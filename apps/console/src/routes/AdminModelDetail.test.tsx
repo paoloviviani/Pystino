@@ -30,6 +30,7 @@ function price(overrides: Partial<Price> = {}): Price {
     cache_read_per_mtok: null,
     cache_write_per_mtok: null,
     per_image: null,
+    per_image_by_size: null,
     currency: "EUR",
     effective_from: "2026-08-01T10:00:00Z",
     source: "manual",

@@ -34,6 +34,9 @@ function backend(overrides: Partial<AdminProvider> = {}): AdminProvider {
     kind: "search",
     plugin_kind: "search",
     billing_mode: "own_prices",
+    catalogue_id: null,
+    catalogue: null,
+    catalogue_missing: false,
     unpriced_model_count: 0,
     model_count: 1,
     created_at: "2026-09-01T00:00:00Z",
@@ -98,6 +101,8 @@ const PLUGINS: ProviderPlugin[] = [
     default_base_url: "https://api.linkup.so/v1",
     base_url_options: [],
     is_default: false,
+    supports_decisions: false,
+    requires_api_key: true,
   },
   {
     name: "exa",
@@ -108,6 +113,8 @@ const PLUGINS: ProviderPlugin[] = [
     default_base_url: "https://api.exa.ai",
     base_url_options: [],
     is_default: false,
+    supports_decisions: false,
+    requires_api_key: true,
   },
   {
     name: "jina",
@@ -121,6 +128,8 @@ const PLUGINS: ProviderPlugin[] = [
       { url: "https://eu.s.jina.ai", label: "eu.s.jina.ai — all processing stays in the EU" },
     ],
     is_default: false,
+    supports_decisions: false,
+    requires_api_key: true,
   },
   {
     name: "duckduckgo",
@@ -135,6 +144,7 @@ const PLUGINS: ProviderPlugin[] = [
     base_url_options: [],
     requires_api_key: false,
     is_default: false,
+    supports_decisions: false,
   },
 ];
 

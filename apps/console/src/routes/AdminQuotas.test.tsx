@@ -25,6 +25,7 @@ function rule(overrides: Partial<LimitRule> = {}): LimitRule {
     scope_id: "g1",
     metric: "cost",
     applies_to: "aggregate",
+    overrides_each_user: false,
     window_seconds: null,
     period: "month",
     window_label: "month",

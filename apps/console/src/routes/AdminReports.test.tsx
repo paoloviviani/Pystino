@@ -16,6 +16,8 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
   const totals = {
     key: null,
     label: "total",
+    split_key: null,
+    split_label: null,
     requests: 100,
     prompt_tokens: 8000,
     completion_tokens: 2000,
@@ -28,6 +30,8 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
     native_currency: null,
     estimated_requests: 0,
     unavailable_requests: 0,
+    estimated_disconnected_requests: 0,
+    via_alias_requests: 0,
   };
   return {
     period: {
@@ -38,10 +42,12 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
       timezone: "Europe/Rome",
     },
     group_by: "group",
+    split_by: null,
     currency: "EUR",
     rows: [{ ...totals, key: "g1", label: "research" }],
     totals,
     disclosures: [],
+    reconciliation: [],
     ...overrides,
   };
 }
