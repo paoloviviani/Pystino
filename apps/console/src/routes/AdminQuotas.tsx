@@ -11,7 +11,7 @@ import {
   Spinner,
   SummaryStrip,
   Table,
-  
+  RowActions,
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { formatMoney, useExactMoney } from "@llmp/ui";
@@ -143,23 +143,30 @@ export function AdminQuotas() {
       header: "",
       render: (rule) => (
         <div className={ROW_ACTIONS}>
-          <Button onClick={() => setHistory(rule)}>{m["admin_quotas.action.history"]()}</Button>
-          <Button onClick={() => setResetting(rule)}>{m["admin_quotas.action.reset"]()}</Button>
-          <Button
-            variant="ghost"
-            className="text-danger"
-            busy={remove.isPending && remove.variables === rule.id}
-            onClick={() =>
-              remove.mutate(rule.id, {
-                onSuccess: () =>
-                  toast?.add({ title: m["admin_quotas.toast.deleted"](), type: "success" }),
-                onError: () =>
-                  toast?.add({ title: m["admin_quotas.toast.delete_failed"](), type: "error" }),
-              })
-            }
-          >
-            {m["admin_quotas.action.delete"]()}
-          </Button>
+          <RowActions
+            label={m["table.row_actions"]({ name: rule.name || rule.scope })}
+            actions={[
+              {
+                key: "history",
+                label: m["admin_quotas.action.history"](),
+                onSelect: () => setHistory(rule),
+              },
+              { key: "reset", label: m["admin_quotas.action.reset"](), onSelect: () => setResetting(rule) },
+              {
+                key: "delete",
+                label: m["admin_quotas.action.delete"](),
+                onSelect: () =>
+                  remove.mutate(rule.id, {
+                    onSuccess: () =>
+                      toast?.add({ title: m["admin_quotas.toast.deleted"](), type: "success" }),
+                    onError: () =>
+                      toast?.add({ title: m["admin_quotas.toast.delete_failed"](), type: "error" }),
+                  }),
+                destructive: true,
+                disabled: remove.isPending && remove.variables === rule.id,
+              },
+            ]}
+          />
         </div>
       ),
     },

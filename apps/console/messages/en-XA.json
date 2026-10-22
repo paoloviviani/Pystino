@@ -2785,5 +2785,6 @@
   "plots.table.show": "[Śȟóŵ áś á ťáƀľé]",
   "plots.table.hide": "[Ȟíďé ťȟé ťáƀľé]",
   "plots.table.day": "[Ďáý]",
-  "plots.table.total": "[Ťóťáľ]"
+  "plots.table.total": "[Ťóťáľ]",
+  "table.row_actions": "[Áćťíóńś ƒóŕ {name}]"
 }

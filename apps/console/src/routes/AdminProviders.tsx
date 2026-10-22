@@ -9,10 +9,9 @@ import {
   Spinner,
   SummaryStrip,
   Table,
-  
+  RowActions,
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
-import { Tooltip } from "@llmp/ui";
 import { useState } from "react";
 import {
   useCreateProvider,
@@ -164,66 +163,57 @@ export function AdminProviders() {
       header: "",
       render: (provider) => (
         <div className={ROW_ACTIONS}>
-          {/* So a wrong URL or a stale key shows up here rather than in a
-              request to a model. Said here, where the button is — it spent a
-              while as a notice inside the create dialog, explaining an action
-              that did not exist yet. */}
-          <Tooltip label={m["admin_providers.test.tooltip"]()}>
-            <Button
-              busy={test.isPending && test.variables === provider.id}
-              onClick={() => runTest(provider)}
-            >
-              {m["admin_providers.action.test"]()}
-            </Button>
-          </Tooltip>
-          <Button onClick={() => setEditing(provider)}>{m["admin_providers.action.edit"]()}</Button>
-          <Button
-            busy={update.isPending && update.variables?.id === provider.id}
-            onClick={() =>
-              update.mutate(
-                { id: provider.id, is_active: !provider.is_active },
-                {
-                  onSuccess: () =>
-                    toast?.add({ title: m["admin_providers.toast.updated"](), type: "success" }),
-                  onError: () =>
-                    toast?.add({
-                      title: m["admin_providers.toast.update_failed"](),
-                      type: "error",
-                    }),
-                },
-              )
-            }
-          >
-            {provider.is_active
-              ? m["admin_providers.action.deactivate"]()
-              : m["admin_providers.action.activate"]()}
+          <Button variant="secondary" onClick={() => setEditing(provider)}>
+            {m["admin_providers.action.edit"]()}
           </Button>
-          {provider.kind === "internal" ? (
-            <Tooltip label={m["admin_providers.internal.tooltip"]()}>
-              <Button variant="ghost" className="text-danger" disabled>
-                {m["admin_providers.action.delete"]()}
-              </Button>
-            </Tooltip>
-          ) : (
-            <Button
-              variant="ghost"
-              className="text-danger"
-              busy={remove.isPending && remove.variables === provider.id}
-              onClick={() =>
-                remove.mutate(provider.id, {
-                  onSuccess: () =>
-                    toast?.add({ title: m["admin_providers.toast.deleted"](), type: "success" }),
-                  onError: () =>
-                    toast?.add({
-                      title: m["admin_providers.toast.delete_failed"](),
-                      type: "error",
-                    }),
-                })
-              }
-            >
-              {m["admin_providers.action.delete"]()}
-            </Button>
-          )}
+          <RowActions
+            label={m["table.row_actions"]({ name: provider.name })}
+            actions={[
+              {
+                key: "test",
+                label: m["admin_providers.action.test"](),
+                onSelect: () => runTest(provider),
+                disabled: test.isPending && test.variables === provider.id,
+              },
+              {
+                key: "toggle",
+                label: provider.is_active
+                  ? m["admin_providers.action.deactivate"]()
+                  : m["admin_providers.action.activate"](),
+                onSelect: () =>
+                  update.mutate(
+                    { id: provider.id, is_active: !provider.is_active },
+                    {
+                      onSuccess: () =>
+                        toast?.add({ title: m["admin_providers.toast.updated"](), type: "success" }),
+                      onError: () =>
+                        toast?.add({
+                          title: m["admin_providers.toast.update_failed"](),
+                          type: "error",
+                        }),
+                    },
+                  ),
+                disabled: update.isPending && update.variables?.id === provider.id,
+              },
+              {
+                key: "delete",
+                label: m["admin_providers.action.delete"](),
+                onSelect: () =>
+                  remove.mutate(provider.id, {
+                    onSuccess: () =>
+                      toast?.add({ title: m["admin_providers.toast.deleted"](), type: "success" }),
+                    onError: () =>
+                      toast?.add({
+                        title: m["admin_providers.toast.delete_failed"](),
+                        type: "error",
+                      }),
+                  }),
+                destructive: true,
+                disabled:
+                  provider.kind === "internal" || (remove.isPending && remove.variables === provider.id),
+              },
+            ]}
+          />
         </div>
       ),
     },

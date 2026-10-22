@@ -22,3 +22,21 @@ export function jsonResponse(payload: unknown, status = 200): Response {
     headers: { "content-type": "application/json" },
   });
 }
+
+/**
+ * Choose an item from a table row's "⋯" menu, as a person does: open the
+ * row's menu, then pick the item. `row` is the name the menu button was given
+ * ("Actions for <row>"); without it, the first row's menu is used.
+ */
+export async function chooseRowAction(
+  user: { click: (element: Element) => Promise<void> },
+  item: string | RegExp,
+  row?: string | RegExp,
+): Promise<void> {
+  const { screen } = await import("@testing-library/react");
+  const triggers = await screen.findAllByRole("button", {
+    name: row === undefined ? /^Actions for / : typeof row === "string" ? `Actions for ${row}` : row,
+  });
+  await user.click(triggers[0]!);
+  await user.click(await screen.findByRole("menuitem", { name: item }));
+}

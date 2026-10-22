@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { chooseRowAction } from "../test-helpers";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
@@ -557,7 +558,7 @@ describe("AdminRedaction", () => {
     const user = userEvent.setup();
     renderScreen(<AdminRedaction />);
 
-    await user.click(await screen.findByRole("button", { name: "Clone" }));
+    await chooseRowAction(user, "Clone");
 
     await waitFor(() => expect(location.pathname).toBe("/admin/redaction/rules/new"));
   });

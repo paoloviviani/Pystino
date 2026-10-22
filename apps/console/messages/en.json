@@ -2785,5 +2785,6 @@
   "plots.table.show": "Show as a table",
   "plots.table.hide": "Hide the table",
   "plots.table.day": "Day",
-  "plots.table.total": "Total"
+  "plots.table.total": "Total",
+  "table.row_actions": "Actions for {name}"
 }

@@ -8,6 +8,7 @@ import {
   Select,
   Spinner,
   Table,
+  RowActions,
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
@@ -233,31 +234,40 @@ export function AdminRouting() {
       header: "",
       render: (alias) => (
         <div className={ROW_ACTIONS}>
-          <Button onClick={() => setEditing(alias)}>{m["admin_routing.action.edit"]()}</Button>
-          <Button
-            busy={update.isPending && update.variables?.id === alias.id}
-            onClick={() =>
-              update.mutate(
-                { id: alias.id, is_active: !alias.is_active },
-                {
-                  onSuccess: () =>
-                    toast?.add({ title: m["admin_routing.toast.updated"](), type: "success" }),
-                  onError: () =>
-                    toast?.add({
-                      title: m["admin_routing.toast.update_failed"](),
-                      type: "error",
-                    }),
-                },
-              )
-            }
-          >
-            {alias.is_active
-              ? m["admin_routing.action.deactivate"]()
-              : m["admin_routing.action.activate"]()}
+          <Button variant="secondary" onClick={() => setEditing(alias)}>
+            {m["admin_routing.action.edit"]()}
           </Button>
-          <Button variant="ghost" className="text-danger" onClick={() => setDeleting(alias)}>
-            {m["admin_routing.action.delete"]()}
-          </Button>
+          <RowActions
+            label={m["table.row_actions"]({ name: alias.name })}
+            actions={[
+              {
+                key: "toggle",
+                label: alias.is_active
+                  ? m["admin_routing.action.deactivate"]()
+                  : m["admin_routing.action.activate"](),
+                onSelect: () =>
+                  update.mutate(
+                    { id: alias.id, is_active: !alias.is_active },
+                    {
+                      onSuccess: () =>
+                        toast?.add({ title: m["admin_routing.toast.updated"](), type: "success" }),
+                      onError: () =>
+                        toast?.add({
+                          title: m["admin_routing.toast.update_failed"](),
+                          type: "error",
+                        }),
+                    },
+                  ),
+                disabled: update.isPending && update.variables?.id === alias.id,
+              },
+              {
+                key: "delete",
+                label: m["admin_routing.action.delete"](),
+                onSelect: () => setDeleting(alias),
+                destructive: true,
+              },
+            ]}
+          />
         </div>
       ),
     },

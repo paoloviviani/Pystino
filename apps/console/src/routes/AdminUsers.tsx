@@ -8,7 +8,8 @@ import {
   Pagination,
   Spinner,
   Table,
-  } from "@llmp/ui";
+  RowActions,
+} from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
 import {
@@ -157,6 +158,27 @@ export function AdminUsers() {
     paged.setOffset(0);
   };
 
+  // Re-issue an expired invitation: regenerate the text (which re-stamps
+  // `invited_at`, ADR 0095) and put it on the clipboard.
+  const reinvite = useInviteText();
+  const reissue = (user: AdminUser) =>
+    reinvite.mutate(user.id, {
+      onSuccess: async (result) => {
+        try {
+          await navigator.clipboard.writeText(result.invite_text);
+          toast?.add({ title: m["admin_users.invite.toast_copied"](), type: "success" });
+        } catch {
+          toast?.add({ title: result.invite_text, type: "info" });
+        }
+      },
+      onError: (caught: unknown) =>
+        toast?.add({
+          // i18n: server text — the API's own error message.
+          title: caught instanceof Error ? caught.message : m["admin_users.toast.reissue_failed"](),
+          type: "error",
+        }),
+    });
+
   const approve = (user: AdminUser) =>
     update.mutate(
       { id: user.id, is_active: true },
@@ -301,35 +323,46 @@ export function AdminUsers() {
             {m["admin_users.action.edit"]()}
           </Button>
           {/* The approval queue's one click (ADR 0095): enable is the whole
-              approval; Reject is the Delete below it. */}
+              approval; Reject is the Delete in the menu. */}
           {!user.is_active && user.deactivated_by === "approval" && (
             <Button variant="secondary" onClick={() => approve(user)}>
               {m["admin_users.action.approve"]()}
             </Button>
           )}
-          {isInvited(user) && inviteExpired(user) && <ReIssueButton user={user} />}
-          {!user.is_active && user.deactivated_by !== "approval" && (
-            <Button variant="ghost" onClick={() => setTogglingActive(user)}>
-              {m["admin_users.action.enable"]()}
-            </Button>
-          )}
-          {user.is_active && (
-            <Button variant="ghost" onClick={() => setTogglingActive(user)}>
-              {m["admin_users.action.disable"]()}
-            </Button>
-          )}
-          {/* Thin red text, never filled: the same row-level delete as every
-              other screen — filled red belongs to the confirm dialog, not to
-              a control that sits beside Edit all day. Destructive actions
-              stay visible on the row, one click away, rather than hiding
-              behind the edit panel. */}
-          <Button
-            variant="ghost"
-            className="text-danger"
-            onClick={() => setDeleting(user)}
-          >
-            {m["admin_users.action.delete"]()}
-          </Button>
+          <RowActions
+            label={m["table.row_actions"]({
+              name: user.display_name || user.username || user.email || user.subject,
+            })}
+            actions={[
+              ...(isInvited(user) && inviteExpired(user)
+                ? [
+                    {
+                      key: "reinvite",
+                      label: m["admin_users.action.reinvite"](),
+                      onSelect: () => reissue(user),
+                      disabled: reinvite.isPending,
+                    },
+                  ]
+                : []),
+              ...(!user.is_active && user.deactivated_by === "approval"
+                ? []
+                : [
+                    {
+                      key: "toggle",
+                      label: user.is_active
+                        ? m["admin_users.action.disable"]()
+                        : m["admin_users.action.enable"](),
+                      onSelect: () => setTogglingActive(user),
+                    },
+                  ]),
+              {
+                key: "delete",
+                label: m["admin_users.action.delete"](),
+                onSelect: () => setDeleting(user),
+                destructive: true,
+              },
+            ]}
+          />
         </div>
       ),
     },
@@ -908,41 +941,6 @@ function Chip({
       {label}
       {count === undefined ? "" : ` (${formatNumber(count)})`}
     </button>
-  );
-}
-
-/** Re-issue an expired invitation: regenerate the text (which re-stamps
- * `invited_at`, ADR 0095) and put it on the clipboard. */
-function ReIssueButton({ user }: { user: AdminUser }) {
-  const invite = useInviteText();
-  const toast = useOptionalToast();
-  return (
-    <Button
-      variant="ghost"
-      busy={invite.isPending}
-      onClick={() =>
-        invite.mutate(user.id, {
-          onSuccess: async (result) => {
-            try {
-              await navigator.clipboard.writeText(result.invite_text);
-              toast?.add({ title: m["admin_users.invite.toast_copied"](), type: "success" });
-            } catch {
-              toast?.add({ title: result.invite_text, type: "info" });
-            }
-          },
-          onError: (caught: unknown) =>
-            toast?.add({
-              // i18n: server text — the API's own error message.
-              title: caught instanceof Error
-                ? caught.message
-                : m["admin_users.toast.reissue_failed"](),
-              type: "error",
-            }),
-        })
-      }
-    >
-      {m["admin_users.action.reinvite"]()}
-    </Button>
   );
 }
 

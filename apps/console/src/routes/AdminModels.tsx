@@ -9,7 +9,7 @@ import {
   Select,
   Spinner,
   Table,
-  
+  RowActions,
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { formatMoney, useExactMoney } from "@llmp/ui";
@@ -264,37 +264,40 @@ export function AdminModels() {
       header: "",
       render: (model) => (
         <div className={ROW_ACTIONS}>
-          {/* Everything that configures one model — capabilities, price, who may
-              reach it — is on its page now. Access used to be a dialog here and
-              pricing a whole separate screen, which meant three places to change
-              one model and a price you had to go and look for. */}
-          <Button onClick={() => navigate(`/admin/models/${model.id}`)}>
+          <Button variant="secondary" onClick={() => navigate(`/admin/models/${model.id}`)}>
             {m["admin_models.action.edit"]()}
           </Button>
-          <Button
-            busy={update.isPending && update.variables?.id === model.id}
-            onClick={() =>
-              update.mutate(
-                { id: model.id, is_active: !model.is_active },
-                {
-                  onSuccess: () =>
-                    toast?.add({ title: m["admin_models.toast.updated"](), type: "success" }),
-                  onError: () =>
-                    toast?.add({
-                      title: m["admin_models.toast.update_failed"](),
-                      type: "error",
-                    }),
-                },
-              )
-            }
-          >
-            {model.is_active
-              ? m["admin_models.action.deactivate"]()
-              : m["admin_models.action.activate"]()}
-          </Button>
-          <Button variant="ghost" className="text-danger" onClick={() => setDeleting(model)}>
-            {m["admin_models.action.delete"]()}
-          </Button>
+          <RowActions
+            label={m["table.row_actions"]({ name: model.display_name || model.name })}
+            actions={[
+              {
+                key: "toggle",
+                label: model.is_active
+                  ? m["admin_models.action.deactivate"]()
+                  : m["admin_models.action.activate"](),
+                onSelect: () =>
+                  update.mutate(
+                    { id: model.id, is_active: !model.is_active },
+                    {
+                      onSuccess: () =>
+                        toast?.add({ title: m["admin_models.toast.updated"](), type: "success" }),
+                      onError: () =>
+                        toast?.add({
+                          title: m["admin_models.toast.update_failed"](),
+                          type: "error",
+                        }),
+                    },
+                  ),
+                disabled: update.isPending && update.variables?.id === model.id,
+              },
+              {
+                key: "delete",
+                label: m["admin_models.action.delete"](),
+                onSelect: () => setDeleting(model),
+                destructive: true,
+              },
+            ]}
+          />
         </div>
       ),
     },

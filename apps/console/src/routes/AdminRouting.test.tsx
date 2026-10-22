@@ -5,7 +5,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdminAlias, AdminModel, AliasTarget } from "../lib/types";
-import { jsonResponse } from "../test-helpers";
+import { jsonResponse, chooseRowAction } from "../test-helpers";
 import { AdminRouting } from "./AdminRouting";
 
 /**
@@ -346,7 +346,7 @@ describe("the Routing tab", () => {
   it("deletes behind a confirmation", async () => {
     const { captured, user } = await open([alias()]);
 
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await chooseRowAction(user, "Delete");
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: /Delete permanently/ }));
 
