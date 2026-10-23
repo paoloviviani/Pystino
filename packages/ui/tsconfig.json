@@ -16,5 +16,8 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // The type-scale guard reads the sources with node:fs; this package carries no Node
+  // types, and vitest runs the file regardless.
+  "exclude": ["src/typography.test.ts"]
 }
