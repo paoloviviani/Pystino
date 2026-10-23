@@ -1,8 +1,30 @@
-# Built-in catalogue entry. Override any field from the operator directory;
-# see docs/provider-catalogue.md. Region and retention are left unset where the
-# provider does not commit to one answer: unknown is not the same as "no".
+# Built-in facts, read from the provider's own pages on 2026-10-23 (see sources). Only what
+# the provider states is recorded; where it does not say, the value is left null
+# or marked not published, never guessed. Re-verify before relying on it.
 providers:
   - id: openai
     name: OpenAI
     plugin: openai
     base_url: https://api.openai.com/v1
+    region: us
+    region_note: >-
+      Default is the United States. Data residency is a per-project setting
+      that needs OpenAI approval: Europe (EEA and Switzerland) is available for
+      storage and processing via eu.api.openai.com, and requires abuse
+      monitoring controls (ZDR or Modified Abuse Monitoring). Several other
+      regions are storage only, without regional processing.
+    retention:
+      status: published
+      zero_data_retention: false
+      zero_data_retention_available: true
+      retention_days: 30
+      trains_on_customer_data: false
+      note: >-
+        Abuse monitoring logs, which can contain prompts and responses, are
+        kept up to 30 days. ZDR and Modified Abuse Monitoring need prior
+        OpenAI approval; contact sales. API data is not used for training
+        unless you opt in.
+    sources:
+      - url: https://developers.openai.com/api/docs/guides/your-data
+        retrieved: 2026-10-23
+        covers: location, retention, ZDR, training

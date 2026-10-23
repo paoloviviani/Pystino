@@ -3465,7 +3465,11 @@ export interface components {
             price_hints: components["schemas"]["CataloguePriceHintResponse"][];
             /** Region */
             region: string | null;
+            /** Region Note */
+            region_note: string | null;
             retention: components["schemas"]["CatalogueRetentionResponse"];
+            /** Sources */
+            sources: components["schemas"]["CatalogueSourceResponse"][];
         };
         /**
          * CatalogueOriginResponse
@@ -3517,10 +3521,29 @@ export interface components {
             retention_days: number | null;
             /** Source Url */
             source_url: string | null;
+            /** Status */
+            status: ("published" | "various" | "not_published") | null;
             /** Trains On Customer Data */
             trains_on_customer_data: boolean | null;
             /** Zero Data Retention */
             zero_data_retention: boolean | null;
+            /** Zero Data Retention Available */
+            zero_data_retention_available: boolean | null;
+        };
+        /**
+         * CatalogueSourceResponse
+         * @description A primary source a fact was read from, and the day it was read.
+         */
+        CatalogueSourceResponse: {
+            /** Covers */
+            covers: string | null;
+            /**
+             * Retrieved
+             * Format: date
+             */
+            retrieved: string;
+            /** Url */
+            url: string;
         };
         /**
          * CatalogueTagsResponse

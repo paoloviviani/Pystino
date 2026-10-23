@@ -1,5 +1,29 @@
+# Built-in facts, read from the provider's own pages on 2026-10-23 (see sources). Only what
+# the provider states is recorded; where it does not say, the value is left null
+# or marked not published, never guessed. Re-verify before relying on it.
 providers:
   - id: nebius
     name: Nebius AI Studio
     plugin: nebius
     base_url: https://api.studio.nebius.com/v1
+    region: global
+    region_note: >-
+      Public endpoints show region Global: processing location is decided
+      dynamically with no commitment. Dedicated endpoints commit to a region
+      chosen by the customer. Without ZDR, inputs and outputs kept for
+      speculative decoding are stored in Finland (EU).
+    retention:
+      status: published
+      zero_data_retention: false
+      zero_data_retention_available: true
+      trains_on_customer_data: false
+      note: >-
+        Without ZDR, inputs and outputs are kept to speed up inference
+        (speculative decoding); the retention period is not published. ZDR is
+        an organization-level switch in account settings and stores nothing
+        (it may slow inference). Content is not used to train any model in
+        either mode.
+    sources:
+      - url: https://docs.tokenfactory.nebius.com/legal/legal-quick-guide
+        retrieved: 2026-10-23
+        covers: location, retention, ZDR, training

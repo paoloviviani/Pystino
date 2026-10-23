@@ -903,11 +903,23 @@ class CatalogueOriginResponse(ResponseModel):
 class CatalogueRetentionResponse(ResponseModel):
     """What the provider keeps. ``null`` is *unknown*, never "no"."""
 
+    #: ``published`` / ``various`` (a router) / ``not_published``; null only on
+    #: an operator-added entry that never says.
+    status: Literal["published", "various", "not_published"] | None = None
     zero_data_retention: bool | None = None
+    zero_data_retention_available: bool | None = None
     retention_days: int | None = None
     trains_on_customer_data: bool | None = None
     note: str | None = None
     source_url: str | None = None
+
+
+class CatalogueSourceResponse(ResponseModel):
+    """A primary source a fact was read from, and the day it was read."""
+
+    url: str
+    retrieved: date
+    covers: str | None = None
 
 
 class CataloguePriceHintResponse(ResponseModel):
@@ -933,7 +945,9 @@ class CatalogueEntryResponse(ResponseModel):
     base_url: str | None = None
     prefix: str = ""
     region: str | None = None
+    region_note: str | None = None
     retention: CatalogueRetentionResponse
+    sources: list[CatalogueSourceResponse] = Field(default_factory=list)
     price_hints: list[CataloguePriceHintResponse] = Field(default_factory=list)
     origins: list[CatalogueOriginResponse] = Field(default_factory=list)
 

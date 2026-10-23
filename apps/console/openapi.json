@@ -1470,8 +1470,26 @@
             ],
             "title": "Region"
           },
+          "region_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region Note"
+          },
           "retention": {
             "$ref": "#/components/schemas/CatalogueRetentionResponse"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogueSourceResponse"
+            },
+            "title": "Sources",
+            "type": "array"
           }
         },
         "required": [
@@ -1482,7 +1500,9 @@
           "base_url",
           "prefix",
           "region",
+          "region_note",
           "retention",
+          "sources",
           "price_hints",
           "origins"
         ],
@@ -1655,6 +1675,22 @@
             ],
             "title": "Source Url"
           },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "published",
+                  "various",
+                  "not_published"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
           "trains_on_customer_data": {
             "anyOf": [
               {
@@ -1676,16 +1712,61 @@
               }
             ],
             "title": "Zero Data Retention"
+          },
+          "zero_data_retention_available": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zero Data Retention Available"
           }
         },
         "required": [
+          "status",
           "zero_data_retention",
+          "zero_data_retention_available",
           "retention_days",
           "trains_on_customer_data",
           "note",
           "source_url"
         ],
         "title": "CatalogueRetentionResponse",
+        "type": "object"
+      },
+      "CatalogueSourceResponse": {
+        "description": "A primary source a fact was read from, and the day it was read.",
+        "properties": {
+          "covers": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Covers"
+          },
+          "retrieved": {
+            "format": "date",
+            "title": "Retrieved",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "retrieved",
+          "covers"
+        ],
+        "title": "CatalogueSourceResponse",
         "type": "object"
       },
       "CatalogueTagsResponse": {

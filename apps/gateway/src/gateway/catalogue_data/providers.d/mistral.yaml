@@ -1,6 +1,44 @@
+# Built-in facts, read from the provider's own pages on 2026-10-23 (see sources). Only what
+# the provider states is recorded; where it does not say, the value is left null
+# or marked not published, never guessed. Re-verify before relying on it.
 providers:
   - id: mistral
     name: Mistral AI
     plugin: mistral
     base_url: https://api.mistral.ai/v1
     region: eu
+    region_note: >-
+      Mistral says data is hosted in the EU by default, with a US endpoint as
+      an explicit option. Its regional inference docs add that the global
+      endpoint api.mistral.ai (the one configured here) makes no commitment on
+      where inference runs; api.eu.mistral.ai serves from EU and EFTA data
+      centres and api.us.mistral.ai from the US. For a guaranteed EU location,
+      point base_url at the EU endpoint with an override.
+    retention:
+      status: published
+      zero_data_retention: false
+      zero_data_retention_available: true
+      retention_days: 30
+      note: >-
+        Inputs and outputs are kept for the time needed to answer, then 30
+        rolling days for abuse monitoring, unless ZDR is activated (Agents API:
+        until the account ends). ZDR is on request for paid plans and stateless
+        endpoints, approved at Mistral's discretion. Training on API data by
+        default is not stated clearly: the DPA allows training unless the
+        customer has opted out, and an opt-out exists.
+    sources:
+      - url: https://legal.mistral.ai/terms/privacy-policy/
+        retrieved: 2026-10-23
+        covers: retention, training
+      - url: https://docs.mistral.ai/admin/monitor-comply/zero-data-retention
+        retrieved: 2026-10-23
+        covers: zero data retention
+      - url: https://docs.mistral.ai/inference/regional-inference
+        retrieved: 2026-10-23
+        covers: location
+      - url: https://help.mistral.ai/en/articles/347629-where-do-you-store-my-data-or-my-organization-s-data
+        retrieved: 2026-10-23
+        covers: location
+      - url: https://legal.mistral.ai/terms/data-processing-addendum/
+        retrieved: 2026-10-23
+        covers: training

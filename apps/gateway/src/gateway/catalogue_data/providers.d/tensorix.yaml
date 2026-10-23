@@ -1,4 +1,29 @@
+# Built-in facts, read from the provider's own pages on 2026-10-23 (see sources). Only what
+# the provider states is recorded; where it does not say, the value is left null
+# or marked not published, never guessed. Re-verify before relying on it.
 providers:
   - id: tensorix
     name: Tensorix
     plugin: tensorix
+    region: eu
+    region_note: >-
+      Tensorix states all GPU infrastructure is in the EU, in Dublin (Ireland)
+      and Helsinki (Finland). Region is not selectable.
+    retention:
+      status: published
+      zero_data_retention: true
+      zero_data_retention_available: true
+      retention_days: 0
+      trains_on_customer_data: false
+      note: >-
+        Prompts and completions are held in volatile memory for the life of the
+        request and never stored. Usage metadata (token counts, API logs) is
+        kept up to 12 months for billing and analytics. Inference data is not
+        used for training. Self-reported; no audit is published.
+    sources:
+      - url: https://tensorx.ai/trust
+        retrieved: 2026-10-23
+        covers: location, retention, training
+      - url: https://tensorx.ai/privacy
+        retrieved: 2026-10-23
+        covers: retention, training
