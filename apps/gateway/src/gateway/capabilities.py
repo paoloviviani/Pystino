@@ -1,8 +1,9 @@
 """Who holds which capability (ADR 0096, amended).
 
 A capability is only a per-group flag: a person holds ``code_agents`` (the
-/code panel and the machine links that serve it) or ``api_keys`` (minting
-and using ``gwk_`` keys) as an administrator, or through an active
+/code panel and the machine links that serve it), ``api_keys`` (minting
+and using ``gwk_`` keys) or ``local_connectors`` (a connectors-only machine
+serving the person's own MCP servers) as an administrator, or through an active
 membership in an active group with the flag on. There is no mode that gates
 access anymore — the deployment setting is the default new groups are
 created with (see :func:`default_flags`).
@@ -26,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.models import Group, OIDCPolicyConfig, User
 from gateway.oidc_policy import OIDCPolicy, effective_policy
+from gateway.schemas import CapabilityFlags
 
 if TYPE_CHECKING:
     from gateway.config import Settings
@@ -33,10 +35,11 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class Capabilities:
-    """The two ADR 0096 capabilities a person effectively holds."""
+    """The ADR 0096 capabilities (and local connectors, ADR 0102) a person effectively holds."""
 
     code_agents: bool
     api_keys: bool
+    local_connectors: bool = False
 
 
 def effective_capabilities(user: User) -> Capabilities:
@@ -44,6 +47,24 @@ def effective_capabilities(user: User) -> Capabilities:
     return Capabilities(
         code_agents=_holds(user, "code_agents"),
         api_keys=_holds(user, "api_keys"),
+        local_connectors=_holds(user, "local_connectors"),
+    )
+
+
+def reported_flags(user: User, settings: Settings) -> CapabilityFlags:
+    """What `/v1/me` and `/api/me` report for this person.
+
+    Code agents and local connectors are chat concepts: without a chat
+    (`GATEWAY_CHAT__ENABLED` false) they are not reported at all, only
+    `api_keys` is.
+    """
+    flags = effective_capabilities(user)
+    if not settings.chat.enabled:
+        return CapabilityFlags(api_keys=flags.api_keys)
+    return CapabilityFlags(
+        code_agents=flags.code_agents,
+        api_keys=flags.api_keys,
+        local_connectors=flags.local_connectors,
     )
 
 
@@ -59,10 +80,11 @@ def default_flags(policy: OIDCPolicy | None) -> Capabilities:
     its meaning.
     """
     if policy is None:
-        return Capabilities(code_agents=True, api_keys=True)
+        return Capabilities(code_agents=True, api_keys=True, local_connectors=True)
     return Capabilities(
         code_agents=_default_on(policy.code_agents_mode),
         api_keys=_default_on(policy.api_keys_mode),
+        local_connectors=_default_on(policy.local_connectors_mode),
     )
 
 
@@ -82,7 +104,11 @@ def new_group_flags(defaults: Capabilities) -> dict[str, bool]:
     flags apply only when the row is CREATED; an existing group's flags are
     never touched (the conflict-safe inserts keep ``on conflict do nothing``).
     """
-    return {"code_agents_allowed": defaults.code_agents, "api_keys_allowed": defaults.api_keys}
+    return {
+        "code_agents_allowed": defaults.code_agents,
+        "api_keys_allowed": defaults.api_keys,
+        "local_connectors_allowed": defaults.local_connectors,
+    }
 
 
 async def load_defaults(session: AsyncSession, settings: Settings) -> Capabilities:
@@ -117,4 +143,6 @@ def _holds(user: User, flag_name: str) -> bool:
 def _group_flag(group: Group, flag_name: str) -> bool:
     if flag_name == "code_agents":
         return group.code_agents_allowed
+    if flag_name == "local_connectors":
+        return group.local_connectors_allowed
     return group.api_keys_allowed

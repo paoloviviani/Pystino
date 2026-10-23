@@ -31,6 +31,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from gateway.accounting.cost import TokenCounts
 from gateway.config import (
+    ChatSettings,
     OIDCSettings,
     QuotaSettings,
     RedactionSettings,
@@ -395,6 +396,10 @@ def settings(tmp_path: Path) -> Iterator[Settings]:
         upstream=UpstreamSettings(base_url=UPSTREAM_BASE, api_key="upstream-key"),
         redaction=RedactionSettings(engine="noop"),
         quota=QuotaSettings(enabled=True, default_max_output_tokens=1000),
+        # Code agents and local connectors are chat concepts; the fleet of
+        # capability tests runs as a full chat deployment, and the standalone
+        # tests turn this off explicitly.
+        chat=ChatSettings(enabled=True),
     )
     # Teardown runs after the app fixture's (app depends on settings), so the
     # engine is disposed by now; WITH (FORCE) ends any backend still attached.
@@ -481,6 +486,7 @@ async def seeded(session_factory: async_sessionmaker[AsyncSession], app: FastAPI
             description="test group",
             code_agents_allowed=True,
             api_keys_allowed=True,
+            local_connectors_allowed=True,
         )
         db.add(group)
         await db.flush()

@@ -24,6 +24,7 @@ import {
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
+import { useChatEnabled } from "../lib/queries";
 import {
   type SeenGroupPage,
   useCreateGroup,
@@ -53,6 +54,7 @@ export function AdminGroups() {
   const groups = useGroups(paged.page);
   const updateGroup = useUpdateGroup();
   const toast = useOptionalToast();
+  const chatEnabled = useChatEnabled();
 
   const [creating, setCreating] = useState(false);
   const [managing, setManaging] = useState<AdminGroup | null>(null);
@@ -63,7 +65,7 @@ export function AdminGroups() {
 
   const flipCapability = (
     group: AdminGroup,
-    knob: "code_agents_allowed" | "api_keys_allowed",
+    knob: "code_agents_allowed" | "api_keys_allowed" | "local_connectors_allowed",
     value: boolean,
   ) =>
     updateGroup.mutate(
@@ -115,6 +117,7 @@ export function AdminGroups() {
       // too, so a badge there changes with the flag that decides it.
       render: (group) => (
         <div className="flex flex-col gap-1.5">
+          {chatEnabled && (
           <label className="inline-flex items-center gap-1.5 text-sm">
             <input
               type="checkbox"
@@ -128,6 +131,7 @@ export function AdminGroups() {
             />
             {m["admin_groups.capability.agents"]()}
           </label>
+          )}
           <label className="inline-flex items-center gap-1.5 text-sm">
             <input
               type="checkbox"
@@ -141,6 +145,21 @@ export function AdminGroups() {
             />
             {m["admin_groups.capability.api_keys"]()}
           </label>
+          {chatEnabled && (
+          <label className="inline-flex items-center gap-1.5 text-sm">
+            <input
+              type="checkbox"
+              aria-label={m["admin_groups.capability.local_connectors_aria"]({ name: group.name })}
+              checked={group.local_connectors_allowed}
+              onChange={(event) =>
+                flipCapability(group, "local_connectors_allowed", event.target.checked)
+              }
+              disabled={updateGroup.isPending}
+              className="accent-accent"
+            />
+            {m["admin_groups.capability.local_connectors"]()}
+          </label>
+          )}
         </div>
       ),
     },

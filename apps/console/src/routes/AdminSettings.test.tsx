@@ -113,6 +113,7 @@ describe("AdminSettings providers card", () => {
     group_mappings: [],
     code_agents_mode: "on",
     api_keys_mode: "on",
+    local_connectors_mode: "on",
     source: "environment",
     sources: {},
     configured: null,
@@ -387,6 +388,7 @@ describe("AdminSettings capabilities card", () => {
       group_mappings: [],
       code_agents_mode: "on",
       api_keys_mode: "on",
+      local_connectors_mode: "on",
       source: "environment",
       sources: {},
       configured: null,
@@ -425,7 +427,9 @@ describe("AdminSettings capabilities card", () => {
     losses = 0,
     putStatus = 200,
     postStatus = 200,
+    chatEnabled = true,
   }: {
+    chatEnabled?: boolean;
     policy: OidcPolicy;
     gains?: number;
     losses?: number;
@@ -436,6 +440,12 @@ describe("AdminSettings capabilities card", () => {
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), "http://console.test");
         const method = init?.method ?? "GET";
+        if (url.pathname === "/api/me") {
+          return new Response(JSON.stringify({ chat_enabled: chatEnabled }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
         if (url.pathname === "/api/admin/oidc/policy/preview") {
           if (url.searchParams.get("bulk_value") === "true")
             return previewBody({ would_gain: gains });
@@ -544,8 +554,12 @@ describe("AdminSettings capabilities card", () => {
   async function openCard() {
     // Await the settled card, not its header: the policy query answers after
     // the first paint, and a test that stops at the header races the spinner.
-    // Both capability rows carry a "New groups" select, so the wait matches two.
-    return (await screen.findAllByLabelText("New groups"))[0]!;
+    // Three capability rows (agents, keys, local connectors) once the chat
+    // flag has loaded, each with a "New groups" select.
+    await waitFor(() =>
+      expect(screen.getAllByLabelText("New groups")).toHaveLength(3),
+    );
+    return screen.getAllByLabelText("New groups")[0]!;
   }
 
   it("seeds the two defaults from the policy in force", async () => {
@@ -553,8 +567,40 @@ describe("AdminSettings capabilities card", () => {
     renderScreen(<AdminSettings />);
     await openCard();
     const selects = screen.getAllByLabelText("New groups") as HTMLSelectElement[];
-    // Card order: coding agents first, then API keys.
-    expect(selects.map((s) => s.value)).toEqual(["off", "on"]);
+    // Card order: coding agents, API keys, local connectors.
+    expect(selects.map((s) => s.value)).toEqual(["off", "on", "on"]);
+  });
+
+  it("saves the local connectors default as its own policy field", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockRoutes({ policy: policyFixture() });
+    renderScreen(<AdminSettings />);
+    await openCard();
+    await user.selectOptions(screen.getAllByLabelText("New groups")[2]!, "off");
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(
+        ([, init]) => (init as RequestInit)?.method === "PUT",
+      );
+      expect(JSON.parse((put?.[1] as RequestInit).body as string)).toEqual({
+        local_connectors_mode: "off",
+      });
+    });
+  });
+
+  it("shows only the API keys capability when the gateway has no chat", async () => {
+    mockRoutes({ policy: policyFixture(), chatEnabled: false });
+    renderScreen(<AdminSettings />);
+    await screen.findAllByLabelText("New groups");
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url]) => String(url).includes("/api/me")),
+      ).toBe(true),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getAllByLabelText("New groups")).toHaveLength(1);
+    expect(screen.queryByText("Coding agents")).not.toBeInTheDocument();
+    expect(screen.queryByText("Local connectors")).not.toBeInTheDocument();
+    expect(screen.getByText("API keys")).toBeInTheDocument();
   });
 
   it("saves a default as its own policy field", async () => {

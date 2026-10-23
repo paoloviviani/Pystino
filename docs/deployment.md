@@ -31,6 +31,16 @@ Two limits are structural, and worth knowing before you promise anything:
   other satellite deployment. A person's data on a second chat must be
   erased there, by its operator.
 
+- **`GATEWAY_CHAT__ENABLED`** (default `false`) says this gateway serves a
+  chat. The Cerea kit sets it to `true` whenever its chat profile is active;
+  Pystino's own `deploy/compose.yaml` leaves it `false`. Code agents and local
+  connectors are chat concepts, so when it is `false` their group flags are
+  hidden in the console, refused by the admin API (400), left out of the
+  `capabilities` that `/v1/me` and `/api/me` report, and the machine-client
+  gate does not apply. The data (`groups.code_agents_allowed`,
+  `groups.local_connectors_allowed`) exists either way, so turning the setting
+  on later needs no migration.
+
 ## What runs
 
 `deploy/compose.yaml` builds nothing: every service names an image, and

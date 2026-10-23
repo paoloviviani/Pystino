@@ -284,7 +284,9 @@ def _refuse_machine_without_code_agents(
     request: Request, claims: dict[str, Any], user: User
 ) -> None:
     """ADR 0096: a machine-client token from a person without the code_agents
-    capability is refused on every `/v1` route — `/v1/me` included.
+    capability is refused (only when `GATEWAY_CHAT__ENABLED`) on every `/v1`
+    route — `/v1/me` included — unless the person holds local_connectors,
+    which admits the machine client to `/v1/me` alone (a connectors-only machine; no model access).
 
     Matched on the token's `azp`/`client_id` exactly as the accepted-clients
     check does, against the configured machine client (``opencode-enrollment``
@@ -296,6 +298,12 @@ def _refuse_machine_without_code_agents(
     carries `capabilities`, so Cerea can tell why.
     """
     settings: Settings = request.app.state.settings
+    if not settings.chat.enabled:
+        # No chat to pair a machine with (standalone Pystino): code agents and
+        # local connectors are not capabilities here, so nothing gates on
+        # them. Simpler and safer than half-keeping a restriction the console
+        # cannot show or change.
+        return
     machine_client = settings.oidc.machine_client_id
     if not machine_client:
         return
@@ -303,14 +311,22 @@ def _refuse_machine_without_code_agents(
     if client != machine_client:
         return
     capabilities = effective_capabilities(user)
+    on_me = request.url.path.rstrip("/") == "/v1/me"
     if capabilities.code_agents:
         return
+    # Local connectors (Cerea ADR 0102): a connectors-only machine signs in
+    # with this same client but must never reach a model. It may identify
+    # itself (`/v1/me`, which tells Cerea which capability it holds); every
+    # other `/v1` route stays refused, exactly as for a person with neither.
+    if capabilities.local_connectors and on_me:
+        return
     extra_payload = None
-    if request.url.path.rstrip("/") == "/v1/me":
+    if on_me:
         extra_payload = {
             "capabilities": {
                 "code_agents": capabilities.code_agents,
                 "api_keys": capabilities.api_keys,
+                "local_connectors": capabilities.local_connectors,
             }
         }
     raise AgentsNotAllowedError(

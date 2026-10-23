@@ -3329,6 +3329,8 @@ export interface components {
             last_login_at: string | null;
             /** Linked Identities */
             linked_identities: string[];
+            /** Local Connectors Allowed */
+            local_connectors_allowed: boolean | null;
             /** Membership Source */
             membership_source: string | null;
             /** Password */
@@ -3401,7 +3403,9 @@ export interface components {
             /** Api Keys */
             api_keys: boolean;
             /** Code Agents */
-            code_agents: boolean;
+            code_agents: boolean | null;
+            /** Local Connectors */
+            local_connectors: boolean | null;
         };
         /**
          * CatalogueDiscoveryResponse
@@ -3812,6 +3816,11 @@ export interface components {
             id: string;
             /** Is Active */
             is_active: boolean;
+            /**
+             * Local Connectors Allowed
+             * @default false
+             */
+            local_connectors_allowed: boolean;
             /** Member Count */
             member_count: number;
             /** Models */
@@ -3834,7 +3843,7 @@ export interface components {
              * Capability
              * @enum {string}
              */
-            capability: "code_agents" | "api_keys";
+            capability: "code_agents" | "api_keys" | "local_connectors";
             /** Value */
             value: boolean;
         };
@@ -3901,6 +3910,8 @@ export interface components {
             api_keys_allowed?: boolean | null;
             /** Code Agents Allowed */
             code_agents_allowed?: boolean | null;
+            /** Local Connectors Allowed */
+            local_connectors_allowed?: boolean | null;
         };
         /** GroupUsageRow */
         GroupUsageRow: {
@@ -4333,6 +4344,11 @@ export interface components {
         /** MeResponse */
         MeResponse: {
             capabilities: components["schemas"]["CapabilityFlags"] | null;
+            /**
+             * Chat Enabled
+             * @default false
+             */
+            chat_enabled: boolean;
             default_billing_group: components["schemas"]["GroupSummary"] | null;
             /** Display Name */
             display_name: string | null;
@@ -4866,6 +4882,11 @@ export interface components {
             /** Join Mode */
             join_mode: string;
             /**
+             * Local Connectors Mode
+             * @default on
+             */
+            local_connectors_mode: string;
+            /**
              * Propagation Seconds
              * @default 0
              */
@@ -4907,6 +4928,8 @@ export interface components {
             groups_claim?: string | null;
             /** Join Mode */
             join_mode?: ("open" | "approval" | "invite" | "group") | null;
+            /** Local Connectors Mode */
+            local_connectors_mode?: ("on" | "off" | "everyone" | "groups") | null;
             /**
              * Reason
              * @default
@@ -6427,6 +6450,8 @@ export interface components {
             last_login_at: string | null;
             /** Linked Identities */
             linked_identities: string[];
+            /** Local Connectors Allowed */
+            local_connectors_allowed: boolean | null;
             /** Membership Source */
             membership_source: string | null;
             /** Subject */
@@ -8272,10 +8297,11 @@ export interface operations {
             query?: {
                 join_mode?: string;
                 required_groups?: string[];
-                bulk_capability?: ("code_agents" | "api_keys") | null;
+                bulk_capability?: ("code_agents" | "api_keys" | "local_connectors") | null;
                 bulk_value?: boolean | null;
                 code_agents_mode?: string | null;
                 api_keys_mode?: string | null;
+                local_connectors_mode?: string | null;
             };
             header?: never;
             path?: never;

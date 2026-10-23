@@ -65,7 +65,7 @@ from fastapi import APIRouter, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gateway.capabilities import effective_capabilities
+from gateway.capabilities import reported_flags
 from gateway.deps import AuthenticatedCallerDep, SessionDep, SettingsDep, validate_bearer_token
 from gateway.errors import AuthenticationError, PermissionError_, TooManyRequestsError
 from gateway.join_gate import refusal_text
@@ -74,7 +74,6 @@ from gateway.models import User, UserIdentity
 from gateway.oidc import OIDCError, ProvisioningRefused, sign_in
 from gateway.schemas import (
     CallerIdentity,
-    CapabilityFlags,
     IdentityRef,
     MeIdentities,
     SessionAnnounce,
@@ -224,7 +223,7 @@ async def my_identities(caller: AuthenticatedCallerDep, session: SessionDep) -> 
 
 
 @router.get("/me", response_model=CallerIdentity)
-async def whoami(caller: AuthenticatedCallerDep) -> CallerIdentity:
+async def whoami(caller: AuthenticatedCallerDep, settings: SettingsDep) -> CallerIdentity:
     # No query. Authentication already loaded the user with its memberships,
     # and each membership's group comes with it (`lazy="joined"`), so this
     # route adds nothing to the round-trip budget `test_query_counts.py` pins.
@@ -265,8 +264,7 @@ async def whoami(caller: AuthenticatedCallerDep) -> CallerIdentity:
     # query. Absent on an older gateway means allowed, which is the
     # contract's "so Cerea can tell why" side: a client that sees no
     # `capabilities` field must read it as permission.
-    flags = effective_capabilities(user)
-    capabilities = CapabilityFlags(code_agents=flags.code_agents, api_keys=flags.api_keys)
+    capabilities = reported_flags(user, settings)
 
     return CallerIdentity(
         id=user.id,

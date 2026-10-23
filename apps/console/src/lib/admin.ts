@@ -1420,7 +1420,7 @@ export interface PolicyPreviewQuery {
   join_mode?: string;
   required_groups?: string[];
   /** ADR 0096 (amended): preview a bulk flip; both fields together. */
-  bulk_capability?: "code_agents" | "api_keys";
+  bulk_capability?: "code_agents" | "api_keys" | "local_connectors";
   bulk_value?: boolean;
 }
 

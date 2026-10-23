@@ -2446,6 +2446,7 @@ def _group_admin_response(
         is_active=group.is_active,
         code_agents_allowed=group.code_agents_allowed,
         api_keys_allowed=group.api_keys_allowed,
+        local_connectors_allowed=group.local_connectors_allowed,
         member_count=member_count,
         models=models,
         # Which of `models` is an alias, so the Groups page can badge them
@@ -2806,12 +2807,19 @@ async def update_group(
     if group is None:
         raise NotFoundError(f"No group with id {group_id}.")
     fields = payload.model_dump(exclude_unset=True)
-    if fields.get("code_agents_allowed") is False:
+    if "code_agents_allowed" in fields or "local_connectors_allowed" in fields:
+        _require_chat(settings, "Code agents and local connectors")
+    if (
+        fields.get("code_agents_allowed") is False
+        or fields.get("local_connectors_allowed") is False
+    ):
         _refuse_code_agents_off(settings)
     if "code_agents_allowed" in fields:
         group.code_agents_allowed = payload.code_agents_allowed is True
     if "api_keys_allowed" in fields:
         group.api_keys_allowed = payload.api_keys_allowed is True
+    if "local_connectors_allowed" in fields:
+        group.local_connectors_allowed = payload.local_connectors_allowed is True
     await session.commit()
     await session.refresh(group)
     member_count = await session.scalar(
@@ -2839,6 +2847,24 @@ async def update_group(
     )
 
 
+_CAPABILITY_FLAG_COLUMNS = {
+    "code_agents": Group.code_agents_allowed,
+    "api_keys": Group.api_keys_allowed,
+    "local_connectors": Group.local_connectors_allowed,
+}
+
+
+def _require_chat(settings: Settings, what: str) -> None:
+    """Code agents and local connectors are chat concepts: refuse to read or
+    write them on a gateway with no chat (`GATEWAY_CHAT__ENABLED` false) rather
+    than store a knob that nothing applies and the console does not show."""
+    if not settings.chat.enabled:
+        raise BadRequestError(
+            f"{what} applies only to a deployment with the chat "
+            "(GATEWAY_CHAT__ENABLED is false on this gateway)."
+        )
+
+
 def _refuse_code_agents_off(settings: Settings) -> None:
     """Refuse a change that would switch code_agents off somewhere while the
     machine client cannot match it (ADR 0096, amended).
@@ -2852,7 +2878,7 @@ def _refuse_code_agents_off(settings: Settings) -> None:
     machine = settings.oidc.machine_client_id
     if accepted and machine not in accepted:
         raise BadRequestError(
-            "Switching code_agents off needs a machine client the deployment "
+            "Switching code_agents or local_connectors off needs a machine client the deployment "
             f"accepts: GATEWAY_OIDC__MACHINE_CLIENT_ID={machine!r} names a "
             "client not in GATEWAY_OIDC__ACCEPTED_CLIENTS "
             f"({', '.join(accepted)}), so the restriction could never reach "
@@ -2881,10 +2907,10 @@ async def bulk_group_capabilities(
     refuses, because the restriction's machine-link half could never fire.
     Granting is always fine.
     """
-    flag_column = (
-        Group.code_agents_allowed if payload.capability == "code_agents" else Group.api_keys_allowed
-    )
-    if payload.capability == "code_agents" and payload.value is False:
+    if payload.capability != "api_keys":
+        _require_chat(settings, "Code agents and local connectors")
+    flag_column = _CAPABILITY_FLAG_COLUMNS[payload.capability]
+    if payload.capability in ("code_agents", "local_connectors") and payload.value is False:
         _refuse_code_agents_off(settings)
     result = await session.execute(update(Group).values({flag_column: payload.value}))
     updated = cast(CursorResult[Any], result).rowcount or 0
@@ -3722,6 +3748,11 @@ async def _user_responses(
             ),
             api_keys_allowed=(
                 capabilities_by_id[user.id].api_keys
+                if membership_in is None and user.id in capabilities_by_id
+                else None
+            ),
+            local_connectors_allowed=(
+                capabilities_by_id[user.id].local_connectors
                 if membership_in is None and user.id in capabilities_by_id
                 else None
             ),
@@ -5051,6 +5082,7 @@ async def _oidc_policy_response(request: Request, session: SessionDep) -> OidcPo
         ],
         code_agents_mode=policy.code_agents_mode,
         api_keys_mode=policy.api_keys_mode,
+        local_connectors_mode=policy.local_connectors_mode,
         source=policy.source,
         sources=policy.sources,
         configured=(
@@ -5078,6 +5110,7 @@ async def _latest_oidc_config(session: SessionDep) -> OIDCPolicyConfig | None:
 async def preview_oidc_policy(
     admin: AdminUserDep,
     session: SessionDep,
+    settings: SettingsDep,
     join_mode: str = "group",
     #: Repeated `?required_groups=a&required_groups=b`: the console sends the
     #: set as it is, and a comma inside a group name cannot be mistaken for a
@@ -5088,10 +5121,11 @@ async def preview_oidc_policy(
     # active non-admin people gain / lose it", which the console confirms
     # before applying. Either may be asked alone, and together they are a
     # preview of the same flag both ways.
-    bulk_capability: Literal["code_agents", "api_keys"] | None = None,
+    bulk_capability: Literal["code_agents", "api_keys", "local_connectors"] | None = None,
     bulk_value: bool | None = None,
     code_agents_mode: str | None = None,
     api_keys_mode: str | None = None,
+    local_connectors_mode: str | None = None,
 ) -> OidcPolicyPreviewResponse:
     """What saving this group gate would do (ADR 0095 §7, ADR 0096).
 
@@ -5107,8 +5141,16 @@ async def preview_oidc_policy(
     no active flagged group today and would hold one after; loses when the
     reverse. Admins are exempt either way, so they never count.
     """
+    if bulk_capability in ("code_agents", "local_connectors") or (
+        code_agents_mode is not None or local_connectors_mode is not None
+    ):
+        _require_chat(settings, "Code agents and local connectors")
     want_bulk = bulk_capability is not None or bulk_value is not None
-    want_capabilities = code_agents_mode is not None or api_keys_mode is not None
+    want_capabilities = (
+        code_agents_mode is not None
+        or api_keys_mode is not None
+        or local_connectors_mode is not None
+    )
     if not want_bulk and not want_capabilities:
         if join_mode != "group":
             raise BadRequestError("Only join_mode 'group' has a preview.")
@@ -5153,11 +5195,7 @@ async def preview_oidc_policy(
     would_lose: int | None = None
     if want_bulk:
         assert bulk_capability is not None and bulk_value is not None
-        flag = (
-            Group.code_agents_allowed
-            if bulk_capability == "code_agents"
-            else Group.api_keys_allowed
-        )
+        flag = _CAPABILITY_FLAG_COLUMNS[bulk_capability]
         if bulk_value:
             # Gaining: active non-admin people holding no active flagged
             # group today — exactly the people the bulk turn-on grants it to.
@@ -5458,9 +5496,15 @@ async def set_oidc_policy(
             "save one or the other, not both."
         )
 
+    if (
+        fields.get("code_agents_mode") is not None
+        or fields.get("local_connectors_mode") is not None
+    ):
+        _require_chat(settings, "Code agents and local connectors")
     for knob, label in (
         ("code_agents_mode", "code_agents_mode"),
         ("api_keys_mode", "api_keys_mode"),
+        ("local_connectors_mode", "local_connectors_mode"),
     ):
         value = fields.get(knob)
         # The 0.7.x spellings still save — meaning on/off — for one release

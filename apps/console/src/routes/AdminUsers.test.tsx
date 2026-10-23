@@ -48,6 +48,7 @@ function user(index: number, overrides: Partial<AdminUser> = {}): AdminUser {
     invited_at: null,
     code_agents_allowed: true,
     api_keys_allowed: true,
+    local_connectors_allowed: true,
     ...overrides,
   };
 }
@@ -119,6 +120,7 @@ function routes(
   seen: Seen = { users: [], patches: [], posts: [] },
   firstOverrides: Partial<AdminUser> = {},
   providers: IdentityProvider[] = [],
+  chatEnabled = true,
 ) {
   const everyone = Array.from({ length: total }, (_, index) =>
     user(index, index === 0 ? firstOverrides : {}),
@@ -128,6 +130,9 @@ function routes(
     const method = init?.method ?? "GET";
     const body = () => JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
 
+    if (url.pathname === "/api/me") {
+      return jsonResponse({ chat_enabled: chatEnabled });
+    }
     if (url.pathname === "/api/admin/identity-providers") {
       // Not paginated (`GET /admin/identity-providers` answers a bare list),
       // unlike every other listing route this file mocks — `jsonResponse`
@@ -392,12 +397,34 @@ describe("AdminUsers", () => {
     // ADR 0096: the badge reads the two effective flags the listing answers
     // with. Null (a listing that did not answer) is never the badge — here
     // every other row holds one capability, so exactly one badge renders.
-    const first: Partial<AdminUser> = { code_agents_allowed: false, api_keys_allowed: false };
+    const first: Partial<AdminUser> = {
+      code_agents_allowed: false,
+      api_keys_allowed: false,
+      local_connectors_allowed: false,
+    };
     vi.stubGlobal("fetch", routes(3, undefined, first));
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    expect(screen.getAllByText("Chat only")).toHaveLength(1);
+    await waitFor(() => expect(screen.getAllByText("Chat only")).toHaveLength(1));
+  });
+
+  it("shows no chat-only badge when the gateway has no chat", async () => {
+    const first: Partial<AdminUser> = {
+      code_agents_allowed: false,
+      api_keys_allowed: false,
+      local_connectors_allowed: false,
+    };
+    const fetchMock = routes(3, undefined, first, [], false);
+    vi.stubGlobal("fetch", fetchMock);
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/me"))).toBe(true),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByText("Chat only")).not.toBeInTheDocument();
   });
 });
 

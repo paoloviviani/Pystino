@@ -21,7 +21,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import selectinload
 
 from gateway.caller_usage import caller_group_usage, caller_limits, caller_usage
-from gateway.capabilities import effective_capabilities
+from gateway.capabilities import effective_capabilities, reported_flags
 from gateway.deps import ManagementUserDep, QuotaDep, SessionDep, SettingsDep
 from gateway.errors import ApiKeysNotAllowedError, BadRequestError, NotFoundError, PermissionError_
 from gateway.models import (
@@ -46,7 +46,6 @@ from gateway.schemas import (
     ApiKeyCreatedResponse,
     ApiKeyCreateRequest,
     ApiKeyResponse,
-    CapabilityFlags,
     GroupSummary,
     MeResponse,
     MyLimitResponse,
@@ -87,14 +86,13 @@ def _key_response(key: ApiKey) -> ApiKeyResponse:
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(user: ManagementUserDep, session: SessionDep) -> MeResponse:
+async def me(user: ManagementUserDep, session: SessionDep, settings: SettingsDep) -> MeResponse:
     groups = [membership.group for membership in user.memberships]
     default = next((group for group in groups if group.id == user.default_billing_group_id), None)
     # ADR 0096 (amended): the person's memberships, already loaded by
     # `get_management_user` — no query. The console's key page reads
     # `api_keys` to decide whether to offer minting.
-    flags = effective_capabilities(user)
-    capabilities = CapabilityFlags(code_agents=flags.code_agents, api_keys=flags.api_keys)
+    capabilities = reported_flags(user, settings)
     return MeResponse(
         id=user.id,
         email=user.email,
@@ -110,6 +108,7 @@ async def me(user: ManagementUserDep, session: SessionDep) -> MeResponse:
             is not None
         ),
         capabilities=capabilities,
+        chat_enabled=settings.chat.enabled,
     )
 
 
@@ -118,6 +117,7 @@ async def set_default_billing_group(
     payload: SetDefaultBillingGroupRequest,
     user: ManagementUserDep,
     session: SessionDep,
+    settings: SettingsDep,
 ) -> MeResponse:
     """Users pick their own default billing group, from their own groups only."""
     if payload.group_id not in user.group_ids():
@@ -126,7 +126,7 @@ async def set_default_billing_group(
     user.default_billing_group_id = payload.group_id
     await session.commit()
     await session.refresh(user)
-    return await me(user, session)
+    return await me(user, session, settings)
 
 
 @router.get("/me/keys", response_model=Page[ApiKeyResponse])

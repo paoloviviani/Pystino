@@ -604,6 +604,9 @@ class MeResponse(ResponseModel):
     #: ADR 0096: which capabilities this person holds. The console's key page
     #: reads `api_keys` to decide whether to offer minting.
     capabilities: CapabilityFlags | None = None
+    #: `GATEWAY_CHAT__ENABLED`: the console shows the chat-only capabilities
+    #: (code agents, local connectors) only when true.
+    chat_enabled: bool = False
 
 
 class CapabilityFlags(ResponseModel):
@@ -615,8 +618,13 @@ class CapabilityFlags(ResponseModel):
     ``gateway.capabilities``.
     """
 
-    code_agents: bool
+    #: Null (not reported) when the gateway has no chat
+    #: (`GATEWAY_CHAT__ENABLED` false): code agents and local connectors are
+    #: chat concepts, and a false there would read as a refusal.
+    code_agents: bool | None = None
     api_keys: bool
+    #: Local MCP connectors (ADR 0102): a connectors-only machine.
+    local_connectors: bool | None = None
 
 
 class CallerIdentity(ResponseModel):
@@ -1573,6 +1581,7 @@ class GroupAdminResponse(ResponseModel):
     # False by default; a flag grants a capability and never withholds one.
     code_agents_allowed: bool = False
     api_keys_allowed: bool = False
+    local_connectors_allowed: bool = False
     member_count: int
     #: Every model name this group may use, aliases included — they are rows of
     #: the same table, and granting an alias is the point of having one.
@@ -1600,6 +1609,7 @@ class GroupUpdateRequest(BaseModel):
 
     code_agents_allowed: bool | None = None
     api_keys_allowed: bool | None = None
+    local_connectors_allowed: bool | None = None
 
 
 class GroupCapabilityBulkResponse(ResponseModel):
@@ -1614,7 +1624,7 @@ class GroupCapabilityBulkRequest(BaseModel):
     capability's flag on every group, from the Settings screen's two bulk
     actions. Applied in one transaction, audited once."""
 
-    capability: Literal["code_agents", "api_keys"]
+    capability: Literal["code_agents", "api_keys", "local_connectors"]
     value: bool
 
 
@@ -1732,6 +1742,7 @@ class UserAdminResponse(ResponseModel):
     # answer" from "chat only".
     code_agents_allowed: bool | None = None
     api_keys_allowed: bool | None = None
+    local_connectors_allowed: bool | None = None
     # Who granted *this* person's membership of the group being listed (ADR
     # 0057): "manual" for an administrator's grant, "oidc" for the directory's.
     # Only the group-members route can answer it — a user has many memberships
@@ -2045,6 +2056,7 @@ class OidcPolicyUpdateRequest(BaseModel):
     # Null clears back to the environment (GATEWAY_ACCESS__*).
     code_agents_mode: Literal["on", "off", "everyone", "groups"] | None = None
     api_keys_mode: Literal["on", "off", "everyone", "groups"] | None = None
+    local_connectors_mode: Literal["on", "off", "everyone", "groups"] | None = None
     reason: str = Field(default="", max_length=500)
 
 
@@ -2094,6 +2106,7 @@ class OidcPolicyResponse(ResponseModel):
     # `everyone`/`groups` still readable for one release.
     code_agents_mode: str = "on"
     api_keys_mode: str = "on"
+    local_connectors_mode: str = "on"
     # "console" when any field is a stored decision, "environment" otherwise;
     # `sources` says which, per field — "the console says X and the
     # environment says Y" is otherwise invisible.

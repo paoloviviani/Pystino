@@ -376,6 +376,12 @@ class Group(Base):
     api_keys_allowed: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
+    #: Local MCP connectors (Cerea ADR 0102): a connectors-only machine. A
+    #: separate flag from code_agents so an administrator can allow a person's
+    #: own MCP servers without handing them agent-machine model access.
+    local_connectors_allowed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
 
     # The one search backend this group searches through on the unified
     # ``POST /v1/search`` route. Null means no policy: the group cannot use
@@ -2415,6 +2421,7 @@ class OIDCPolicyConfig(Base):
     #: (``GATEWAY_ACCESS__CODE_AGENTS`` / ``GATEWAY_ACCESS__API_KEYS``).
     code_agents_mode: Mapped[str | None] = mapped_column(String(16), default=None)
     api_keys_mode: Mapped[str | None] = mapped_column(String(16), default=None)
+    local_connectors_mode: Mapped[str | None] = mapped_column(String(16), default=None)
     #: [[idp_name, local_name], ...]: what an IdP group means here. Unmapped
     #: groups keep their own name. Many IdP groups may map to one local group.
     group_mappings: Mapped[list[list[str]] | None] = mapped_column(JSON, default=None)

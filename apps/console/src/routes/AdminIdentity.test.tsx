@@ -27,6 +27,7 @@ function policyFixture(overrides: Partial<OidcPolicy> = {}): OidcPolicy {
     group_mappings: [],
     code_agents_mode: "on",
     api_keys_mode: "on",
+    local_connectors_mode: "on",
     source: "environment",
     sources: {},
     configured: null,

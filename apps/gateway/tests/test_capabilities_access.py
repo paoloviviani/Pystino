@@ -60,12 +60,14 @@ def _group(
     active: bool = True,
     code_agents: bool = False,
     api_keys: bool = False,
+    local_connectors: bool = False,
 ) -> Group:
     return Group(
         name=name,
         is_active=active,
         code_agents_allowed=code_agents,
         api_keys_allowed=api_keys,
+        local_connectors_allowed=local_connectors,
     )
 
 
@@ -73,13 +75,15 @@ def _membership(group: Group, source: MembershipSource = MembershipSource.MANUAL
     return Membership(group=group, source=source)
 
 
-def _caps(code_agents: bool, api_keys: bool) -> Capabilities:
-    return Capabilities(code_agents=code_agents, api_keys=api_keys)
+def _caps(code_agents: bool, api_keys: bool, local_connectors: bool = False) -> Capabilities:
+    return Capabilities(
+        code_agents=code_agents, api_keys=api_keys, local_connectors=local_connectors
+    )
 
 
 class TestEffectiveCapabilities:
     def test_admin_holds_both_with_no_groups(self) -> None:
-        assert effective_capabilities(_user(is_admin=True)) == _caps(True, True)
+        assert effective_capabilities(_user(is_admin=True)) == _caps(True, True, True)
 
     def test_flagged_active_group_grants(self) -> None:
         member = _user(memberships=[_membership(_group("agents", code_agents=True, api_keys=True))])
@@ -93,6 +97,12 @@ class TestEffectiveCapabilities:
         # The ADR edge: a person in no group has neither capability. In
         # practice the default group covers everyone at first sign-in.
         assert effective_capabilities(_user()) == _caps(False, False)
+
+    def test_local_connectors_is_its_own_flag(self) -> None:
+        only = _user(memberships=[_membership(_group("lc", local_connectors=True))])
+        assert effective_capabilities(only) == _caps(False, False, True)
+        agents = _user(memberships=[_membership(_group("ag", code_agents=True))])
+        assert effective_capabilities(agents) == _caps(True, False, False)
 
     def test_flags_are_independent(self) -> None:
         member = _user(memberships=[_membership(_group("agents", code_agents=True))])
@@ -117,17 +127,21 @@ class TestEffectiveCapabilities:
 
 class TestDefaultFlags:
     def test_no_policy_means_on(self) -> None:
-        assert default_flags(None) == _caps(True, True)
+        assert default_flags(None) == _caps(True, True, True)
 
     def test_on_off_follow_the_folded_default(self) -> None:
         assert default_flags(OIDCPolicy(code_agents_mode="on", api_keys_mode="off")) == _caps(
-            True, False
+            True, False, True
         )
+
+    def test_local_connectors_default_follows_its_own_mode(self) -> None:
+        assert default_flags(OIDCPolicy(local_connectors_mode="off")) == _caps(True, True, False)
+        assert default_flags(OIDCPolicy(local_connectors_mode="groups")) == _caps(True, True, False)
 
     def test_legacy_values_fold_without_behaviour_change(self) -> None:
         assert default_flags(
             OIDCPolicy(code_agents_mode="everyone", api_keys_mode="groups")
-        ) == _caps(True, False)
+        ) == _caps(True, False, True)
 
 
 async def _fold_policy(app: object, session_factory: object, **row: object) -> None:
@@ -161,7 +175,11 @@ class TestV1MeReportsCapabilities:
         assert response.status_code == 200
         # The seeded person holds "research", an ordinary working group with
         # both flags on.
-        assert response.json()["capabilities"] == {"code_agents": True, "api_keys": True}
+        assert response.json()["capabilities"] == {
+            "code_agents": True,
+            "api_keys": True,
+            "local_connectors": True,
+        }
 
     async def test_a_person_in_no_group_holds_neither(
         self, bearer_app: object, client: httpx.AsyncClient, signing_key: object
@@ -174,7 +192,11 @@ class TestV1MeReportsCapabilities:
         bearer_app.state.settings.oidc.default_group = ""  # type: ignore[attr-defined]
         response = await client.get("/v1/me", headers=bearer_auth(make_token(signing_key)))
         assert response.status_code == 200
-        assert response.json()["capabilities"] == {"code_agents": False, "api_keys": False}
+        assert response.json()["capabilities"] == {
+            "code_agents": False,
+            "api_keys": False,
+            "local_connectors": False,
+        }
 
     async def test_reflects_the_persons_flags(
         self,
@@ -192,7 +214,11 @@ class TestV1MeReportsCapabilities:
             await session.commit()
 
         response = await client.get("/v1/me", headers=bearer_auth(make_token(signing_key)))
-        assert response.json()["capabilities"] == {"code_agents": True, "api_keys": False}
+        assert response.json()["capabilities"] == {
+            "code_agents": True,
+            "api_keys": False,
+            "local_connectors": True,
+        }
 
 
 class TestMachineClientGate:
@@ -204,7 +230,89 @@ class TestMachineClientGate:
         async with session_factory() as session:  # type: ignore[attr-defined]
             group = await session.get(Group, seeded.group.id)
             group.code_agents_allowed = False
+            group.local_connectors_allowed = False
             await session.commit()
+
+    async def _set_flags(
+        self,
+        session_factory: object,
+        seeded: Seeded,
+        *,
+        code_agents: bool,
+        local_connectors: bool,
+    ) -> None:
+        async with session_factory() as session:  # type: ignore[attr-defined]
+            group = await session.get(Group, seeded.group.id)
+            group.code_agents_allowed = code_agents
+            group.local_connectors_allowed = local_connectors
+            await session.commit()
+
+    async def test_only_code_agents_passes_everywhere(
+        self,
+        bearer_app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        signing_key: object,
+        session_factory: object,
+    ) -> None:
+        await self._set_flags(session_factory, seeded, code_agents=True, local_connectors=False)
+        machine = bearer_auth(make_token(signing_key, azp=MACHINE_CLIENT))
+        for path in ("/v1/me", "/v1/models"):
+            assert (await client.get(path, headers=machine)).status_code == 200, path
+        me = await client.get("/v1/me", headers=machine)
+        assert me.json()["capabilities"]["code_agents"] is True
+        assert me.json()["capabilities"]["local_connectors"] is False
+
+    async def test_only_local_connectors_reaches_v1_me_and_nothing_else(
+        self,
+        bearer_app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        signing_key: object,
+        session_factory: object,
+    ) -> None:
+        await self._set_flags(session_factory, seeded, code_agents=False, local_connectors=True)
+        machine = bearer_auth(make_token(signing_key, azp=MACHINE_CLIENT))
+        me = await client.get("/v1/me", headers=machine)
+        assert me.status_code == 200
+        assert me.json()["capabilities"]["code_agents"] is False
+        assert me.json()["capabilities"]["local_connectors"] is True
+        # No model access: every other route is still refused for the machine
+        # client, and the chat client is untouched.
+        for path in ("/v1/models", "/v1/me/identities"):
+            response = await client.get(path, headers=machine)
+            assert response.status_code == 403, path
+            assert response.json()["error"]["code"] == "agents_not_allowed", path
+        chat = await client.get("/v1/models", headers=bearer_auth(make_token(signing_key)))
+        assert chat.status_code == 200
+
+    async def test_neither_is_refused_with_capabilities_in_the_body(
+        self,
+        bearer_app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        signing_key: object,
+        session_factory: object,
+    ) -> None:
+        await self._set_flags(session_factory, seeded, code_agents=False, local_connectors=False)
+        machine = bearer_auth(make_token(signing_key, azp=MACHINE_CLIENT))
+        response = await client.get("/v1/me", headers=machine)
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "agents_not_allowed"
+        assert response.json()["capabilities"]["local_connectors"] is False
+
+    async def test_both_passes_everywhere(
+        self,
+        bearer_app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        signing_key: object,
+        session_factory: object,
+    ) -> None:
+        await self._set_flags(session_factory, seeded, code_agents=True, local_connectors=True)
+        machine = bearer_auth(make_token(signing_key, azp=MACHINE_CLIENT))
+        for path in ("/v1/me", "/v1/models"):
+            assert (await client.get(path, headers=machine)).status_code == 200, path
 
     async def test_machine_token_is_refused_everywhere(
         self,
@@ -235,7 +343,11 @@ class TestMachineClientGate:
         )
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "agents_not_allowed"
-        assert response.json()["capabilities"] == {"code_agents": False, "api_keys": True}
+        assert response.json()["capabilities"] == {
+            "code_agents": False,
+            "api_keys": True,
+            "local_connectors": False,
+        }
 
     async def test_chat_client_token_for_the_same_user_passes(
         self,

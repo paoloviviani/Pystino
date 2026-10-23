@@ -52,6 +52,16 @@ export function useMe() {
   });
 }
 
+/**
+ * Whether this gateway serves a chat (`GATEWAY_CHAT__ENABLED`). Code agents and
+ * local connectors are chat concepts, so their controls render only when true.
+ * False while the identity loads: a control that appears is better than one
+ * that flashes and goes.
+ */
+export function useChatEnabled(): boolean {
+  return useMe().data?.chat_enabled === true;
+}
+
 export function useMyReport(period: string, groupBy: string, splitBy = "") {
   const query = period ? `period=${encodeURIComponent(period)}&` : "";
   const split = splitBy ? `&split_by=${encodeURIComponent(splitBy)}` : "";

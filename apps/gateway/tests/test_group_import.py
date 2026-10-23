@@ -304,6 +304,15 @@ class TestTheDefaultGroupCarriesTheCapabilityDefaults:
         assert group.code_agents_allowed is True
         assert group.api_keys_allowed is True
         assert effective_capabilities(user).code_agents is True
+        assert group.local_connectors_allowed is True
+        assert effective_capabilities(user).local_connectors is True
+
+    async def test_local_connectors_default_off_is_independent(self, session: AsyncSession) -> None:
+        user = await _login(session, "new", [], policy=OIDCPolicy(local_connectors_mode="off"))
+        group = (await session.execute(select(Group).where(Group.name == "users"))).scalar_one()
+        assert group.local_connectors_allowed is False
+        assert group.code_agents_allowed is True
+        assert effective_capabilities(user).local_connectors is False
 
     async def test_the_default_off_creates_users_chat_only(self, session: AsyncSession) -> None:
         user = await _login(
