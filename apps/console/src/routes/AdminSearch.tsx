@@ -196,8 +196,8 @@ export function AdminSearch() {
       {/* -- grants ---------------------------------------------------- */}
       <Card flush>
         <div className="p-4">
-          <h2 className="text-sm font-semibold">{m["admin_search.grants_heading"]()}</h2>
-          <p className={`${MUTED} mt-1 text-sm`}>{m["admin_search.grants_body"]()}</p>
+          <h2 className="text-heading font-semibold">{m["admin_search.grants_heading"]()}</h2>
+          <p className={`${MUTED} mt-1 text-body`}>{m["admin_search.grants_body"]()}</p>
         </div>
         {models.isPending ? (
           <div className="p-6">
@@ -234,7 +234,7 @@ export function AdminSearch() {
                         // which the old pairing managed in light only.
                         <label
                           key={group.id}
-                          className="flex cursor-pointer items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-xs font-medium transition-colors has-[:checked]:border-accent/25 has-[:checked]:bg-accent-subtle has-[:checked]:text-accent"
+                          className="flex cursor-pointer items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-dense font-medium transition-colors has-[:checked]:border-accent/25 has-[:checked]:bg-accent-subtle has-[:checked]:text-accent"
                         >
                           <input
                             type="checkbox"
@@ -267,8 +267,8 @@ export function AdminSearch() {
       {/* -- one backend per group ------------------------------------- */}
       <Card flush>
         <div className="p-4">
-          <h2 className="text-sm font-semibold">{m["admin_search.policy_heading"]()}</h2>
-          <p className={`${MUTED} mt-1 text-sm`}>
+          <h2 className="text-heading font-semibold">{m["admin_search.policy_heading"]()}</h2>
+          <p className={`${MUTED} mt-1 text-body`}>
             <Message
               message={m["admin_search.policy_body"]}
               markup={{ code: (children) => <code>{children}</code> }}

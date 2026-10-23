@@ -612,7 +612,7 @@ function DeleteUserDialog({ user, onClose }: { user: AdminUser | null; onClose: 
               ))}
           </ul>
           {preview.data.bundled_login && (
-            <p className="text-sm text-ink-muted">
+            <p className="text-body text-ink-muted">
               {m["admin_users.delete.bundled_login_line"]({ login: preview.data.bundled_login })}
             </p>
           )}
@@ -633,7 +633,7 @@ function DeleteUserDialog({ user, onClose }: { user: AdminUser | null; onClose: 
             </ul>
           )}
           <p>{m["admin_users.delete.body"]()}</p>
-          <p className="text-sm text-ink-muted">{m["admin_users.delete.ledger_note"]()}</p>
+          <p className="text-body text-ink-muted">{m["admin_users.delete.ledger_note"]()}</p>
           {preview.data.shared_with_others && (
             <>
               {preview.data.shared.length > 0 && (
@@ -780,7 +780,7 @@ function MergeUserDialog({ user, onClose }: { user: AdminUser | null; onClose: (
                   </Button>
                 ))}
               {candidates.data.items.length === 0 && (
-                <p className="text-sm text-ink-muted">{m["admin_users.merge.no_match"]()}</p>
+                <p className="text-body text-ink-muted">{m["admin_users.merge.no_match"]()}</p>
               )}
             </div>
           ) : null}
@@ -794,7 +794,7 @@ function MergeUserDialog({ user, onClose }: { user: AdminUser | null; onClose: (
         </Notice>
       ) : preview.data ? (
         <div className={FORM}>
-          <p className="text-sm text-ink-muted">
+          <p className="text-body text-ink-muted">
             {/* i18n: server text — the target account's own names. */}
             {m["admin_users.merge.into"]({
               name: target?.display_name || target?.email || preview.data.target_id,
@@ -818,21 +818,21 @@ function MergeUserDialog({ user, onClose }: { user: AdminUser | null; onClose: (
             </Notice>
           )}
           {preview.data.duplicate_rules_dropped > 0 && (
-            <p className="text-sm text-ink-muted">
+            <p className="text-body text-ink-muted">
               {m["admin_users.merge.duplicate_rules"]({
                 count: preview.data.duplicate_rules_dropped,
               })}
             </p>
           )}
           {preview.data.bundled_logins_disabled.length > 0 && (
-            <p className="text-sm text-ink-muted">
+            <p className="text-body text-ink-muted">
               {m["admin_users.merge.bundled_disabled"]({
                 count: preview.data.bundled_logins_disabled.length,
                 logins: preview.data.bundled_logins_disabled.join(", "),
               })}
             </p>
           )}
-          <p className="text-sm text-ink-muted">
+          <p className="text-body text-ink-muted">
             {preview.data.resulting_is_admin
               ? m["admin_users.merge.admin_yes"]()
               : m["admin_users.merge.admin_no"]()}{" "}
@@ -892,7 +892,7 @@ function MintedPasswordNotice({ login, password }: { login: string; password: st
         </Button>
       </div>
       {copied === false && (
-        <p className="text-sm text-warn">{m["admin_users.password.clipboard"]()}</p>
+        <p className="text-body text-warn">{m["admin_users.password.clipboard"]()}</p>
       )}
       <p className={SECRET_DETAIL}>{m["admin_users.password.detail"]()}</p>
     </>
@@ -943,8 +943,8 @@ function Chip({
       aria-pressed={active}
       className={
         active
-          ? "rounded-full border border-accent bg-accent-soft px-3 py-1 text-xs font-medium text-accent"
-          : "rounded-full border border-line px-3 py-1 text-xs text-ink-muted hover:border-accent"
+          ? "rounded-full border border-accent bg-accent-soft px-3 py-1 text-dense font-medium text-accent"
+          : "rounded-full border border-line px-3 py-1 text-dense text-ink-muted hover:border-accent"
       }
     >
       {label}
@@ -1040,8 +1040,8 @@ function InviteUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
             </Notice>
           ) : sendEmail ? null : null}
           <div>
-            <p className="mb-1 text-sm font-medium">{m["admin_users.invite.text_heading"]()}</p>
-            <p className="rounded border border-line bg-surface-muted p-2 text-sm">
+            <p className="mb-1 text-body font-medium">{m["admin_users.invite.text_heading"]()}</p>
+            <p className="rounded border border-line bg-surface-muted p-2 text-body">
               {created.invite_text}
             </p>
             <Button
@@ -1100,7 +1100,7 @@ function InviteUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
               <span>{m["admin_users.invite.email_them"]()}</span>
             </label>
           ) : (
-            <p className="text-xs text-ink-faint">
+            <p className="text-small text-ink-faint">
               {m["admin_users.invite.email_unconfigured"]()}
             </p>
           )}
@@ -1489,11 +1489,11 @@ function ActivityDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
             <li key={event.id} className="border-b border-line pb-2 last:border-none">
               <div className="flex items-center justify-between gap-2">
                 <span className={CODE}>{event.action}</span>
-                <span className={`${MUTED} text-sm`}>{formatDate(event.at)}</span>
+                <span className={`${MUTED} text-body`}>{formatDate(event.at)}</span>
               </div>
               {/* i18n: server text — the action, the actor and the reason are
                   the audit log's own values. */}
-              <div className={`${MUTED} text-sm`}>
+              <div className={`${MUTED} text-body`}>
                 {event.actor_label || event.actor_type}
                 {event.reason ? ` — ${event.reason}` : ""}
               </div>
@@ -1650,7 +1650,7 @@ function EditUserDialog({
 
       <div className={FORM}>
         <div>
-          <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">
+          <div className="text-dense font-medium tracking-[0.01em] text-ink-muted">
             {m["admin_users.edit.identity"]()}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -1672,7 +1672,7 @@ function EditUserDialog({
               on. It looks editable-adjacent sitting in a form, so the line
               says it is not, rather than letting somebody find out from a
               silent no-op. */}
-          <p className="mt-1 text-xs text-ink-faint">
+          <p className="mt-1 text-small text-ink-faint">
             {user && (
               <span className={CODE}>
                 {user.issuer} / {user.subject}
@@ -1683,7 +1683,7 @@ function EditUserDialog({
         </div>
 
         <div>
-          <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">
+          <div className="text-dense font-medium tracking-[0.01em] text-ink-muted">
             {m["admin_users.edit.profile"]()}
           </div>
           <div className="mt-1 space-y-3">
@@ -1732,7 +1732,7 @@ function EditUserDialog({
                  decision survives the next login rather than being undone by
                  it. Revoking is the narrower half: a membership the directory
                  granted has to be withdrawn there, and the API says so. */
-              <span className="mt-0.5 block text-xs text-ink-faint">
+              <span className="mt-0.5 block text-dense text-ink-faint">
                 {m["admin_users.edit.admin_note"]()}
               </span>
             )}
@@ -1745,7 +1745,7 @@ function EditUserDialog({
             keeps its dialog, its copy and its confirmations; only its
             address changed. */}
         <div>
-          <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">
+          <div className="text-dense font-medium tracking-[0.01em] text-ink-muted">
             {m["admin_users.edit.actions"]()}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -1778,7 +1778,7 @@ function EditUserDialog({
           </div>
         </div>
 
-        <p className="m-0 text-sm text-ink-muted">
+        <p className="m-0 text-body text-ink-muted">
           {knowsProviders && bundled
             ? m["admin_users.edit.passwords_note_bundled"]()
             : m["admin_users.edit.passwords_note"]()}

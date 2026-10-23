@@ -606,7 +606,7 @@ function UserMenu({
           header row used to carry as a full badge. */}
       <MenuTrigger
         aria-label={m["shell.account_aria"]({ name })}
-        className="relative flex size-9 cursor-pointer items-center justify-center rounded-full bg-accent-subtle text-sm font-medium text-accent transition-colors hover:bg-accent hover:text-ink-inverse focus-visible:outline-none focus-visible:shadow-focus data-popup-open:bg-accent data-popup-open:text-ink-inverse"
+        className="relative flex size-9 cursor-pointer items-center justify-center rounded-full bg-accent-subtle text-body font-medium text-accent transition-colors hover:bg-accent hover:text-ink-inverse focus-visible:outline-none focus-visible:shadow-focus data-popup-open:bg-accent data-popup-open:text-ink-inverse"
       >
         <span aria-hidden="true">{initialsOf(name)}</span>
         {me.is_admin && (
@@ -618,7 +618,7 @@ function UserMenu({
       </MenuTrigger>
 
       <MenuContent align="end">
-        <div className="mb-1.5 flex flex-col gap-1 border-b border-line-quiet px-2 pb-2 text-xs">
+        <div className="mb-1.5 flex flex-col gap-1 border-b border-line-quiet px-2 pb-2 text-dense">
           {me.email && <div className="break-all text-ink">{me.email}</div>}
           <div className="text-ink-faint">
             {me.default_billing_group
@@ -652,7 +652,7 @@ function UserMenu({
             >
               <span>
                 {m["shell.exact_figures"]()}
-                <span className="mt-0.5 block text-xs text-ink-faint">
+                <span className="mt-0.5 block text-dense text-ink-faint">
                   {m["shell.exact_figures_hint"]()}
                 </span>
               </span>

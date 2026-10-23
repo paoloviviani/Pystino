@@ -424,14 +424,14 @@ export function AdminModels() {
                       look right: the heading sat on the card's edge, one inset
                       short of the "Model" column it heads. */}
                   <div className="px-5 pt-5 pb-3">
-                    <h2 className="text-md font-semibold leading-tight">
+                    <h2 className="text-heading font-semibold leading-tight">
                       {section.title()}{" "}
-                      <span className={`${MUTED} text-base font-normal`}>
+                      <span className={`${MUTED} text-body font-normal`}>
                         ({formatNumber(section.rows.length)})
                       </span>
                     </h2>
                     {section.description() && (
-                      <p className={`${MUTED} mt-1 text-sm`}>{section.description()}</p>
+                      <p className={`${MUTED} mt-1 text-body`}>{section.description()}</p>
                     )}
                   </div>
                   <Table
@@ -1272,7 +1272,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           />
           <span>
             {m["admin_models.discover.fill_missing"]()}
-            <span className={`${MUTED} ml-1 text-sm`}>
+            <span className={`${MUTED} ml-1 text-body`}>
               {m["admin_models.discover.community_gloss"]()}
             </span>
           </span>
@@ -1386,10 +1386,10 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
                   />
                   {searchRows.length > 0 && (
                     <div className="mt-4">
-                      <h4 className="mb-1 text-sm font-semibold">
+                      <h4 className="mb-1 text-body font-semibold">
                         {m["admin_models.discover.search_tiers"]()}
                       </h4>
-                      <p className={`${MUTED} mb-2 text-sm`}>
+                      <p className={`${MUTED} mb-2 text-body`}>
                         <Message
                           message={m["admin_models.discover.search_tiers_body"]}
                           markup={{ code: (children) => <code className={CODE}>{children}</code> }}

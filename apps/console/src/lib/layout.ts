@@ -38,8 +38,8 @@ export const FORM_ROW =
 /** Buttons at the end of a row (a dialog footer, a table's action column). */
 export const ROW_ACTIONS = "flex items-center justify-end gap-2";
 
-/** Inline code, request ids, tokens. */
-export const CODE = "font-mono text-sm";
+/** Inline code, request ids, tokens: monospace at the size of the text around it. */
+export const CODE = "font-mono";
 
 /** Muted prose inside a cell ("—" for not applicable). */
 export const MUTED = "text-ink-muted";
@@ -58,7 +58,7 @@ export const DETAILS =
   "max-[40rem]:grid-cols-1 max-[40rem]:gap-x-0 max-[40rem]:gap-y-1";
 
 export const DETAIL_LABEL =
-  "text-xs font-medium tracking-[0.01em] text-ink-muted";
+  "text-dense font-medium tracking-[0.01em] text-ink-muted";
 
 export const DETAIL_VALUE =
   "[overflow-wrap:anywhere] max-[40rem]:[&:not(:last-child)]:mb-3";
@@ -95,7 +95,7 @@ export const SECTION_GROUP = "flex flex-col gap-3";
  * heading that wants to compete with the card titles under it.
  */
 export const SECTION_GROUP_HEADING =
-  "text-xs font-medium uppercase tracking-[0.08em] text-ink-faint";
+  "text-small font-medium uppercase tracking-[0.08em] text-ink-faint";
 
 /* -- the sidebar ----------------------------------------------------------- */
 
@@ -106,7 +106,7 @@ export const SECTION_GROUP_HEADING =
  * both widths and a test finds exactly one link per screen.
  */
 export const SIDEBAR_LINK =
-  "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium tracking-[0.01em] no-underline " +
+  "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-control font-medium tracking-[0.01em] no-underline " +
   "text-ink-muted transition-colors hover:bg-sunken hover:text-ink " +
   "focus-visible:outline-none focus-visible:shadow-focus";
 
@@ -143,6 +143,9 @@ export const ENGINE_BODY = "flex min-w-0 flex-col gap-1";
 export const ENGINE_NAME = "flex flex-wrap items-center gap-2 font-semibold";
 export const ENGINE_ACTION = "shrink-0";
 
+/** The engine's description and notes: a compact list, so the dense step. */
+export const ENGINE_TEXT = "text-dense text-ink-muted";
+
 /**
  * Short labels that must not break mid-phrase. "per 24 / hours" split across
  * two lines reads as a layout fault rather than as prose; a long *name*
@@ -161,23 +164,23 @@ export const NOWRAP = "whitespace-nowrap";
  * rather than as a section of its own.
  */
 export const FIELD = "flex flex-col gap-1";
-export const FIELD_LABEL = "text-xs font-medium tracking-[0.01em] text-ink-muted";
+export const FIELD_LABEL = "text-dense font-medium tracking-[0.01em] text-ink-muted";
 
 export const TEXTAREA =
-  "w-full resize-y rounded-md border border-line bg-surface px-3 py-2 text-base " +
+  "w-full resize-y rounded-md border border-line bg-surface px-3 py-2 text-body max-[40rem]:text-[16px] " +
   "transition-shadow hover:border-line-strong focus-visible:outline-none focus-visible:shadow-focus";
 
 /** The rewritten prompt: monospace, pre-wrap — the substitutions are the point. */
 export const SAMPLE =
-  "rounded-md border border-line bg-sunken p-3 font-mono text-sm whitespace-pre-wrap [overflow-wrap:anywhere]";
+  "rounded-md border border-line bg-sunken p-3 font-mono whitespace-pre-wrap [overflow-wrap:anywhere]";
 
 /* -- Overview -------------------------------------------------------------- */
 
 /** The minted API-key secret: a long unbroken token, readable on a phone. */
 export const SECRET_ROW = "flex flex-wrap items-center gap-3";
 export const SECRET =
-  "min-w-48 flex-1 rounded-md border border-line bg-sunken p-3 font-mono text-sm [overflow-wrap:anywhere]";
-export const SECRET_DETAIL = "text-sm text-ink-muted";
+  "min-w-48 flex-1 rounded-md border border-line bg-sunken p-3 font-mono [overflow-wrap:anywhere]";
+export const SECRET_DETAIL = "text-dense text-ink-muted";
 
 /** Quotas, one per row: a meter is read left to right, and two side by side
  * invite a comparison between different metrics that does not mean anything. */
@@ -185,7 +188,7 @@ export const QUOTA_LIST = "grid gap-4";
 export const QUOTA = "grid gap-1";
 export const QUOTA_HEAD = "flex flex-wrap items-center gap-2";
 export const QUOTA_NAME = "font-medium";
-export const QUOTA_DETAIL = "m-0 text-sm text-ink-muted";
+export const QUOTA_DETAIL = "m-0 text-dense text-ink-muted";
 
 /* -- Login ------------------------------------------------------------------ */
 

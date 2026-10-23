@@ -51,7 +51,7 @@ export function Pagination({
       aria-label={t.paginationLabel}
     >
       <span
-        className="text-sm text-ink-muted transition-opacity duration-120 data-busy:opacity-50"
+        className="text-dense text-ink-muted transition-opacity duration-120 data-busy:opacity-50"
         aria-live="polite"
         data-busy={busy || undefined}
       >

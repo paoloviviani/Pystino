@@ -58,8 +58,8 @@ export function SummaryStrip({ headline, detail, actions, active = true, icon }:
           {icon ?? <RowsIcon />}
         </div>
         <div>
-          <div className="text-sm font-semibold text-ink">{headline}</div>
-          {detail ? <div className="mt-0.5 text-xs text-ink-muted">{detail}</div> : null}
+          <div className="text-body font-semibold text-ink">{headline}</div>
+          {detail ? <div className="mt-0.5 text-dense text-ink-muted">{detail}</div> : null}
         </div>
       </div>
       {actions ? (

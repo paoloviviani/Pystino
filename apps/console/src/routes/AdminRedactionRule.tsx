@@ -30,7 +30,7 @@ const SCOPE_OPTIONS: RedactionScope[] = ["all", "provider", "model", "group", "u
  * accident into a decision.
  */
 const INPUT =
-  "w-full rounded-md border border-line bg-surface px-3 py-2 text-base text-ink " +
+  "w-full rounded-md border border-line bg-surface px-3 py-2 text-body text-ink max-[40rem]:text-[16px] " +
   "placeholder:text-ink-faint transition-shadow hover:border-line-strong " +
   "focus-visible:outline-none focus-visible:shadow-focus";
 

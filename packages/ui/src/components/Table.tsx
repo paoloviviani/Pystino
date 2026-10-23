@@ -37,16 +37,15 @@ const HIDE_BELOW = {
 
 /*
  * Density. These are working tables an administrator scans for many rows, so
- * cell text is the 13px `text-xs` step (the page's 17px body made a six-column
- * row wider than the screen and three lines tall), and padding is tight enough
- * to keep a screenful of rows. Two things inside cells would undo that if left
- * alone: monospace spans (`CODE` is the 15px step) and buttons (17px, tall
- * padding), so both are scaled to the cell here, once, rather than at each of
- * the screens that put them in a row.
+ * cell text is the 13px `text-dense` step of the type scale (tokens.css), and
+ * padding is tight enough to keep a screenful of rows. Buttons inside cells
+ * would undo that with their own padding, so they take the `sm` button size
+ * here, once, rather than at each of the screens that put them in a row.
+ * Monospace needs nothing: code inherits its neighbour's size.
  */
 const TABLE =
-  "w-full border-collapse text-xs " +
-  "[&_td_.font-mono]:text-xs [&_td_button]:px-2.5 [&_td_button]:py-1 [&_td_button]:text-xs";
+  "w-full border-collapse text-dense " +
+  "[&_td_button]:px-2.5 [&_td_button]:py-1 [&_td_button]:text-dense";
 const CELL_X = "px-3 first:pl-5 last:pr-5";
 
 export interface TableProps<Row> {
@@ -114,7 +113,7 @@ export function Table<Row>({
                 key={column.key}
                 scope="col"
                 className={cx(
-                  "border-b border-line bg-sunken py-1.5 text-left text-xs font-semibold tracking-[0.01em] whitespace-nowrap text-ink",
+                  "border-b border-line bg-sunken py-1.5 text-left text-dense font-semibold tracking-[0.01em] whitespace-nowrap text-ink",
                   CELL_X,
                   cellTone(column.numeric),
                   column.hideBelow && HIDE_BELOW[column.hideBelow],

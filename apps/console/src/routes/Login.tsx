@@ -81,7 +81,7 @@ export function Login() {
   return (
     <div className={LOGIN_CENTRE}>
       <div className={LOGIN_CARD}>
-        <h1 className="text-lg font-semibold">{m["login.heading"]()}</h1>
+        <h1 className="text-heading font-semibold">{m["login.heading"]()}</h1>
         <div className={FORM_STACK}>
           {providers.map((provider) => (
             <Button key={provider.name} variant="primary" onClick={() => loginWith(provider.name, next)}>

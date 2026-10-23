@@ -60,7 +60,7 @@ export function Dialog({ open, title, onClose, footer, children }: DialogProps) 
           )}
         >
           <header className="flex items-center justify-between gap-4 border-b border-line-quiet px-5 py-4">
-            <BaseDialog.Title className="text-md font-semibold leading-tight">
+            <BaseDialog.Title className="text-heading font-semibold leading-tight">
               {title}
             </BaseDialog.Title>
             <BaseDialog.Close
@@ -70,7 +70,7 @@ export function Dialog({ open, title, onClose, footer, children }: DialogProps) 
                 // reserves the pill for status pills (`Badge`), and a round
                 // close button on a rectangular dialog read as one more of
                 // them. Buttons keep the shared rectangle-with-soft-corners.
-                "flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-lg text-ink-faint",
+                "flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-body text-ink-faint",
                 "transition-colors hover:bg-sunken hover:text-ink",
                 "focus-visible:outline-none focus-visible:shadow-focus",
               )}

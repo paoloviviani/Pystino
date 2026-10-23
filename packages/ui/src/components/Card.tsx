@@ -51,8 +51,8 @@ export function Card({ title, actions, description, flush = false, children }: C
           )}
         >
           <div>
-            {title && <h2 className="text-md font-semibold leading-tight">{title}</h2>}
-            {description && <p className="mt-1 text-sm text-ink-muted">{description}</p>}
+            {title && <h2 className="text-heading font-semibold leading-tight">{title}</h2>}
+            {description && <p className="mt-1 text-body text-ink-muted">{description}</p>}
           </div>
           {actions && (
             // Not shrunk (which squashed the controls) but allowed onto its own

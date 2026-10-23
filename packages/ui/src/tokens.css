@@ -162,21 +162,33 @@
   --font-mono:
     ui-monospace, "SF Mono", "Cascadia Mono", "DejaVu Sans Mono", Consolas, monospace;
 
-  /* One pixel above the browser's 16px steps: at the stock sizes the chat's
-   * running text was 15px and its menus 12–14px, which read small on every
-   * screen. Each step is the stock size plus 1px (1/16rem), so the scale
-   * keeps its proportions. The top stays down: a page title is a heading,
-   * not a shape on a poster. `xxs` and `smd` are the chat's two extra steps,
-   * folded in so both apps share one scale rather than each extending it
-   * privately. */
-  --text-xs: 0.8125rem;
-  --text-sm: 0.9375rem;
-  --text-base: 1.0625rem;
-  --text-md: 1.1875rem;
-  --text-lg: 1.4375rem;
-  --text-xl: 1.8125rem;
+  /* -- the type scale ---------------------------------------------------------
+   * ONE scale, named by role rather than by size, so a screen asks for "the
+   * size of a table cell" and not for a number that happens to match one. Every
+   * `text-*` utility in the console and in this package is one of these; the
+   * Tailwind defaults are cleared in the theme block below, so a stray
+   * `text-sm` produces nothing instead of a fifth, unrelated size (and a test
+   * in this package fails on one). Reasoned from the dense 13px tables the
+   * owner approved: prose is two px above them, not four, which is what made
+   * the redaction engine cards read as another product (2026-10-23).
+   *
+   *   title    24  the page title, and a headline figure
+   *   heading  16  a card, dialog or section title
+   *   body     15  prose, card text, form controls, the page default
+   *   control  14  buttons, menus and the sidebar: chrome, not content
+   *   dense    13  table cells, field labels, compact lists, secondary lines
+   *   small    12  hints, badges, pills, captions
+   *
+   * `xxs` (11) stays for the one place that needs a tick label. Monospace is
+   * not a step: code takes its neighbour's size (`font-size: inherit`), so a
+   * request id in a 13px cell is 13px and in a 15px sentence is 15px. */
+  --text-title: 1.5rem;
+  --text-heading: 1rem;
+  --text-body: 0.9375rem;
+  --text-control: 0.875rem;
+  --text-dense: 0.8125rem;
+  --text-small: 0.75rem;
   --text-xxs: 0.6875rem;
-  --text-smd: 1rem;
 
   /* A variable font, so these are real instances rather than a synthetic bold.
    * Medium is the workhorse: headings and labels sit at 500, which reads as
@@ -186,6 +198,7 @@
   --weight-bold: 700;
 
   --leading-tight: 1.25;
+  --leading-snug: 1.4;
   --leading-normal: 1.55;
 
   /* Labels are sentence case. Tracked uppercase is measurably slower to read,
@@ -314,6 +327,9 @@
  * above still apply in full.
  */
 @theme inline {
+  /* Clear Tailwind's own text sizes: the scale above is the only one. */
+  --text-*: initial;
+
   --color-page: var(--colour-bg);
   --color-surface: var(--colour-surface);
   --color-raised: var(--colour-surface-raised);
@@ -348,19 +364,19 @@
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
 
-  --text-xs: var(--text-xs);
-  --text-sm: var(--text-sm);
-  --text-base: var(--text-base);
-  --text-md: var(--text-md);
-  --text-lg: var(--text-lg);
-  --text-xl: var(--text-xl);
+  --text-title: var(--text-title);
+  --text-heading: var(--text-heading);
+  --text-body: var(--text-body);
+  --text-control: var(--text-control);
+  --text-dense: var(--text-dense);
+  --text-small: var(--text-small);
   --text-xxs: var(--text-xxs);
-  --text-smd: var(--text-smd);
-  --text-sm--line-height: var(--leading-normal);
-  --text-base--line-height: var(--leading-normal);
-  --text-md--line-height: var(--leading-tight);
-  --text-lg--line-height: var(--leading-tight);
-  --text-xl--line-height: var(--leading-tight);
+  --text-title--line-height: var(--leading-tight);
+  --text-heading--line-height: var(--leading-tight);
+  --text-body--line-height: var(--leading-normal);
+  --text-control--line-height: var(--leading-tight);
+  --text-dense--line-height: var(--leading-snug);
+  --text-small--line-height: var(--leading-snug);
 
   --radius-sm: var(--radius-sm);
   --radius-md: var(--radius-md);
@@ -396,7 +412,7 @@
 		background: var(--colour-bg);
 		color: var(--colour-text);
 		font-family: var(--font-sans);
-		font-size: var(--text-base);
+		font-size: var(--text-body);
 		line-height: var(--leading-normal);
 		-webkit-font-smoothing: antialiased;
 	}

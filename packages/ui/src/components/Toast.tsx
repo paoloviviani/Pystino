@@ -55,12 +55,12 @@ function ToastList() {
     >
       <BaseToast.Content className="flex items-start justify-between gap-3">
         <div>
-          <BaseToast.Title className="text-sm font-semibold text-ink" />
+          <BaseToast.Title className="text-body font-semibold text-ink" />
           {toast.description && (
-            <BaseToast.Description className="mt-0.5 text-sm text-ink-muted" />
+            <BaseToast.Description className="mt-0.5 text-dense text-ink-muted" />
           )}
         </div>
-        <BaseToast.Close className="cursor-pointer text-sm text-ink-faint transition-colors hover:text-ink">
+        <BaseToast.Close className="cursor-pointer text-dense text-ink-faint transition-colors hover:text-ink">
           {t.dismiss}
         </BaseToast.Close>
       </BaseToast.Content>

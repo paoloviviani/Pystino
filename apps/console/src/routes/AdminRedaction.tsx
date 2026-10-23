@@ -43,6 +43,7 @@ import {
   DETAIL_VALUE,
   ENGINE,
   ENGINE_ACTION,
+  ENGINE_TEXT,
   ENGINE_ACTIVE,
   ENGINE_BODY,
   ENGINE_NAME,
@@ -889,7 +890,7 @@ function FamilySwitch({
         <div className={MUTED}>{description}</div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <span aria-hidden className={`text-sm ${MUTED}`}>
+        <span aria-hidden className={`text-body ${MUTED}`}>
           {checked ? m["admin_redaction.families.on"]() : m["admin_redaction.families.off"]()}
         </span>
         <button
@@ -994,11 +995,11 @@ function EngineList({ status }: { status: RedactionStatus }) {
                 )}
               </div>
               {/* i18n: server text — the engine's own description, from its plugin. */}
-              <div className={MUTED}>{engine.description}</div>
+              <div className={ENGINE_TEXT}>{engine.description}</div>
               {/* i18n: server text — rendered verbatim: the wording lives with
                   the rule, the same convention as the warnings above. */}
               {engine.blocked_reason && (
-                <div className={MUTED}>
+                <div className={ENGINE_TEXT}>
                   <strong>{m["admin_redaction.engine.cannot_enable"]()}</strong>{" "}
                   {engine.blocked_reason}
                 </div>
@@ -1092,7 +1093,7 @@ function ConfirmOff({
       }
     >
       <Notice tone="danger">{m["admin_redaction.confirm.warning"]()}</Notice>
-      <p className="m-0 text-sm text-ink-muted">{m["admin_redaction.confirm.recorded"]()}</p>
+      <p className="m-0 text-body text-ink-muted">{m["admin_redaction.confirm.recorded"]()}</p>
     </Dialog>
   );
 }
