@@ -401,7 +401,7 @@ function CatalogueCard() {
         <>
           <div>{regionLabel(entry.region)}</div>
           {/* i18n: server text — the catalogue file's own note. */}
-          {entry.region_note && <div className={`${MUTED} text-xs`}>{entry.region_note}</div>}
+          {entry.region_note && <div className={`${MUTED} text-small`}>{entry.region_note}</div>}
           <Origin entry={entry} fields={["region", "region_note"]} />
         </>
       ),
@@ -414,7 +414,7 @@ function CatalogueCard() {
           <div>{retentionText(entry)}</div>
           {/* i18n: server text — the catalogue file's own note. */}
           {entry.retention.note && (
-            <div className={`${MUTED} text-xs`}>{entry.retention.note}</div>
+            <div className={`${MUTED} text-small`}>{entry.retention.note}</div>
           )}
           <Origin
             entry={entry}
@@ -504,7 +504,7 @@ function retentionText(entry: CatalogueEntry): string {
 function Sources({ entry }: { entry: CatalogueEntry }) {
   if (entry.sources.length === 0) return <div className={MUTED}>-</div>;
   return (
-    <ul className="space-y-1 text-xs">
+    <ul className="space-y-1 text-small">
       {entry.sources.map((source) => (
         <li key={source.url}>
           <a
