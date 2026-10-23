@@ -45,8 +45,8 @@ export function EmptyState({ title, detail, action, icon }: EmptyStateProps) {
       <div aria-hidden="true" className="mb-3 size-10 text-ink-faint">
         {icon ?? <TrayIcon />}
       </div>
-      <p className="m-0 text-sm font-medium text-ink">{title}</p>
-      {detail ? <div className="mt-1 text-xs text-ink-muted">{detail}</div> : null}
+      <p className="m-0 text-body font-medium text-ink">{title}</p>
+      {detail ? <div className="mt-1 text-dense text-ink-muted">{detail}</div> : null}
       {action ? <div className="mt-4">{action}</div> : null}
     </div>
   );

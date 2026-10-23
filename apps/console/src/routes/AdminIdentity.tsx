@@ -223,12 +223,12 @@ export function ProvisioningPolicySection() {
       ) : null}
 
       <fieldset>
-        <legend className="p-0 text-sm">{m["admin_identity.who_may_join"]()}</legend>
+        <legend className="p-0 text-body">{m["admin_identity.who_may_join"]()}</legend>
         <div className="flex flex-col gap-2">
           {JOIN_MODES.map((mode) => (
             <label
               key={mode.value}
-              className="flex cursor-pointer items-start gap-2 text-sm"
+              className="flex cursor-pointer items-start gap-2 text-body"
             >
               <input
                 type="radio"
@@ -240,14 +240,14 @@ export function ProvisioningPolicySection() {
               />
               <span>
                 {mode.label()}
-                <span className="mt-0.5 block text-xs text-ink-faint">
+                <span className="mt-0.5 block text-dense text-ink-faint">
                   {mode.hint()}
                 </span>
               </span>
             </label>
           ))}
         </div>
-        <p className="mt-1 text-xs text-ink-faint">
+        <p className="mt-1 text-small text-ink-faint">
           {m["admin_identity.join_mode_note"]({ source: sourceOf("join_mode") })}
         </p>
       </fieldset>
@@ -260,7 +260,7 @@ export function ProvisioningPolicySection() {
             </Notice>
           ) : null}
           <fieldset>
-            <legend className="p-0 text-sm">{m["admin_identity.required_groups"]()}</legend>
+            <legend className="p-0 text-body">{m["admin_identity.required_groups"]()}</legend>
             <div className="flex flex-col gap-1.5">
               {(groups.data?.items ?? []).map((group) => {
                 // The mapping-only rule: a claimed name reaches the group only
@@ -272,7 +272,7 @@ export function ProvisioningPolicySection() {
                 const chosen = requiredGroups.includes(group.name);
                 return (
                   <div key={group.id}>
-                    <label className="inline-flex items-center gap-1.5 text-sm">
+                    <label className="inline-flex items-center gap-1.5 text-body">
                       <input
                         type="checkbox"
                         checked={chosen}
@@ -290,7 +290,7 @@ export function ProvisioningPolicySection() {
                       {group.name}
                     </label>
                     {chosen && !mapped ? (
-                      <p className="text-xs text-ink-faint">
+                      <p className="text-small text-ink-faint">
                         {m["admin_identity.group.unmapped"]()}
                       </p>
                     ) : null}
@@ -299,9 +299,9 @@ export function ProvisioningPolicySection() {
               })}
             </div>
             {(groups.data?.items ?? []).length === 0 ? (
-              <p className="text-xs text-ink-faint">{m["admin_identity.group.none"]()}</p>
+              <p className="text-small text-ink-faint">{m["admin_identity.group.none"]()}</p>
             ) : (
-              <p className="text-xs text-ink-faint">
+              <p className="text-small text-ink-faint">
                 {m["admin_identity.group.local_note"]({ source: sourceOf("required_groups") })}
               </p>
             )}

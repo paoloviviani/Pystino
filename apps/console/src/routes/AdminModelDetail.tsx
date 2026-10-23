@@ -605,7 +605,7 @@ function Pricing({ model }: { model: AdminModel }) {
           <span>
             <Rate amount={price.per_image} currency={price.currency} />
             {/* i18n: literal (sizes and amounts, not text) */}
-            <span className="block text-xs text-ink-muted">
+            <span className="block text-dense text-ink-muted">
               {Object.entries(price.per_image_by_size)
                 .map(([size, rate]) => `${size} ${rate}`)
                 .join(" · ")}

@@ -118,7 +118,7 @@ export function AdminGroups() {
       render: (group) => (
         <div className="flex flex-col gap-1.5">
           {chatEnabled && (
-          <label className="inline-flex items-center gap-1.5 text-sm">
+          <label className="inline-flex items-center gap-1.5 text-body">
             <input
               type="checkbox"
               aria-label={m["admin_groups.capability.agents_aria"]({ name: group.name })}
@@ -132,7 +132,7 @@ export function AdminGroups() {
             {m["admin_groups.capability.agents"]()}
           </label>
           )}
-          <label className="inline-flex items-center gap-1.5 text-sm">
+          <label className="inline-flex items-center gap-1.5 text-body">
             <input
               type="checkbox"
               aria-label={m["admin_groups.capability.api_keys_aria"]({ name: group.name })}
@@ -146,7 +146,7 @@ export function AdminGroups() {
             {m["admin_groups.capability.api_keys"]()}
           </label>
           {chatEnabled && (
-          <label className="inline-flex items-center gap-1.5 text-sm">
+          <label className="inline-flex items-center gap-1.5 text-body">
             <input
               type="checkbox"
               aria-label={m["admin_groups.capability.local_connectors_aria"]({ name: group.name })}
@@ -421,10 +421,10 @@ function GroupMembersDialog({ group, onClose }: { group: AdminGroup | null; onCl
                   className="flex items-center justify-between gap-2 rounded-md border border-line p-2"
                 >
                   <div className="min-w-0">
-                    <div className="truncate text-sm">
+                    <div className="truncate text-body">
                       {user.display_name || user.email || user.subject}
                     </div>
-                    <div className="truncate text-xs text-ink-faint">
+                    <div className="truncate text-dense text-ink-faint">
                       {user.email ?? user.subject}
                     </div>
                   </div>
@@ -454,7 +454,7 @@ function GroupMembersDialog({ group, onClose }: { group: AdminGroup | null; onCl
                 </div>
               ))}
               {(picker.data?.items ?? []).length === 0 && (
-                <p className="m-0 text-sm text-ink-muted">
+                <p className="m-0 text-body text-ink-muted">
                   {m["admin_groups.members.no_match"]()}
                 </p>
               )}
@@ -473,7 +473,7 @@ function GroupMembersDialog({ group, onClose }: { group: AdminGroup | null; onCl
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="truncate text-sm">
+                    <span className="truncate text-body">
                       {user.display_name || user.email || user.subject}
                     </span>
                     {/* Which of these the directory will still be deciding at
@@ -483,7 +483,7 @@ function GroupMembersDialog({ group, onClose }: { group: AdminGroup | null; onCl
                       <Badge tone="neutral">{m["admin_groups.members.from_directory"]()}</Badge>
                     )}
                   </div>
-                  <div className="truncate text-xs text-ink-faint">
+                  <div className="truncate text-dense text-ink-faint">
                     {user.email ?? user.subject}
                   </div>
                 </div>
@@ -511,7 +511,7 @@ function GroupMembersDialog({ group, onClose }: { group: AdminGroup | null; onCl
               </div>
             ))}
             {(members.data?.items ?? []).length === 0 && (
-              <p className="m-0 text-sm text-ink-muted">{m["admin_groups.members.none_yet"]()}</p>
+              <p className="m-0 text-body text-ink-muted">{m["admin_groups.members.none_yet"]()}</p>
             )}
           </div>
         )}
@@ -701,12 +701,12 @@ function SeenGroups() {
           reconcile, so they go at the next sign-in — the confirm says so. */}
       {policy.data && policy.data.group_mappings.length > 0 ? (
         <div className="mb-4">
-          <p className="mb-2 text-sm font-medium">{m["admin_groups.seen.mappings_heading"]()}</p>
+          <p className="mb-2 text-body font-medium">{m["admin_groups.seen.mappings_heading"]()}</p>
           <div className={CHIPS}>
             {policy.data.group_mappings.map((rule) => (
               <span
                 key={rule.idp}
-                className="inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1 text-xs"
+                className="inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1 text-dense"
               >
                 <span className="[overflow-wrap:anywhere]">{rule.idp}</span>
                 <span aria-hidden>→</span>
@@ -899,7 +899,7 @@ function MapSeenDialog({ seen, onClose }: { seen: SeenGroup | null; onClose: () 
           </Notice>
         ) : null}
         <fieldset>
-          <legend className="p-0 text-sm">{m["admin_groups.map.legend"]()}</legend>
+          <legend className="p-0 text-body">{m["admin_groups.map.legend"]()}</legend>
           <div className="flex flex-col gap-1.5">
             {(
               [
@@ -908,7 +908,7 @@ function MapSeenDialog({ seen, onClose }: { seen: SeenGroup | null; onClose: () 
                 ["existing", m["admin_groups.map.option.existing"]],
               ] as const
             ).map(([value, label]) => (
-              <label key={value} className="flex cursor-pointer items-center gap-2 text-sm">
+              <label key={value} className="flex cursor-pointer items-center gap-2 text-body">
                 <input
                   type="radio"
                   name="map-target"

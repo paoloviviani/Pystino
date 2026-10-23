@@ -587,7 +587,7 @@ function AliasDialog({
         />
 
         <fieldset className="m-0 flex flex-col gap-3 border-0 p-0">
-          <legend className="mb-1 text-base font-medium">{m["admin_routing.form.targets"]()}</legend>
+          <legend className="mb-1 text-body font-medium">{m["admin_routing.form.targets"]()}</legend>
           <p className={MUTED}>{m["admin_routing.form.targets_hint"]()}</p>
           {rows.map((row, index) => {
             // The row's current model stays selectable even when it is not a

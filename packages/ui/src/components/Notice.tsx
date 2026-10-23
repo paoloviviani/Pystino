@@ -31,7 +31,7 @@ export function Notice({ tone = "info", title, children }: NoticeProps) {
   return (
     <div
       className={cx(
-        "rounded-md border border-l-4 px-4 py-3 text-sm",
+        "rounded-md border border-l-4 px-4 py-3 text-body",
         "[&>*+*]:mt-1",
         TONES[tone],
       )}

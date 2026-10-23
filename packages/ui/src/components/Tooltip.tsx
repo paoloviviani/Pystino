@@ -25,7 +25,7 @@ export function Tooltip({ label, children }: TooltipProps) {
           <BaseTooltip.Positioner sideOffset={6} className="z-50 outline-none">
             <BaseTooltip.Popup
               className={cx(
-                "max-w-72 rounded-md bg-ink px-2.5 py-1.5 text-xs text-ink-inverse shadow-md",
+                "max-w-72 rounded-md bg-ink px-2.5 py-1.5 text-dense text-ink-inverse shadow-md",
                 "transition-opacity duration-100",
                 "data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
               )}

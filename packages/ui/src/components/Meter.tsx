@@ -54,7 +54,7 @@ export function Meter({ value, limit, label, caption }: MeterProps) {
         // Under the bar, not beside it: stacked, the cell's width demand is
         // `max(bar, caption)` and no font metric or locale can make the caption
         // compete with the bar for horizontal space.
-        <span className="text-sm whitespace-nowrap text-ink-muted tabular-nums">{caption}</span>
+        <span className="text-body whitespace-nowrap text-ink-muted tabular-nums">{caption}</span>
       )}
     </div>
   );

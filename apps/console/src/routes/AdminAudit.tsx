@@ -53,7 +53,7 @@ function Changes({ changes }: { changes: Record<string, AuditChange> }) {
   return (
     <details>
       <summary className="cursor-pointer">{m["admin_audit.changes"]({ count: fields.length })}</summary>
-      <dl className="mt-2 flex flex-col gap-1 text-sm">
+      <dl className="mt-2 flex flex-col gap-1 text-body">
         {fields.map(([field, change]) => (
           <div key={field} className="flex flex-wrap gap-x-2">
             <dt className="font-medium">{field}</dt>

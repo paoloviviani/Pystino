@@ -402,7 +402,7 @@ function CatalogueCard() {
   return (
     <Card flush>
       <div className="p-5">
-        <h2 className="text-lg font-semibold">{m["admin_providers.catalogue.title"]()}</h2>
+        <h2 className="text-heading font-semibold">{m["admin_providers.catalogue.title"]()}</h2>
         <p className={MUTED}>{m["admin_providers.catalogue.subtitle"]()}</p>
       </div>
       <Table

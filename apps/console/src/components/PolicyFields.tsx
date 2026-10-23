@@ -96,7 +96,7 @@ export function PolicyFields({
       />
 
       {known.length === 0 ? (
-        <p className="text-sm text-ink-muted">{m["policy_fields.no_entity_types"]()}</p>
+        <p className="text-body text-ink-muted">{m["policy_fields.no_entity_types"]()}</p>
       ) : (
         <>
           <ModeKey />
@@ -170,7 +170,7 @@ export function PolicyFields({
           {/* Measured, and the opposite of what a list of switches implies: the
               model pass runs over the whole prompt whichever types are asked
               for. See docs/performance.md. */}
-          <p className="text-sm text-ink-muted">{m["policy_fields.detection_note"]()}</p>
+          <p className="text-body text-ink-muted">{m["policy_fields.detection_note"]()}</p>
         </>
       )}
 
@@ -240,7 +240,7 @@ export function PolicyFields({
             {m["policy_fields.pattern_from_template"]()}
           </Button>
         </div>
-        <p className="text-sm text-ink-muted">{m["policy_fields.pattern_note"]()}</p>
+        <p className="text-body text-ink-muted">{m["policy_fields.pattern_note"]()}</p>
 
         {/* Measured, not assumed: eight credential shapes were put through this
             deployment's detector and none was found. Two produced *wrong* hits —
@@ -250,7 +250,7 @@ export function PolicyFields({
             into every new rule. An empty pattern list is a deliberate choice;
             a seeded list would make it impossible to tell that choice from an
             omission. */}
-        <p className="text-sm text-ink-muted">{m["policy_fields.templates_note"]()}</p>
+        <p className="text-body text-ink-muted">{m["policy_fields.templates_note"]()}</p>
         <PatternTemplatesDialog
           open={templatesOpen}
           policy={policy}
@@ -325,7 +325,7 @@ function PatternTemplatesDialog({
                       : m["policy_fields.templates.mode.redact"]()}
                   </Badge>
                 </div>
-                <p className={`m-0 text-sm ${MUTED}`}>{template.description()}</p>
+                <p className={`m-0 text-body ${MUTED}`}>{template.description()}</p>
                 <code className={CODE}>{template.regex}</code>
               </div>
               <Button
@@ -442,7 +442,7 @@ function ModeRadios({
     // nothing saying which type they belong to. No border or padding: it is a
     // row of controls and not a section.
     <fieldset className="m-0 grid min-w-0 gap-1 border-0 p-0">
-      <legend className="p-0 text-sm">{legend}</legend>
+      <legend className="p-0 text-body">{legend}</legend>
       <div className="flex flex-wrap gap-x-3 gap-y-1">
         {MODES.map((mode) => {
           const disabled = modeRank(mode.value) < least;
@@ -452,7 +452,7 @@ function ModeRadios({
             // exists and is not theirs to choose.
             <label
               key={mode.value}
-              className="inline-flex cursor-pointer items-center gap-[0.35em] text-sm whitespace-nowrap data-disabled:cursor-not-allowed data-disabled:text-ink-faint"
+              className="inline-flex cursor-pointer items-center gap-[0.35em] text-body whitespace-nowrap data-disabled:cursor-not-allowed data-disabled:text-ink-faint"
               title={m["redaction_mode.title"]({ label: mode.label(), hint: mode.hint() })}
               data-disabled={disabled || undefined}
             >
@@ -483,7 +483,7 @@ function ModeRadios({
  */
 function ModeKey() {
   return (
-    <dl className="m-0 grid gap-x-4 gap-y-1 bg-sunken p-3 text-sm [grid-template-columns:repeat(auto-fit,minmax(14rem,1fr))]">
+    <dl className="m-0 grid gap-x-4 gap-y-1 bg-sunken p-3 text-body [grid-template-columns:repeat(auto-fit,minmax(14rem,1fr))]">
       {MODES.map((mode) => (
         <div key={mode.value} className="flex items-baseline gap-2">
           <dt className="font-medium whitespace-nowrap">{mode.short()}</dt>

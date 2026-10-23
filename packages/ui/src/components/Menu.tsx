@@ -62,7 +62,7 @@ export function MenuItem({
   return (
     <BaseMenu.Item
       className={cx(
-        "flex cursor-pointer items-center gap-2 rounded-sm px-3 py-2 text-sm text-ink",
+        "flex cursor-pointer items-center gap-2 rounded-sm px-3 py-2 text-control text-ink",
         "outline-none data-[highlighted]:bg-sunken",
         className,
       )}
@@ -79,7 +79,7 @@ export function MenuCheckboxItem({
   return (
     <BaseMenu.CheckboxItem
       className={cx(
-        "flex cursor-pointer items-center gap-2 rounded-sm px-3 py-2 text-sm text-ink",
+        "flex cursor-pointer items-center gap-2 rounded-sm px-3 py-2 text-control text-ink",
         "outline-none data-[highlighted]:bg-sunken",
         className,
       )}
@@ -121,7 +121,7 @@ export function MenuLabel({
 }: StringClassProps<ComponentProps<typeof BaseMenu.GroupLabel>>) {
   return (
     <BaseMenu.GroupLabel
-      className={cx("px-3 py-2 text-xs text-ink-faint", className)}
+      className={cx("px-3 py-2 text-dense text-ink-faint", className)}
       {...rest}
     />
   );

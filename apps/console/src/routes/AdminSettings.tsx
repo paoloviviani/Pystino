@@ -227,9 +227,9 @@ export function RedirectUri({ name }: { name: string }) {
           </Button>
         )}
       </div>
-      <p className="mt-1 text-sm text-ink-muted">{m["admin_settings.redirect_uri.note"]()}</p>
+      <p className="mt-1 text-body text-ink-muted">{m["admin_settings.redirect_uri.note"]()}</p>
       {copied === false && (
-        <p className="text-sm text-warn">{m["admin_settings.redirect_uri.clipboard"]()}</p>
+        <p className="text-body text-warn">{m["admin_settings.redirect_uri.clipboard"]()}</p>
       )}
     </div>
   );
@@ -363,8 +363,8 @@ function ProviderRow({
             </Badge>
           )}
         </div>
-        <div className={`mt-1 text-sm ${MUTED}`}>{provider.issuer}</div>
-        <div className="mt-1 text-xs text-ink-faint">
+        <div className={`mt-1 text-body ${MUTED}`}>{provider.issuer}</div>
+        <div className="mt-1 text-dense text-ink-faint">
           {/* ADR 0095: one mapping surface, the Groups page — this line only
               points there now. The link and the claim are inside the message, so
               a translator moves the sentence and the target stays. */}
@@ -400,7 +400,7 @@ function ProviderRow({
         {/* Said up front, so a kept row explains itself instead of offering a
             button that would only answer 409. */}
         {!provider.is_enabled && provider.kept_reason && (
-          <div className={`mt-1 text-sm ${MUTED}`}>{provider.kept_reason}</div>
+          <div className={`mt-1 text-body ${MUTED}`}>{provider.kept_reason}</div>
         )}
         <div className="mt-2 max-w-md">
           <RedirectUri name={provider.name} />
@@ -583,7 +583,7 @@ function CapabilityDefaultsCard() {
                 <div className={CHIPS}>
                   <span className="font-medium">{entry.title()}</span>
                 </div>
-                <div className={`mt-1 text-sm ${MUTED}`}>{entry.hint()}</div>
+                <div className={`mt-1 text-body ${MUTED}`}>{entry.hint()}</div>
               </div>
               {/* w-full on phones: shrink-0 alone kept the two long labels
                   side by side and they ran past the card edge. */}
@@ -622,7 +622,7 @@ function CapabilityDefaultsCard() {
                   </Select>
                 </div>
                 <div className="flex flex-col gap-1">
-                  <span className="text-sm font-medium">
+                  <span className="text-body font-medium">
                     {m["admin_settings.capability.all_groups_label"]()}
                   </span>
                   <div className="flex flex-wrap gap-2">

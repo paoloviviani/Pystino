@@ -46,7 +46,7 @@ function errorText(caught: unknown, fallback: string): string {
 function RunSummary({ run }: { run: SyncRun }) {
   const tone = run.status === "ok" ? "ok" : run.status === "failed" ? "danger" : "warn";
   return (
-    <div className="rounded-md border border-line p-3 text-sm">
+    <div className="rounded-md border border-line p-3 text-body">
       <div className="flex flex-wrap items-center gap-2">
         {/* i18n: server text — `status` and `trigger` are the API's enum values. */}
         <Badge tone={tone}>{run.status.replace("_", " ")}</Badge>
@@ -71,7 +71,7 @@ function RunSummary({ run }: { run: SyncRun }) {
           <summary className="cursor-pointer text-ink-muted">
             {m["identity_directory.run.change_count"]({ count: run.changes.length })}
           </summary>
-          <ul className="mt-1 max-h-48 overflow-auto font-mono text-xs">
+          <ul className="mt-1 max-h-48 overflow-auto font-mono text-dense">
             {/* i18n: server text — the change kind, the person and the field
                 names come from the API, which is where an operator looks them up. */}
             {run.changes.map((change, index) => (
@@ -153,7 +153,7 @@ export function DirectoryDialog({
       footer={<Button onClick={close}>{m["identity_directory.close"]()}</Button>}
     >
       <div className={FORM}>
-        <p className="text-sm text-ink-muted">{m["identity_directory.intro"]()}</p>
+        <p className="text-body text-ink-muted">{m["identity_directory.intro"]()}</p>
         {!provider.capabilities.adapters.length && (
           <Notice tone="info" title={m["identity_directory.just_in_time.title"]()}>
             {m["identity_directory.just_in_time.body"]({ kind: provider.kind })}
@@ -193,7 +193,7 @@ export function DirectoryDialog({
         {provider.sync_adapter === "scim" && (
           <div className="flex flex-col gap-2">
             <div className={DETAIL_LABEL}>{m["identity_directory.scim.detail"]()}</div>
-            <p className="text-sm text-ink-muted">
+            <p className="text-body text-ink-muted">
               <Message
                 message={m["identity_directory.scim.body"]}
                 markup={{ code: (children) => <span className="font-mono">{children}</span> }}
@@ -281,7 +281,7 @@ export function DirectoryDialog({
           <div className="flex flex-col gap-2">
             <div className={DETAIL_LABEL}>{m["identity_directory.pending.detail"]()}</div>
             {(directory.data ?? []).filter((p) => !p.user_id && p.present).length === 0 ? (
-              <span className="text-sm text-ink-faint">
+              <span className="text-body text-ink-faint">
                 {m["identity_directory.pending.all_accounted"]()}
               </span>
             ) : (
@@ -289,9 +289,9 @@ export function DirectoryDialog({
                 .filter((p) => !p.user_id && p.present)
                 .map((person) => (
                   <div key={person.id} className="flex flex-wrap items-end gap-2">
-                    <div className="min-w-40 text-sm">
+                    <div className="min-w-40 text-body">
                       {person.username ?? person.external_id}
-                      <div className="text-xs text-ink-faint">{person.email}</div>
+                      <div className="text-dense text-ink-faint">{person.email}</div>
                     </div>
                     <Input
                       label={m["identity_directory.pending.groups_label"]()}

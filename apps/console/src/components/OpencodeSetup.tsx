@@ -54,7 +54,7 @@ export function OpencodeSetup({ heading }: { heading?: string }) {
 
   return (
     <div className={heading ? "grid gap-3 border-t border-line pt-4" : "grid gap-3"}>
-      {heading ? <h3 className="text-sm font-semibold">{heading}</h3> : null}
+      {heading ? <h3 className="text-body font-semibold">{heading}</h3> : null}
       <p className={SECRET_DETAIL}>{m["opencode_setup.intro"]()}</p>
       <div className={SECRET_ROW}>
         <code className={SECRET} aria-label={m["opencode_setup.command_aria"]()}>
@@ -63,7 +63,7 @@ export function OpencodeSetup({ heading }: { heading?: string }) {
         <Button onClick={copy}>{copied ? m["opencode_setup.copied"]() : m["opencode_setup.copy"]()}</Button>
       </div>
       {copied === false && (
-        <p className="text-sm text-warn">{m["opencode_setup.clipboard_unavailable"]()}</p>
+        <p className="text-body text-warn">{m["opencode_setup.clipboard_unavailable"]()}</p>
       )}
       <p className={SECRET_DETAIL}>
         <Message

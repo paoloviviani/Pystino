@@ -3,8 +3,12 @@ import { cx } from "../cx";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 
+/** Two sizes, and only two: the default, and `sm` for a button inside a dense row. */
+export type ButtonSize = "md" | "sm";
+
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
+  size?: ButtonSize;
   /**
    * Shows a busy state and disables the button.
    *
@@ -41,8 +45,14 @@ const VARIANTS: Record<ButtonVariant, string> = {
   danger: "bg-danger border-danger text-ink-inverse hover:brightness-92",
 };
 
+const SIZES: Record<ButtonSize, string> = {
+  md: "px-3.5 py-1.5 text-control",
+  sm: "px-2.5 py-1 text-dense",
+};
+
 export function Button({
   variant = "secondary",
+  size = "md",
   busy = false,
   disabled,
   className,
@@ -55,8 +65,9 @@ export function Button({
       // into an accidental form submission. Explicit unless overridden.
       type="button"
       className={cx(
-        "inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2",
-        "text-base font-medium leading-tight whitespace-nowrap",
+        "inline-flex items-center justify-center gap-2 rounded-lg border",
+        "font-medium leading-tight whitespace-nowrap",
+        SIZES[size],
         "cursor-pointer transition-colors duration-120",
         "focus-visible:outline-none focus-visible:shadow-focus",
         "disabled:cursor-not-allowed disabled:opacity-55",

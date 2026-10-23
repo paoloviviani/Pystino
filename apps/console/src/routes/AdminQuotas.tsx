@@ -333,7 +333,7 @@ function QuotaHealthPanel() {
     <Card flush>
       <div className="flex items-center justify-between gap-4 p-5">
         <div>
-          <h2 className="font-medium">{m["admin_quotas.health.title"]()}</h2>
+          <h2 className="text-heading font-semibold">{m["admin_quotas.health.title"]()}</h2>
           <p className={MUTED}>{m["admin_quotas.health.body"]()}</p>
         </div>
         <Button

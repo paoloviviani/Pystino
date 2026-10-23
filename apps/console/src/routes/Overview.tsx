@@ -143,7 +143,7 @@ export function Overview({ me }: OverviewProps) {
           time (Dockerfile CONSOLE_BUILD_SHA); "unknown" means built by hand
           without it, and the gateway's startup log still says which files are
           actually served. */}
-      <p className={`${MUTED} -mt-2 text-xs`}>
+      <p className={`${MUTED} -mt-2 text-dense`}>
         {m["overview.build"]({ sha: import.meta.env.VITE_CONSOLE_BUILD_SHA ?? "unknown" })}
       </p>
 
@@ -446,7 +446,7 @@ function QuotaMeter({ rule, currency }: { rule: MyLimit; currency: string }) {
               }}
             >
               <input
-                className="w-40 rounded-md border border-line bg-surface px-2 py-1 text-sm"
+                className="w-40 rounded-md border border-line bg-surface px-2 py-1 text-body"
                 value={value}
                 onChange={(event) => setValue(event.target.value)}
                 placeholder={m["overview.quotas.thresholds_placeholder"]()}
@@ -464,7 +464,7 @@ function QuotaMeter({ rule, currency }: { rule: MyLimit; currency: string }) {
             <button
               type="button"
               onClick={() => setEditing(true)}
-              className="cursor-pointer text-left text-xs text-ink-faint underline-offset-2 hover:text-ink-muted hover:underline"
+              className="cursor-pointer text-left text-dense text-ink-faint underline-offset-2 hover:text-ink-muted hover:underline"
             >
               {(rule.notification_thresholds ?? []).length > 0
                 ? m["overview.quotas.threshold_set"]({
@@ -650,7 +650,7 @@ function MintedSecret({ minted }: { minted: MintedApiKey }) {
       </div>
       {copied === false && (
         // Warn ink, small — a caveat about the fallback, not the failure itself.
-        <p className="text-sm text-warn">{m["overview.minted.clipboard"]()}</p>
+        <p className="text-body text-warn">{m["overview.minted.clipboard"]()}</p>
       )}
 
       <p className={SECRET_DETAIL}>

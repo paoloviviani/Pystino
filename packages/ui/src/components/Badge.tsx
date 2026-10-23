@@ -49,7 +49,7 @@ export function Badge({ tone = "neutral", icon, children }: BadgeProps) {
     <span
       className={cx(
         "inline-flex items-center gap-1 rounded-full py-0.5 pr-2 pl-1.5",
-        "text-xs font-medium whitespace-nowrap",
+        "text-small font-medium whitespace-nowrap",
         TONES[tone],
       )}
     >

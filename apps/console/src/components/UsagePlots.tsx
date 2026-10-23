@@ -128,7 +128,7 @@ function PlotBody({
     <div className="flex flex-col gap-4" data-testid="usage-plot">
       <StackedBars plot={plot} metric={metric} currency={currency} label={label} />
 
-      <ul className="m-0 flex list-none flex-wrap gap-x-5 gap-y-2 p-0 text-sm" aria-label={m["plots.legend"]()}>
+      <ul className="m-0 flex list-none flex-wrap gap-x-5 gap-y-2 p-0 text-body" aria-label={m["plots.legend"]()}>
         {plot.series.map((series) => (
           <li key={series.key} className="flex items-center gap-2">
             <span
@@ -145,7 +145,7 @@ function PlotBody({
       <div>
         <button
           type="button"
-          className="text-sm text-accent underline underline-offset-2"
+          className="text-body text-accent underline underline-offset-2"
           aria-expanded={showTable}
           onClick={() => setShowTable((open) => !open)}
         >
@@ -287,7 +287,7 @@ function PlotTable({
 }) {
   return (
     <div className="mt-3 max-h-80 overflow-auto rounded-md border border-line-quiet">
-      <table className="w-full border-collapse text-sm tabular-nums">
+      <table className="w-full border-collapse text-body tabular-nums">
         <caption className="sr-only">{label}</caption>
         <thead className="sticky top-0 bg-sunken text-left">
           <tr>
