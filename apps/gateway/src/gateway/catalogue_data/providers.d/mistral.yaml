@@ -5,15 +5,16 @@ providers:
   - id: mistral
     name: Mistral AI
     plugin: mistral
-    base_url: https://api.mistral.ai/v1
+    base_url: https://api.eu.mistral.ai/v1
     region: eu
     region_note: >-
-      Mistral says data is hosted in the EU by default, with a US endpoint as
-      an explicit option. Its regional inference docs add that the global
-      endpoint api.mistral.ai (the one configured here) makes no commitment on
-      where inference runs; api.eu.mistral.ai serves from EU and EFTA data
-      centres and api.us.mistral.ai from the US. For a guaranteed EU location,
-      point base_url at the EU endpoint with an override.
+      Uses the EU regional endpoint api.eu.mistral.ai: inference is processed
+      in data centres in EU and EFTA countries. Mistral also says data is
+      hosted in the EU by default. Regional inference is billed at 1.1x list
+      pricing (a 10% upcharge). Account, billing and usage metadata may still
+      be handled outside the region. The EU endpoint does not offer Agents,
+      Batch or the Files API. The global endpoint api.mistral.ai makes no
+      inference-location commitment.
     retention:
       status: published
       zero_data_retention: false
@@ -35,7 +36,7 @@ providers:
         covers: zero data retention
       - url: https://docs.mistral.ai/inference/regional-inference
         retrieved: 2026-10-23
-        covers: location
+        covers: location, endpoint, EU upcharge
       - url: https://help.mistral.ai/en/articles/347629-where-do-you-store-my-data-or-my-organization-s-data
         retrieved: 2026-10-23
         covers: location

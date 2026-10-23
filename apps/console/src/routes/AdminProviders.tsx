@@ -92,6 +92,35 @@ export function AdminProviders() {
           <div className={`${MUTED} ${CODE} ${CLAMP}`} title={provider.base_url}>
             {provider.base_url}
           </div>
+          {/* The row keeps the endpoint it was created with; the catalogue may
+              have moved on. Say so and offer the one-click fix, never rewrite
+              it silently. */}
+          {endpointDiffers(provider) && (
+            <div className={CHIPS}>
+              <Badge tone="warn">{m["admin_providers.badge.endpoint_differs"]()}</Badge>
+              <Button
+                variant="secondary"
+                title={provider.catalogue?.base_url ?? ""}
+                disabled={update.isPending && update.variables?.id === provider.id}
+                onClick={() =>
+                  update.mutate(
+                    { id: provider.id, base_url: provider.catalogue?.base_url ?? "" },
+                    {
+                      onSuccess: () =>
+                        toast?.add({ title: m["admin_providers.toast.updated"](), type: "success" }),
+                      onError: () =>
+                        toast?.add({
+                          title: m["admin_providers.toast.update_failed"](),
+                          type: "error",
+                        }),
+                    },
+                  )
+                }
+              >
+                {m["admin_providers.action.use_catalogue_endpoint"]()}
+              </Button>
+            </div>
+          )}
           {provider.description && (
             <div className={`${MUTED} ${CLAMP}`} title={provider.description}>
               {provider.description}
@@ -430,6 +459,13 @@ function CatalogueCard() {
       />
     </Card>
   );
+}
+
+/** The provider's stored endpoint is not the one its catalogue entry now names. */
+function endpointDiffers(provider: AdminProvider): boolean {
+  const wanted = provider.catalogue?.base_url;
+  if (!wanted) return false;
+  return wanted.replace(/\/+$/, "") !== provider.base_url.replace(/\/+$/, "");
 }
 
 /**

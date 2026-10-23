@@ -705,6 +705,49 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
     ).toBeInTheDocument();
   });
 
+  it("flags a provider whose endpoint differs from its catalogue entry and updates it on click", async () => {
+    const captured: { bodies: { url: string; body: unknown }[] } = { bodies: [] };
+    vi.stubGlobal(
+      "fetch",
+      routes(
+        [
+          provider({
+            catalogue_id: "mistral",
+            base_url: "https://api.old.test/v1",
+            catalogue: entry({ base_url: "https://api.mistral.test/v1" }),
+          }),
+        ],
+        captured,
+      ),
+    );
+    renderScreen(<AdminProviders />);
+
+    expect(await screen.findByText("catalogue endpoint differs")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Use catalogue endpoint" }));
+    await waitFor(() => expect(captured.bodies.length).toBe(1));
+    expect(captured.bodies[0]?.body).toEqual({ base_url: "https://api.mistral.test/v1" });
+  });
+
+  it("does not flag a provider on the catalogue's endpoint, nor an unlinked one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routes(
+        [
+          provider({
+            catalogue_id: "mistral",
+            base_url: "https://api.mistral.test/v1",
+            catalogue: entry({ base_url: "https://api.mistral.test/v1/" }),
+          }),
+          provider({ id: "p2", name: "by hand", base_url: "https://x.test/v1" }),
+        ],
+        { bodies: [] },
+      ),
+    );
+    renderScreen(<AdminProviders />);
+    await screen.findByText("by hand");
+    expect(screen.queryByText("catalogue endpoint differs")).not.toBeInTheDocument();
+  });
+
   it("says unknown, not no, for a retention the catalogue does not state", async () => {
     const unknown = entry({
       region: null,

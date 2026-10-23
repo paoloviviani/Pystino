@@ -2734,6 +2734,8 @@
   "admin_providers.badge.region": "region {region}",
   "admin_providers.badge.zero_retention": "zero data retention",
   "admin_providers.badge.catalogue_missing": "catalogue entry missing",
+  "admin_providers.badge.endpoint_differs": "catalogue endpoint differs",
+  "admin_providers.action.use_catalogue_endpoint": "Use catalogue endpoint",
   "admin_providers.field.catalogue": "Catalogue entry",
   "admin_providers.field.catalogue_none": "None (set up by hand)",
   "admin_providers.field.catalogue_hint_new": "Fills in the type, endpoint and prefix below; you can still change them. Region and retention are read from the catalogue.",
