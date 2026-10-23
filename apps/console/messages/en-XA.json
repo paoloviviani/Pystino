@@ -2760,6 +2760,13 @@
     }
   ],
   "admin_providers.catalogue.trains": "[ťŕáíńś óń ćúśťóḿéŕ ďáťá]",
+  "admin_providers.catalogue.various": "[Ǚáŕíóúś]",
+  "admin_providers.catalogue.not_published": "[Ńóť þúƀľíśȟéď]",
+  "admin_providers.catalogue.global": "[Ǧľóƀáľ]",
+  "admin_providers.catalogue.zdr_available": "[ŹĎŔ áǚáíľáƀľé]",
+  "admin_providers.catalogue.no_training": "[ńóť úśéď ƒóŕ ťŕáíńíńǧ]",
+  "admin_providers.catalogue.column.sources": "[Śóúŕćéś]",
+  "admin_providers.catalogue.source_title": "[{covers}, ŕéáď {date}]",
   "admin_providers.catalogue.origin_builtin": "[ƀúíľť-íń]",
   "admin_providers.catalogue.origin_override": "[óǚéŕŕíďé]",
   "admin_reports.breakdown.provider": "[Ɓý þŕóǚíďéŕ]",

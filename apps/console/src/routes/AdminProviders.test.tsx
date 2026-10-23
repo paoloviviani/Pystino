@@ -134,7 +134,11 @@ function entry(overrides: Partial<CatalogueEntry> = {}): CatalogueEntry {
     base_url: "https://api.mistral.test/v1",
     prefix: "mi-",
     region: "eu",
+    region_note: null,
+    sources: [],
     retention: {
+      status: "published",
+      zero_data_retention_available: null,
       zero_data_retention: true,
       retention_days: 0,
       trains_on_customer_data: null,
@@ -620,10 +624,93 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
     expect(within(table).getByText("zero data retention · 0 days")).toBeInTheDocument();
   });
 
+  it("says Various for a router, with its note, and links the sources it was read from", async () => {
+    const router = entry({
+      id: "cortecs",
+      name: "Cortecs",
+      region: "various",
+      region_note: "Depends on the upstream that serves the request.",
+      retention: {
+        status: "various",
+        zero_data_retention: null,
+        zero_data_retention_available: true,
+        retention_days: null,
+        trains_on_customer_data: false,
+        note: "Retention depends on the upstream.",
+        source_url: null,
+      },
+      sources: [
+        {
+          url: "https://docs.cortecs.ai/security-and-compliance/zero-data-retention-zdr",
+          retrieved: "2026-10-23",
+          covers: "retention",
+        },
+      ],
+    });
+    vi.stubGlobal("fetch", routes([provider()], { bodies: [] }, undefined, [router]));
+    renderScreen(<AdminProviders />);
+
+    const table = await screen.findByRole("table", { name: /catalogue entries/i });
+    // Both cells say Various, never blank and never a made-up place.
+    expect(within(table).getAllByText("Various").length).toBe(2);
+    expect(within(table).getByText("Depends on the upstream that serves the request.")).toBeInTheDocument();
+    expect(within(table).getByText("Retention depends on the upstream.")).toBeInTheDocument();
+    const link = within(table).getByRole("link", { name: "docs.cortecs.ai" });
+    expect(link).toHaveAttribute(
+      "href",
+      "https://docs.cortecs.ai/security-and-compliance/zero-data-retention-zdr",
+    );
+    expect(link).toHaveAttribute("title", "retention, read 2026-10-23");
+  });
+
+  it("says Not published, not unknown, where the provider says nothing", async () => {
+    const quiet = entry({
+      region: "not-published",
+      retention: {
+        status: "not_published",
+        zero_data_retention: null,
+        zero_data_retention_available: null,
+        retention_days: null,
+        trains_on_customer_data: null,
+        note: null,
+        source_url: null,
+      },
+    });
+    vi.stubGlobal("fetch", routes([provider()], { bodies: [] }, undefined, [quiet]));
+    renderScreen(<AdminProviders />);
+
+    const table = await screen.findByRole("table", { name: /catalogue entries/i });
+    expect(within(table).getAllByText("Not published").length).toBe(2);
+    expect(within(table).queryByText("unknown")).not.toBeInTheDocument();
+  });
+
+  it("shows ZDR on request and the training stance beside a retention period", async () => {
+    const e = entry({
+      retention: {
+        status: "published",
+        zero_data_retention: false,
+        zero_data_retention_available: true,
+        retention_days: 30,
+        trains_on_customer_data: false,
+        note: null,
+        source_url: null,
+      },
+    });
+    vi.stubGlobal("fetch", routes([provider()], { bodies: [] }, undefined, [e]));
+    renderScreen(<AdminProviders />);
+
+    const table = await screen.findByRole("table", { name: /catalogue entries/i });
+    expect(
+      within(table).getByText("retains data · 30 days · ZDR available · not used for training"),
+    ).toBeInTheDocument();
+  });
+
   it("says unknown, not no, for a retention the catalogue does not state", async () => {
     const unknown = entry({
       region: null,
       retention: {
+        status: null,
+        zero_data_retention_available: null,
         zero_data_retention: null,
         retention_days: null,
         trains_on_customer_data: null,

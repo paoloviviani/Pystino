@@ -67,13 +67,19 @@ providers:
     plugin: mistral                  # a provider plugin (see /api/admin/provider-plugins)
     base_url: https://api.mistral.ai/v1   # optional; the plugin's default if omitted
     prefix: ""                       # optional model-name prefix
-    region: eu                       # lower-case tag: eu, us, eu-west, ...
+    region: eu                       # lower-case tag: eu, us, eu-west, global, various, not-published
+    region_note: Hosted in the EU by default; a US endpoint is optional.
     retention:
-      zero_data_retention: false     # true / false; leave out if unknown
+      status: published              # published | various (a router) | not_published
+      zero_data_retention: false     # ZDR in force by default; leave out if unknown
+      zero_data_retention_available: true   # ZDR can be had (request, contract, setting)
       retention_days: 30
       trains_on_customer_data: false
       note: Per our DPA of 2026-03-01.
-      source_url: https://example.org/dpa
+    sources:                         # where the facts were read, and when
+      - url: https://example.org/dpa
+        retrieved: 2026-10-23
+        covers: retention
     prices:                          # dated hints, per model id as the provider names it
       mistral-large-latest:
         - effective_from: 2026-01-01
@@ -88,7 +94,11 @@ providers:
 | `name` | Required once merged (built-in or override must set it). |
 | `plugin` | Required once merged; must be an installed plugin. |
 | `base_url` | `http(s)` with a host, no credentials in the URL. Omit to use the plugin's own default, where it has one. |
-| `region` | A free-form lower-case tag. Routing rules compare tags, so be consistent. |
+| `region` | A free-form lower-case tag. Routing rules compare tags, so be consistent. Three tags say how much is known rather than where: `global` (anywhere, no commitment), `various` (a router: the routed upstream decides) and `not-published` (the provider does not say). `various` and `not-published` reach routing as *unknown*, never as a place. |
+| `region_note` | Plain words: is the region selectable, is there an EU option, what is not covered. |
+| `retention.status` | `published`, `various` (a router) or `not_published`. Required of every built-in entry, so none ships blank. |
+| `retention.zero_data_retention_available` | ZDR can be obtained. Unlike `zero_data_retention`, which is whether it is in force by default. |
+| `sources` | A list of `url` (http or https), `retrieved` (the day it was read) and optional `covers`. An override replaces the whole list. The Providers page links them. |
 | `retention.*` | Absent means **unknown**, which is not the same as "no". |
 | `prices` | `effective_from` is a date. Give `input_per_mtok` and `output_per_mtok`, or `per_image` / `per_page`; `cache_read_per_mtok` and `cache_write_per_mtok` are optional. |
 
@@ -179,3 +189,14 @@ OpenAI, Anthropic, Mistral, Nebius, Tensorix, Cortecs and OpenRouter ship
 built in. They state a region only where the provider commits to one (Mistral
 and Cortecs: `eu`) and no retention claims at all: those are for you to record
 from your own contract, in an override.
+
+## Built-in facts: what they claim
+
+The built-in entries record only what each provider states on its own pages
+(documentation, privacy policy, DPA, trust centre), with the URL and the day it
+was read under `sources`. Where a provider does not say, the value is left
+empty or marked `not-published` / `not_published`; nothing is inferred. Routers
+(Cortecs, OpenRouter) say `various` for both location and retention, because
+the answer is the routed upstream's, and keep the router's own policy in the
+notes. Facts change: re-read the sources before relying on one for compliance,
+and correct a value with an override file until a release carries the fix.
