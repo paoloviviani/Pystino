@@ -2734,6 +2734,8 @@
   "admin_providers.badge.region": "[ŕéǧíóń {region}]",
   "admin_providers.badge.zero_retention": "[źéŕó ďáťá ŕéťéńťíóń]",
   "admin_providers.badge.catalogue_missing": "[ćáťáľóǧúé éńťŕý ḿíśśíńǧ]",
+  "admin_providers.badge.endpoint_differs": "[ćáťáľóǧúé éńďþóíńť ďíƒƒéŕś]",
+  "admin_providers.action.use_catalogue_endpoint": "[Úśé ćáťáľóǧúé éńďþóíńť]",
   "admin_providers.field.catalogue": "[Ćáťáľóǧúé éńťŕý]",
   "admin_providers.field.catalogue_none": "[Ńóńé (śéť úþ ƀý ȟáńď)]",
   "admin_providers.field.catalogue_hint_new": "[Ƒíľľś íń ťȟé ťýþé, éńďþóíńť áńď þŕéƒíẋ ƀéľóŵ; ýóú ćáń śťíľľ ćȟáńǧé ťȟéḿ. Ŕéǧíóń áńď ŕéťéńťíóń áŕé ŕéáď ƒŕóḿ ťȟé ćáťáľóǧúé.]",

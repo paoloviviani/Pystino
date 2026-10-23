@@ -5,7 +5,7 @@ providers:
   - id: nebius
     name: Nebius AI Studio
     plugin: nebius
-    base_url: https://api.studio.nebius.com/v1
+    base_url: https://api.tokenfactory.nebius.com/v1
     region: global
     region_note: >-
       Public endpoints show region Global: processing location is decided
@@ -24,6 +24,9 @@ providers:
         (it may slow inference). Content is not used to train any model in
         either mode.
     sources:
+      - url: https://docs.tokenfactory.nebius.com/api-reference/introduction
+        retrieved: 2026-10-23
+        covers: endpoint
       - url: https://docs.tokenfactory.nebius.com/legal/legal-quick-guide
         retrieved: 2026-10-23
         covers: location, retention, ZDR, training

@@ -111,6 +111,16 @@ class TestBuiltInFacts:
                     or r.zero_data_retention_available is not None
                 ), f"{entry.id}: status published but no fact"
 
+    def test_nebius_and_mistral_use_the_current_endpoints(self) -> None:
+        catalogue = load_catalogue(override_dir=None)
+        assert catalogue.entries["nebius"].base_url == "https://api.tokenfactory.nebius.com/v1"
+        assert catalogue.entries["mistral"].base_url == "https://api.eu.mistral.ai/v1"
+        assert catalogue.entries["mistral"].region == "eu"
+        assert "1.1x" in (catalogue.entries["mistral"].region_note or "")
+        assert not any(
+            "studio.nebius.com" in (e.base_url or "") for e in catalogue.entries.values()
+        )
+
     def test_routers_say_various_for_both(self) -> None:
         catalogue = load_catalogue(override_dir=None)
         for entry_id in ROUTERS:

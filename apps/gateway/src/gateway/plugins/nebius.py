@@ -18,4 +18,4 @@ class NebiusPlugin(GenericOpenAIPlugin):
     name = "nebius"
     label = "Nebius AI Studio"
     description = "Nebius AI Studio, OpenAI-compatible. Billed from the configured prices."
-    default_base_url: str | None = "https://api.studio.nebius.com/v1"
+    default_base_url: str | None = "https://api.tokenfactory.nebius.com/v1"

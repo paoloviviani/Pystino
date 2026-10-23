@@ -65,7 +65,7 @@ providers:
     name: Mistral AI                 # display name
     description: Hosted in the EU.   # optional
     plugin: mistral                  # a provider plugin (see /api/admin/provider-plugins)
-    base_url: https://api.mistral.ai/v1   # optional; the plugin's default if omitted
+    base_url: https://api.eu.mistral.ai/v1   # optional; the plugin's default if omitted
     prefix: ""                       # optional model-name prefix
     region: eu                       # lower-case tag: eu, us, eu-west, global, various, not-published
     region_note: Hosted in the EU by default; a US endpoint is optional.
@@ -200,3 +200,15 @@ empty or marked `not-published` / `not_published`; nothing is inferred. Routers
 the answer is the routed upstream's, and keep the router's own policy in the
 notes. Facts change: re-read the sources before relying on one for compliance,
 and correct a value with an override file until a release carries the fix.
+
+## When a built-in endpoint changes
+
+A provider row **keeps the endpoint it was created with**: the catalogue
+pre-fills `base_url` at creation and nothing is copied afterwards, so an
+upgrade that moves a built-in entry (Nebius to the Token Factory host, Mistral
+to the EU endpoint) does **not** rewrite existing rows. The Providers page marks
+a linked row whose endpoint differs from its entry's with "catalogue endpoint
+differs" and a **Use catalogue endpoint** button; or edit the provider and set
+the endpoint by hand. Region and retention, which are read through the link,
+follow the new entry at once, so check that the row's endpoint matches what the
+entry now claims.
