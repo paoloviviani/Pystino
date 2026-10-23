@@ -211,6 +211,7 @@ from gateway.schemas import (
     CatalogueOriginResponse,
     CataloguePriceHintResponse,
     CatalogueRetentionResponse,
+    CatalogueSourceResponse,
     CatalogueTagsResponse,
     ChatSharedResource,
     DeletePreviewResponse,
@@ -609,8 +610,15 @@ def _catalogue_entry_response(entry: CatalogueEntry) -> CatalogueEntryResponse:
         base_url=entry.effective_base_url,
         prefix=entry.prefix,
         region=entry.region,
+        region_note=entry.region_note,
+        sources=[
+            CatalogueSourceResponse(url=x.url, retrieved=x.retrieved, covers=x.covers)
+            for x in entry.sources
+        ],
         retention=CatalogueRetentionResponse(
+            status=entry.retention.status,
             zero_data_retention=entry.retention.zero_data_retention,
+            zero_data_retention_available=entry.retention.zero_data_retention_available,
             retention_days=entry.retention.retention_days,
             trains_on_customer_data=entry.retention.trains_on_customer_data,
             note=entry.retention.note,

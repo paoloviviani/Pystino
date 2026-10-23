@@ -1,5 +1,35 @@
+# Built-in facts, read from the provider's own pages on 2026-10-23 (see sources). Only what
+# the provider states is recorded; where it does not say, the value is left null
+# or marked not published, never guessed. Re-verify before relying on it.
 providers:
   - id: openrouter
     name: OpenRouter
     plugin: openrouter
     base_url: https://openrouter.ai/api/v1
+    region: various
+    region_note: >-
+      A router: location depends on the upstream provider. On the Business and
+      Enterprise plans, requests sent to eu.openrouter.ai or us.openrouter.ai
+      are processed within that region and do not leave it (for the models that
+      support regional routing).
+    retention:
+      status: various
+      zero_data_retention_available: true
+      note: >-
+        Retention and training depend on the upstream provider; OpenRouter does
+        not route by provider retention unless you set it. Account setting or
+        provider.zdr=true routes only to zero-retention endpoints; a training
+        opt-out avoids providers that train. OpenRouter's own policy: prompts
+        are not retained unless you opt in to prompt logging, and it does not
+        use inputs or outputs for training; no retention period for metadata
+        is published.
+    sources:
+      - url: https://openrouter.ai/docs/guides/features/zdr
+        retrieved: 2026-10-23
+        covers: ZDR, own retention
+      - url: https://openrouter.ai/docs/guides/privacy/logging
+        retrieved: 2026-10-23
+        covers: location, training, provider retention
+      - url: https://openrouter.ai/privacy
+        retrieved: 2026-10-23
+        covers: training, own retention

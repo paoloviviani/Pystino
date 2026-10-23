@@ -83,6 +83,129 @@ class TestShippedCatalogue:
         assert entry.effective_base_url == "https://api.cortecs.ai/v1"
 
 
+#: Router entries: their location and retention are the routed upstream's.
+ROUTERS = {"cortecs", "openrouter"}
+
+
+class TestBuiltInFacts:
+    """No built-in provider ships with a blank location or retention."""
+
+    def test_every_built_in_says_where_it_runs_and_what_it_keeps(self) -> None:
+        for entry in load_catalogue(override_dir=None).ordered():
+            assert entry.region, f"{entry.id}: region is blank (use not-published if unknown)"
+            assert entry.region_note, f"{entry.id}: region_note is blank"
+            assert entry.retention.status, f"{entry.id}: retention.status is blank"
+            assert entry.retention.note, f"{entry.id}: retention.note is blank"
+            assert entry.sources, f"{entry.id}: no sources"
+            for src in entry.sources:
+                assert src.url.startswith("https://"), f"{entry.id}: {src.url}"
+                assert src.retrieved <= date.today(), f"{entry.id}: {src.url} read in the future"
+
+    def test_a_published_retention_states_at_least_one_fact(self) -> None:
+        for entry in load_catalogue(override_dir=None).ordered():
+            r = entry.retention
+            if r.status == "published":
+                assert (
+                    r.retention_days is not None
+                    or r.zero_data_retention is not None
+                    or r.zero_data_retention_available is not None
+                ), f"{entry.id}: status published but no fact"
+
+    def test_routers_say_various_for_both(self) -> None:
+        catalogue = load_catalogue(override_dir=None)
+        for entry_id in ROUTERS:
+            entry = catalogue.entries[entry_id]
+            assert entry.region == "various", entry_id
+            assert entry.retention.status == "various", entry_id
+            assert entry.retention.retention_days is None, entry_id
+            facts = entry.facts()
+            # Various is not a place: a residency rule must see unknown.
+            assert (facts.region, facts.zero_data_retention) == (None, None), entry_id
+
+    def test_only_routers_say_various(self) -> None:
+        for entry in load_catalogue(override_dir=None).ordered():
+            if entry.id not in ROUTERS:
+                assert entry.region != "various", entry.id
+                assert entry.retention.status != "various", entry.id
+
+
+class TestFactsSchema:
+    def test_status_sources_and_notes_are_read(self, tmp_path: Path) -> None:
+        directory = tmp_path / "b"
+        write(
+            directory,
+            "a.yaml",
+            """
+            providers:
+              - id: acme
+                name: Acme
+                plugin: generic
+                region: not-published
+                region_note: Says nothing.
+                retention:
+                  status: not_published
+                  zero_data_retention_available: false
+                sources:
+                  - url: https://acme.example/privacy
+                    retrieved: 2026-10-01
+                    covers: retention
+            """,
+        )
+        entry = load_catalogue(builtin_dir=directory).entries["acme"]
+        assert entry.region_note == "Says nothing."
+        assert entry.retention.status == "not_published"
+        assert entry.retention.zero_data_retention_available is False
+        assert [(x.url, x.retrieved, x.covers) for x in entry.sources] == [
+            ("https://acme.example/privacy", date(2026, 10, 1), "retention")
+        ]
+        # Not published is unknown to routing, never a place.
+        assert entry.facts().region is None
+
+    def test_an_unknown_status_is_refused(self, builtin: Path, overrides: Path) -> None:
+        write(
+            overrides, "s.yaml", "providers:\n  - id: acme\n    retention:\n      status: maybe\n"
+        )
+        with pytest.raises(CatalogueError, match=r"retention\.status"):
+            load_catalogue(builtin_dir=builtin, override_dir=overrides)
+
+    def test_a_source_needs_a_date_and_an_http_url(self, builtin: Path, overrides: Path) -> None:
+        write(
+            overrides,
+            "s.yaml",
+            "providers:\n  - id: acme\n    sources:\n      - url: ftp://x.example/a\n"
+            "        retrieved: 2026-10-01\n",
+        )
+        with pytest.raises(CatalogueError, match=r"sources\[0\]\.url"):
+            load_catalogue(builtin_dir=builtin, override_dir=overrides)
+        write(
+            overrides,
+            "s.yaml",
+            "providers:\n  - id: acme\n    sources:\n      - url: https://x.example/a\n",
+        )
+        with pytest.raises(CatalogueError, match="retrieved"):
+            load_catalogue(builtin_dir=builtin, override_dir=overrides)
+
+    def test_sources_are_replaced_as_a_whole_by_an_override(self, tmp_path: Path) -> None:
+        builtin = tmp_path / "b"
+        write(
+            builtin,
+            "a.yaml",
+            "providers:\n  - id: acme\n    name: A\n    plugin: generic\n    sources:\n"
+            "      - url: https://a.example/1\n        retrieved: 2026-10-01\n"
+            "      - url: https://a.example/2\n        retrieved: 2026-10-01\n",
+        )
+        over = tmp_path / "o"
+        write(
+            over,
+            "o.yaml",
+            "providers:\n  - id: acme\n    sources:\n      - url: https://a.example/3\n"
+            "        retrieved: 2026-10-02\n",
+        )
+        entry = load_catalogue(builtin_dir=builtin, override_dir=over).entries["acme"]
+        assert [x.url for x in entry.sources] == ["https://a.example/3"]
+        assert entry.origins["sources"].layer == OVERRIDE
+
+
 class TestValidFiles:
     def test_a_full_entry_is_read_with_typed_values(self, builtin: Path) -> None:
         entry = load_catalogue(builtin_dir=builtin).entries["acme"]

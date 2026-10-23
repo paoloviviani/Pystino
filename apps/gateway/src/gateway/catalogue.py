@@ -26,7 +26,8 @@ gets committed to a repository.
 
 **Merge semantics.** Files in a directory are read in name order and a later
 file overrides an earlier one. Within an entry, every scalar is overridden
-individually, ``retention`` is merged per sub-field, and ``prices`` per model
+individually, ``retention`` is merged per sub-field, ``sources`` is replaced as
+a whole, and ``prices`` per model
 and ``effective_from`` date. An explicit ``null`` clears a value; omitting the
 key leaves the lower layer's value alone. The merged entry is validated again as
 a whole (a name and a plugin are required), and the origin of every field
@@ -94,17 +95,44 @@ class _Strict(BaseModel):
 
 Money = Annotated[Decimal, Field(strict=False, ge=0, max_digits=20, decimal_places=8)]
 Region = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,31}$")]
+
+#: Region tags that say *how much is known*, not *where*. ``various`` is a
+#: router (the answer is the routed upstream's); ``not-published`` is a
+#: provider that does not say. Both reach routing as *unknown* (``None``), so a
+#: residency rule never mistakes either for a place; ``global`` is a real
+#: answer ("anywhere") and is passed through, where it matches no specific tag.
+REGION_VARIOUS: Final = "various"
+REGION_NOT_PUBLISHED: Final = "not-published"
+_NOT_A_PLACE: Final = (REGION_VARIOUS, REGION_NOT_PUBLISHED)
+
+#: What the retention fields amount to. ``published``: the provider states a
+#: policy (a field may still be ``null`` where it states nothing). ``various``:
+#: a router, retention depends on the upstream. ``not_published``: it does not
+#: say. Required of every built-in entry, so none ships blank.
+RetentionStatus = Literal["published", "various", "not_published"]
 ProviderId = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")]
 
 
 class RetentionPatch(_Strict):
     """What the provider keeps of a request, as one layer states it."""
 
+    status: RetentionStatus | None = None
+    #: ZDR is in force by default for API traffic (true), or is not (false).
     zero_data_retention: bool | None = None
+    #: ZDR can be obtained (by request, by contract, by a setting).
+    zero_data_retention_available: bool | None = None
     retention_days: Annotated[int, Field(ge=0, le=36500)] | None = None
     trains_on_customer_data: bool | None = None
-    note: Annotated[str, Field(max_length=500)] | None = None
+    note: Annotated[str, Field(max_length=700)] | None = None
     source_url: Annotated[str, Field(max_length=500)] | None = None
+
+
+class SourcePatch(_Strict):
+    """A primary source for a fact, with the day it was read."""
+
+    url: Annotated[str, Field(min_length=8, max_length=500)]
+    retrieved: date
+    covers: Annotated[str, Field(max_length=100)] | None = None
 
 
 class PricePatch(_Strict):
@@ -135,7 +163,11 @@ class EntryPatch(_Strict):
     #: A lower-case tag for where requests are processed: ``eu``, ``us``,
     #: ``eu-west``. Free-form on purpose; a residency rule compares tags.
     region: Region | None = None
+    #: Plain words on the region: selectable? an EU option? what is not covered?
+    region_note: Annotated[str, Field(max_length=700)] | None = None
     retention: RetentionPatch | None = None
+    #: Where the facts above were read (replaced as a whole by an override).
+    sources: list[SourcePatch] | None = None
     #: ``{model id as the provider names it: [dated hints]}``.
     prices: dict[str, list[PricePatch]] | None = None
 
@@ -149,11 +181,20 @@ class _FileDoc(_Strict):
 
 @dataclass(frozen=True, slots=True)
 class Retention:
+    status: RetentionStatus | None = None
     zero_data_retention: bool | None = None
+    zero_data_retention_available: bool | None = None
     retention_days: int | None = None
     trains_on_customer_data: bool | None = None
     note: str | None = None
     source_url: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Source:
+    url: str
+    retrieved: date
+    covers: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,7 +243,9 @@ class CatalogueEntry:
     description: str | None = None
     prefix: str = ""
     region: str | None = None
+    region_note: str | None = None
     retention: Retention = field(default_factory=Retention)
+    sources: tuple[Source, ...] = ()
     prices: tuple[PriceHint, ...] = ()
     #: Field path (``name``, ``retention.note``, ``prices.<model>@<date>``) to
     #: where its current value came from.
@@ -221,7 +264,7 @@ class CatalogueEntry:
     def facts(self) -> CatalogueFacts:
         return CatalogueFacts(
             catalogue_id=self.id,
-            region=self.region,
+            region=None if self.region in _NOT_A_PLACE else self.region,
             zero_data_retention=self.retention.zero_data_retention,
             retention_days=self.retention.retention_days,
             trains_on_customer_data=self.retention.trains_on_customer_data,
@@ -327,6 +370,14 @@ def _read_dir(
                 )
             seen.add(patch.id)
             _check_url(patch.base_url, f"{label}: providers[{index}].base_url", errors)
+            for n, src in enumerate(patch.sources or []):
+                _check_url(src.url, f"{label}: providers[{index}].sources[{n}].url", errors)
+            if patch.retention is not None:
+                _check_url(
+                    patch.retention.source_url,
+                    f"{label}: providers[{index}].retention.source_url",
+                    errors,
+                )
             patches.append((path.name, patch))
     if errors:
         raise CatalogueError("\n".join(errors))
@@ -345,13 +396,14 @@ def _check_url(url: str | None, where: str, errors: list[str]) -> None:
 
 # -- merging -------------------------------------------------------------------
 
-_SCALARS = ("name", "description", "plugin", "base_url", "prefix", "region")
+_SCALARS = ("name", "description", "plugin", "base_url", "prefix", "region", "region_note")
 
 
 @dataclass(slots=True)
 class _Draft:
     scalars: dict[str, Any] = field(default_factory=dict)
     retention: dict[str, Any] = field(default_factory=dict)
+    sources: tuple[Source, ...] = ()
     prices: dict[tuple[str, date], dict[str, Any]] = field(default_factory=dict)
     origins: dict[str, Origin] = field(default_factory=dict)
     #: file names that touched this entry, first definition first.
@@ -372,6 +424,9 @@ def _merge(patches: Iterable[tuple[Origin, EntryPatch]]) -> dict[str, _Draft]:
             for name in patch.retention.model_fields_set:
                 draft.retention[name] = getattr(patch.retention, name)
                 draft.origins[f"retention.{name}"] = origin
+        if patch.sources is not None:
+            draft.sources = tuple(Source(x.url, x.retrieved, x.covers) for x in patch.sources)
+            draft.origins["sources"] = origin
         for model, hints in (patch.prices or {}).items():
             for hint in hints:
                 key = (model, hint.effective_from)
@@ -428,7 +483,9 @@ def _finish(entry_id: str, draft: _Draft, errors: list[str]) -> CatalogueEntry |
         description=draft.scalars.get("description"),
         prefix=draft.scalars.get("prefix") or "",
         region=draft.scalars.get("region"),
+        region_note=draft.scalars.get("region_note"),
         retention=Retention(**draft.retention),
+        sources=draft.sources,
         prices=tuple(hints),
         origins=dict(draft.origins),
     )

@@ -125,7 +125,9 @@ export function AdminProviders() {
                 Unknown stays unmarked: absence is not a "no". */}
             {provider.catalogue?.region && (
               <Badge tone="neutral">
-                {m["admin_providers.badge.region"]({ region: provider.catalogue.region })}
+                {m["admin_providers.badge.region"]({
+                  region: regionLabel(provider.catalogue.region),
+                })}
               </Badge>
             )}
             {provider.catalogue?.retention.zero_data_retention === true && (
@@ -368,8 +370,10 @@ function CatalogueCard() {
       header: m["admin_providers.catalogue.column.region"](),
       render: (entry) => (
         <>
-          <div>{entry.region ?? m["admin_providers.catalogue.unknown"]()}</div>
-          <Origin entry={entry} fields={["region"]} />
+          <div>{regionLabel(entry.region)}</div>
+          {/* i18n: server text — the catalogue file's own note. */}
+          {entry.region_note && <div className={`${MUTED} text-xs`}>{entry.region_note}</div>}
+          <Origin entry={entry} fields={["region", "region_note"]} />
         </>
       ),
     },
@@ -379,10 +383,16 @@ function CatalogueCard() {
       render: (entry) => (
         <>
           <div>{retentionText(entry)}</div>
+          {/* i18n: server text — the catalogue file's own note. */}
+          {entry.retention.note && (
+            <div className={`${MUTED} text-xs`}>{entry.retention.note}</div>
+          )}
           <Origin
             entry={entry}
             fields={[
+              "retention.status",
               "retention.zero_data_retention",
+              "retention.zero_data_retention_available",
               "retention.retention_days",
               "retention.trains_on_customer_data",
               "retention.note",
@@ -390,6 +400,12 @@ function CatalogueCard() {
           />
         </>
       ),
+    },
+    {
+      key: "sources",
+      hideBelow: "lg",
+      header: m["admin_providers.catalogue.column.sources"](),
+      render: (entry) => <Sources entry={entry} />,
     },
     {
       key: "prices",
@@ -416,17 +432,69 @@ function CatalogueCard() {
   );
 }
 
+/**
+ * A region tag as words. ``various`` (a router) and ``not-published`` are
+ * statements about what is known, not places; every other tag is shown as the
+ * file wrote it, so an operator's own tags read back unchanged.
+ */
+function regionLabel(region: string | null): string {
+  if (region === null) return m["admin_providers.catalogue.unknown"]();
+  if (region === "various") return m["admin_providers.catalogue.various"]();
+  if (region === "not-published") return m["admin_providers.catalogue.not_published"]();
+  if (region === "global") return m["admin_providers.catalogue.global"]();
+  return region;
+}
+
 /** What the entry says it keeps, in one line; unknown is said as unknown. */
 function retentionText(entry: CatalogueEntry): string {
   const r = entry.retention;
+  if (r.status === "various") return m["admin_providers.catalogue.various"]();
+  if (r.status === "not_published") return m["admin_providers.catalogue.not_published"]();
   const parts: string[] = [];
   if (r.zero_data_retention === true) parts.push(m["admin_providers.catalogue.zdr_yes"]());
   if (r.zero_data_retention === false) parts.push(m["admin_providers.catalogue.zdr_no"]());
   if (r.retention_days !== null) {
     parts.push(m["admin_providers.catalogue.days"]({ count: r.retention_days }));
   }
+  if (r.zero_data_retention !== true && r.zero_data_retention_available === true) {
+    parts.push(m["admin_providers.catalogue.zdr_available"]());
+  }
+  if (r.trains_on_customer_data === false) parts.push(m["admin_providers.catalogue.no_training"]());
   if (r.trains_on_customer_data === true) parts.push(m["admin_providers.catalogue.trains"]());
   return parts.length > 0 ? parts.join(" · ") : m["admin_providers.catalogue.unknown"]();
+}
+
+/** The primary sources behind an entry's facts, each with the day it was read. */
+function Sources({ entry }: { entry: CatalogueEntry }) {
+  if (entry.sources.length === 0) return <div className={MUTED}>-</div>;
+  return (
+    <ul className="space-y-1 text-xs">
+      {entry.sources.map((source) => (
+        <li key={source.url}>
+          <a
+            href={source.url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="underline"
+            title={m["admin_providers.catalogue.source_title"]({
+              covers: source.covers ?? "",
+              date: source.retrieved,
+            })}
+          >
+            {sourceHost(source.url)}
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function sourceHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 }
 
 /**

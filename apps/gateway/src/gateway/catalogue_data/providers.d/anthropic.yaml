@@ -1,4 +1,38 @@
+# Built-in facts, read from the provider's own pages on 2026-10-23 (see sources). Only what
+# the provider states is recorded; where it does not say, the value is left null
+# or marked not published, never guessed. Re-verify before relying on it.
 providers:
   - id: anthropic
     name: Anthropic
     plugin: anthropic
+    region: global
+    region_note: >-
+      Default inference_geo is "global": inference may run in any available
+      geography. "us" pins inference to US infrastructure (priced 1.1x; Claude
+      4.6 and later; Claude API and Claude Platform on AWS only). Workspace
+      geo (data at rest) is US only. No EU-only option is published.
+    retention:
+      status: published
+      zero_data_retention: false
+      zero_data_retention_available: true
+      retention_days: 30
+      trains_on_customer_data: false
+      note: >-
+        Inputs and outputs are deleted from the backend within 30 days; up to
+        2 years if flagged by trust and safety. ZDR is by agreement: contact
+        Anthropic sales, enabled per organization. Some models require 30-day
+        retention and are not available under ZDR. Commercial inputs and
+        outputs are not used for training by default.
+    sources:
+      - url: https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data
+        retrieved: 2026-10-23
+        covers: retention, abuse monitoring
+      - url: https://platform.claude.com/docs/en/manage-claude/api-and-data-retention
+        retrieved: 2026-10-23
+        covers: zero data retention
+      - url: https://platform.claude.com/docs/en/build-with-claude/data-residency
+        retrieved: 2026-10-23
+        covers: location
+      - url: https://privacy.claude.com/en/articles/7996868-is-my-data-used-for-model-training
+        retrieved: 2026-10-23
+        covers: training

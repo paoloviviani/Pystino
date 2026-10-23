@@ -2760,6 +2760,13 @@
     }
   ],
   "admin_providers.catalogue.trains": "trains on customer data",
+  "admin_providers.catalogue.various": "Various",
+  "admin_providers.catalogue.not_published": "Not published",
+  "admin_providers.catalogue.global": "Global",
+  "admin_providers.catalogue.zdr_available": "ZDR available",
+  "admin_providers.catalogue.no_training": "not used for training",
+  "admin_providers.catalogue.column.sources": "Sources",
+  "admin_providers.catalogue.source_title": "{covers}, read {date}",
   "admin_providers.catalogue.origin_builtin": "built-in",
   "admin_providers.catalogue.origin_override": "override",
   "admin_reports.breakdown.provider": "By provider",
