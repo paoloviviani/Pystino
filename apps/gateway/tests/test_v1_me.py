@@ -87,7 +87,11 @@ class TestIdentity:
             # ADR 0096: the default setting is "everyone", so the seeded
             # person holds both capabilities even though no group carries a
             # flag — the upgrade-change-nothing guarantee.
-            "capabilities": {"code_agents": True, "api_keys": True},
+            "capabilities": {
+                "code_agents": True,
+                "api_keys": True,
+                "local_connectors": True,
+            },
         }
 
     async def test_sessions_valid_after_and_merged_at_are_read_from_the_row(

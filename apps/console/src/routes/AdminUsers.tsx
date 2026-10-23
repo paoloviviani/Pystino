@@ -12,6 +12,7 @@ import {
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
+import { useChatEnabled } from "../lib/queries";
 import {
   useCreateBundledSignIn,
   useCreateBundledUser,
@@ -120,6 +121,7 @@ function takenName(error: unknown, login: string): string | null {
 
 
 export function AdminUsers() {
+  const chatEnabled = useChatEnabled();
   // Searched and paged on the server. It used to filter in the browser over
   // whatever the endpoint had returned, which reads the same until the
   // organisation outgrows one response — at which point the box quietly
@@ -298,7 +300,10 @@ export function AdminUsers() {
           )}
           {/* ADR 0096: neither capability — a chat-only person. Null means
               the listing did not answer, which is never the badge. */}
-          {user.code_agents_allowed === false && user.api_keys_allowed === false && (
+          {chatEnabled &&
+            user.code_agents_allowed === false &&
+            user.api_keys_allowed === false &&
+            user.local_connectors_allowed !== true && (
             <Badge tone="neutral">{m["admin_users.badge.chat_only"]()}</Badge>
           )}
         </div>

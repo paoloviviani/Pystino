@@ -24,7 +24,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from gateway.config import AccessSettings, OIDCSettings
@@ -98,6 +98,7 @@ class OIDCPolicy:
     #: `on` or `off`. The per-group booleans decide who holds a capability.
     code_agents_mode: str = "on"
     api_keys_mode: str = "on"
+    local_connectors_mode: str = "on"
     #: IdP group name -> local group name. A claimed name resolves to a local
     #: group only through this table: an unmapped name resolves to nothing,
     #: even when a local group carries the same name.
@@ -176,6 +177,7 @@ def environment_policy(settings: OIDCSettings, access: AccessSettings | None = N
         group_mappings={},
         code_agents_mode=access.code_agents if access is not None else "everyone",
         api_keys_mode=access.api_keys if access is not None else "everyone",
+        local_connectors_mode=access.local_connectors if access is not None else "on",
     )
 
 
@@ -284,6 +286,17 @@ def effective_policy(
     elif normalized is not None:
         api_keys_mode = normalized
         sources["api_keys_mode"] = "console"
+    local_connectors_mode = base.local_connectors_mode
+    normalized = _normalize_capability_mode(row.local_connectors_mode)
+    if row.local_connectors_mode is not None and normalized is None:
+        logger.warning(
+            "ignoring oidc_config row %s: local_connectors_mode %r",
+            row.id,
+            row.local_connectors_mode,
+        )
+    elif normalized is not None:
+        local_connectors_mode = normalized
+        sources["local_connectors_mode"] = "console"
 
     return OIDCPolicy(
         join_mode=mode,
@@ -293,6 +306,7 @@ def effective_policy(
         group_mappings=mappings,
         code_agents_mode=code_agents_mode,
         api_keys_mode=api_keys_mode,
+        local_connectors_mode=local_connectors_mode,
         sources=sources,
         config_id=row.id,
         config_at=row.created_at,
@@ -340,6 +354,7 @@ def pending_policy_row(
         ),
         code_agents_mode=stored.code_agents_mode if stored is not None else None,
         api_keys_mode=stored.api_keys_mode if stored is not None else None,
+        local_connectors_mode=stored.local_connectors_mode if stored is not None else None,
     )
     if "auto_provision" in fields:
         row.auto_provision = fields["auto_provision"]  # type: ignore[assignment]
@@ -359,6 +374,8 @@ def pending_policy_row(
         row.code_agents_mode = fields["code_agents_mode"]  # type: ignore[assignment]
     if "api_keys_mode" in fields:
         row.api_keys_mode = fields["api_keys_mode"]  # type: ignore[assignment]
+    if "local_connectors_mode" in fields:
+        row.local_connectors_mode = fields["local_connectors_mode"]  # type: ignore[assignment]
     if fields.get("join_mode") is not None:
         row.auto_provision = None
         row.unknown_user_policy = None
@@ -448,16 +465,22 @@ class OIDCPolicyResolver:
                 any_off = (
                     await flag_session.execute(
                         select(Group.id)
-                        .where(Group.is_active.is_(True), Group.code_agents_allowed.is_(False))
+                        .where(
+                            Group.is_active.is_(True),
+                            or_(
+                                Group.code_agents_allowed.is_(False),
+                                Group.local_connectors_allowed.is_(False),
+                            ),
+                        )
                         .limit(1)
                     )
                 ).scalar_one_or_none() is not None
         mismatch = (machine, accepted, any_off) if any_off else None
         if mismatch is not None and mismatch != self._warned_machine_mismatch:
             logger.error(
-                "An active group has code_agents off while "
+                "An active group has code_agents or local_connectors off while "
                 "GATEWAY_OIDC__MACHINE_CLIENT_ID=%r names a client not in "
-                "GATEWAY_OIDC__ACCEPTED_CLIENTS (%s): the code_agents "
+                "GATEWAY_OIDC__ACCEPTED_CLIENTS (%s): the "
                 "restriction cannot reach machine tokens, and a chat-only "
                 "person's machine keeps working. Name the machine client the "
                 "deployment accepts.",

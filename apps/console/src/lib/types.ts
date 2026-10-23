@@ -460,6 +460,7 @@ export type OidcPolicy = Narrow<
     group_fallback: "refuse" | "approval";
     code_agents_mode: CapabilityMode;
     api_keys_mode: CapabilityMode;
+    local_connectors_mode: CapabilityMode;
     source: "console" | "environment";
   }
 >;

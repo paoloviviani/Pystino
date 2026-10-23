@@ -1086,6 +1086,17 @@
             "title": "Linked Identities",
             "type": "array"
           },
+          "local_connectors_allowed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Connectors Allowed"
+          },
           "membership_source": {
             "anyOf": [
               {
@@ -1132,6 +1143,7 @@
           "groups",
           "code_agents_allowed",
           "api_keys_allowed",
+          "local_connectors_allowed",
           "membership_source",
           "default_billing_group",
           "active_key_count",
@@ -1281,13 +1293,32 @@
             "type": "boolean"
           },
           "code_agents": {
-            "title": "Code Agents",
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Agents"
+          },
+          "local_connectors": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Connectors"
           }
         },
         "required": [
           "code_agents",
-          "api_keys"
+          "api_keys",
+          "local_connectors"
         ],
         "title": "CapabilityFlags",
         "type": "object"
@@ -2279,6 +2310,11 @@
             "title": "Is Active",
             "type": "boolean"
           },
+          "local_connectors_allowed": {
+            "default": false,
+            "title": "Local Connectors Allowed",
+            "type": "boolean"
+          },
           "member_count": {
             "title": "Member Count",
             "type": "integer"
@@ -2318,6 +2354,7 @@
           "is_active",
           "code_agents_allowed",
           "api_keys_allowed",
+          "local_connectors_allowed",
           "member_count",
           "models",
           "aliases",
@@ -2332,7 +2369,8 @@
           "capability": {
             "enum": [
               "code_agents",
-              "api_keys"
+              "api_keys",
+              "local_connectors"
             ],
             "title": "Capability",
             "type": "string"
@@ -2480,6 +2518,17 @@
               }
             ],
             "title": "Code Agents Allowed"
+          },
+          "local_connectors_allowed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Connectors Allowed"
           }
         },
         "title": "GroupUpdateRequest",
@@ -3477,6 +3526,11 @@
               }
             ]
           },
+          "chat_enabled": {
+            "default": false,
+            "title": "Chat Enabled",
+            "type": "boolean"
+          },
           "default_billing_group": {
             "anyOf": [
               {
@@ -3544,7 +3598,8 @@
           "default_billing_group",
           "issuer",
           "has_password",
-          "capabilities"
+          "capabilities",
+          "chat_enabled"
         ],
         "title": "MeResponse",
         "type": "object"
@@ -4837,6 +4892,11 @@
             "title": "Join Mode",
             "type": "string"
           },
+          "local_connectors_mode": {
+            "default": "on",
+            "title": "Local Connectors Mode",
+            "type": "string"
+          },
           "propagation_seconds": {
             "default": 0.0,
             "title": "Propagation Seconds",
@@ -4879,6 +4939,7 @@
           "group_mappings",
           "code_agents_mode",
           "api_keys_mode",
+          "local_connectors_mode",
           "source",
           "sources",
           "configured",
@@ -4993,6 +5054,23 @@
               }
             ],
             "title": "Join Mode"
+          },
+          "local_connectors_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "on",
+                  "off",
+                  "everyone",
+                  "groups"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Connectors Mode"
           },
           "reason": {
             "default": "",
@@ -8758,6 +8836,17 @@
             "title": "Linked Identities",
             "type": "array"
           },
+          "local_connectors_allowed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Connectors Allowed"
+          },
           "membership_source": {
             "anyOf": [
               {
@@ -8800,6 +8889,7 @@
           "groups",
           "code_agents_allowed",
           "api_keys_allowed",
+          "local_connectors_allowed",
           "membership_source",
           "default_billing_group",
           "active_key_count",
@@ -11848,7 +11938,8 @@
                 {
                   "enum": [
                     "code_agents",
-                    "api_keys"
+                    "api_keys",
+                    "local_connectors"
                   ],
                   "type": "string"
                 },
@@ -11905,6 +11996,22 @@
                 }
               ],
               "title": "Api Keys Mode"
+            }
+          },
+          {
+            "in": "query",
+            "name": "local_connectors_mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Local Connectors Mode"
             }
           }
         ],

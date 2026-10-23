@@ -28,10 +28,11 @@ function seen(overrides: Partial<SeenGroup> = {}): SeenGroup {
   };
 }
 
-function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual") {
+function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual", chatEnabled = true) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (url.endsWith("/api/me")) return jsonResponse({ chat_enabled: chatEnabled });
     if (url.includes("/api/admin/groups/seen/") && method === "POST") {
       if (url.endsWith("/import"))
         return jsonResponse({
@@ -80,6 +81,7 @@ function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual") {
       const payload = JSON.parse(String(init?.body ?? "{}")) as {
         code_agents_allowed?: boolean;
         api_keys_allowed?: boolean;
+        local_connectors_allowed?: boolean;
       };
       return jsonResponse({
         id: "g2",
@@ -89,6 +91,7 @@ function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual") {
         is_active: true,
         code_agents_allowed: payload.code_agents_allowed ?? false,
         api_keys_allowed: payload.api_keys_allowed ?? true,
+        local_connectors_allowed: payload.local_connectors_allowed ?? true,
         member_count: 1,
         models: [],
             aliases: [],
@@ -98,7 +101,7 @@ function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual") {
     if (url.includes("/api/admin/groups"))
       return jsonResponse({
         items: [
-          { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, code_agents_allowed: false, api_keys_allowed: true, member_count: 1, models: [],
+          { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, code_agents_allowed: false, api_keys_allowed: true, local_connectors_allowed: true, member_count: 1, models: [],
             aliases: [], search_backend: null },
         ],
         total: 1,
@@ -307,6 +310,39 @@ describe("AdminGroups — capability flags (ADR 0096)", () => {
     // The listing seeds the mock: agents off, keys on.
     expect(agents).not.toBeChecked();
     expect(keys).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "engineering: local connectors" })).toBeChecked();
+  });
+
+  it("flips local connectors through the group PATCH route", async () => {
+    const fetchMock = routes([]);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(
+      await screen.findByRole("checkbox", { name: "engineering: local connectors" }),
+    );
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          String(url).includes("/api/admin/groups/g2") && (init as RequestInit).method === "PATCH",
+      );
+      expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+        local_connectors_allowed: false,
+      });
+    });
+  });
+
+  it("hides the agents and local connectors toggles when the gateway has no chat", async () => {
+    vi.stubGlobal("fetch", routes([], "manual", false));
+    renderScreen();
+    const keys = await screen.findByRole("checkbox", { name: "engineering: API keys" });
+    expect(keys).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "engineering: coding agents" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "engineering: local connectors" }),
+    ).not.toBeInTheDocument();
   });
 
   it("flips a flag through the group PATCH route", async () => {

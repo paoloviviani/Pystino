@@ -174,7 +174,8 @@ unchanged, which Caddy does by default.
   credential.
 - A person without the `code_agents` capability ([Chat-only
   people](identity.md#chat-only-people)) is refused on every route — `/v1/me`
-  included — with 403 `agents_not_allowed`, and the chat closes the link
+  included — with 403 `agents_not_allowed` unless they hold `local_connectors`
+  (a connectors-only machine, admitted to `/v1/me` alone: no model access), and the chat closes the link
   without revoking the device. Chat tokens are unaffected: a chat-only
   person's chat keeps working; only their machine is refused.
 

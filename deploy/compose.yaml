@@ -118,6 +118,7 @@ services:
       # the migrate service and the gateway fold the same answers.
       GATEWAY_ACCESS__CODE_AGENTS: ${ACCESS_CODE_AGENTS:-everyone}
       GATEWAY_ACCESS__API_KEYS: ${ACCESS_API_KEYS:-everyone}
+      GATEWAY_ACCESS__LOCAL_CONNECTORS: ${ACCESS_LOCAL_CONNECTORS:-on}
       GATEWAY_OIDC__MACHINE_CLIENT_ID: ${OIDC_MACHINE_CLIENT_ID:-opencode-enrollment}
     depends_on:
       postgres:
@@ -195,6 +196,7 @@ services:
       # the migrate service and the gateway fold the same answers.
       GATEWAY_ACCESS__CODE_AGENTS: ${ACCESS_CODE_AGENTS:-everyone}
       GATEWAY_ACCESS__API_KEYS: ${ACCESS_API_KEYS:-everyone}
+      GATEWAY_ACCESS__LOCAL_CONNECTORS: ${ACCESS_LOCAL_CONNECTORS:-on}
       GATEWAY_OIDC__MACHINE_CLIENT_ID: ${OIDC_MACHINE_CLIENT_ID:-opencode-enrollment}
       # The group everyone joins once, so a new account can bill; `-`, not
       # `:-`, so an explicitly empty value turns it off.

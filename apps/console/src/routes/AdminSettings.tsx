@@ -20,6 +20,7 @@ import {
   Spinner,
 } from "@llmp/ui";
 import { useState } from "react";
+import { useChatEnabled } from "../lib/queries";
 import { Link } from "react-router";
 import {
   useBulkGroupCapabilities,
@@ -491,8 +492,10 @@ function RemoveProviderDialog({
 
 // -- capability defaults (ADR 0096, amended) -----------------------------------
 
+type CapabilityKey = "code_agents" | "api_keys" | "local_connectors";
+
 const CAPABILITIES: {
-  key: "code_agents" | "api_keys";
+  key: CapabilityKey;
   title: () => string;
   titleLower: () => string;
   hint: () => string;
@@ -508,6 +511,12 @@ const CAPABILITIES: {
     title: m["admin_settings.capability.api_keys"],
     titleLower: m["admin_settings.capability.api_keys_lower"],
     hint: m["admin_settings.capability.api_keys_hint"],
+  },
+  {
+    key: "local_connectors",
+    title: m["admin_settings.capability.local_connectors"],
+    titleLower: m["admin_settings.capability.local_connectors_lower"],
+    hint: m["admin_settings.capability.local_connectors_hint"],
   },
 ];
 
@@ -527,9 +536,15 @@ function CapabilityDefaultsCard() {
   const preview = usePolicyPreview();
   const bulk = useBulkGroupCapabilities();
   const toast = useOptionalToast();
+  // Code agents and local connectors are chat concepts: without a chat only
+  // the API-key capability exists.
+  const chatEnabled = useChatEnabled();
+  const capabilities = CAPABILITIES.filter(
+    (entry) => chatEnabled || entry.key === "api_keys",
+  );
 
   const [pending, setPending] = useState<{
-    capability: "code_agents" | "api_keys";
+    capability: CapabilityKey;
     value: boolean;
   } | null>(null);
 
@@ -556,11 +571,9 @@ function CapabilityDefaultsCard() {
       description={m["admin_settings.capabilities.description"]()}
     >
       <div className={FORM}>
-        {CAPABILITIES.map((entry) => {
+        {capabilities.map((entry) => {
           const mode: CapabilityMode =
-            entry.key === "code_agents"
-              ? (policy.data?.code_agents_mode ?? "on")
-              : (policy.data?.api_keys_mode ?? "on");
+            policy.data?.[`${entry.key}_mode` as const] ?? "on";
           return (
             <div
               key={entry.key}
@@ -715,7 +728,7 @@ function CapabilityDefaultsCard() {
   );
 
   function applyBulk(
-    capability: "code_agents" | "api_keys",
+    capability: CapabilityKey,
     value: boolean,
     count: number,
   ) {
@@ -747,10 +760,10 @@ function CapabilityBulkConfirm({
   onSave,
   onClose,
 }: {
-  pending: { capability: "code_agents" | "api_keys"; value: boolean } | null;
+  pending: { capability: CapabilityKey; value: boolean } | null;
   preview: { would_gain: number | null; would_lose: number | null } | undefined;
   saving: boolean;
-  onSave: (capability: "code_agents" | "api_keys", value: boolean) => void;
+  onSave: (capability: CapabilityKey, value: boolean) => void;
   onClose: () => void;
 }) {
   const entry =

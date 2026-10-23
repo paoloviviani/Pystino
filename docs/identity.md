@@ -40,6 +40,8 @@ multi-factor authentication, that is also the IdP's job**: the bundled Authelia 
 | `OIDC_REQUIRED_GROUPS` | `GATEWAY_OIDC__REQUIRED_GROUPS` | `join_mode: group` only: the local group names that confer access, comma-separated |
 | `OIDC_GROUP_FALLBACK` | `GATEWAY_OIDC__GROUP_FALLBACK` | `join_mode: group` only: what a stranger without a required group gets, `refuse` (default) or `approval` |
 | `ACCESS_CODE_AGENTS` | `GATEWAY_ACCESS__CODE_AGENTS` | the default `code_agents` flag new groups are created with: `on` (default) or `off`; the console's Settings page decides once it saves, and the old `everyone`/`groups` spellings still parse for one release ([Chat-only people](#chat-only-people)) |
+| (none; set by the Cerea kit) | `GATEWAY_CHAT__ENABLED` | `true` on a full chat + Pystino deployment, default `false`. The `code_agents` and `local_connectors` capabilities below exist only when it is `true`: otherwise they are hidden in the console, refused by the admin API, not reported on `/v1/me`, and the machine-client gate does not apply ([deployment](deployment.md)) |
+| `ACCESS_LOCAL_CONNECTORS` | `GATEWAY_ACCESS__LOCAL_CONNECTORS` | the default `local_connectors` flag new groups are created with: `on` (default) or `off`; the console's Settings page decides once it saves ([Chat-only people](#chat-only-people)) |
 | `ACCESS_API_KEYS` | `GATEWAY_ACCESS__API_KEYS` | the default `api_keys` flag new groups are created with: `on` (default) or `off`; the console's Settings page decides once it saves, and the old `everyone`/`groups` spellings still parse for one release ([Chat-only people](#chat-only-people)) |
 | `OIDC_DEFAULT_GROUP` | `GATEWAY_OIDC__DEFAULT_GROUP` | the group everyone joins once, `users` by default; empty turns it off ([the default group](#the-default-group)) |
 | `OIDC_LOGOUT_URL` | `GATEWAY_OIDC__LOGOUT_URL` | for an issuer without `end_session_endpoint`: where the browser is sent to end the IdP session; `{redirect}` is where to land |
@@ -212,6 +214,15 @@ that gates access any more.
 |---|---|
 | `code_agents` | the `/code` panel and the machine links that serve it (galopin's enrolment and the agent session; the plain-API-key opencode script is an **API-key** use, not this) |
 | `api_keys` | minting API keys, and using one already minted |
+| `local_connectors` | a connectors-only machine: galopin serving the person's own local MCP servers to the chat. It signs in with the same machine client as an agent machine but gets **no model access** |
+
+`local_connectors` is managed exactly like `code_agents`: a per-group flag, a
+new-group default (`ACCESS_LOCAL_CONNECTORS`, `on` by default), the same bulk
+levers on **Settings** and a checkbox on **Groups**. Migration 0071 switched it
+**on for every existing group**: the feature is new, "new groups default on" is
+the rule, and no behaviour in force is widened (a person gains only the right to
+run MCP servers on their own computer). Administrators who want it off turn it
+off per group or for all groups.
 
 **A person in no group holds neither capability.** That is the edge case the
 flag model allows; in practice the default group covers everyone —
@@ -258,7 +269,12 @@ Cross-cutting, the same as the join gate:
   `OIDC_MACHINE_CLIENT_ID`, `opencode-enrollment` by default) from a person
   without `code_agents` is refused on every `/v1` route — `/v1/me` included,
   whose body still carries `capabilities` so the client can tell why — with
-  **403 `agents_not_allowed`**; Cerea gates `/code` on that report and closes
+  **403 `agents_not_allowed`**, unless the person holds `local_connectors`:
+  then the machine client is admitted to **`/v1/me` only** (so Cerea can read
+  which of `code_agents` and `local_connectors` the person has and decide per
+  machine mode), and every other `/v1` route stays refused, so a
+  connectors-only machine never reaches a model. A person with neither is
+  refused as above; Cerea gates `/code` on that report and closes
   the link (`4404`) without revoking the device, and it reconnects by itself
   once a group grants the flag. (Chat tokens are unaffected: the chat keeps
   working for a chat-only person.) A key whose owner lost `api_keys` is
@@ -267,8 +283,8 @@ Cross-cutting, the same as the join gate:
   capability restores the same key, no re-mint needed. The install script
   explains that refusal instead of telling the person to mint a fresh key
   they are not allowed to.
-- **Switching `code_agents` off is refused while the machine client cannot
-  match it.** A machine token is refused before the gate runs, so a
+- **Switching `code_agents` (or `local_connectors`) off is refused while the
+  machine client cannot match it.** A machine token is refused before the gate runs, so a
   restriction the machine client never matches would fail silently open for
   machines while still applying to the panel. A per-group toggle to off, and
   the bulk turn-off alike, answer **400** naming the setting to fix when

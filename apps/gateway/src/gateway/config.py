@@ -88,8 +88,12 @@ class AccessSettings(BaseModel):
     code_agents: Literal["on", "off"] = "on"
     #: Minting and using ``gwk_`` API keys.
     api_keys: Literal["on", "off"] = "on"
+    #: Local MCP connectors: a connectors-only machine (galopin) that serves
+    #: the person's own MCP servers to the chat, signed in with the same
+    #: machine client as an agent machine but with no model access.
+    local_connectors: Literal["on", "off"] = "on"
 
-    @field_validator("code_agents", "api_keys", mode="before")
+    @field_validator("code_agents", "api_keys", "local_connectors", mode="before")
     @classmethod
     def _legacy_modes_still_parse(cls, value: object) -> object:
         # One release only: a deployment that set the 0.7.x vocabulary keeps
@@ -433,7 +437,7 @@ class SmtpSettings(BaseModel):
 
 
 class ChatSettings(BaseModel):
-    """The gateway's own call to the chat, for erasure only (ADR 0093 §9.3).
+    """The chat this gateway serves: whether there is one, and the erasure call (ADR 0093 §9.3).
 
     ``erasure_token`` is a service credential minted once by
     the deploy kit's ``./configure`` (Cerea's ``kit/``), used for nothing else, and never
@@ -444,6 +448,13 @@ class ChatSettings(BaseModel):
     refuses outright rather than queuing a call that can never land.
     """
 
+    #: True on a full chat + Pystino deployment (the Cerea kit sets it whenever
+    #: the chat profile is active). Code agents and local connectors are chat
+    #: concepts: when this is false (standalone Pystino) their group flags are
+    #: hidden in the console, refused by the admin API, left out of `/v1/me`,
+    #: and the machine-client gate does not apply. The columns exist either
+    #: way, so flipping this later needs no migration.
+    enabled: bool = False
     erasure_url: str = ""
     erasure_token: SecretStr = SecretStr("")
 

@@ -30,7 +30,8 @@ function me(overrides: Partial<Me> = {}): Me {
     default_billing_group: { id: "g1", name: "platform-admins", description: null },
     issuer: "local",
     has_password: true,
-    capabilities: { code_agents: true, api_keys: true },
+    capabilities: { code_agents: true, api_keys: true, local_connectors: true },
+    chat_enabled: true,
     ...overrides,
   };
 }
