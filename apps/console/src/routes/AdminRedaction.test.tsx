@@ -339,6 +339,38 @@ describe("AdminRedaction", () => {
     expect(captured.puts[0]!.body).toEqual({ engine: "http", reason: "" });
   });
 
+  it.each(["noop", "regex"])(
+    "dims the detection families and disables the switches when %s is in force",
+    async (name) => {
+      vi.stubGlobal("fetch", respondWith(status({ engine: name, enabled: name !== "noop" })));
+      renderScreen(<AdminRedaction />);
+
+      const patterns = await screen.findByRole("switch", { name: "Pattern matching" });
+      const ner = screen.getByRole("switch", { name: "Named-entity recognition" });
+      for (const sw of [patterns, ner]) {
+        expect(sw).toBeDisabled();
+        expect(sw).toHaveAttribute("aria-disabled", "true");
+        // Stored values stay shown.
+        expect(sw).toHaveAttribute("aria-checked", "true");
+      }
+      expect(
+        screen.getByText("Used only when Presidio is the engine in force. Enable it above."),
+      ).toBeInTheDocument();
+      expect(screen.getAllByText("(Presidio only)").length).toBeGreaterThan(0);
+    },
+  );
+
+  it("keeps the detection families live when Presidio is in force", async () => {
+    vi.stubGlobal("fetch", respondWith(status()));
+    renderScreen(<AdminRedaction />);
+
+    const patterns = await screen.findByRole("switch", { name: "Pattern matching" });
+    expect(patterns).toBeEnabled();
+    expect(patterns).not.toHaveAttribute("aria-disabled");
+    expect(screen.queryByText(/Used only when Presidio is the engine in force/)).toBeNull();
+    expect(screen.queryByText("(Presidio only)")).toBeNull();
+  });
+
   it("saves each detector family with a big switch, immediately", async () => {
     // The detector families are independent console decisions, not a rebuild:
     // flipping a switch writes the row at once, with no separate save step and

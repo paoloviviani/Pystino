@@ -2205,6 +2205,8 @@
   "admin_redaction.families.toast_failed": "[Ďéťéćťíóń ƒáḿíľíéś ŵéŕé ńóť ćȟáńǧéď]",
   "admin_redaction.families.card": "[Þŕéśíďíó ďéťéćťíóń ƒáḿíľíéś]",
   "admin_redaction.families.description": "[Ťȟéśé śŵíťćȟéś ćóńťŕóľ ťȟé ďéťéćťíóń śéŕǚíćé'ś ŕéćóǧńíźéŕ ƒáḿíľíéś, ńóť ćúśťóḿ ǧáťéŵáý þáťťéŕńś.]",
+  "admin_redaction.families.inactive_note": "[Úśéď óńľý ŵȟéń Þŕéśíďíó íś ťȟé éńǧíńé íń ƒóŕćé. Éńáƀľé íť áƀóǚé.]",
+  "admin_redaction.config.presidio_only": "[(Þŕéśíďíó óńľý)]",
   "admin_redaction.families.patterns": "[Þáťťéŕń ḿáťćȟíńǧ]",
   "admin_redaction.families.patterns_description": "[Śťŕúćťúŕéď íďéńťíƒíéŕś: ćáŕďś, áććóúńťś, éḿáíľś, þȟóńéś, ńáťíóńáľ ÍĎś.]",
   "admin_redaction.families.ner": "[Ńáḿéď-éńťíťý ŕéćóǧńíťíóń]",

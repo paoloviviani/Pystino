@@ -2205,6 +2205,8 @@
   "admin_redaction.families.toast_failed": "Detection families were not changed",
   "admin_redaction.families.card": "Presidio detection families",
   "admin_redaction.families.description": "These switches control the detection service's recognizer families, not custom gateway patterns.",
+  "admin_redaction.families.inactive_note": "Used only when Presidio is the engine in force. Enable it above.",
+  "admin_redaction.config.presidio_only": "(Presidio only)",
   "admin_redaction.families.patterns": "Pattern matching",
   "admin_redaction.families.patterns_description": "Structured identifiers: cards, accounts, emails, phones, national IDs.",
   "admin_redaction.families.ner": "Named-entity recognition",
