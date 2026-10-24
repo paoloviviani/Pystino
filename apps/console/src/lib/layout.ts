@@ -38,8 +38,12 @@ export const FORM_ROW =
 /** Buttons at the end of a row (a dialog footer, a table's action column). */
 export const ROW_ACTIONS = "flex items-center justify-end gap-2";
 
-/** Inline code, request ids, tokens: monospace at the size of the text around it. */
-export const CODE = "font-mono";
+/**
+ * Inline code, request ids, tokens: monospace at the size of the text around it. A long value
+ * (a redirect URI, an id) breaks anywhere rather than running off a phone screen; a value that
+ * fits is never broken.
+ */
+export const CODE = "font-mono [overflow-wrap:anywhere]";
 
 /** Muted prose inside a cell ("—" for not applicable). */
 export const MUTED = "text-ink-muted";
