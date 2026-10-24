@@ -126,6 +126,7 @@ function Detail({ status }: { status: RedactionStatus }) {
       <EngineList status={status} />
       {status.installed_engines.includes("http") && (
         <DetectorFamilies
+          inForce={status.engine === "http"}
           key={`${status.engine}-${status.presidio_pattern_matching ?? "default"}-${status.presidio_ner ?? "default"}`}
           status={status}
         />
@@ -238,7 +239,7 @@ function Detail({ status }: { status: RedactionStatus }) {
               </>
             )}
           </Row>
-          <Row label={m["admin_redaction.config.endpoint"]()}>
+          <Row label={m["admin_redaction.config.endpoint"]()} presidioOnly={status.engine !== "http"}>
             {status.endpoint ? (
               <code className={CODE}>{status.endpoint}</code>
             ) : (
@@ -252,16 +253,16 @@ function Detail({ status }: { status: RedactionStatus }) {
               <Badge tone="ok">{m["admin_redaction.config.fail_closed"]()}</Badge>
             )}
           </Row>
-          <Row label={m["admin_redaction.config.language"]()}>
+          <Row label={m["admin_redaction.config.language"]()} presidioOnly={status.engine !== "http"}>
             {status.language}
             {service?.models?.[status.language] && (
               <span className={MUTED}> · {service.models[status.language]}</span>
             )}
           </Row>
-          <Row label={m["admin_redaction.config.timeout"]()}>
+          <Row label={m["admin_redaction.config.timeout"]()} presidioOnly={status.engine !== "http"}>
             {m["admin_redaction.config.timeout_value"]({ seconds: status.timeout_seconds })}
           </Row>
-          <Row label={m["admin_redaction.config.cache"]()}>
+          <Row label={m["admin_redaction.config.cache"]()} presidioOnly={status.engine !== "http"}>
             {status.cache_size === 0
               ? m["admin_redaction.config.cache_disabled"]()
               : m["admin_redaction.config.cache_texts"]({ count: status.cache_size })}
@@ -772,7 +773,7 @@ function PreviewBox() {
  * removes its entity types from a new rule — and why a rule that still names
  * one carries a warning instead of failing.
  */
-function DetectorFamilies({ status }: { status: RedactionStatus }) {
+function DetectorFamilies({ status, inForce }: { status: RedactionStatus; inForce: boolean }) {
   const setEngine = useSetRedactionEngine();
   const toast = useOptionalToast();
   const service = status.service;
@@ -795,6 +796,7 @@ function DetectorFamilies({ status }: { status: RedactionStatus }) {
   );
 
   const toggle = (which: "patterns" | "ner", next: boolean) => {
+    if (!inForce) return;
     const prevPatterns = patterns;
     const prevNer = ner;
     const nextPatterns = which === "patterns" ? next : patterns;
@@ -832,6 +834,9 @@ function DetectorFamilies({ status }: { status: RedactionStatus }) {
       title={m["admin_redaction.families.card"]()}
       description={m["admin_redaction.families.description"]()}
     >
+      {/* Stored values stay shown so they apply once Presidio is enabled; the
+          section is dimmed because nothing here is in force until then. */}
+      {!inForce && <p className={MUTED}>{m["admin_redaction.families.inactive_note"]()}</p>}
       {setEngine.error ? (
         <Notice tone="danger" title={m["admin_redaction.families.toast_failed"]()}>
           {/* i18n: server text — the API's own error message. */}
@@ -841,12 +846,13 @@ function DetectorFamilies({ status }: { status: RedactionStatus }) {
         </Notice>
       ) : null}
 
-      <div className="flex flex-col gap-4">
+      <div className={`flex flex-col gap-4${inForce ? "" : " opacity-60"}`}>
         <FamilySwitch
           label={m["admin_redaction.families.patterns"]()}
           description={m["admin_redaction.families.patterns_description"]()}
           checked={patterns}
           pending={setEngine.isPending}
+          inactive={!inForce}
           onToggle={(next) => toggle("patterns", next)}
         />
         <FamilySwitch
@@ -854,6 +860,7 @@ function DetectorFamilies({ status }: { status: RedactionStatus }) {
           description={m["admin_redaction.families.ner_description"]()}
           checked={ner}
           pending={setEngine.isPending}
+          inactive={!inForce}
           onToggle={(next) => toggle("ner", next)}
         />
       </div>
@@ -875,12 +882,14 @@ function FamilySwitch({
   description,
   checked,
   pending,
+  inactive,
   onToggle,
 }: {
   label: string;
   description: string;
   checked: boolean;
   pending: boolean;
+  inactive: boolean;
   onToggle: (next: boolean) => void;
 }) {
   return (
@@ -898,9 +907,10 @@ function FamilySwitch({
           role="switch"
           aria-checked={checked}
           aria-label={label}
-          disabled={pending}
+          disabled={pending || inactive}
+          aria-disabled={inactive || undefined}
           onClick={() => onToggle(!checked)}
-          className="relative h-9 w-16 shrink-0 cursor-pointer rounded-full border border-line-strong bg-sunken transition-colors data-[checked=true]:border-accent data-[checked=true]:bg-accent disabled:cursor-wait disabled:opacity-60 focus-visible:outline-none focus-visible:shadow-focus"
+          className="relative h-9 w-16 shrink-0 cursor-pointer rounded-full border border-line-strong bg-sunken transition-colors data-[checked=true]:border-accent data-[checked=true]:bg-accent disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:shadow-focus"
           data-checked={checked}
         >
           <span
@@ -1098,11 +1108,23 @@ function ConfirmOff({
   );
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function Row({
+  label,
+  children,
+  presidioOnly = false,
+}: {
+  label: string;
+  children: React.ReactNode;
+  /** A Presidio-engine setting while another engine is in force: dimmed and tagged. */
+  presidioOnly?: boolean;
+}) {
   return (
     <>
-      <dt className={DETAIL_LABEL}>{label}</dt>
-      <dd className={DETAIL_VALUE}>{children}</dd>
+      <dt className={presidioOnly ? `${DETAIL_LABEL} opacity-60` : DETAIL_LABEL}>
+        {label}
+        {presidioOnly && <span className={MUTED}> {m["admin_redaction.config.presidio_only"]()}</span>}
+      </dt>
+      <dd className={presidioOnly ? `${DETAIL_VALUE} opacity-60` : DETAIL_VALUE}>{children}</dd>
     </>
   );
 }
