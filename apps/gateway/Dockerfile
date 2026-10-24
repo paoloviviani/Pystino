@@ -54,7 +54,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # The Node stage runs unconditionally because BuildKit skips stages nothing
 # copies from: with INCLUDE_CONSOLE=false the `console` stage below is never
 # referenced, so it is never built, and the headless image pays nothing for it.
-FROM node:24.19.0-slim AS console-build
+FROM node:24.22.1-slim AS console-build
 
 WORKDIR /build
 RUN corepack enable
