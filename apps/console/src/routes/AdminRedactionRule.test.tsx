@@ -90,7 +90,42 @@ const STATUS = {
 interface Captured {
   posts: unknown[];
   patches: unknown[];
+  /** Bodies sent to the preview endpoint, which is a POST but not a write. */
+  previews?: Record<string, unknown>[];
 }
+
+/** What the gateway answers a preview with, unless a test says otherwise. */
+const PREVIEW = {
+  blocked: false,
+  blocked_reason: null,
+  engine: "http",
+  entity_count: 1,
+  note: null,
+  policy: { default_mode: "off", entities: {}, patterns: [], allow_list: [] },
+  redacted_text: "write to <PERSON> at mario@example.com",
+  rule_id: null,
+  scope: null,
+  spans: [
+    {
+      entity_type: "PERSON",
+      start: 9,
+      end: 20,
+      score: 0.9,
+      mode: "redact",
+      threshold: 0.5,
+      allow_listed: false,
+    },
+    {
+      entity_type: "EMAIL_ADDRESS",
+      start: 24,
+      end: 41,
+      score: 1,
+      mode: "off",
+      threshold: 0.5,
+      allow_listed: false,
+    },
+  ],
+};
 
 function routes(
   rules: RedactionRule[],
@@ -98,10 +133,19 @@ function routes(
   onWrite?: () => Response,
   statusPayload = STATUS,
   groups: { id: string; name: string }[] = GROUPS,
+  previewResponse: () => Response = () =>
+    new Response(JSON.stringify(PREVIEW), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
 ) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (method === "POST" && url.includes("/redaction/preview")) {
+      (captured.previews ??= []).push(JSON.parse(String(init?.body)));
+      return previewResponse();
+    }
     if (method === "POST" || method === "PATCH") {
       const body = JSON.parse(String(init?.body));
       (method === "POST" ? captured.posts : captured.patches).push(body);
@@ -126,7 +170,9 @@ function routes(
 }
 
 function renderPage(path: string, state?: unknown) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[state === undefined ? path : { pathname: path, state }]}>
@@ -150,18 +196,13 @@ describe("AdminRedactionRule", () => {
     renderPage("/admin/redaction/rules/new");
 
     const scope = await screen.findByLabelText("Scope");
-    const options = within(scope).getAllByRole("option").map((o) => o.textContent);
-    expect(options).toEqual([
-      "Every request",
-      "Provider",
-      "Model",
-      "Group",
-      "User",
-      "API key",
-    ]);
+    const options = within(scope)
+      .getAllByRole("option")
+      .map((o) => o.textContent);
+    expect(options).toEqual(["Every request", "Provider", "Model", "Group", "User", "API key"]);
   });
 
-  it("lists only the detector's effective entity types", async () => {
+  it("offers only the detector's effective entity types", async () => {
     // The API narrows `service.entities` to the enabled recognizer families.
     // A rule editor that merged in a hardcoded NER list would offer PERSON
     // after NER was switched off, and the resulting rule could never fire.
@@ -174,8 +215,55 @@ describe("AdminRedactionRule", () => {
     );
     renderPage("/admin/redaction/rules/new");
 
-    await screen.findByRole("group", { name: /EMAIL_ADDRESS/ });
+    const add = await screen.findByLabelText("Add a kind of data");
+    await waitFor(() =>
+      expect(
+        within(add)
+          .getAllByRole("option")
+          .map((o) => o.textContent),
+      ).toEqual(["Choose a kind…", "Email address (EMAIL_ADDRESS)"]),
+    );
+  });
+
+  it("shows a type's row only once the rule says something about it", async () => {
+    // A new rule says nothing, so it lists nothing: every type follows the
+    // default, and a table of thirty rows that all read "Off" is noise.
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", routes([]));
+    renderPage("/admin/redaction/rules/new");
+
+    expect(
+      await screen.findByText(/Every kind of data follows the default above/),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: /PERSON/ })).not.toBeInTheDocument();
+
+    const add = await screen.findByLabelText("Add a kind of data");
+    await waitFor(() => expect(within(add).getAllByRole("option")).toHaveLength(4));
+    await user.selectOptions(add, "PERSON");
+
+    // Stricter than the default, so the row is a decision and not a repeat.
+    const person = screen.getByRole("group", { name: /PERSON/ });
+    expect(within(person).getByRole("radio", { name: "Redact" })).toBeChecked();
+    // Listed rows leave the "add" list.
+    expect(within(add).queryByRole("option", { name: /Person name/ })).not.toBeInTheDocument();
+    // Plain words first, the id kept for experts.
+    expect(screen.getByText("Person name")).toBeInTheDocument();
+  });
+
+  it("resets a type to the default by removing its row", async () => {
+    const user = userEvent.setup({ delay: null });
+    const captured: Captured = { posts: [], patches: [] };
+    vi.stubGlobal("fetch", routes([rule()], captured));
+    renderPage("/admin/redaction/rules/r1");
+
+    await screen.findByRole("group", { name: /PERSON/ });
+    await user.click(screen.getByRole("button", { name: "Reset Person name to the default" }));
+    expect(screen.queryByRole("group", { name: /PERSON/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save rule" }));
+    await waitFor(() => expect(captured.patches).toHaveLength(1));
+    const body = captured.patches[0] as { policy: RedactionPolicy };
+    expect(body.policy.entities).toEqual({});
   });
 
   it("creates a catch-all rule with no subject", async () => {
@@ -190,11 +278,14 @@ describe("AdminRedactionRule", () => {
     expect(screen.getByText("Applies to every request.")).toBeInTheDocument();
 
     // One entity turned on, so the rule says something. Each type offers all
-    // five modes as radios, not a checkbox: "redact or not" has not been the
-    // question since ADR 0037.
+    // five modes as a segmented control, not a checkbox: "redact or not" has
+    // not been the question since ADR 0037.
     // Awaited: the entity list comes from the detector's own report, which is a
     // second request and may not have landed when the scope control has.
-    const person = await screen.findByRole("group", { name: /PERSON/ });
+    const add = await screen.findByLabelText("Add a kind of data");
+    await waitFor(() => expect(within(add).getAllByRole("option")).toHaveLength(4));
+    await user.selectOptions(add, "PERSON");
+    const person = screen.getByRole("group", { name: /PERSON/ });
     await user.click(within(person).getByRole("radio", { name: "Restore" }));
     await user.click(screen.getByRole("button", { name: "Create rule" }));
 
@@ -202,6 +293,9 @@ describe("AdminRedactionRule", () => {
     const body = captured.posts[0] as Record<string, unknown>;
     expect(body.scope).toBe("all");
     expect(body.scope_id).toBeNull();
+    expect((body.policy as RedactionPolicy).entities).toEqual({
+      PERSON: { mode: "anonymise_restore", threshold: null },
+    });
   });
 
   it("starts a new rule with no patterns", async () => {
@@ -232,9 +326,7 @@ describe("AdminRedactionRule", () => {
     await user.click(screen.getByRole("button", { name: "Add pattern from template" }));
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "Add OPENAI_KEY pattern" }));
-    expect(
-      within(dialog).getByRole("button", { name: "Add OPENAI_KEY pattern" }),
-    ).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Add OPENAI_KEY pattern" })).toBeDisabled();
     await user.click(within(dialog).getByRole("button", { name: "Done" }));
 
     await user.click(screen.getByRole("button", { name: "Create rule" }));
@@ -372,7 +464,9 @@ describe("AdminRedactionRule", () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { posts: [], patches: [] };
     vi.stubGlobal("fetch", routes([], captured));
-    renderPage("/admin/redaction/rules/new", { cloneFrom: rule({ reason: "handles patient data" }) });
+    renderPage("/admin/redaction/rules/new", {
+      cloneFrom: rule({ reason: "handles patient data" }),
+    });
 
     // Says what a clone is before anything is sent.
     expect(await screen.findByText(/Cloning “research group”/)).toBeInTheDocument();
@@ -424,7 +518,9 @@ describe("AdminRedactionRule", () => {
     await user.click(screen.getByRole("button", { name: "Save rule" }));
 
     await waitFor(() => expect(captured.patches).toHaveLength(1));
-    const body = captured.patches[0] as { policy: { entities: Record<string, unknown> } };
+    const body = captured.patches[0] as {
+      policy: { entities: Record<string, unknown> };
+    };
     expect(body.policy.entities).toHaveProperty("PERSON");
   });
 
@@ -434,11 +530,16 @@ describe("AdminRedactionRule", () => {
     const user = userEvent.setup({ delay: null });
     vi.stubGlobal(
       "fetch",
-      routes([rule()], { posts: [], patches: [] }, () =>
-        new Response(
-          JSON.stringify({ error: { message: "this pattern cannot be used: bad escape" } }),
-          { status: 400, headers: { "content-type": "application/json" } },
-        ),
+      routes(
+        [rule()],
+        { posts: [], patches: [] },
+        () =>
+          new Response(
+            JSON.stringify({
+              error: { message: "this pattern cannot be used: bad escape" },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          ),
       ),
     );
     renderPage("/admin/redaction/rules/r1");
@@ -449,6 +550,241 @@ describe("AdminRedactionRule", () => {
     await waitFor(() =>
       expect(screen.getByText(/this pattern cannot be used/)).toBeInTheDocument(),
     );
+  });
+
+  describe("the page", () => {
+    it("puts the rule's name first, as the title, with its subject beneath", async () => {
+      vi.stubGlobal("fetch", routes([rule()]));
+      renderPage("/admin/redaction/rules/r1");
+
+      expect(
+        await screen.findByRole("heading", {
+          level: 1,
+          name: "research group",
+        }),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Applies to group “research”.")).toBeInTheDocument();
+      // The first card is the name, the second the subject.
+      const cards = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+      expect(cards.slice(0, 3)).toEqual(["Name and reason", "Who it applies to", "What to hide"]);
+    });
+
+    it("follows the name as it is typed, and falls back for a new rule", async () => {
+      const user = userEvent.setup({ delay: null });
+      vi.stubGlobal("fetch", routes([]));
+      renderPage("/admin/redaction/rules/new");
+
+      expect(
+        await screen.findByRole("heading", { level: 1, name: "New rule" }),
+      ).toBeInTheDocument();
+      await user.type(screen.getByLabelText("Rule name"), "Clinical");
+      expect(screen.getByRole("heading", { level: 1, name: "Clinical" })).toBeInTheDocument();
+    });
+
+    it("calls a clone with no name a clone", async () => {
+      vi.stubGlobal("fetch", routes([]));
+      renderPage("/admin/redaction/rules/new", {
+        cloneFrom: rule({ name: "" }),
+      });
+
+      await waitFor(() => expect(screen.getByLabelText("Rule name")).toHaveValue(" (copy)"));
+      expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("(copy)");
+    });
+
+    it("keeps the save bar stuck to the bottom, with Back, a hint and Save", async () => {
+      const user = userEvent.setup({ delay: null });
+      vi.stubGlobal("fetch", routes([rule()]));
+      renderPage("/admin/redaction/rules/r1");
+
+      const bar = await screen.findByRole("region", { name: "Save the rule" });
+      expect(bar).toHaveClass("sticky", "bottom-0");
+      expect(within(bar).getByRole("button", { name: "Back" })).toBeInTheDocument();
+      expect(within(bar).getByRole("button", { name: "Save rule" })).toBeInTheDocument();
+      expect(within(bar).getByText("No changes")).toBeInTheDocument();
+
+      await user.type(screen.getByLabelText("Reason (optional)"), "x");
+      expect(within(bar).getByText("Unsaved changes")).toBeInTheDocument();
+      // Put back, it is the saved rule again.
+      await user.clear(screen.getByLabelText("Reason (optional)"));
+      expect(within(bar).getByText("No changes")).toBeInTheDocument();
+    });
+
+    it("says why Create is disabled on a clone with no subject", async () => {
+      vi.stubGlobal("fetch", routes([]));
+      renderPage("/admin/redaction/rules/new", { cloneFrom: rule() });
+
+      const bar = await screen.findByRole("region", { name: "Save the rule" });
+      expect(within(bar).getByText("Choose who it applies to before saving")).toBeInTheDocument();
+      expect(within(bar).getByRole("button", { name: "Create rule" })).toBeDisabled();
+    });
+
+    it("goes back from the save bar", async () => {
+      const user = userEvent.setup({ delay: null });
+      vi.stubGlobal("fetch", routes([rule()]));
+      renderPage("/admin/redaction/rules/r1");
+
+      await user.click(await screen.findByRole("button", { name: "Back" }));
+      expect(await screen.findByText("redaction screen")).toBeInTheDocument();
+    });
+
+    it("summarises the form as it is edited", async () => {
+      const user = userEvent.setup({ delay: null });
+      vi.stubGlobal("fetch", routes([rule()]));
+      renderPage("/admin/redaction/rules/r1");
+
+      const summary = await screen.findByTestId("rule-summary");
+      await waitFor(() =>
+        expect(summary).toHaveTextContent("Anonymises person name and restores it in the answer."),
+      );
+
+      await user.click(
+        within(screen.getByRole("group", { name: /PERSON/ })).getByRole("radio", { name: "Block" }),
+      );
+      expect(summary).toHaveTextContent("Blocks person name.");
+    });
+  });
+
+  describe("the test box", () => {
+    it("tests the unsaved policy, not the stored rule", async () => {
+      const user = userEvent.setup({ delay: null });
+      const captured: Captured = { posts: [], patches: [], previews: [] };
+      vi.stubGlobal("fetch", routes([rule()], captured));
+      renderPage("/admin/redaction/rules/r1");
+
+      // An edit the stored rule does not have.
+      await user.click(
+        within(await screen.findByRole("group", { name: /PERSON/ })).getByRole("radio", {
+          name: "Block",
+        }),
+      );
+      await user.type(screen.getByLabelText("Sample text"), "write to Mario Rossi");
+
+      await waitFor(() => expect(captured.previews).toHaveLength(1), {
+        timeout: 3000,
+      });
+      // Debounced: one request for the whole sentence, not one per key.
+      const sent = captured.previews?.[0] as Record<string, unknown>;
+      expect(sent.text).toBe("write to Mario Rossi");
+      expect((sent.policy as RedactionPolicy).entities.PERSON?.mode).toBe("block");
+      // Tested as the rule's own subject, so the catch-all folds in as it would.
+      expect(sent.scope).toBe("group");
+      expect(sent.scope_id).toBe("g1");
+      // And nothing was saved by testing.
+      expect(captured.patches).toHaveLength(0);
+    });
+
+    it("shows what the provider receives, with the replaced spans picked out", async () => {
+      const user = userEvent.setup({ delay: null });
+      vi.stubGlobal("fetch", routes([rule()]));
+      renderPage("/admin/redaction/rules/r1");
+
+      await user.type(
+        await screen.findByLabelText("Sample text"),
+        "write to Mario Rossi at mario@example.com",
+      );
+
+      const output = await screen.findByTestId("rule-test-output", undefined, {
+        timeout: 3000,
+      });
+      expect(output).toHaveTextContent("write to <PERSON> at mario@example.com");
+      expect(within(output).getByText("<PERSON>").tagName).toBe("MARK");
+      expect(screen.getByText("1 thing replaced")).toBeInTheDocument();
+      // The e-mail was found and the rule leaves it: said, not hidden.
+      expect(screen.getByText("Found but left as written: Email address")).toBeInTheDocument();
+    });
+
+    it("sends the catch-all as a draft with no subject", async () => {
+      const user = userEvent.setup({ delay: null });
+      const captured: Captured = { posts: [], patches: [], previews: [] };
+      vi.stubGlobal("fetch", routes([], captured));
+      renderPage("/admin/redaction/rules/new");
+
+      await user.type(await screen.findByLabelText("Sample text"), "hello");
+      await waitFor(() => expect(captured.previews).toHaveLength(1), {
+        timeout: 3000,
+      });
+      expect(captured.previews?.[0]).toMatchObject({ scope: "all" });
+      expect(captured.previews?.[0]).not.toHaveProperty("scope_id");
+    });
+
+    it("says a block is a block", async () => {
+      const user = userEvent.setup({ delay: null });
+      vi.stubGlobal(
+        "fetch",
+        routes(
+          [rule()],
+          undefined,
+          undefined,
+          STATUS,
+          GROUPS,
+          () =>
+            new Response(
+              JSON.stringify({
+                ...PREVIEW,
+                blocked: true,
+                blocked_reason: "US_SSN",
+                redacted_text: null,
+                entity_count: 0,
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+        ),
+      );
+      renderPage("/admin/redaction/rules/r1");
+
+      await user.type(await screen.findByLabelText("Sample text"), "123-45-6789");
+      expect(
+        await screen.findByText(
+          "This text would be refused before it reached a provider.",
+          undefined,
+          { timeout: 3000 },
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByText("US_SSN")).toBeInTheDocument();
+    });
+
+    it("shows the gateway's refusal plainly", async () => {
+      const user = userEvent.setup({ delay: null });
+      vi.stubGlobal(
+        "fetch",
+        routes(
+          [rule()],
+          undefined,
+          undefined,
+          STATUS,
+          GROUPS,
+          () =>
+            new Response(
+              JSON.stringify({
+                error: { message: "the redaction service is not reachable" },
+              }),
+              {
+                status: 502,
+                headers: { "content-type": "application/json" },
+              },
+            ),
+        ),
+      );
+      renderPage("/admin/redaction/rules/r1");
+
+      await user.type(await screen.findByLabelText("Sample text"), "hello");
+      expect(
+        await screen.findByText(/the redaction service is not reachable/, undefined, {
+          timeout: 3000,
+        }),
+      ).toBeInTheDocument();
+      expect(screen.getByText("The test could not run")).toBeInTheDocument();
+    });
+
+    it("sends nothing while the box is empty", async () => {
+      const captured: Captured = { posts: [], patches: [], previews: [] };
+      vi.stubGlobal("fetch", routes([rule()], captured));
+      renderPage("/admin/redaction/rules/r1");
+
+      await screen.findByLabelText("Sample text");
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      expect(captured.previews).toHaveLength(0);
+    });
   });
 
   it("says so when the rule is gone", async () => {

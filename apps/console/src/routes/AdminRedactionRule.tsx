@@ -1,4 +1,4 @@
-import { Button, Card, Notice, Select, Spinner } from "@llmp/ui";
+import { Button, Card, Input, Notice, Select, Spinner } from "@llmp/ui";
 import { useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
 import {
@@ -10,6 +10,7 @@ import {
 import type { RedactionPolicy, RedactionRule, RedactionScope } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import { PolicyFields, seededPolicy } from "../components/PolicyFields";
+import { RulePanel } from "../components/RulePanel";
 import { Message } from "../components/Message";
 import { SubjectPicker, scopeNoun, scopeNounLower } from "../components/SubjectPicker";
 import { FORM, PAGE } from "../lib/layout";
@@ -18,21 +19,6 @@ import { useOptionalToast } from "../lib/toast";
 
 //: Widest first, matching the order rules are folded in and listed.
 const SCOPE_OPTIONS: RedactionScope[] = ["all", "provider", "model", "group", "user", "api_key"];
-
-
-/**
- * The name and reason fields are native inputs labelled with `aria-label`
- * rather than a visible label, so they sit outside `@llmp/ui`'s `Input` (which
- * is built around a visible label) — but they wear the same control chrome,
- * written out from the package's `controlClass`. `Admin.module.css` never
- * defined the `.input` they used to cite, so until this conversion they were
- * rendering with no styling at all; writing the chrome here turns that
- * accident into a decision.
- */
-const INPUT =
-  "w-full rounded-md border border-line bg-surface px-3 py-2 text-body text-ink max-[40rem]:text-[16px] " +
-  "placeholder:text-ink-faint transition-shadow hover:border-line-strong " +
-  "focus-visible:outline-none focus-visible:shadow-focus";
 
 /**
  * What a new rule starts as: off for every entity type, and the credential
@@ -45,6 +31,15 @@ const INPUT =
  * their absence would not have been.
  */
 const EMPTY_POLICY: RedactionPolicy = seededPolicy();
+
+/** A new rule's form before anyone has touched it, in the shape `dirty` compares. */
+const INITIAL = JSON.stringify({
+  name: "",
+  scope: "all",
+  scopeId: "",
+  policy: EMPTY_POLICY,
+  reason: "",
+});
 
 /**
  * One rule, on its own page (ADR 0039).
@@ -141,8 +136,7 @@ export function AdminRedactionRule() {
       // it is given, and revalidating a subject that has since been deleted
       // would turn an edit of anything else into a 404 through no fault of
       // the admin.
-      const subjectChanged =
-        existing.scope !== scope || (existing.scope_id ?? "") !== scopeId;
+      const subjectChanged = existing.scope !== scope || (existing.scope_id ?? "") !== scopeId;
       update.mutate(
         {
           id: existing.id,
@@ -189,33 +183,64 @@ export function AdminRedactionRule() {
         <Notice tone="danger" title={m["redaction_rule.missing.title"]()}>
           <Message
             message={m["redaction_rule.missing.body"]}
-            markup={{ link: (children) => <a href="/admin/redaction">{children}</a> }}
+            markup={{
+              link: (children) => <a href="/admin/redaction">{children}</a>,
+            }}
           />
         </Notice>
       </div>
     );
   }
 
+  // What the form held when it was last saved, or loaded. A rule that has been
+  // typed into and put back is not "unsaved", which a flag set on the first
+  // keystroke would say. A clone has no saved state at all, so it is always
+  // unsaved until it is created.
+  const current = JSON.stringify({ name, scope, scopeId, policy, reason });
+  const baseline = existing
+    ? JSON.stringify({
+        name: existing.name,
+        scope: existing.scope,
+        scopeId: existing.scope_id ?? "",
+        policy: existing.policy,
+        reason: existing.reason,
+      })
+    : cloneFrom
+      ? null
+      : INITIAL;
+  const dirty = baseline === null || current !== baseline;
+  // A scoped rule without a subject would match nothing, and a clone has none
+  // until one is chosen.
+  const needsSubject = scope === "" || (scope !== "all" && !scopeId);
+
+  const title = name.trim()
+    ? name.trim()
+    : existing
+      ? m["redaction_rule.title.unnamed"]()
+      : cloneFrom
+        ? m["redaction_rule.title.clone"]()
+        : m["redaction_rule.title.new"]();
+  // i18n: server text — `subject_label` is the API's name for the subject; the
+  // scope noun is the console's own when the API has none.
+  const subtitle = existing
+    ? existing.scope === "all"
+      ? m["redaction_rule.subtitle.every"]()
+      : existing.subject_label === null
+        ? m["redaction_rule.subtitle.subject_missing"]({
+            scope: scopeNounLower(existing.scope),
+          })
+        : m["redaction_rule.subtitle.subject"]({
+            scope: scopeNounLower(existing.scope),
+            subject: existing.subject_label,
+          })
+    : m["redaction_rule.subtitle"]();
+
   return (
     <div className={PAGE}>
-      <PageHeader
-        title={
-          existing
-            ? m["redaction_rule.title.rule"]({
-                // i18n: server text — `subject_label` is the API's name for the
-                // subject; the scope noun is the console's own when the API has
-                // none.
-                subject: existing.subject_label ?? scopeNoun(existing.scope),
-              })
-            : cloneFrom
-              ? m["redaction_rule.title.clone"]()
-              : m["redaction_rule.title.new"]()
-        }
-        subtitle={m["redaction_rule.subtitle"]()}
-        actions={
-          <Button onClick={() => navigate("/admin/redaction")}>{m["redaction_rule.back"]()}</Button>
-        }
-      />
+      {/* The rule's name is the title: a page called "Rule · research" said
+          which subject it was about and not which rule, and two rules for two
+          groups looked the same in a tab. */}
+      <PageHeader title={title} subtitle={subtitle} />
 
       {cloneFrom && !existing && (
         <Notice
@@ -235,76 +260,111 @@ export function AdminRedactionRule() {
         </Notice>
       ) : null}
 
-      <Card title={m["redaction_rule.subject_card"]()}>
-        {existing && existing.scope !== "all" && existing.subject_label === null && (
-          // The one state a rule cannot stay in: scope_id is not a foreign key,
-          // so a deleted subject leaves the rule matching nothing. Saying so is
-          // the point of the subject_label contract; offering the repair is
-          // what an editable subject is for.
-          <Notice tone="warn" title={m["redaction_rule.subject_missing.title"]()}>
-            {m["redaction_rule.subject_missing.body"]({
-              scope: scopeNounLower(existing.scope),
-            })}
-          </Notice>
-        )}
-        <Select
-          label={m["redaction_rule.scope.label"]()}
-          value={scope}
-          onChange={(event) => {
-            setScope(event.target.value as RedactionScope | "");
-            setScopeId("");
-          }}
-        >
-          {/* The clone's subject is deliberately unset — it cannot keep the
-              source's, and defaulting to the catch-all would make "Every
-              request" a choice nobody made. */}
-          {cloneFrom && !existing && <option value="">{m["redaction_rule.scope.choose"]()}</option>}
-          {SCOPE_OPTIONS.map((option) => (
-            <option key={option} value={option}>
-              {scopeNoun(option)}
-            </option>
-          ))}
-        </Select>
-        {scope !== "" && <SubjectPicker scope={scope} value={scopeId} onChange={setScopeId} />}
-      </Card>
+      {/* Two columns where there is room: the form, and beside it what the form
+          adds up to. Below 80rem the summary follows the form in one column. */}
+      <div className="grid items-start gap-5 min-[80rem]:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)]">
+        <div className="flex min-w-0 flex-col gap-5">
+          <Card
+            title={m["redaction_rule.name_card"]()}
+            description={m["redaction_rule.name_card_hint"]()}
+          >
+            <div className={FORM}>
+              <Input
+                label={m["redaction_rule.name.label"]()}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+              <Input
+                label={m["redaction_rule.reason.label"]()}
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+              />
+            </div>
+          </Card>
 
-      <PolicyFields
-        policy={policy}
-        onChange={setPolicy}
-        entityTypes={entityTypes}
-        scoreThreshold={status.data?.score_threshold ?? null}
-      />
+          <Card
+            title={m["redaction_rule.subject_card"]()}
+            description={m["redaction_rule.subject_card_hint"]()}
+          >
+            <div className={FORM}>
+              {existing && existing.scope !== "all" && existing.subject_label === null && (
+                // The one state a rule cannot stay in: scope_id is not a foreign
+                // key, so a deleted subject leaves the rule matching nothing.
+                // Saying so is the point of the subject_label contract; offering
+                // the repair is what an editable subject is for.
+                <Notice tone="warn" title={m["redaction_rule.subject_missing.title"]()}>
+                  {m["redaction_rule.subject_missing.body"]({
+                    scope: scopeNounLower(existing.scope),
+                  })}
+                </Notice>
+              )}
+              <Select
+                label={m["redaction_rule.scope.label"]()}
+                value={scope}
+                onChange={(event) => {
+                  setScope(event.target.value as RedactionScope | "");
+                  setScopeId("");
+                }}
+              >
+                {/* The clone's subject is deliberately unset — it cannot keep
+                    the source's, and defaulting to the catch-all would make
+                    "Every request" a choice nobody made. */}
+                {cloneFrom && !existing && (
+                  <option value="">{m["redaction_rule.scope.choose"]()}</option>
+                )}
+                {SCOPE_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {scopeNoun(option)}
+                  </option>
+                ))}
+              </Select>
+              {scope !== "" && (
+                <SubjectPicker scope={scope} value={scopeId} onChange={setScopeId} />
+              )}
+            </div>
+          </Card>
 
-      <Card title={m["redaction_rule.name_card"]()}>
-        <div className={FORM}>
-          <input
-            aria-label={m["redaction_rule.name.label"]()}
-            className={INPUT}
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder={m["redaction_rule.name.label"]()}
+          <PolicyFields
+            policy={policy}
+            onChange={setPolicy}
+            entityTypes={entityTypes}
+            scoreThreshold={status.data?.score_threshold ?? null}
           />
-          <input
-            aria-label={m["redaction_rule.reason.label"]()}
-            className={INPUT}
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            placeholder={m["redaction_rule.reason.label"]()}
-          />
-          <div>
-            <Button
-              variant="primary"
-              busy={saving}
-              // A scoped rule without a subject would match nothing, and a
-              // clone has none until one is chosen.
-              disabled={scope === "" || (scope !== "all" && !scopeId)}
-              onClick={submit}
-            >
-              {existing ? m["redaction_rule.submit.save"]() : m["redaction_rule.submit.create"]()}
-            </Button>
-          </div>
         </div>
-      </Card>
+
+        {/* Sticky below the page header and the console's own bar (3.75rem), so
+            the summary stays in view while a long list of types scrolls past. */}
+        <aside className="min-w-0 min-[80rem]:sticky min-[80rem]:top-[5.5rem]">
+          <RulePanel policy={policy} scope={scope} scopeId={scopeId} />
+        </aside>
+      </div>
+
+      {/* Stuck to the bottom of the screen rather than sitting in the last card:
+          the page is a long form, and the button that saves it used to be
+          below everything, out of sight for most of the time it was needed. */}
+      <div
+        role="region"
+        aria-label={m["redaction_rule.savebar.label"]()}
+        className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3 shadow-md max-[40rem]:px-3"
+      >
+        <p className="m-0 text-body text-ink-muted" role="status">
+          {needsSubject
+            ? m["redaction_rule.savebar.need_subject"]()
+            : dirty
+              ? baseline === null
+                ? m["redaction_rule.savebar.clone"]()
+                : m["redaction_rule.savebar.unsaved"]()
+              : existing
+                ? m["redaction_rule.savebar.saved"]()
+                : ""}
+        </p>
+        <div className="flex items-center gap-2">
+          <Button onClick={() => navigate("/admin/redaction")}>{m["redaction_rule.back"]()}</Button>
+          <Button variant="primary" busy={saving} disabled={needsSubject} onClick={submit}>
+            {existing ? m["redaction_rule.submit.save"]() : m["redaction_rule.submit.create"]()}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
