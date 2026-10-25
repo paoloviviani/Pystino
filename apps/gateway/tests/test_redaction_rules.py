@@ -679,6 +679,76 @@ class TestPreview:
         assert "Mario Rossi" not in caplog.text
         assert "Via Roma" not in caplog.text
 
+    async def test_an_unsaved_rule_previews_without_being_stored(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The rule page previews its form as it stands. Nothing is written, and
+        a draft that is not the catch-all is folded onto it."""
+        await admin_client(app, session_factory, seeded)
+        install_detector(app, {"Mario Rossi": "PERSON", "mario@example.com": "EMAIL_ADDRESS"})
+        await catch_all(app, session_factory, PERSON=EntityPolicy())
+
+        draft = policy(entities={"EMAIL_ADDRESS": EntityPolicy(mode=EntityMode.REDACT)})
+        response = await client.post(
+            "/api/admin/redaction/preview",
+            json={
+                "text": "Mario Rossi, mario@example.com",
+                "scope": "group",
+                "scope_id": str(seeded.group.id),
+                "policy": draft,
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        # The draft's e-mail rule and the catch-all's person rule both apply.
+        assert body["entity_count"] == 2
+        assert "mario@example.com" not in body["redacted_text"]
+        assert "Mario Rossi" not in body["redacted_text"]
+        listing = await client.get("/api/admin/redaction/rules")
+        assert listing.json()["items"] == [] or all(
+            item["scope"] == "all" for item in listing.json()["items"]
+        )
+
+    async def test_a_draft_catch_all_needs_no_subject_and_replaces_the_catch_all(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await admin_client(app, session_factory, seeded)
+        install_detector(app, {"Mario Rossi": "PERSON"})
+        await catch_all(app, session_factory, PERSON=EntityPolicy())
+
+        response = await client.post(
+            "/api/admin/redaction/preview",
+            json={"text": "Mario Rossi", "scope": "all", "policy": policy()},
+        )
+
+        assert response.status_code == 200, response.text
+        # The draft is the catch-all, so the saved one is not folded in.
+        assert response.json()["entity_count"] == 0
+
+    async def test_a_scope_without_a_subject_is_still_refused_without_a_draft(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await admin_client(app, session_factory, seeded)
+
+        response = await client.post(
+            "/api/admin/redaction/preview", json={"text": "hello", "scope": "all"}
+        )
+
+        assert response.status_code == 400, response.text
+
     async def test_previewing_as_a_subject_that_does_not_exist_is_refused(
         self,
         app: Any,

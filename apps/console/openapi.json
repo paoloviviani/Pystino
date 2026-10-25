@@ -7124,6 +7124,16 @@
       "RedactionPreviewRequest": {
         "description": "A sample to run the real redaction path over.\n\n``scope``/``scope_id`` preview *as* a subject, so an admin can see what a\ngroup's rule actually does before saving it. Omitted, the deployment policy\napplies.\n\n**This body is never logged.** It will contain real personal data within a\nweek of shipping — an admin pastes the prompt that came back wrong — and a\ntool for inspecting redaction that writes the unredacted sample to a log file\nhas defeated itself.",
         "properties": {
+          "policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RedactionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "scope": {
             "anyOf": [
               {
