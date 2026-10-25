@@ -2742,37 +2742,10 @@
   "admin_providers.field.catalogue_none": "None (set up by hand)",
   "admin_providers.field.catalogue_hint_new": "Fills in the type, endpoint and prefix below; you can still change them. Region and retention are read from the catalogue.",
   "admin_providers.field.catalogue_hint_edit": "Links this provider to a catalogue entry for its region and retention. Nothing is copied into the provider.",
-  "admin_providers.catalogue.title": "Provider catalogue",
-  "admin_providers.catalogue.subtitle": "Known providers, read from YAML at startup: the ones shipped with Pystino and any in your providers directory. Changes apply on restart.",
-  "admin_providers.catalogue.caption": "Catalogue entries, with where each value came from.",
-  "admin_providers.catalogue.column.entry": "Entry",
-  "admin_providers.catalogue.column.endpoint": "Endpoint",
-  "admin_providers.catalogue.column.region": "Region",
-  "admin_providers.catalogue.column.retention": "Retention",
-  "admin_providers.catalogue.column.prices": "Price hints",
   "admin_providers.catalogue.unknown": "unknown",
-  "admin_providers.catalogue.zdr_yes": "zero data retention",
-  "admin_providers.catalogue.zdr_no": "retains data",
-  "admin_providers.catalogue.days": [
-    {
-      "declarations": [
-        "input count"
-      ],
-      "match": {
-        "*": "{count: number} days"
-      }
-    }
-  ],
-  "admin_providers.catalogue.trains": "trains on customer data",
   "admin_providers.catalogue.various": "Various",
   "admin_providers.catalogue.not_published": "Not published",
   "admin_providers.catalogue.global": "Global",
-  "admin_providers.catalogue.zdr_available": "ZDR available",
-  "admin_providers.catalogue.no_training": "not used for training",
-  "admin_providers.catalogue.column.sources": "Sources",
-  "admin_providers.catalogue.source_title": "{covers}, read {date}",
-  "admin_providers.catalogue.origin_builtin": "built-in",
-  "admin_providers.catalogue.origin_override": "override",
   "admin_reports.breakdown.provider": "By provider",
   "admin_reports.heading.provider": "Provider",
   "admin_reports.heading_lower.provider": "provider",

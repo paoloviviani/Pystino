@@ -24,7 +24,6 @@ import {
 } from "../lib/admin";
 import type {
   AdminProvider,
-  CatalogueEntry,
   ProviderPlugin,
   ProviderTestResult,
 } from "../lib/types";
@@ -340,8 +339,6 @@ export function AdminProviders() {
         )}
       </Card>
 
-      <CatalogueCard />
-
       <ProviderDialog
         open={creating}
         provider={null}
@@ -355,109 +352,6 @@ export function AdminProviders() {
         onClose={() => setEditing(null)}
       />
     </div>
-  );
-}
-
-/**
- * The provider catalogue (YAML), read-only: each value with where it came from.
- *
- * The catalogue is files, edited where they live and applied on restart, so
- * there is nothing to edit here. What the screen is for is the question an
- * operator asks when a value surprises them: "is that the release's, or mine?".
- * Renders nothing while loading or when the request fails, because the page's
- * real content is the providers above it.
- */
-function CatalogueCard() {
-  const catalogue = useProviderCatalogue();
-  const entries = Array.isArray(catalogue.data) ? catalogue.data : [];
-  if (entries.length === 0) return null;
-
-  const columns: Column<CatalogueEntry>[] = [
-    {
-      key: "entry",
-      header: m["admin_providers.catalogue.column.entry"](),
-      render: (entry) => (
-        <>
-          {/* i18n: server text — the catalogue file's own name and id. */}
-          <div>{entry.name}</div>
-          <div className={`${MUTED} ${CODE}`}>{entry.id}</div>
-        </>
-      ),
-    },
-    {
-      key: "endpoint",
-      header: m["admin_providers.catalogue.column.endpoint"](),
-      render: (entry) => (
-        <>
-          <div className={CODE}>{entry.base_url ?? m["admin_providers.catalogue.unknown"]()}</div>
-          <Origin entry={entry} fields={["base_url", "plugin"]} />
-        </>
-      ),
-    },
-    {
-      key: "region",
-      header: m["admin_providers.catalogue.column.region"](),
-      render: (entry) => (
-        <>
-          <div>{regionLabel(entry.region)}</div>
-          {/* i18n: server text — the catalogue file's own note. */}
-          {entry.region_note && <div className={`${MUTED} text-small`}>{entry.region_note}</div>}
-          <Origin entry={entry} fields={["region", "region_note"]} />
-        </>
-      ),
-    },
-    {
-      key: "retention",
-      header: m["admin_providers.catalogue.column.retention"](),
-      render: (entry) => (
-        <>
-          <div>{retentionText(entry)}</div>
-          {/* i18n: server text — the catalogue file's own note. */}
-          {entry.retention.note && (
-            <div className={`${MUTED} text-small`}>{entry.retention.note}</div>
-          )}
-          <Origin
-            entry={entry}
-            fields={[
-              "retention.status",
-              "retention.zero_data_retention",
-              "retention.zero_data_retention_available",
-              "retention.retention_days",
-              "retention.trains_on_customer_data",
-              "retention.note",
-            ]}
-          />
-        </>
-      ),
-    },
-    {
-      key: "sources",
-      hideBelow: "lg",
-      header: m["admin_providers.catalogue.column.sources"](),
-      render: (entry) => <Sources entry={entry} />,
-    },
-    {
-      key: "prices",
-      header: m["admin_providers.catalogue.column.prices"](),
-      numeric: true,
-      render: (entry) => formatNumber(entry.price_hints.length),
-    },
-  ];
-
-  return (
-    <Card flush>
-      <div className="p-5">
-        <h2 className="text-heading font-semibold">{m["admin_providers.catalogue.title"]()}</h2>
-        <p className={MUTED}>{m["admin_providers.catalogue.subtitle"]()}</p>
-      </div>
-      <Table
-        columns={columns}
-        rows={entries}
-        rowKey={(entry) => entry.id}
-        empty=""
-        caption={m["admin_providers.catalogue.caption"]()}
-      />
-    </Card>
   );
 }
 
@@ -479,78 +373,6 @@ function regionLabel(region: string | null): string {
   if (region === "not-published") return m["admin_providers.catalogue.not_published"]();
   if (region === "global") return m["admin_providers.catalogue.global"]();
   return region;
-}
-
-/** What the entry says it keeps, in one line; unknown is said as unknown. */
-function retentionText(entry: CatalogueEntry): string {
-  const r = entry.retention;
-  if (r.status === "various") return m["admin_providers.catalogue.various"]();
-  if (r.status === "not_published") return m["admin_providers.catalogue.not_published"]();
-  const parts: string[] = [];
-  if (r.zero_data_retention === true) parts.push(m["admin_providers.catalogue.zdr_yes"]());
-  if (r.zero_data_retention === false) parts.push(m["admin_providers.catalogue.zdr_no"]());
-  if (r.retention_days !== null) {
-    parts.push(m["admin_providers.catalogue.days"]({ count: r.retention_days }));
-  }
-  if (r.zero_data_retention !== true && r.zero_data_retention_available === true) {
-    parts.push(m["admin_providers.catalogue.zdr_available"]());
-  }
-  if (r.trains_on_customer_data === false) parts.push(m["admin_providers.catalogue.no_training"]());
-  if (r.trains_on_customer_data === true) parts.push(m["admin_providers.catalogue.trains"]());
-  return parts.length > 0 ? parts.join(" · ") : m["admin_providers.catalogue.unknown"]();
-}
-
-/** The primary sources behind an entry's facts, each with the day it was read. */
-function Sources({ entry }: { entry: CatalogueEntry }) {
-  if (entry.sources.length === 0) return <div className={MUTED}>-</div>;
-  return (
-    <ul className="space-y-1 text-small">
-      {entry.sources.map((source) => (
-        <li key={source.url}>
-          <a
-            href={source.url}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="underline"
-            title={m["admin_providers.catalogue.source_title"]({
-              covers: source.covers ?? "",
-              date: source.retrieved,
-            })}
-          >
-            {sourceHost(source.url)}
-          </a>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function sourceHost(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url;
-  }
-}
-
-/**
- * Where the shown fields came from. Built-in is the quiet default; an override
- * is marked, with the file that did it, because that is the one to look for.
- */
-function Origin({ entry, fields }: { entry: CatalogueEntry; fields: string[] }) {
-  const overrides = entry.origins.filter(
-    (origin) => fields.includes(origin.field) && origin.layer === "override",
-  );
-  if (overrides.length === 0) {
-    return <div className={MUTED}>{m["admin_providers.catalogue.origin_builtin"]()}</div>;
-  }
-  const files = [...new Set(overrides.map((origin) => origin.file))].join(", ");
-  return (
-    <div className={CHIPS}>
-      <Badge tone="accent">{m["admin_providers.catalogue.origin_override"]()}</Badge>
-      <span className={`${MUTED} ${CODE}`}>{files}</span>
-    </div>
-  );
 }
 
 function TestBadge({ result }: { result: ProviderTestResult | undefined }) {
