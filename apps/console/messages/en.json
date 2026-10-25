@@ -248,7 +248,6 @@
   "reports.heading_lower.day": "day",
   "reports.heading_lower.total": "all",
   "reports.heading_lower.other": "label",
-  "redaction_rule.title.rule": "Rule · {subject}",
   "redaction_rule.title.clone": "Clone rule",
   "redaction_rule.title.new": "New rule",
   "redaction_rule.subtitle": "The strictest applicable rule wins, so adding one can only protect more.",
@@ -261,7 +260,7 @@
   "redaction_rule.clone_notice.body": "The policy and reason are copied. A clone starts inactive — choose its subject, review it, and activate it from the rules list.",
   "redaction_rule.error.save_title": "Could not save the rule",
   "redaction_rule.error.unknown": "Unknown error.",
-  "redaction_rule.subject_card": "Subject",
+  "redaction_rule.subject_card": "Who it applies to",
   "redaction_rule.subject_missing.title": "This rule's subject no longer exists",
   "redaction_rule.subject_missing.body": "It matches no request. Choose another {scope} below, or scope it to every request.",
   "redaction_rule.scope.label": "Scope",
@@ -274,6 +273,102 @@
   "redaction_rule.toast.saved": "Rule saved.",
   "redaction_rule.toast.created": "Rule created.",
   "redaction_rule.toast.cloned": "Clone created — it starts inactive.",
+  "rule_summary.empty": "Does nothing yet. Every kind of data is left as written.",
+  "rule_summary.and": " and ",
+  "rule_summary.group.block": "blocks {what}",
+  "rule_summary.group.redact": "redacts {what}",
+  "rule_summary.group.anonymise": "anonymises {what}",
+  "rule_summary.group.anonymise_restore": "anonymises {what} and restores it in the answer",
+  "rule_summary.group.off": "leaves {what} as written",
+  "rule_summary.everything_else": "everything else",
+  "rule_summary.everything": "everything it finds",
+  "rule_summary.kinds": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} kind of data",
+        "countPlural=other": "{n} kinds of data"
+      }
+    }
+  ],
+  "rule_summary.patterns": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} custom pattern",
+        "countPlural=other": "{n} custom patterns"
+      }
+    }
+  ],
+  "rule_summary.allowed": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "never hides {n} listed value",
+        "countPlural=other": "never hides {n} listed values"
+      }
+    }
+  ],
+  "rule_summary.allowed_ignored": "ignores its never-hide list, because the rule for every request has its own",
+  "redaction_rule.title.unnamed": "Unnamed rule",
+  "redaction_rule.subtitle.every": "Applies to every request.",
+  "redaction_rule.subtitle.subject": "Applies to {scope} “{subject}”.",
+  "redaction_rule.subtitle.subject_missing": "Its {scope} no longer exists.",
+  "redaction_rule.name_card_hint": "A name to find the rule by, and why it exists.",
+  "redaction_rule.subject_card_hint": "The strictest rule that applies to a request wins, so adding a rule can only protect more.",
+  "redaction_rule.savebar.unsaved": "Unsaved changes",
+  "redaction_rule.savebar.clone": "This clone is not saved yet",
+  "redaction_rule.savebar.saved": "No changes",
+  "redaction_rule.savebar.need_subject": "Choose who it applies to before saving",
+  "redaction_rule.savebar.label": "Save the rule",
+  "redaction_rule.summary.title": "What this rule does",
+  "redaction_rule.test.title": "Try it",
+  "redaction_rule.test.hint": "Paste some text to see what a provider would receive with this rule as it is now. Nothing is saved.",
+  "redaction_rule.test.label": "Sample text",
+  "redaction_rule.test.placeholder": "Write to Mario Rossi at mario@example.com",
+  "redaction_rule.test.running": "Checking…",
+  "redaction_rule.test.error": "The test could not run",
+  "redaction_rule.test.blocked": "This text would be refused before it reached a provider.",
+  "redaction_rule.test.output": "What the provider receives",
+  "redaction_rule.test.replaced": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} thing replaced",
+        "countPlural=other": "{n} things replaced"
+      }
+    }
+  ],
+  "redaction_rule.test.none": "Nothing was replaced.",
+  "redaction_rule.test.left": "Found but left as written: {types}",
   "identity_directory.run.dry_run": "dry run",
   "identity_directory.run.counts": [
     {
@@ -642,8 +737,8 @@
       }
     }
   ],
-  "policy_fields.default_mode": "Default mode",
-  "policy_fields.default_mode_hint": "Applies to anything not listed below, including types added later.",
+  "policy_fields.default_mode": "Default action",
+  "policy_fields.default_mode_hint": "What happens to any kind of data not listed below, including kinds added in a later release.",
   "policy_fields.no_entity_types": "No entity types to list. The default above still applies.",
   "policy_fields.source.pattern": "Pattern",
   "policy_fields.source.model": "Model",
@@ -673,6 +768,25 @@
   "policy_fields.allowlist.label": "Allowlist",
   "policy_fields.allowlist.placeholder": "ilpost.it, example.org",
   "policy_fields.allowlist.hint": "Comma separated. Matched exactly, case-insensitively.",
+  "policy_fields.hide_card": "What to hide",
+  "policy_fields.hide_hint": "Choose what happens to each kind of data. Add a kind only when it should be treated differently from the rest.",
+  "policy_fields.types_heading": "Kinds treated differently",
+  "policy_fields.types_empty": "None yet. Every kind of data follows the default above.",
+  "policy_fields.col_type": "Kind of data",
+  "policy_fields.col_action": "Action",
+  "policy_fields.col_confidence": "Confidence",
+  "policy_fields.add_type": "Add a kind of data",
+  "policy_fields.add_type_choose": "Choose a kind…",
+  "policy_fields.add_type_none": "Every kind is already listed",
+  "policy_fields.remove_type": "Reset {name} to the default",
+  "policy_fields.remove_type_short": "Reset",
+  "policy_fields.actions_key": "What the actions mean",
+  "policy_fields.patterns_card": "Your own patterns",
+  "policy_fields.patterns_hint": "Hide values the detector cannot recognise, such as ticket numbers or API keys, by describing their shape.",
+  "policy_fields.allowlist_card": "Never hide",
+  "policy_fields.allowlist_card_hint": "Values to leave alone even when the detector finds them, such as your own domain. When a rule for every request exists, only its list is used.",
+  "policy_fields.allowlist_ignored": "This list is ignored: the rule for every request has its own, and only that one is used. Edit it there.",
+  "policy_fields.mode_group": "Action for {name}",
   "admin_providers.toast.reachable": "Provider reachable",
   "admin_providers.toast.unreachable": "Provider is not reachable",
   "admin_providers.toast.test_failed": "Could not test the provider",

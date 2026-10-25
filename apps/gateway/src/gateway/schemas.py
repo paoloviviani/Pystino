@@ -2706,10 +2706,19 @@ class RedactionPreviewRequest(BaseModel):
     text: str = Field(min_length=1, max_length=20_000)
     scope: RedactionScopeName | None = None
     scope_id: uuid.UUID | None = None
+    #: A rule that is not saved yet: the console's rule page previews the form as
+    #: it stands, which no stored rule can answer. It is folded exactly as a
+    #: saved rule would be (``RedactionPolicy.combine``), onto the catch-all
+    #: unless ``scope`` is ``all``, in which case it is the catch-all. The other
+    #: scoped rules are not folded in: the draft's own effect is the question.
+    policy: RedactionPolicy | None = None
 
     @model_validator(mode="after")
     def _scope_and_subject_together(self) -> RedactionPreviewRequest:
-        if (self.scope is None) != (self.scope_id is None):
+        # A draft catch-all has no subject, so for it ``scope="all"`` stands
+        # alone; every other combination still needs both or neither.
+        draft_catch_all = self.policy is not None and self.scope == "all" and self.scope_id is None
+        if not draft_catch_all and (self.scope is None) != (self.scope_id is None):
             raise ValueError("give both scope and scope_id, or neither")
         return self
 

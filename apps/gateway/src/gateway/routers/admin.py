@@ -7018,7 +7018,16 @@ async def preview_redaction(
     effective = EffectivePolicy(
         policy=resolver.policy if resolver is not None else settings.redaction.policy
     )
-    if payload.scope is not None and payload.scope_id is not None:
+    if payload.policy is not None:
+        # An unsaved rule, as the rule page's form stands. Folded the way the
+        # resolver folds a saved one, so the preview cannot show a draft
+        # loosening what the catch-all already protects.
+        base = [] if payload.scope == "all" else [effective.policy]
+        effective = EffectivePolicy(
+            policy=RedactionPolicy.combine([*base, payload.policy]),
+            scope=payload.scope,
+        )
+    elif payload.scope is not None and payload.scope_id is not None:
         scope = RedactionScope(payload.scope)
         # Same check as creating a rule: previewing "as" a group that does not
         # exist would show the deployment policy and look like a rule that is

@@ -5758,6 +5758,7 @@ export interface components {
          *     has defeated itself.
          */
         RedactionPreviewRequest: {
+            policy?: components["schemas"]["RedactionPolicy"] | null;
             /** Scope */
             scope?: ("all" | "provider" | "model" | "group" | "user" | "api_key") | null;
             /** Scope Id */
