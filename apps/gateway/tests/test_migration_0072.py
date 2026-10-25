@@ -15,6 +15,7 @@ import sqlite3
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import closing
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -149,8 +150,48 @@ def test_up_and_down_on_postgres(scratch_postgres: Callable[[], str]) -> None:
         finally:
             await conn.close()
 
+    # An existing usage row, as the owner's deployment has: every NOT NULL
+    # column without a default filled from the live schema.
+    needed = asyncio.run(
+        query(
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_name = 'usage_records' AND is_nullable = 'NO' "
+            "AND column_default IS NULL"
+        )
+    )
+    fill: dict[str, str] = {}
+    for name, kind in needed:
+        if name == "id":
+            fill[name] = f"'{uuid.uuid4()}'"
+        elif name == "status":
+            fill[name] = "'completed'"
+        elif name == "usage_source":
+            fill[name] = "'unavailable'"
+        elif name == "cost":
+            fill[name] = "1.5"
+        elif name == "currency":
+            fill[name] = "'EUR'"
+        elif "timestamp" in str(kind):
+            fill[name] = "now()"
+        elif kind in ("integer", "bigint", "numeric", "smallint"):
+            fill[name] = "0"
+        elif kind == "boolean":
+            fill[name] = "false"
+        else:
+            fill[name] = "'before'"
+    asyncio.run(
+        query(
+            f"INSERT INTO usage_records ({', '.join(fill)}) "  # noqa: S608
+            f"VALUES ({', '.join(fill.values())})"
+        )
+    )
+
     up = _alembic(url, "upgrade", "0072")
     assert up.returncode == 0, up.stderr[-2000:]
+    # History untouched: cost stands, no price claimed for it.
+    assert asyncio.run(query("SELECT cost, search_price_id FROM usage_records")) == [
+        (Decimal("1.5"), None)
+    ]
     asyncio.run(
         query(
             "INSERT INTO search_prices (id, backend, tier, per_request, currency, "  # noqa: S608
@@ -173,4 +214,5 @@ def test_up_and_down_on_postgres(scratch_postgres: Callable[[], str]) -> None:
         )
     )
     assert ("search_price_id",) not in columns
+    assert asyncio.run(query("SELECT cost FROM usage_records")) == [(Decimal("1.5"),)]
     assert _alembic(url, "upgrade", "head").returncode == 0
