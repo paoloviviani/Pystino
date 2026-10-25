@@ -48,7 +48,13 @@ function describeTypes(entities: string[]): string {
   return m["rule_summary.kinds"]({ count: entities.length });
 }
 
-export function summariseRule(policy: RedactionPolicy): string {
+/**
+ * `allowListIgnored` is true when the gateway will not use this rule's
+ * allowlist: it takes the list from the first applicable policy alone, which is
+ * the catch-all rule when one exists. Saying "never hides 2 values" then would
+ * promise protection from redaction the rule does not give.
+ */
+export function summariseRule(policy: RedactionPolicy, allowListIgnored = false): string {
   const named = Object.entries(policy.entities);
   const parts: string[] = [];
 
@@ -72,7 +78,9 @@ export function summariseRule(policy: RedactionPolicy): string {
   if (policy.patterns.length > 0) {
     parts.push(m["rule_summary.patterns"]({ count: policy.patterns.length }));
   }
-  if (policy.allow_list.length > 0) {
+  if (policy.allow_list.length > 0 && allowListIgnored) {
+    parts.push(m["rule_summary.allowed_ignored"]());
+  } else if (policy.allow_list.length > 0) {
     parts.push(m["rule_summary.allowed"]({ count: policy.allow_list.length }));
   }
 

@@ -329,6 +329,7 @@
       }
     }
   ],
+  "rule_summary.allowed_ignored": "ignores its never-hide list, because the rule for every request has its own",
   "redaction_rule.title.unnamed": "Unnamed rule",
   "redaction_rule.subtitle.every": "Applies to every request.",
   "redaction_rule.subtitle.subject": "Applies to {scope} “{subject}”.",
@@ -783,6 +784,7 @@
   "policy_fields.patterns_hint": "Hide values the detector cannot recognise, such as ticket numbers or API keys, by describing their shape.",
   "policy_fields.allowlist_card": "Never hide",
   "policy_fields.allowlist_card_hint": "Values to leave alone even when the detector finds them, such as your own domain. When a rule for every request exists, only its list is used.",
+  "policy_fields.allowlist_ignored": "This list is ignored: the rule for every request has its own, and only that one is used. Edit it there.",
   "policy_fields.mode_group": "Action for {name}",
   "admin_providers.toast.reachable": "Provider reachable",
   "admin_providers.toast.unreachable": "Provider is not reachable",

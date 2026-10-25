@@ -329,6 +329,7 @@
       }
     }
   ],
+  "rule_summary.allowed_ignored": "[íǧńóŕéś íťś ńéǚéŕ-ȟíďé ľíśť, ƀéćáúśé ťȟé ŕúľé ƒóŕ éǚéŕý ŕéǫúéśť ȟáś íťś óŵń]",
   "redaction_rule.title.unnamed": "[Úńńáḿéď ŕúľé]",
   "redaction_rule.subtitle.every": "[Áþþľíéś ťó éǚéŕý ŕéǫúéśť.]",
   "redaction_rule.subtitle.subject": "[Áþþľíéś ťó {scope} “{subject}”.]",
@@ -783,6 +784,7 @@
   "policy_fields.patterns_hint": "[Ȟíďé ǚáľúéś ťȟé ďéťéćťóŕ ćáńńóť ŕéćóǧńíśé, śúćȟ áś ťíćķéť ńúḿƀéŕś óŕ ÁÞÍ ķéýś, ƀý ďéśćŕíƀíńǧ ťȟéíŕ śȟáþé.]",
   "policy_fields.allowlist_card": "[Ńéǚéŕ ȟíďé]",
   "policy_fields.allowlist_card_hint": "[Ǚáľúéś ťó ľéáǚé áľóńé éǚéń ŵȟéń ťȟé ďéťéćťóŕ ƒíńďś ťȟéḿ, śúćȟ áś ýóúŕ óŵń ďóḿáíń. Ŵȟéń á ŕúľé ƒóŕ éǚéŕý ŕéǫúéśť éẋíśťś, óńľý íťś ľíśť íś úśéď.]",
+  "policy_fields.allowlist_ignored": "[Ťȟíś ľíśť íś íǧńóŕéď: ťȟé ŕúľé ƒóŕ éǚéŕý ŕéǫúéśť ȟáś íťś óŵń, áńď óńľý ťȟáť óńé íś úśéď. Éďíť íť ťȟéŕé.]",
   "policy_fields.mode_group": "[Áćťíóń ƒóŕ {name}]",
   "admin_providers.toast.reachable": "[Þŕóǚíďéŕ ŕéáćȟáƀľé]",
   "admin_providers.toast.unreachable": "[Þŕóǚíďéŕ íś ńóť ŕéáćȟáƀľé]",

@@ -74,6 +74,24 @@ describe("summariseRule", () => {
   });
 });
 
+describe("an allowlist the gateway ignores", () => {
+  const listed = policy({ default_mode: "redact", allow_list: ["a.org"] });
+
+  it("is not promised in the summary", () => {
+    const text = summariseRule(listed, true);
+    expect(text).not.toContain("never hides");
+    expect(text).toBe(
+      "Redacts everything it finds, ignores its never-hide list, because the rule for every request has its own.",
+    );
+  });
+
+  it("says nothing about it when there is no list", () => {
+    expect(summariseRule(policy({ default_mode: "block" }), true)).toBe(
+      "Blocks everything it finds.",
+    );
+  });
+});
+
 describe("isWideRoute", () => {
   it("is wide for the list and for one rule's page, new or edit", () => {
     expect(isWideRoute("/admin/redaction")).toBe(true);

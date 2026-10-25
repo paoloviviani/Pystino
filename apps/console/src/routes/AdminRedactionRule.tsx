@@ -102,6 +102,16 @@ export function AdminRedactionRule() {
     setReason(existing.reason);
   }
 
+  // The gateway reads the allowlist from the first applicable policy alone, which
+  // is the catch-all rule when an active one exists. A narrower rule's list is
+  // then never consulted, so the page must not describe it as working. The
+  // rule being edited does not count against itself.
+  const allowListIgnored =
+    scope !== "all" &&
+    (rules.data?.items ?? []).some(
+      (rule) => rule.scope === "all" && rule.is_active && rule.id !== existing?.id,
+    );
+
   const saving = create.isPending || update.isPending;
   const error = create.error ?? update.error;
   const entityTypes = status.data?.service?.entities ?? [];
@@ -329,13 +339,19 @@ export function AdminRedactionRule() {
             onChange={setPolicy}
             entityTypes={entityTypes}
             scoreThreshold={status.data?.score_threshold ?? null}
+            allowListIgnored={allowListIgnored}
           />
         </div>
 
         {/* Sticky below the page header and the console's own bar (3.75rem), so
             the summary stays in view while a long list of types scrolls past. */}
         <aside className="min-w-0 min-[80rem]:sticky min-[80rem]:top-[5.5rem]">
-          <RulePanel policy={policy} scope={scope} scopeId={scopeId} />
+          <RulePanel
+            policy={policy}
+            scope={scope}
+            scopeId={scopeId}
+            allowListIgnored={allowListIgnored}
+          />
         </aside>
       </div>
 

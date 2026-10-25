@@ -787,6 +787,53 @@ describe("AdminRedactionRule", () => {
     });
   });
 
+  describe("the allowlist", () => {
+    const listed = rule({
+      policy: {
+        default_mode: "redact",
+        entities: {},
+        patterns: [],
+        allow_list: ["example.org"],
+      },
+    });
+    const catchAll = (overrides: Partial<RedactionRule> = {}) =>
+      rule({ id: "r0", name: "everyone", scope: "all", scope_id: null, ...overrides });
+
+    it("is ignored, and the page says so, when a catch-all rule exists", async () => {
+      vi.stubGlobal("fetch", routes([listed, catchAll()]));
+      renderPage("/admin/redaction/rules/r1");
+
+      const summary = await screen.findByTestId("rule-summary");
+      await waitFor(() => expect(summary).toHaveTextContent("ignores its never-hide list"));
+      expect(summary).not.toHaveTextContent("never hides");
+      expect(screen.getByText(/This list is ignored/)).toBeInTheDocument();
+    });
+
+    it("counts when there is no catch-all rule", async () => {
+      vi.stubGlobal("fetch", routes([listed]));
+      renderPage("/admin/redaction/rules/r1");
+
+      const summary = await screen.findByTestId("rule-summary");
+      await waitFor(() => expect(summary).toHaveTextContent("never hides 1 listed value"));
+      expect(screen.queryByText(/This list is ignored/)).not.toBeInTheDocument();
+    });
+
+    it("counts when the only catch-all is inactive, or is the rule itself", async () => {
+      vi.stubGlobal("fetch", routes([listed, catchAll({ is_active: false })]));
+      const first = renderPage("/admin/redaction/rules/r1");
+      await waitFor(() =>
+        expect(screen.getByTestId("rule-summary")).toHaveTextContent("never hides 1 listed value"),
+      );
+      first.unmount();
+
+      vi.stubGlobal("fetch", routes([catchAll({ policy: listed.policy })]));
+      renderPage("/admin/redaction/rules/r0");
+      await waitFor(() =>
+        expect(screen.getByTestId("rule-summary")).toHaveTextContent("never hides 1 listed value"),
+      );
+    });
+  });
+
   it("says so when the rule is gone", async () => {
     vi.stubGlobal("fetch", routes([]));
     renderPage("/admin/redaction/rules/missing");

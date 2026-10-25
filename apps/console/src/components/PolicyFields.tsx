@@ -22,6 +22,8 @@ export interface PolicyFieldsProps {
    * they wanted is not available.
    */
   floor?: RedactionPolicy | null;
+  /** The gateway will not use this policy's allowlist, so the card says so. */
+  allowListIgnored?: boolean;
 }
 
 /**
@@ -45,6 +47,7 @@ export function PolicyFields({
   scoreThreshold = null,
   allowList = true,
   floor = null,
+  allowListIgnored = false,
 }: PolicyFieldsProps) {
   // Every type the detector holds, plus anything the policy already names — a
   // rule about a type this engine does not report is still a rule, and dropping
@@ -361,7 +364,11 @@ export function PolicyFields({
       {allowList && (
         <Card
           title={m["policy_fields.allowlist_card"]()}
-          description={m["policy_fields.allowlist_card_hint"]()}
+          description={
+            allowListIgnored
+              ? m["policy_fields.allowlist_ignored"]()
+              : m["policy_fields.allowlist_card_hint"]()
+          }
         >
           <AllowList
             values={policy.allow_list}

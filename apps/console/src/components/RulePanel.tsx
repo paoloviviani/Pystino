@@ -19,6 +19,8 @@ export interface RulePanelProps {
   policy: RedactionPolicy;
   scope: RedactionScope | "";
   scopeId: string;
+  /** The gateway will not use this rule's allowlist; see `summariseRule`. */
+  allowListIgnored?: boolean;
 }
 
 /**
@@ -34,7 +36,7 @@ export interface RulePanelProps {
  * prompt is real personal data, and the gateway makes the same promise on its
  * side.
  */
-export function RulePanel({ policy, scope, scopeId }: RulePanelProps) {
+export function RulePanel({ policy, scope, scopeId, allowListIgnored = false }: RulePanelProps) {
   const preview = usePreviewRedaction();
   const [text, setText] = useState("");
 
@@ -66,7 +68,7 @@ export function RulePanel({ policy, scope, scopeId }: RulePanelProps) {
     <div className="flex flex-col gap-5">
       <Card title={m["redaction_rule.summary.title"]()}>
         <p className="m-0 text-body" data-testid="rule-summary">
-          {summariseRule(policy)}
+          {summariseRule(policy, allowListIgnored)}
         </p>
       </Card>
 
