@@ -262,7 +262,7 @@ export function AdminRedactionRule() {
 
       {/* Two columns where there is room: the form, and beside it what the form
           adds up to. Below 80rem the summary follows the form in one column. */}
-      <div className="grid items-start gap-5 min-[80rem]:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)]">
+      <div className="grid items-start gap-5 min-[80rem]:grid-cols-[minmax(0,1fr)_minmax(20rem,25rem)]">
         <div className="flex min-w-0 flex-col gap-5">
           <Card
             title={m["redaction_rule.name_card"]()}

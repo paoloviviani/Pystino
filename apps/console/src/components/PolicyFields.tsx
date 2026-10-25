@@ -187,6 +187,11 @@ export function PolicyFields({
                           placeholder={
                             scoreThreshold === null
                               ? m["policy_fields.confidence_default"]()
+                              : String(scoreThreshold)
+                          }
+                          title={
+                            scoreThreshold === null
+                              ? undefined
                               : m["policy_fields.confidence_default_value"]({
                                   value: scoreThreshold,
                                 })
@@ -374,7 +379,7 @@ export function PolicyFields({
  * shrinking, because five segments and a number field do not fit in 360px.
  */
 const TYPE_ROW =
-  "grid grid-cols-[minmax(10rem,1fr)_auto_7rem_auto] items-center gap-x-4 gap-y-2 " +
+  "grid grid-cols-[minmax(8rem,1fr)_max-content_5.5rem_auto] items-center gap-x-3 gap-y-2 " +
   "max-[40rem]:grid-cols-[1fr_auto] max-[40rem]:[&>*:nth-child(2)]:col-span-2 " +
   "max-[40rem]:[&>*:nth-child(2)]:row-start-2 max-[40rem]:[&>*:nth-child(3)]:row-start-3 " +
   "max-[40rem]:[&>*:nth-child(3)]:col-span-2";
@@ -571,7 +576,7 @@ function ModeSegments({
     // row of controls and not a section.
     <fieldset className="m-0 grid min-w-0 gap-1 border-0 p-0">
       <legend className={visibleLegend ? `mb-1 p-0 ${FIELD_LABEL}` : "sr-only"}>{legend}</legend>
-      <div className="grid grid-flow-col auto-cols-fr overflow-hidden rounded-md border border-line bg-surface min-[40rem]:w-max min-[40rem]:grid-flow-col">
+      <div className="grid grid-flow-col auto-cols-auto overflow-hidden rounded-md border border-line bg-surface min-[40rem]:w-max min-[40rem]:grid-flow-col">
         {MODES.map((mode) => {
           const disabled = modeRank(mode.value) < least;
           return (
@@ -596,7 +601,7 @@ function ModeSegments({
                 className="peer sr-only"
               />
               <span
-                className={`block px-3 py-1.5 text-center text-dense whitespace-nowrap text-ink-muted transition-colors hover:bg-sunken peer-focus-visible:shadow-focus peer-disabled:text-ink-faint peer-disabled:line-through peer-disabled:hover:bg-transparent max-[40rem]:px-1 ${SEGMENT_ON[mode.value]}`}
+                className={`block px-2 py-1.5 text-center text-dense whitespace-nowrap text-ink-muted transition-colors hover:bg-sunken peer-focus-visible:shadow-focus peer-disabled:text-ink-faint peer-disabled:line-through peer-disabled:hover:bg-transparent max-[40rem]:px-1.5 max-[40rem]:text-small ${SEGMENT_ON[mode.value]}`}
               >
                 {mode.short()}
               </span>
