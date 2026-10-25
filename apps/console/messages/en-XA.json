@@ -247,7 +247,6 @@
   "reports.heading_lower.day": "[ďáý]",
   "reports.heading_lower.total": "[áľľ]",
   "reports.heading_lower.other": "[ľáƀéľ]",
-  "redaction_rule.title.rule": "[Ŕúľé · {subject}]",
   "redaction_rule.title.clone": "[Ćľóńé ŕúľé]",
   "redaction_rule.title.new": "[Ńéŵ ŕúľé]",
   "redaction_rule.subtitle": "[Ťȟé śťŕíćťéśť áþþľíćáƀľé ŕúľé ŵíńś, śó áďďíńǧ óńé ćáń óńľý þŕóťéćť ḿóŕé.]",
@@ -260,7 +259,7 @@
   "redaction_rule.clone_notice.body": "[Ťȟé þóľíćý áńď ŕéáśóń áŕé ćóþíéď. Á ćľóńé śťáŕťś íńáćťíǚé — ćȟóóśé íťś śúƀĵéćť, ŕéǚíéŵ íť, áńď áćťíǚáťé íť ƒŕóḿ ťȟé ŕúľéś ľíśť.]",
   "redaction_rule.error.save_title": "[Ćóúľď ńóť śáǚé ťȟé ŕúľé]",
   "redaction_rule.error.unknown": "[Úńķńóŵń éŕŕóŕ.]",
-  "redaction_rule.subject_card": "[Śúƀĵéćť]",
+  "redaction_rule.subject_card": "[Ŵȟó íť áþþľíéś ťó]",
   "redaction_rule.subject_missing.title": "[Ťȟíś ŕúľé'ś śúƀĵéćť ńó ľóńǧéŕ éẋíśťś]",
   "redaction_rule.subject_missing.body": "[Íť ḿáťćȟéś ńó ŕéǫúéśť. Ćȟóóśé áńóťȟéŕ {scope} ƀéľóŵ, óŕ śćóþé íť ťó éǚéŕý ŕéǫúéśť.]",
   "redaction_rule.scope.label": "[Śćóþé]",
@@ -273,6 +272,102 @@
   "redaction_rule.toast.saved": "[Ŕúľé śáǚéď.]",
   "redaction_rule.toast.created": "[Ŕúľé ćŕéáťéď.]",
   "redaction_rule.toast.cloned": "[Ćľóńé ćŕéáťéď — íť śťáŕťś íńáćťíǚé.]",
+  "rule_summary.empty": "[Ďóéś ńóťȟíńǧ ýéť. Éǚéŕý ķíńď óƒ ďáťá íś ľéƒť áś ŵŕíťťéń.]",
+  "rule_summary.and": "[ áńď ]",
+  "rule_summary.group.block": "[ƀľóćķś {what}]",
+  "rule_summary.group.redact": "[ŕéďáćťś {what}]",
+  "rule_summary.group.anonymise": "[áńóńýḿíśéś {what}]",
+  "rule_summary.group.anonymise_restore": "[áńóńýḿíśéś {what} áńď ŕéśťóŕéś íť íń ťȟé áńśŵéŕ]",
+  "rule_summary.group.off": "[ľéáǚéś {what} áś ŵŕíťťéń]",
+  "rule_summary.everything_else": "[éǚéŕýťȟíńǧ éľśé]",
+  "rule_summary.everything": "[éǚéŕýťȟíńǧ íť ƒíńďś]",
+  "rule_summary.kinds": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ķíńď óƒ ďáťá]",
+        "countPlural=other": "[{n} ķíńďś óƒ ďáťá]"
+      }
+    }
+  ],
+  "rule_summary.patterns": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ćúśťóḿ þáťťéŕń]",
+        "countPlural=other": "[{n} ćúśťóḿ þáťťéŕńś]"
+      }
+    }
+  ],
+  "rule_summary.allowed": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[ńéǚéŕ ȟíďéś {n} ľíśťéď ǚáľúé]",
+        "countPlural=other": "[ńéǚéŕ ȟíďéś {n} ľíśťéď ǚáľúéś]"
+      }
+    }
+  ],
+  "rule_summary.allowed_ignored": "[íǧńóŕéś íťś ńéǚéŕ-ȟíďé ľíśť, ƀéćáúśé ťȟé ŕúľé ƒóŕ éǚéŕý ŕéǫúéśť ȟáś íťś óŵń]",
+  "redaction_rule.title.unnamed": "[Úńńáḿéď ŕúľé]",
+  "redaction_rule.subtitle.every": "[Áþþľíéś ťó éǚéŕý ŕéǫúéśť.]",
+  "redaction_rule.subtitle.subject": "[Áþþľíéś ťó {scope} “{subject}”.]",
+  "redaction_rule.subtitle.subject_missing": "[Íťś {scope} ńó ľóńǧéŕ éẋíśťś.]",
+  "redaction_rule.name_card_hint": "[Á ńáḿé ťó ƒíńď ťȟé ŕúľé ƀý, áńď ŵȟý íť éẋíśťś.]",
+  "redaction_rule.subject_card_hint": "[Ťȟé śťŕíćťéśť ŕúľé ťȟáť áþþľíéś ťó á ŕéǫúéśť ŵíńś, śó áďďíńǧ á ŕúľé ćáń óńľý þŕóťéćť ḿóŕé.]",
+  "redaction_rule.savebar.unsaved": "[Úńśáǚéď ćȟáńǧéś]",
+  "redaction_rule.savebar.clone": "[Ťȟíś ćľóńé íś ńóť śáǚéď ýéť]",
+  "redaction_rule.savebar.saved": "[Ńó ćȟáńǧéś]",
+  "redaction_rule.savebar.need_subject": "[Ćȟóóśé ŵȟó íť áþþľíéś ťó ƀéƒóŕé śáǚíńǧ]",
+  "redaction_rule.savebar.label": "[Śáǚé ťȟé ŕúľé]",
+  "redaction_rule.summary.title": "[Ŵȟáť ťȟíś ŕúľé ďóéś]",
+  "redaction_rule.test.title": "[Ťŕý íť]",
+  "redaction_rule.test.hint": "[Þáśťé śóḿé ťéẋť ťó śéé ŵȟáť á þŕóǚíďéŕ ŵóúľď ŕéćéíǚé ŵíťȟ ťȟíś ŕúľé áś íť íś ńóŵ. Ńóťȟíńǧ íś śáǚéď.]",
+  "redaction_rule.test.label": "[Śáḿþľé ťéẋť]",
+  "redaction_rule.test.placeholder": "[Ŵŕíťé ťó Ḿáŕíó Ŕóśśí áť ḿáŕíó@éẋáḿþľé.ćóḿ]",
+  "redaction_rule.test.running": "[Ćȟéćķíńǧ…]",
+  "redaction_rule.test.error": "[Ťȟé ťéśť ćóúľď ńóť ŕúń]",
+  "redaction_rule.test.blocked": "[Ťȟíś ťéẋť ŵóúľď ƀé ŕéƒúśéď ƀéƒóŕé íť ŕéáćȟéď á þŕóǚíďéŕ.]",
+  "redaction_rule.test.output": "[Ŵȟáť ťȟé þŕóǚíďéŕ ŕéćéíǚéś]",
+  "redaction_rule.test.replaced": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ťȟíńǧ ŕéþľáćéď]",
+        "countPlural=other": "[{n} ťȟíńǧś ŕéþľáćéď]"
+      }
+    }
+  ],
+  "redaction_rule.test.none": "[Ńóťȟíńǧ ŵáś ŕéþľáćéď.]",
+  "redaction_rule.test.left": "[Ƒóúńď ƀúť ľéƒť áś ŵŕíťťéń: {types}]",
   "identity_directory.run.dry_run": "[ďŕý ŕúń]",
   "identity_directory.run.counts": [
     {
@@ -641,8 +736,8 @@
       }
     }
   ],
-  "policy_fields.default_mode": "[Ďéƒáúľť ḿóďé]",
-  "policy_fields.default_mode_hint": "[Áþþľíéś ťó áńýťȟíńǧ ńóť ľíśťéď ƀéľóŵ, íńćľúďíńǧ ťýþéś áďďéď ľáťéŕ.]",
+  "policy_fields.default_mode": "[Ďéƒáúľť áćťíóń]",
+  "policy_fields.default_mode_hint": "[Ŵȟáť ȟáþþéńś ťó áńý ķíńď óƒ ďáťá ńóť ľíśťéď ƀéľóŵ, íńćľúďíńǧ ķíńďś áďďéď íń á ľáťéŕ ŕéľéáśé.]",
   "policy_fields.no_entity_types": "[Ńó éńťíťý ťýþéś ťó ľíśť. Ťȟé ďéƒáúľť áƀóǚé śťíľľ áþþľíéś.]",
   "policy_fields.source.pattern": "[Þáťťéŕń]",
   "policy_fields.source.model": "[Ḿóďéľ]",
@@ -672,6 +767,25 @@
   "policy_fields.allowlist.label": "[Áľľóŵľíśť]",
   "policy_fields.allowlist.placeholder": "[íľþóśť.íť, éẋáḿþľé.óŕǧ]",
   "policy_fields.allowlist.hint": "[Ćóḿḿá śéþáŕáťéď. Ḿáťćȟéď éẋáćťľý, ćáśé-íńśéńśíťíǚéľý.]",
+  "policy_fields.hide_card": "[Ŵȟáť ťó ȟíďé]",
+  "policy_fields.hide_hint": "[Ćȟóóśé ŵȟáť ȟáþþéńś ťó éáćȟ ķíńď óƒ ďáťá. Áďď á ķíńď óńľý ŵȟéń íť śȟóúľď ƀé ťŕéáťéď ďíƒƒéŕéńťľý ƒŕóḿ ťȟé ŕéśť.]",
+  "policy_fields.types_heading": "[Ķíńďś ťŕéáťéď ďíƒƒéŕéńťľý]",
+  "policy_fields.types_empty": "[Ńóńé ýéť. Éǚéŕý ķíńď óƒ ďáťá ƒóľľóŵś ťȟé ďéƒáúľť áƀóǚé.]",
+  "policy_fields.col_type": "[Ķíńď óƒ ďáťá]",
+  "policy_fields.col_action": "[Áćťíóń]",
+  "policy_fields.col_confidence": "[Ćóńƒíďéńćé]",
+  "policy_fields.add_type": "[Áďď á ķíńď óƒ ďáťá]",
+  "policy_fields.add_type_choose": "[Ćȟóóśé á ķíńď…]",
+  "policy_fields.add_type_none": "[Éǚéŕý ķíńď íś áľŕéáďý ľíśťéď]",
+  "policy_fields.remove_type": "[Ŕéśéť {name} ťó ťȟé ďéƒáúľť]",
+  "policy_fields.remove_type_short": "[Ŕéśéť]",
+  "policy_fields.actions_key": "[Ŵȟáť ťȟé áćťíóńś ḿéáń]",
+  "policy_fields.patterns_card": "[Ýóúŕ óŵń þáťťéŕńś]",
+  "policy_fields.patterns_hint": "[Ȟíďé ǚáľúéś ťȟé ďéťéćťóŕ ćáńńóť ŕéćóǧńíśé, śúćȟ áś ťíćķéť ńúḿƀéŕś óŕ ÁÞÍ ķéýś, ƀý ďéśćŕíƀíńǧ ťȟéíŕ śȟáþé.]",
+  "policy_fields.allowlist_card": "[Ńéǚéŕ ȟíďé]",
+  "policy_fields.allowlist_card_hint": "[Ǚáľúéś ťó ľéáǚé áľóńé éǚéń ŵȟéń ťȟé ďéťéćťóŕ ƒíńďś ťȟéḿ, śúćȟ áś ýóúŕ óŵń ďóḿáíń. Ŵȟéń á ŕúľé ƒóŕ éǚéŕý ŕéǫúéśť éẋíśťś, óńľý íťś ľíśť íś úśéď.]",
+  "policy_fields.allowlist_ignored": "[Ťȟíś ľíśť íś íǧńóŕéď: ťȟé ŕúľé ƒóŕ éǚéŕý ŕéǫúéśť ȟáś íťś óŵń, áńď óńľý ťȟáť óńé íś úśéď. Éďíť íť ťȟéŕé.]",
+  "policy_fields.mode_group": "[Áćťíóń ƒóŕ {name}]",
   "admin_providers.toast.reachable": "[Þŕóǚíďéŕ ŕéáćȟáƀľé]",
   "admin_providers.toast.unreachable": "[Þŕóǚíďéŕ íś ńóť ŕéáćȟáƀľé]",
   "admin_providers.toast.test_failed": "[Ćóúľď ńóť ťéśť ťȟé þŕóǚíďéŕ]",

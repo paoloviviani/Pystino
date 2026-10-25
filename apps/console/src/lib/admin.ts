@@ -372,6 +372,11 @@ export function usePreviewRedaction() {
       text: string;
       scope?: RedactionScope;
       scope_id?: string;
+      /**
+       * A rule that is not saved yet, previewed as the form stands. The
+       * gateway folds it onto the catch-all as it would a saved rule.
+       */
+      policy?: RedactionPolicy;
     }) =>
       request<RedactionPreview>("/api/admin/redaction/preview", {
         method: "POST",

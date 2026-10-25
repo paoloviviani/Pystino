@@ -235,8 +235,16 @@ const WIDE_ROUTES = new Set([
 /** The width cap for listing screens, in place of the token's default. */
 export const WIDE_LAYOUT_MAX_WIDTH = "104rem";
 
+/**
+ * One rule's page (new, edit, clone) is not a listing, but it is wide for the
+ * listing's reason: the rule form sits beside a summary and a test box, and two
+ * columns need more than the 76rem that keeps a single column's lines readable.
+ */
+const WIDE_PATTERNS = [/^\/admin\/redaction\/rules\/[^/]+$/];
+
 export function isWideRoute(pathname: string): boolean {
-  return WIDE_ROUTES.has(pathname.replace(/\/+$/, "") || "/");
+  const path = pathname.replace(/\/+$/, "") || "/";
+  return WIDE_ROUTES.has(path) || WIDE_PATTERNS.some((pattern) => pattern.test(path));
 }
 
 /**
