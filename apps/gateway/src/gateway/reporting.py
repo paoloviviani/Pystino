@@ -198,6 +198,23 @@ def _base_query(filters: ReportFilter, timezone: str, dialect: str) -> Select[An
         # `UsageReportRow.own_searches` for why folding them would make the
         # figure unreconcilable against either invoice.
         func.coalesce(func.sum(UsageRecord.own_search_requests), 0).label("own_searches"),
+        # Of those, the ones no price covered: no `search_price_id`. A price of 0
+        # ("billed out of band") has one, so it is not counted here; that is the
+        # difference between a search someone decided is free and one nobody
+        # priced.
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        (UsageRecord.own_search_requests > 0)
+                        & (UsageRecord.search_price_id.is_(None)),
+                        UsageRecord.own_search_requests,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("unpriced_own_searches"),
         func.coalesce(func.sum(UsageRecord.cost), 0).label("cost"),
         func.coalesce(func.sum(UsageRecord.cost_native), 0).label("native_cost"),
         func.min(UsageRecord.cost_currency).label("native_currency"),
@@ -328,6 +345,7 @@ def _row(
         images,
         searches,
         own_searches,
+        unpriced_own_searches,
         cost,
         native_cost,
         native_currency,
@@ -351,6 +369,7 @@ def _row(
         images=int(images or 0),
         searches=int(searches or 0),
         own_searches=int(own_searches or 0),
+        unpriced_own_searches=int(unpriced_own_searches or 0),
         cost=Decimal(str(cost or 0)),
         native_cost=Decimal(str(native_cost or 0)) if show_native else None,
         native_currency=native_currency if show_native else None,
@@ -376,6 +395,7 @@ def _totals(rows: Sequence[UsageReportRow]) -> UsageReportRow:
         images=sum(row.images for row in rows),
         searches=sum(row.searches for row in rows),
         own_searches=sum(row.own_searches for row in rows),
+        unpriced_own_searches=sum(row.unpriced_own_searches for row in rows),
         cost=sum((row.cost for row in rows), Decimal(0)),
         estimated_requests=sum(row.estimated_requests for row in rows),
         estimated_disconnected_requests=sum(row.estimated_disconnected_requests for row in rows),
@@ -516,17 +536,27 @@ def _disclosures(
             "without one records the searches and charges nothing for them."
         )
     if totals.own_searches:
-        # The column exists precisely so this sentence can be said. Our own
-        # backends are metered by **count and never priced** — two of the four
-        # vendors do not publish a rate we could verify — so the cost figure in
-        # this report contains nothing for them. Left unsaid, a reader would
-        # take the total for the whole bill and be wrong by however much the
-        # search vendor invoices separately.
-        notes.append(
-            f"{totals.own_searches} web search(es) were made against this deployment's "
-            "own search backends. They are counted, not priced: their cost is not in "
-            "this report and is reconciled against the search vendor's own invoice."
-        )
+        # The column exists precisely so this sentence can be said. A search
+        # backend is billed per request from the price an administrator set
+        # for it, and that cost is in the figure above. What is not in it is
+        # any search no price covered, and a reader who took the total for the
+        # whole bill would be wrong by however much the vendor invoices for
+        # those.
+        priced = totals.own_searches - totals.unpriced_own_searches
+        if priced:
+            notes.append(
+                f"{priced} web search(es) were made against this deployment's own search "
+                "backends and are billed per request at the price set for each backend, "
+                "which is in the cost figures. A price of 0 means the cost is settled out "
+                "of band."
+            )
+        if totals.unpriced_own_searches:
+            notes.append(
+                f"{totals.unpriced_own_searches} web search(es) had no price set for their "
+                "backend, so their cost is recorded as zero and this total is a floor. "
+                "Set a price per request on the Web search screen; searches already made "
+                "are not repriced."
+            )
     if fell_back:
         # Said at all because a pass-through deployment silently billing from
         # prices nobody maintains looks identical to one that is working. The
@@ -708,6 +738,7 @@ CSV_HEADER = [
     "estimated_requests",
     "unavailable_requests",
     "via_alias_requests",
+    "unpriced_own_searches",
 ]
 
 
@@ -752,6 +783,7 @@ def report_to_csv(report: UsageReport) -> str:
                 row.estimated_requests,
                 row.unavailable_requests,
                 row.via_alias_requests,
+                row.unpriced_own_searches,
             ]
         )
     return buffer.getvalue()

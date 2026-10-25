@@ -14,7 +14,7 @@ per-group model availability and a pluggable redaction layer.
 | `POST /v1/decisions`, `POST /v1/systemone` | key or bearer | [Decision models](decision-models.md): typed questions about a text, answered with calibrated probabilities. Metered per token, redacted, the request and the answer passed through in the format they arrived in |
 | `POST /v1/images/generations` | key or bearer | Image generation, billed per picture or per token depending on the model |
 | `POST /v1/ocr` | key or bearer | Document extraction, metered per page. Two backends: an upstream OCR model, or this deployment's own extractor |
-| `POST /v1/search` | key or bearer | Web search against a configured backend (Linkup, Exa, Jina, DuckDuckGo), metered per call. The backend is the billing group's search policy, or the one the body names in an optional `backend` (a search model the caller is granted; an ungranted name is a 404, never a fallback to the policy). `POST /v1/search/{backend}` is the verbatim passthrough |
+| `POST /v1/search` | key or bearer | Web search against a configured backend (Linkup, Exa, Jina, DuckDuckGo), metered per call and billed per request at the backend's price ([Web search: a price per request](accounting-and-quotas.md#web-search-a-price-per-request)). The backend is the billing group's search policy, or the one the body names in an optional `backend` (a search model the caller is granted; an ungranted name is a 404, never a fallback to the policy). `POST /v1/search/{backend}` is the verbatim passthrough |
 | `GET /v1/models` | key, bearer or none | Models this caller may use — billing-group grants (or the group named by `x-bill-to`), personal grants, and public models. Unauthenticated: the full catalogue, brochure fields only |
 | `GET /v1/pystino/usage` | key or bearer | This caller's own spend, for a client that wants to show it without a console session |
 | `GET /v1/billing/groups` | key or bearer | Which groups this caller may bill, and which one paid for this request |
@@ -173,7 +173,7 @@ OCR model, and an optional `currency` that defaults to the gateway's billing
 currency and is refused in any other, never converted). The price must carry
 the rates the kind is metered on — a chat model an input and an output rate, an
 embedding model an input rate, a decision model an input and an output rate (zero is accepted, absent is not), an OCR model a page rate; a search tier takes no
-price at all, because its meter counts requests. Each kind's missing rate is
+model price at all: a search backend is priced per request on the Web search screen instead. Each kind's missing rate is
 refused per item, so one bad price does not lose the rest of the batch.
 
 A hand-typed price may also carry `cache_read_per_mtok` and `cache_write_per_mtok`,

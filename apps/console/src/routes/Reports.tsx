@@ -98,12 +98,25 @@ export function Reports() {
       // serves a request, the other is this deployment calling a search API.
       // Added together they reconcile against neither invoice.
       //
-      // Unlike every other column here it contributes *nothing* to Cost — our
-      // backends are counted and never priced. The disclosures say that in
-      // words, which is where it belongs; a number cannot say it.
+      // These are billed per request at the price set for their backend, and
+      // that is in Cost. The ones no price covered sit in Cost as zero, so the
+      // cell names them: a count with a silent gap in the money beside it would
+      // read as free. The disclosures say the rest in words.
       hideBelow: "md",
       render: (row) =>
-        row.own_searches ? formatNumber(row.own_searches) : <span className={MUTED}>—</span>,
+        row.own_searches ? (
+          <>
+            {formatNumber(row.own_searches)}
+            {row.unpriced_own_searches > 0 && (
+              <span className={MUTED}>
+                {" "}
+                {m["reports.own_searches_unpriced"]({ count: row.unpriced_own_searches })}
+              </span>
+            )}
+          </>
+        ) : (
+          <span className={MUTED}>—</span>
+        ),
     },
     {
       key: "cost",

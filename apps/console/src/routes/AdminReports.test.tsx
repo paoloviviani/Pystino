@@ -25,6 +25,7 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
     images: 0,
     searches: 0,
     own_searches: 0,
+    unpriced_own_searches: 0,
     cost: "42.500000000000",
     native_cost: null,
     native_currency: null,

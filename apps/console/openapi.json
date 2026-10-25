@@ -5619,6 +5619,40 @@
         "title": "Page[RequestLogRow]",
         "type": "object"
       },
+      "Page_SearchPriceResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SearchPriceResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[SearchPriceResponse]",
+        "type": "object"
+      },
       "Page_UserAdminResponse_": {
         "properties": {
           "items": {
@@ -8118,6 +8152,131 @@
         "title": "SearchBackendDeleteResponse",
         "type": "object"
       },
+      "SearchPriceCreateRequest": {
+        "description": "A new per-request price for a search backend. Append-only: it never\nedits an earlier row, and a future ``effective_from`` schedules a change.",
+        "properties": {
+          "backend": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Backend",
+            "type": "string"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "maxLength": 3,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "effective_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective From"
+          },
+          "per_request": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Per Request"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
+          }
+        },
+        "required": [
+          "backend",
+          "per_request"
+        ],
+        "title": "SearchPriceCreateRequest",
+        "type": "object"
+      },
+      "SearchPriceResponse": {
+        "description": "One row of a search backend's price history.\n\n``in_force`` marks the row that prices a search made now (the newest one\nthat has taken effect, for its backend and tier), so the console does not\nhave to redo the effective-dating rule. A price of 0 is a real price:\n\"billed out of band\".",
+        "properties": {
+          "backend": {
+            "title": "Backend",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "effective_from": {
+            "format": "date-time",
+            "title": "Effective From",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "in_force": {
+            "title": "In Force",
+            "type": "boolean"
+          },
+          "per_request": {
+            "title": "Per Request",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
+          }
+        },
+        "required": [
+          "id",
+          "backend",
+          "tier",
+          "per_request",
+          "currency",
+          "effective_from",
+          "source",
+          "in_force"
+        ],
+        "title": "SearchPriceResponse",
+        "type": "object"
+      },
       "SearchRequest": {
         "additionalProperties": false,
         "description": "``POST /v1/search`` — one search through the caller's billing-group policy.\n\n**The one ``/v1`` request model that forbids unknown fields.** Every other\none allows them, because every other one *forwards* the body it was given\nand a gateway that validated a counterparty's whole option set would refuse\nvalid requests each time the counterparty added a field. Nothing is\nforwarded here: the body is rebuilt in the backend's own shape by its\nplugin, because Linkup wants ``q``/``depth`` and Exa wants\n``query``/``numResults`` and no passthrough can be both. An unrecognised\nfield would therefore be *dropped*, silently, and a caller who asked for a\ndate range and did not get one deserves a refusal rather than results they\nwill trust. (A 400, not FastAPI's 422: this app rewrites validation errors\ninto the OpenAI error shape every ``/v1`` client parses.)\n\nThere is no ``depth``, ``type`` or ``tier`` field, and that is the design.\nWhich backend runs is the billing group's policy\n(``groups.search_model_id``) unless the caller names one with the optional\n``backend`` (a model name it is granted — an ungranted name is a 404, never\na fallback). The backend always runs at the\nvendor's default depth: the ledger records no tier because none was asked\nfor, and a ceiling counted in requests bounds volume, not spend. A caller\nthat needs a dearer tier names the backend directly on the passthrough.\n\nThis revisits ADR 0071's refusal to translate, narrowly and for a reason\nthat did not exist then: a group policy is unenforceable while the vendor\ndialect lives in the caller. The translation surface is three fields in\nand three fields out, and anything fancier stays on the passthrough.",
@@ -8672,6 +8831,11 @@
             "title": "Unavailable Requests",
             "type": "integer"
           },
+          "unpriced_own_searches": {
+            "default": 0,
+            "title": "Unpriced Own Searches",
+            "type": "integer"
+          },
           "via_alias_requests": {
             "default": 0,
             "title": "Via Alias Requests",
@@ -8688,6 +8852,7 @@
           "images",
           "searches",
           "own_searches",
+          "unpriced_own_searches",
           "cost",
           "native_cost",
           "native_currency",
@@ -13500,6 +13665,123 @@
           }
         },
         "summary": "Request Log Csv",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/search-prices": {
+      "get": {
+        "description": "Every search backend's per-request price history, newest first.\n\nAppend-only, so nothing here is ever mutated. A backend with no row is\n*unpriced*, which is a different thing from a row of 0 (\"billed out of\nband\"): searches through it are recorded at cost 0 with no price reference.",
+        "operationId": "list_search_prices_api_admin_search_prices_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "backend",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Backend"
+            }
+          },
+          {
+            "description": "Rows to return, at most 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Rows to return, at most 200.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Rows to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Rows to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_SearchPriceResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Search Prices",
+        "tags": [
+          "administration"
+        ]
+      },
+      "post": {
+        "description": "Append a per-request price for a search backend.\n\nEffective-dated like a model price, so a future date schedules a change and\na past date cannot alter what an already-recorded search cost. Refused for a\nbackend this gateway has no search provider for: a price typed against a\nmisspelt name would sit unused while the real backend stayed unpriced.",
+        "operationId": "create_search_price_api_admin_search_prices_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchPriceCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchPriceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Search Price",
         "tags": [
           "administration"
         ]

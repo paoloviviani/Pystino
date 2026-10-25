@@ -42,10 +42,11 @@ passthrough's ``tier=None``. A caller that needs Linkup ``deep`` or Exa
 ``deep-reasoning`` names the backend on the passthrough, where the tier is
 the caller's own words and the spend is the operator's to reconcile.
 
-**The unit is a request, and it has no price.** As on the passthrough: the
-decision is recorded on ``LimitMetric.OWN_SEARCH_REQUESTS``, the reservation
-is ``worst_case_own_searches=1`` and ``worst_case=TokenCounts()`` — nothing
-else.
+**The unit is a request, priced per request.** As on the passthrough: the
+count is recorded on ``LimitMetric.OWN_SEARCH_REQUESTS``, and the reservation
+is ``worst_case_own_searches=1`` with ``search_backend`` so the backend's price
+(``SearchPrice``) joins the cost reservation; ``worst_case`` stays empty because
+there are no tokens to bound. Unpriced until an administrator sets a price.
 
 **The search is counted before it is made, and a failure does not refund it.**
 ``observe_own_search`` runs before the HTTP request, so a vendor error, a
@@ -227,9 +228,8 @@ async def unified_search(
         raise BadRequestError("The search needs a query.", code="empty_query")
 
     # -- reservation --------------------------------------------------------
-    # One call, one search. `worst_case` is empty because there is no token
-    # cost to bound: an unpriced search has no cost ceiling because it has no
-    # cost, which is the whole design rather than a gap in it.
+    # One call, one search. `worst_case` is empty because there are no tokens to
+    # bound; the search's own price is reserved through `search_backend`.
     metered = await _metered.begin(
         fx=request.app.state.fx,
         session_factory=request.app.state.session_factory,
@@ -243,6 +243,7 @@ async def unified_search(
         request_id=request_id,
         worst_case=TokenCounts(),
         worst_case_own_searches=1,
+        search_backend=plugin.name,
         outcome=outcome,
         streamed=False,
     )
@@ -441,9 +442,8 @@ async def search(
         )
 
     # -- reservation --------------------------------------------------------
-    # One call, one search. `worst_case` is empty because there is no token
-    # cost to bound: an unpriced search has no cost ceiling because it has no
-    # cost, which is the whole design rather than a gap in it.
+    # One call, one search. `worst_case` is empty because there are no tokens to
+    # bound; the search's own price is reserved through `search_backend`.
     metered = await _metered.begin(
         fx=request.app.state.fx,
         session_factory=request.app.state.session_factory,
@@ -457,6 +457,7 @@ async def search(
         request_id=_metered.request_id_for(request, settings),
         worst_case=TokenCounts(),
         worst_case_own_searches=1,
+        search_backend=plugin.name,
         outcome=None,
         streamed=False,
     )

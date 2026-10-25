@@ -37,6 +37,7 @@ from gateway.accounting.cost import (
     compute_cost,
     select_price,
 )
+from gateway.accounting.search_price import SearchQuote, quote_search
 from gateway.accounting.tokens import TokenEstimator
 from gateway.config import Settings
 from gateway.models import (
@@ -218,10 +219,9 @@ class RequestAccounting:
         self._image_size: str | None = None
         #: Calls this gateway made to a search backend of its own, and the
         #: labels for them. Held here rather than on ``TokenCounts`` on
-        #: purpose: that structure exists to be multiplied by a rate, and this
-        #: quantity has no rate by decision (``LimitMetric.OWN_SEARCH_REQUESTS``).
-        #: Putting a deliberately unpriced count in the priced structure is an
-        #: invitation to price it.
+        #: purpose: that structure is multiplied by a per-token rate, and a
+        #: search is priced per request from its backend's own `SearchPrice`
+        #: (`_price_own_searches`), not from the model's price row.
         self._own_searches = 0
         self._own_search_backend: str | None = None
         self._own_search_tier: str | None = None
@@ -427,6 +427,30 @@ class RequestAccounting:
                 )
         if tier is not None and self._own_search_tier is None:
             self._own_search_tier = tier[:64]
+
+    async def _price_own_searches(self) -> SearchQuote:
+        """The searches this request ran, priced; unpriced when nothing says otherwise.
+
+        A failure to read the price must not lose the usage record, so it is
+        logged and the searches are recorded unpriced, which reports show.
+        """
+        backend = self._own_search_backend
+        if self._own_searches <= 0 or backend is None:
+            return SearchQuote.unpriced()
+        try:
+            async with self._session_factory() as session:
+                return await quote_search(
+                    session,
+                    fx=self._fx,
+                    backend=backend,
+                    tier=self._own_search_tier,
+                    count=self._own_searches,
+                    billing_currency=self._ctx.currency,
+                    at=self._started_at,
+                )
+        except Exception:
+            logger.error("pricing the %s searches failed", backend, exc_info=True)
+            return SearchQuote.unpriced()
 
     # -- persistence -------------------------------------------------------
 
@@ -712,6 +736,30 @@ class RequestAccounting:
                 # disclose the count.
                 cost_source = CostSource.OWN_PRICES_FALLBACK
 
+        # What the searches this gateway ran cost, from the backend's own price
+        # (`SearchPrice`). Priced here, at the moment the request started, so a
+        # price changed while it ran does not split one request across two rows
+        # of the history. Added to whichever figure was billed above: a search
+        # is a surcharge on the request, in either billing mode.
+        search = await self._price_own_searches()
+        if search.price is not None:
+            computed += search.billed
+            charged += search.billed
+            if native_total is None or native_total == 0:
+                native_total = search.native
+                native_currency = search.native_currency
+                fx_rate_used = search.fx_rate
+            elif native_currency == search.native_currency:
+                native_total += search.native
+            else:
+                logger.warning(
+                    "request %s has a model priced in %s and searches priced in %s; "
+                    "the native figure records the model's part only",
+                    self._ctx.request_id,
+                    native_currency,
+                    search.native_currency,
+                )
+
         now = utcnow()
         latency_ms = int((now - self._started_at).total_seconds() * 1000)
         ttfb_ms = (
@@ -723,7 +771,7 @@ class RequestAccounting:
         actuals = QuotaAmounts(
             requests=Decimal(1),
             tokens=Decimal(counts.total),
-            cost=breakdown.total,
+            cost=breakdown.total + search.billed,
             # Straight from the recorder's own tally, not from `counts`: a
             # search we ran is not in any counterparty's usage frame, and the
             # estimation paths above return a bare `TokenCounts()` on failure,
@@ -791,6 +839,7 @@ class RequestAccounting:
             if reported and reported.details
             else None,
             "price_id": price.id if price is not None else None,
+            "search_price_id": search.price.id if search.price is not None else None,
             "finish_reason": self.finish_reason(),
             "upstream_status": upstream_status,
             "latency_ms": latency_ms,

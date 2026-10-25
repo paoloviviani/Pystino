@@ -41,6 +41,7 @@ from starlette.background import BackgroundTask
 from gateway.access import accessible_model_by_name, alias_targets, alias_unavailable_reason
 from gateway.accounting import RequestAccounting, RequestContext, TokenCounts
 from gateway.accounting.cost import CostBreakdown, compute_cost, select_price
+from gateway.accounting.search_price import quote_search
 from gateway.accounting.tokens import TokenEstimator
 from gateway.catalogue import Catalogue, CatalogueFacts
 from gateway.config import EffectivePolicy, Settings
@@ -845,15 +846,14 @@ async def begin(
     worst_case: TokenCounts,
     # The most searches this request may run against a backend of our own
     # (docs/web-search-plan.md, phase 2). A separate argument rather than a
-    # field on `worst_case`, because `TokenCounts` is the structure
-    # `compute_cost` multiplies by a rate and this quantity deliberately has
-    # none — see `LimitMetric.OWN_SEARCH_REQUESTS`.
-    #
-    # Zero by default, and every surface passes zero today: the search backends
-    # are not built. The path is here so that the surface which does build them
-    # reserves through *this* function, rather than discovering at that point
-    # that the shared pipeline cannot carry its unit and writing a second one.
+    # field on `worst_case`, because `TokenCounts` is what `compute_cost`
+    # multiplies by the model's per-token rates; a search is priced per request
+    # from the backend's `SearchPrice` (see `search_backend` below).
     worst_case_own_searches: int = 0,
+    # The backend those searches go to, so the reservation can include what
+    # they cost. Without it the searches are counted and not priced here, as
+    # before; with it the cost metric sees the search price like any other cost.
+    search_backend: str | None = None,
     outcome: RedactionOutcome | None = None,
     streamed: bool = False,
 ) -> Metered | JSONResponse:
@@ -876,13 +876,26 @@ async def begin(
         model, worst_case, currency=settings.billing_currency, fx=fx
     )
 
+    search_cost = Decimal(0)
+    if worst_case_own_searches and search_backend is not None:
+        search_cost = (
+            await quote_search(
+                session,
+                fx=fx,
+                backend=search_backend,
+                tier=None,
+                count=worst_case_own_searches,
+                billing_currency=settings.billing_currency,
+            )
+        ).billed
+
     try:
         reservation = await quota.check_and_reserve(
             session,
             principal.quota_subject,
             QuotaAmounts(
                 tokens=Decimal(worst_case.total),
-                cost=worst_case_cost.total,
+                cost=worst_case_cost.total + search_cost,
                 own_search_requests=Decimal(worst_case_own_searches),
             ),
         )

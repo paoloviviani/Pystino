@@ -71,6 +71,9 @@ export type ModelKind = "chat" | "embedding" | "image" | "ocr" | "search" | "dec
 
 export type Price = Schemas["PriceResponse"];
 
+/** One row of a search backend's per-request price history. */
+export type SearchPrice = Schemas["SearchPriceResponse"];
+
 export type AdminModel = Narrow<
   Schemas["ModelAdminResponse"],
   {

@@ -28,6 +28,7 @@ from gateway.models import (
     ModelDef,
     Provider,
     QuotaReset,
+    SearchPrice,
     UsageRecord,
     UsageSource,
     UsageStatus,
@@ -948,7 +949,7 @@ class TestSearchesInTheReport:
 
 
 class TestOwnSearches:
-    """Our own search backends, counted and never priced.
+    """Our own search backends, counted and billed per request.
 
     The whole reason these are a separate column: one is the counterparty
     searching while it serves a chat request, the other is this deployment
@@ -995,18 +996,50 @@ class TestOwnSearches:
         assert [row["own_searches"] for row in rows] == ["2", "2"]
         assert [row["searches"] for row in rows] == ["9", "9"]
 
-    async def test_the_disclosure_says_their_cost_is_absent(
+    async def test_unpriced_searches_are_named_so_the_total_is_read_as_a_floor(
         self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
     ) -> None:
-        """A count with no price in a report full of prices reads as free."""
+        """A search nobody priced sits in a report full of prices as zero, and
+        reads as free unless the report says otherwise."""
         await record(
             session, group_id=seeded.group.id, cost="1", own_searches=4, at=inside_this_month()
         )
 
         body = (await admin_client.get(f"/api/admin/reports/usage?period={THIS_MONTH}")).json()
-        note = next(n for n in body["disclosures"] if "own search backends" in n)
-        assert "counted, not priced" in note
+        assert body["totals"]["unpriced_own_searches"] == 4
+        note = next(n for n in body["disclosures"] if "no price set" in n)
         assert "4" in note
+        assert "floor" in note
+
+    async def test_a_search_priced_at_zero_is_not_called_unpriced(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        """ "Billed out of band" is a decision, and the report must not nag
+        about it: it carries a price reference, which unpriced does not."""
+        price = SearchPrice(backend="linkup", per_request=Decimal(0), currency="EUR")
+        session.add(price)
+        await session.flush()
+        row = await record(
+            session, group_id=seeded.group.id, cost="0", own_searches=3, at=inside_this_month()
+        )
+        row.search_price_id = price.id
+        await session.commit()
+
+        body = (await admin_client.get(f"/api/admin/reports/usage?period={THIS_MONTH}")).json()
+        assert body["totals"]["own_searches"] == 3
+        assert body["totals"]["unpriced_own_searches"] == 0
+        assert not any("no price set" in n for n in body["disclosures"])
+        assert any("billed per request" in n for n in body["disclosures"])
+
+    async def test_the_csv_names_the_unpriced_searches(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        await record(
+            session, group_id=seeded.group.id, cost="1", own_searches=4, at=inside_this_month()
+        )
+        response = await admin_client.get("/api/admin/reports/usage.csv")
+        rows = list(csv.DictReader(io.StringIO(response.text)))
+        assert [row["unpriced_own_searches"] for row in rows] == ["4", "4"]
 
     async def test_no_disclosure_when_we_searched_nothing(
         self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded

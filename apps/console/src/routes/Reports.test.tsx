@@ -41,6 +41,7 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
         images: 0,
         searches: 0,
         own_searches: 0,
+        unpriced_own_searches: 0,
         cost: "0.003",
         native_cost: null,
         native_currency: null,
@@ -62,6 +63,7 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
       images: 0,
       searches: 0,
       own_searches: 0,
+      unpriced_own_searches: 0,
       cost: "3.250000000000",
       native_cost: null,
       native_currency: null,
@@ -121,6 +123,38 @@ describe("Reports", () => {
     const notes = screen.getAllByRole("note");
     expect(notes.map((el) => el.textContent)).toContain(note);
     expect(notes.map((el) => el.textContent)).toContain(second);
+  });
+
+  it("names the searches no price covered beside the count, and shows their cost", async () => {
+    // A search billed from its backend's price is in Spend; one nobody priced
+    // sits there as zero, so the cell says how many. Silence would read as free.
+    const base = report();
+    const row = base.rows[0]!;
+    vi.stubGlobal(
+      "fetch",
+      respondWith(
+        report({
+          rows: [{ ...row, own_searches: 5, unpriced_own_searches: 2, cost: "0.035" }],
+        }),
+      ),
+    );
+    renderScreen();
+
+    expect(await screen.findByText("(2 unpriced)")).toBeInTheDocument();
+    expect(screen.getByText("€0.035")).toBeInTheDocument();
+  });
+
+  it("does not mention unpriced searches when every search had a price", async () => {
+    const base = report();
+    const row = base.rows[0]!;
+    vi.stubGlobal(
+      "fetch",
+      respondWith(report({ rows: [{ ...row, own_searches: 5, unpriced_own_searches: 0 }] })),
+    );
+    renderScreen();
+
+    await screen.findByText("gpt-4o");
+    expect(screen.queryByText(/unpriced/)).toBeNull();
   });
 
   it("remembers this page's open-or-closed choice", async () => {

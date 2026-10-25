@@ -193,9 +193,11 @@ class LimitMetric(enum.StrEnum):
     TOKENS = "tokens"  # total_tokens, i.e. prompt + completion
     COST = "cost"
     #: Calls this gateway made to a web-search backend of its own — Exa, Jina,
-    #: Staan, Linkup — counted, never priced.
+    #: Staan, Linkup — counted. Since the per-request price (`SearchPrice`) they
+    #: are also billed in `cost`, but this ceiling still bounds **volume**; the
+    #: paragraph below is why the count stayed the metric rather than the money.
     #:
-    #: Not priced because two of the four rates cannot be established at
+    #: The count was first all there was, because two of the four rates could not be established at
     #: source: Jina publishes no per-token price at all, and Staan's higher
     #: "for AI" tier is neither a documented request parameter nor reported
     #: back in the response. A price table where half the rows are guesses
@@ -257,8 +259,9 @@ class ApiSurface(enum.StrEnum):
     #: extractor. Metered by the page rather than the token.
     OCR = "ocr"
     #: A web search this gateway ran itself, `POST /v1/search`. The only
-    #: surface metered by a count with no rate behind it: `own_search_requests`
-    #: rather than `cost`, for the reasons on `LimitMetric.OWN_SEARCH_REQUESTS`.
+    #: surface metered by a count first: `own_search_requests`, for the reasons
+    #: on `LimitMetric.OWN_SEARCH_REQUESTS`. It is billed per request too, at the
+    #: backend's `SearchPrice`, and unpriced until an administrator sets one.
     SEARCH = "search"
     #: `POST /v1/decisions` and `POST /v1/systemone` (ADR 0100): typed
     #: questions about a piece of text, answered with calibrated
@@ -1378,6 +1381,46 @@ class ModelPrice(Base):
     model: Mapped[ModelDef] = relationship(back_populates="prices")
 
 
+class SearchPrice(Base):
+    """What one request to a web-search backend costs: effective-dated, append-only.
+
+    The same shape as ``ModelPrice`` and the same rule, so a later change never
+    rewrites a request already recorded. A search backend has no token rates,
+    and its rows are keyed by the plugin name (``exa``, ``linkup``), which is
+    exactly what ``usage_records.own_search_backend`` records, rather than by a
+    model row: the model rows under a backend are grant anchors, and one
+    vendor's price must not depend on which anchor a group was handed.
+
+    ``tier`` is empty for the backend's own price and names a tier only for an
+    override. Empty rather than null so that the unique constraint below
+    actually holds (SQL treats two NULLs as different).
+
+    A ``per_request`` of **0 is a real price**: "billed out of band". It is
+    recorded on the usage row with a price reference, which is what tells it
+    from a search no price was ever set for (no row, no reference).
+    """
+
+    __tablename__ = "search_prices"
+    __table_args__ = (
+        UniqueConstraint(
+            "backend", "tier", "effective_from", name="uq_search_prices_backend_tier_effective"
+        ),
+        Index("ix_search_prices_backend_effective", "backend", "effective_from"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    backend: Mapped[str] = mapped_column(String(32))
+    tier: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    #: Per single request, whatever the result count.
+    per_request: Mapped[Decimal]
+    currency: Mapped[str] = mapped_column(String(3))
+    effective_from: Mapped[datetime] = mapped_column(default=utcnow)
+    source: Mapped[PriceSource] = mapped_column(
+        _enum(PriceSource, "price_source"), default=PriceSource.MANUAL
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class GroupModelAccess(Base):
     """Per-group model availability.
 
@@ -1548,9 +1591,11 @@ class UsageRecord(Base):
     # is the distinction the whole `cost` / `computed_cost` / `upstream_cost`
     # family exists to preserve one table over.
     #
-    # A count and never a cost. Half the backends' rates cannot be read at
-    # source (see `LimitMetric.OWN_SEARCH_REQUESTS`), so a money column here
-    # would be a guess wearing the same type as a measurement.
+    # A count, and not a cost: the money is on `cost`, priced from the
+    # backend's `SearchPrice` (null `search_price_id` = nobody priced it). The
+    # count stays its own column because vendor rates were never all readable
+    # at source (see `LimitMetric.OWN_SEARCH_REQUESTS`) and a vendor dashboard
+    # itemises by count.
     own_search_requests: Mapped[int] = mapped_column(default=0, server_default=text("0"))
     # Which backend served them, and at which tier or depth — `exa` +
     # `deep-reasoning`, `staan` + `web_for_ai`, `linkup` + `deep`. Labels only:
@@ -1601,6 +1646,13 @@ class UsageRecord(Base):
     # Which price row produced `cost`. Null when the model had no price.
     price_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("model_prices.id", ondelete="SET NULL"), default=None
+    )
+    # Which search price produced the search part of `cost`. Null when no price
+    # was set for the backend, however many searches ran: that is "unpriced".
+    # A price of 0 ("billed out of band") still sets it, which is the whole
+    # difference between the two on a report.
+    search_price_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("search_prices.id", ondelete="SET NULL"), default=None
     )
 
     finish_reason: Mapped[str | None] = mapped_column(String(64), default=None)
