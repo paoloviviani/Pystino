@@ -253,7 +253,17 @@ async def extract_document(
                     if body.page_images
                     else None
                 ),
+                timeout_seconds=settings.extractor.timeout_seconds,
             )
+        except extraction.ExtractionTimeout as exc:
+            raise await metered.upstream_unreachable(
+                exc,
+                message=(
+                    "The document reader took too long and was stopped. A larger "
+                    "document needs a longer GATEWAY_EXTRACTOR__TIMEOUT_SECONDS "
+                    f"(now {settings.extractor.timeout_seconds:.0f}s)."
+                ),
+            ) from exc
         except UpstreamError as exc:
             # A local extractor that is down and a remote one that is down are
             # the same event from the caller's side, and the same ledger row.

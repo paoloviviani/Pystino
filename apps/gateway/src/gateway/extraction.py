@@ -24,6 +24,7 @@ function with a docstring rather than a dict comprehension:
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -32,6 +33,27 @@ from llmp_shared import ExtractionKind, ExtractionResponse
 from gateway.upstream import UpstreamError
 
 logger = logging.getLogger(__name__)
+
+
+#: How long one document may take when the caller does not say. Mirrors
+#: `ExtractorSettings.timeout_seconds`, which is what the route passes.
+DEFAULT_TIMEOUT_SECONDS = 180.0
+
+#: The provider test's own, much shorter budget: its document is one built-in page.
+PROBE_TIMEOUT_SECONDS = 30.0
+
+#: Connecting to a compose-network service is quick or it is not there at all;
+#: this is not the slow part, so it is not stretched with the read.
+_CONNECT_TIMEOUT_SECONDS = 10.0
+
+
+class ExtractionTimeout(UpstreamError):
+    """The extraction service did not answer within the document timeout.
+
+    A subclass of `UpstreamError` so every existing handler still treats it as
+    "the extractor could not be reached"; the route reads the type to give the
+    caller a message that says what to change.
+    """
 
 
 class DocumentRefused(Exception):
@@ -83,6 +105,7 @@ async def extract_document(
     request_id: str | None = None,
     page_images: int = 0,
     long_side: int | None = None,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> ExtractionResponse:
     """Ask the extraction service to read one document.
 
@@ -91,6 +114,11 @@ async def extract_document(
     which the route turns into the same 502 an unreachable provider produces:
     from the caller's side a local extractor that is down and a remote one that
     is down are the same event.
+
+    ``timeout_seconds`` bounds the whole wait for the answer and is applied per
+    request, so it holds whatever the shared client's own defaults are (the
+    control-plane client's is 10 s, far too short for a large PDF). Past it,
+    `ExtractionTimeout` is raised and a WARN names the setting to raise.
     """
     headers = {"content-type": media_type or "application/octet-stream"}
     if filename:
@@ -102,12 +130,31 @@ async def extract_document(
         if long_side:
             headers["x-page-image-long-side"] = str(long_side)
 
+    started = time.monotonic()
     try:
         response = await client.post(
-            f"{endpoint.rstrip('/')}/extract", content=data, headers=headers
+            f"{endpoint.rstrip('/')}/extract",
+            content=data,
+            headers=headers,
+            timeout=httpx.Timeout(timeout_seconds, connect=_CONNECT_TIMEOUT_SECONDS),
         )
         response.raise_for_status()
         return ExtractionResponse.model_validate(response.json())
+    except httpx.TimeoutException as exc:
+        elapsed = time.monotonic() - started
+        logger.warning(
+            "document extraction timed out after %.1fs (limit %.0fs, %d bytes, %s); "
+            "raise GATEWAY_EXTRACTOR__TIMEOUT_SECONDS to allow larger documents",
+            elapsed,
+            timeout_seconds,
+            len(data),
+            media_type or "unknown type",
+        )
+        raise ExtractionTimeout(
+            f"the extraction service did not answer within {timeout_seconds:.0f}s "
+            "(GATEWAY_EXTRACTOR__TIMEOUT_SECONDS)",
+            cause=exc,
+        ) from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise UpstreamError(f"the extraction service could not be reached: {exc}") from exc
 
