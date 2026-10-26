@@ -50,6 +50,7 @@ from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
 from gateway import identity_policy
 from gateway.accounting.cost import select_price
+from gateway.accounting.search_price import select_search_price
 from gateway.admin_audit import (
     headers_snapshot,
     limit_view,
@@ -57,6 +58,7 @@ from gateway.admin_audit import (
     price_view,
     provider_view,
     record_audit,
+    search_price_view,
 )
 from gateway.capabilities import Capabilities, effective_capabilities, new_group_flags
 from gateway.catalogue import Catalogue, CatalogueEntry
@@ -145,6 +147,7 @@ from gateway.models import (
     RedactionRule,
     RedactionScope,
     RefreshCredential,
+    SearchPrice,
     SeenGroup,
     SeenGroupUser,
     UsageRecord,
@@ -281,6 +284,8 @@ from gateway.schemas import (
     RedactionStatusResponse,
     RequestLogRow,
     SearchBackendDeleteResponse,
+    SearchPriceCreateRequest,
+    SearchPriceResponse,
     SeenGroupImportResponse,
     SeenGroupMapRequest,
     SeenGroupPage,
@@ -2367,6 +2372,121 @@ async def create_price(
     result = _price_response(price)
     assert result is not None
     return result
+
+
+# -- search prices ----------------------------------------------------------
+
+
+def _search_price_responses(prices: list[SearchPrice]) -> list[SearchPriceResponse]:
+    """Newest first, each marked when it is the row pricing a search made now."""
+    now = utcnow()
+    in_force: set[uuid.UUID] = set()
+    for backend, tier in {(price.backend, price.tier) for price in prices}:
+        mine = [price for price in prices if price.backend == backend]
+        # The tier's own override when one is in force, else nothing of its own:
+        # the backend-wide row is marked under the backend's own empty tier.
+        chosen = select_search_price(mine, tier=tier or None, at=now)
+        if chosen is not None and chosen.tier == tier:
+            in_force.add(chosen.id)
+    ordered = sorted(prices, key=lambda price: price.effective_from, reverse=True)
+    return [
+        SearchPriceResponse(
+            id=price.id,
+            backend=price.backend,
+            tier=price.tier or None,
+            per_request=price.per_request,
+            currency=price.currency,
+            effective_from=price.effective_from,
+            source=price.source.value,
+            in_force=price.id in in_force,
+        )
+        for price in ordered
+    ]
+
+
+@router.get("/search-prices", response_model=Page[SearchPriceResponse])
+async def list_search_prices(
+    admin: AdminUserDep, session: SessionDep, page: PageDep, backend: str | None = None
+) -> Page[SearchPriceResponse]:
+    """Every search backend's per-request price history, newest first.
+
+    Append-only, so nothing here is ever mutated. A backend with no row is
+    *unpriced*, which is a different thing from a row of 0 ("billed out of
+    band"): searches through it are recorded at cost 0 with no price reference.
+    """
+    stmt = select(SearchPrice)
+    if backend:
+        stmt = stmt.where(SearchPrice.backend == backend)
+    rows = list((await session.execute(stmt)).scalars().all())
+    return page.slice(_search_price_responses(rows))
+
+
+@router.post(
+    "/search-prices",
+    response_model=SearchPriceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_search_price(
+    request: Request,
+    payload: SearchPriceCreateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> SearchPriceResponse:
+    """Append a per-request price for a search backend.
+
+    Effective-dated like a model price, so a future date schedules a change and
+    a past date cannot alter what an already-recorded search cost. Refused for a
+    backend this gateway has no search provider for: a price typed against a
+    misspelt name would sit unused while the real backend stayed unpriced.
+    """
+    backend = payload.backend.strip().lower()
+    known = (
+        await session.execute(
+            select(Provider.id).where(
+                Provider.plugin == backend, Provider.kind == ProviderKind.SEARCH
+            )
+        )
+    ).first()
+    if known is None:
+        raise BadRequestError(
+            f"There is no search backend {backend!r} on this gateway. Add it on the "
+            "Web search screen first.",
+            code="unknown_search_backend",
+        )
+    currency = await _price_currency(payload.currency, settings, request.app.state.fx)
+    price = SearchPrice(
+        id=uuid.uuid4(),
+        backend=backend,
+        tier=(payload.tier or "").strip(),
+        per_request=payload.per_request,
+        currency=currency,
+        effective_from=payload.effective_from or utcnow(),
+        source=PriceSource.MANUAL,
+    )
+    session.add(price)
+    record_audit(
+        session,
+        admin,
+        "search_price.create",
+        "search_price",
+        price.id,
+        backend if not price.tier else f"{backend}/{price.tier}",
+        after=search_price_view(price),
+    )
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise ConflictError(
+            "This backend already has a price with that exact effective_from."
+        ) from exc
+    rows = list(
+        (await session.execute(select(SearchPrice).where(SearchPrice.backend == backend)))
+        .scalars()
+        .all()
+    )
+    return next(row for row in _search_price_responses(rows) if row.id == price.id)
 
 
 # -- groups and access ------------------------------------------------------

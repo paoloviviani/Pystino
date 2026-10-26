@@ -1650,6 +1650,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/search-prices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Search Prices
+         * @description Every search backend's per-request price history, newest first.
+         *
+         *     Append-only, so nothing here is ever mutated. A backend with no row is
+         *     *unpriced*, which is a different thing from a row of 0 ("billed out of
+         *     band"): searches through it are recorded at cost 0 with no price reference.
+         */
+        get: operations["list_search_prices_api_admin_search_prices_get"];
+        put?: never;
+        /**
+         * Create Search Price
+         * @description Append a per-request price for a search backend.
+         *
+         *     Effective-dated like a model price, so a future date schedules a change and
+         *     a past date cannot alter what an already-recorded search cost. Refused for a
+         *     backend this gateway has no search provider for: a price typed against a
+         *     misspelt name would sit unused while the real backend stayed unpriced.
+         */
+        post: operations["create_search_price_api_admin_search_prices_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/usage": {
         parameters: {
             query?: never;
@@ -5111,6 +5144,17 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** Page[SearchPriceResponse] */
+        Page_SearchPriceResponse_: {
+            /** Items */
+            items: components["schemas"]["SearchPriceResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /** Page[UserAdminResponse] */
         Page_UserAdminResponse_: {
             /** Items */
@@ -6115,6 +6159,56 @@ export interface components {
             tiers_deleted: number;
         };
         /**
+         * SearchPriceCreateRequest
+         * @description A new per-request price for a search backend. Append-only: it never
+         *     edits an earlier row, and a future ``effective_from`` schedules a change.
+         */
+        SearchPriceCreateRequest: {
+            /** Backend */
+            backend: string;
+            /** Currency */
+            currency?: string | null;
+            /** Effective From */
+            effective_from?: string | null;
+            /** Per Request */
+            per_request: number | string;
+            /** Tier */
+            tier?: string | null;
+        };
+        /**
+         * SearchPriceResponse
+         * @description One row of a search backend's price history.
+         *
+         *     ``in_force`` marks the row that prices a search made now (the newest one
+         *     that has taken effect, for its backend and tier), so the console does not
+         *     have to redo the effective-dating rule. A price of 0 is a real price:
+         *     "billed out of band".
+         */
+        SearchPriceResponse: {
+            /** Backend */
+            backend: string;
+            /** Currency */
+            currency: string;
+            /**
+             * Effective From
+             * Format: date-time
+             */
+            effective_from: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** In Force */
+            in_force: boolean;
+            /** Per Request */
+            per_request: string;
+            /** Source */
+            source: string;
+            /** Tier */
+            tier: string | null;
+        };
+        /**
          * SearchRequest
          * @description ``POST /v1/search`` — one search through the caller's billing-group policy.
          *
@@ -6399,6 +6493,11 @@ export interface components {
              * @default 0
              */
             unavailable_requests: number;
+            /**
+             * Unpriced Own Searches
+             * @default 0
+             */
+            unpriced_own_searches: number;
             /**
              * Via Alias Requests
              * @default 0
@@ -8970,6 +9069,74 @@ export interface operations {
                 };
                 content: {
                     "text/plain": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_search_prices_api_admin_search_prices_get: {
+        parameters: {
+            query?: {
+                backend?: string | null;
+                /** @description Rows to return, at most 200. */
+                limit?: number;
+                /** @description Rows to skip. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_SearchPriceResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_search_price_api_admin_search_prices_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SearchPriceCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchPriceResponse"];
                 };
             };
             /** @description Validation Error */

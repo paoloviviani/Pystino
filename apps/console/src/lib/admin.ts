@@ -37,6 +37,7 @@ import type {
   UserStatusCounts,
   ModelKind,
   Price,
+  SearchPrice,
   CatalogueEntry,
   ProviderPlugin,
   ProviderTestResult,
@@ -77,6 +78,7 @@ export const adminKeys = {
   // refreshes an open model page too — which is the whole reason the page can
   // afford to be a second view of the same row rather than its own cache.
   model: (modelId: string) => ["admin", "models", modelId] as const,
+  searchPrices: ["admin", "search-prices"] as const,
   prices: (modelId: string) => ["admin", "models", modelId, "prices"] as const,
   // Prefixed by `models`, deliberately, not a sibling of it: a retarget or a
   // grant change has to refresh an open model page too, because the model page
@@ -859,6 +861,42 @@ export function useCreatePrice() {
       // The catalogue shows each model's current price, which may have changed.
       client.invalidateQueries({ queryKey: adminKeys.models });
     },
+  });
+}
+
+export interface CreateSearchPriceInput {
+  backend: string;
+  /** Empty for the backend's own price; a tier name only for an override. */
+  tier?: string | null;
+  /** Per single request. "0" means billed out of band; it is not "unset". */
+  per_request: string;
+  /** The billing currency when omitted. */
+  currency?: string | null;
+  effective_from?: string | null;
+}
+
+/** Every search backend's price history, newest first. */
+export function useSearchPrices() {
+  return useQuery({
+    queryKey: pagedKey(adminKeys.searchPrices, pageParams({ limit: MAX_LIMIT })),
+    queryFn: () =>
+      request<Page<SearchPrice>>(
+        `/api/admin/search-prices?${pageParams({ limit: MAX_LIMIT })}`,
+      ),
+    ...pagedOptions,
+  });
+}
+
+export function useCreateSearchPrice() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateSearchPriceInput) =>
+      request<SearchPrice>("/api/admin/search-prices", {
+        method: "POST",
+        body,
+      }),
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: adminKeys.searchPrices }),
   });
 }
 

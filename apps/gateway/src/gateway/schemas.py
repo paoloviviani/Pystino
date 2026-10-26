@@ -1323,6 +1323,44 @@ class PriceCreateRequest(BaseModel):
         return cleaned
 
 
+class SearchPriceResponse(ResponseModel):
+    """One row of a search backend's price history.
+
+    ``in_force`` marks the row that prices a search made now (the newest one
+    that has taken effect, for its backend and tier), so the console does not
+    have to redo the effective-dating rule. A price of 0 is a real price:
+    "billed out of band".
+    """
+
+    id: uuid.UUID
+    backend: str
+    #: Null for the backend's own price; a tier name for an override.
+    tier: str | None
+    per_request: Money
+    currency: str
+    effective_from: datetime
+    source: str
+    in_force: bool
+
+
+class SearchPriceCreateRequest(BaseModel):
+    """A new per-request price for a search backend. Append-only: it never
+    edits an earlier row, and a future ``effective_from`` schedules a change."""
+
+    # The plugin name the usage ledger records (`exa`, `linkup`), which must
+    # belong to a search backend configured on this gateway.
+    backend: str = Field(min_length=1, max_length=32)
+    # Empty for the backend's own price. Only for a backend whose tiers are
+    # priced differently, as an override of that one tier.
+    tier: str | None = Field(default=None, max_length=64)
+    # Per single request, whatever the result count. 0 is accepted and means
+    # the operator settles the vendor cost out of band.
+    per_request: Money = Field(ge=0)
+    # Defaults to the gateway's billing currency.
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    effective_from: datetime | None = None
+
+
 class AliasPointer(ResponseModel):
     """The minimum to link to an alias: which row, and what to call it.
 
@@ -2302,9 +2340,14 @@ class UsageReportRow(ResponseModel):
     # Linkup). A separate figure from `searches` above and never folded into
     # it: one is the counterparty searching while serving a chat request, the
     # other is this deployment calling a search API, and a reader reconciling
-    # against either invoice needs to know which they are looking at. Counted,
-    # never priced — the decision recorded on `LimitMetric.OWN_SEARCH_REQUESTS`.
+    # against either invoice needs to know which they are looking at. Billed
+    # per request from the backend's own price (`SearchPrice`), and that cost
+    # is part of `cost`.
     own_searches: int = 0
+    # How many of those had no price set for their backend, so they sit in
+    # `cost` as zero. A search billed at a price of 0 ("billed out of band")
+    # is not counted here: it was priced, at nothing.
+    unpriced_own_searches: int = 0
     cost: Money
     # The native figure — what the model's price table produced, in its own
     # currency (ADR 0054). Present on model rows only: a model's rows share one

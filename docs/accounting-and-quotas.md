@@ -171,6 +171,58 @@ quantity differently. Reading only one would bill those tokens at the input
 rate. The distinction from the rule above is the point — those differ in
 meaning, these differ only in spelling.
 
+## Web search: a price per request
+
+A search this gateway runs against a backend of its own (`POST /v1/search`, or
+the passthrough `POST /v1/search/{backend}`) is billed **per request**, at a
+price an administrator sets for that backend on the **Web search** screen. One
+search is one request, whatever the number of results. The vendor's real
+invoice is settled outside the gateway; this price is what Pystino charges and
+reports.
+
+**Three states, kept apart on the row.**
+
+| State | `cost` | `search_price_id` | How you get there |
+|---|---|---|---|
+| unpriced | 0 | null | no price was ever set for the backend: where every backend starts |
+| billed out of band | 0 | the price row | a price of **0**: you settle the vendor's invoice yourself, and say so |
+| priced | price × requests | the price row | any other price |
+
+Unpriced is the gap, and reports name it ("N web search(es) had no price set",
+and a count beside the searches column), so the total reads as a floor. A price
+of 0 is a decision and is not reported as a gap. Upgrading therefore bills
+nothing you did not set a price for.
+
+**Prices are effective-dated and append-only**, like model prices. Setting a
+price adds a row that applies from its start time (now, or a later time to
+schedule a change); nothing edits or deletes a row, so a change never rewrites
+what an earlier search was billed. A price is per backend (`exa`, `linkup`, the
+plugin name the ledger records as `own_search_backend`), with an optional
+per-tier override for a backend whose tiers cost differently: a search that
+reports a tier takes that tier's price when it has one, else the backend's.
+Today the gateway runs every search at the vendor's default depth and records
+no tier, so the backend price is the one that applies. Prices are read at the
+moment the request starts.
+
+**What lands on the row.** `cost` (in the billing currency), `cost_native` and
+`cost_currency` (in the price's own currency, with `cost_fx_rate` when it
+differs), `computed_cost`, and `search_price_id` naming the price row. A price
+in another currency converts at the day's rate (ADR 0054); with no rate
+available the search is recorded unpriced and an error is logged, never billed
+at a guessed rate. A search is billed whether or not the vendor answered, for
+the reason it is counted whether or not it did: the request was made.
+
+**Quotas count it like any other cost.** A cost rule sees the search price in
+the reservation and in the settled figure, and a request-count ceiling for
+searches (`own_search_requests`) still bounds volume as before. The gateway
+does not itself run searches inside a chat completion; a provider's own
+server-side searches are a different thing (`search_count`, priced by the
+model's `per_search` rate, ADR 0058).
+
+**Searches made before a price existed are not repriced.** Their rows keep a
+cost of 0 and a null price reference, and reports continue to count them as
+unpriced.
+
 ## Money is a string, end to end
 
 - The column type is `Numeric(24,12)` through a `Money` TypeDecorator; in

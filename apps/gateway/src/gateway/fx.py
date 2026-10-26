@@ -105,10 +105,12 @@ class FXService:
         import starts being convertible with no settings change."""
         billing = self._settings.billing_currency.upper()
         async with self._session_factory() as session:
-            from gateway.models import ModelPrice
+            from gateway.models import ModelPrice, SearchPrice
 
             rows = await session.execute(select(ModelPrice.currency).distinct())
             currencies = {str(currency).upper() for currency in rows.scalars().all()}
+            search_rows = await session.execute(select(SearchPrice.currency).distinct())
+            currencies |= {str(currency).upper() for currency in search_rows.scalars().all()}
         return [(c, billing) for c in sorted(currencies) if c != billing]
 
     async def stop(self) -> None:

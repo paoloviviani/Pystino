@@ -35,7 +35,15 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gateway.models import AdminAuditEvent, LimitRule, ModelDef, ModelPrice, Provider, User
+from gateway.models import (
+    AdminAuditEvent,
+    LimitRule,
+    ModelDef,
+    ModelPrice,
+    Provider,
+    SearchPrice,
+    User,
+)
 
 _SECRET_NAME = re.compile(r"key|secret|token|password|authorization|credential", re.IGNORECASE)
 REDACTED = "[redacted]"
@@ -140,6 +148,13 @@ def alias_view(alias: ModelDef, target: str | None) -> dict[str, Any]:
 
 def price_view(price: ModelPrice) -> dict[str, Any]:
     return snapshot(price, PRICE_FIELDS)
+
+
+SEARCH_PRICE_FIELDS = ("backend", "tier", "per_request", "currency", "effective_from", "source")
+
+
+def search_price_view(price: SearchPrice) -> dict[str, Any]:
+    return snapshot(price, SEARCH_PRICE_FIELDS)
 
 
 def limit_view(rule: LimitRule) -> dict[str, Any]:

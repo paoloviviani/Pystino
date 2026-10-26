@@ -27,6 +27,7 @@ import {
 import type { AdminProvider, ProviderPlugin } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
+import { SearchPricesCard } from "../components/SearchPrices";
 import {
   CHIPS,
   CODE,
@@ -45,7 +46,7 @@ import { m } from "../paraglide/messages.js";
  * Web search, as its own screen (2026-09-13).
  *
  * A search backend is not a model provider and a tier is not a model: they
- * answer /v1/search, are metered as a count of requests, never priced, and
+ * answer /v1/search, are metered as a count of requests, billed per request at a price set here (unpriced until then), and
  * are absent from /v1/models unless a caller asks for them by name (ADR
  * 0071). Mixing them into the providers and models screens presented a
  * different concept in the vocabulary of another one — the reason this screen
@@ -192,6 +193,9 @@ export function AdminSearch() {
           </>
         )}
       </Card>
+
+      {/* -- what a request costs --------------------------------------- */}
+      <SearchPricesCard backends={backends} />
 
       {/* -- grants ---------------------------------------------------- */}
       <Card flush>

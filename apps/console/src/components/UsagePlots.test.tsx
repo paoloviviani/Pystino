@@ -22,6 +22,7 @@ function row(day: string, split: string, cost: string): UsageReportRow {
     images: 0,
     searches: 0,
     own_searches: 0,
+    unpriced_own_searches: 0,
     cost,
     native_cost: null,
     native_currency: null,

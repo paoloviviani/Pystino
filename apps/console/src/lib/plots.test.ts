@@ -16,6 +16,7 @@ function row(day: string, split: string, cost: string, requests = 1, tokens = 10
     images: 0,
     searches: 0,
     own_searches: 0,
+    unpriced_own_searches: 0,
     cost,
     native_cost: null,
     native_currency: null,

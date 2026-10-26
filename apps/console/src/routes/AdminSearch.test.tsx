@@ -4,7 +4,13 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AdminGroup, AdminModel, AdminProvider, ProviderPlugin } from "../lib/types";
+import type {
+  AdminGroup,
+  AdminModel,
+  AdminProvider,
+  ProviderPlugin,
+  SearchPrice,
+} from "../lib/types";
 import { jsonResponse, chooseRowAction } from "../test-helpers";
 import { AdminSearch } from "./AdminSearch";
 
@@ -174,6 +180,7 @@ function searchRoutes(
     counts?: Counts;
     deleteResult?: unknown;
     failDeleteWith?: { status: number; message: string };
+    searchPrices?: SearchPrice[];
   } = {},
 ) {
   const {
@@ -184,10 +191,24 @@ function searchRoutes(
     counts,
     deleteResult,
     failDeleteWith,
+    searchPrices = [],
   } = options;
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+
+    if (url.includes("/api/admin/search-prices")) {
+      if (method === "POST") {
+        writes?.captured.push({ url, method, body: JSON.parse(String(init?.body)) });
+        return jsonResponse({ ...searchPrices[0], id: "sp-new" }, 201);
+      }
+      return jsonResponse({
+        items: searchPrices,
+        total: searchPrices.length,
+        limit: 200,
+        offset: 0,
+      });
+    }
 
     if (url.includes("/api/admin/provider-plugins"))
       return new Response(JSON.stringify(PLUGINS), {
@@ -213,7 +234,7 @@ function searchRoutes(
       return jsonResponse({
         items: providers ?? [
           backend(),
-          backend({ id: "p2", name: "exa", base_url: "https://api.exa.ai" }),
+          backend({ id: "p2", name: "exa", plugin: "exa", base_url: "https://api.exa.ai" }),
         ],
         total: providers?.length ?? 2,
         limit: 200,
@@ -498,7 +519,8 @@ describe("AdminSearch backend dialog", () => {
     );
     renderScreen(<AdminSearch />);
 
-    await waitFor(() => expect(screen.getByText("jina")).toBeInTheDocument());
+    // The name appears in the backends table and in the price table.
+    await waitFor(() => expect(screen.getAllByText("jina").length).toBeGreaterThan(0));
     await user.click(screen.getByRole("button", { name: "Edit" }));
     const dialog = within(await screen.findByRole("dialog"));
     const endpoint = dialog.getByLabelText("Endpoint") as HTMLSelectElement;
@@ -536,7 +558,8 @@ describe("AdminSearch backend dialog", () => {
     );
     renderScreen(<AdminSearch />);
 
-    await waitFor(() => expect(screen.getByText("jina")).toBeInTheDocument());
+    // The name appears in the backends table and in the price table.
+    await waitFor(() => expect(screen.getAllByText("jina").length).toBeGreaterThan(0));
     await user.click(screen.getByRole("button", { name: "Edit" }));
     const dialog = within(await screen.findByRole("dialog"));
     const endpoint = dialog.getByLabelText("Endpoint") as HTMLSelectElement;
@@ -654,5 +677,117 @@ describe("AdminSearch backend deletion", () => {
     // The dialog stays open: the delete did not happen, and closing it would
     // read as if it had.
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+});
+
+function searchPrice(overrides: Partial<SearchPrice> = {}): SearchPrice {
+  return {
+    id: "sp1",
+    backend: "linkup",
+    tier: null,
+    per_request: "0.007000000000",
+    currency: "EUR",
+    effective_from: "2026-10-01T00:00:00Z",
+    source: "manual",
+    in_force: true,
+    ...overrides,
+  };
+}
+
+describe("AdminSearch price per request", () => {
+  it("shows a backend with no price as unpriced, not as free", async () => {
+    vi.stubGlobal("fetch", searchRoutes());
+    renderScreen(<AdminSearch />);
+
+    // One per backend: neither linkup nor exa has a price.
+    expect(await screen.findAllByText("Unpriced")).toHaveLength(2);
+    expect(screen.queryByText("Billed out of band")).toBeNull();
+  });
+
+  it("shows a price of 0 as billed out of band, which is not unpriced", async () => {
+    vi.stubGlobal(
+      "fetch",
+      searchRoutes(undefined, { searchPrices: [searchPrice({ per_request: "0.000000000000" })] }),
+    );
+    renderScreen(<AdminSearch />);
+
+    // linkup carries the zero price and is the only backend still pricing as
+    // "out of band"; exa, with no row, stays unpriced.
+    expect(await screen.findAllByText("Billed out of band")).not.toHaveLength(0);
+    expect(screen.getAllByText("Unpriced")).toHaveLength(1);
+  });
+
+  it("shows the price in force and its history", async () => {
+    vi.stubGlobal(
+      "fetch",
+      searchRoutes(undefined, {
+        searchPrices: [
+          searchPrice({ id: "new", per_request: "0.010000000000", effective_from: "2026-10-20T00:00:00Z" }),
+          searchPrice({ id: "old", in_force: false, effective_from: "2026-10-01T00:00:00Z" }),
+        ],
+      }),
+    );
+    renderScreen(<AdminSearch />);
+
+    expect(await screen.findByText("In force")).toBeTruthy();
+    expect(screen.getByText("Superseded")).toBeTruthy();
+    // The current price is on the backend's row, the old one only in history.
+    expect(screen.getAllByText("€0.01").length).toBeGreaterThan(0);
+  });
+
+  it("sets a price per request for the chosen backend", async () => {
+    const writes: Writes = { captured: [] };
+    vi.stubGlobal("fetch", searchRoutes(undefined, { writes, searchPrices: [searchPrice()] }));
+    const user = userEvent.setup();
+    renderScreen(<AdminSearch />);
+
+    const buttons = await screen.findAllByRole("button", { name: "Set price" });
+    await user.click(buttons[0]!);
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Price per request"), "0.007");
+    await user.click(within(dialog).getByRole("button", { name: "Set price" }));
+
+    await waitFor(() =>
+      expect(writes.captured).toEqual([
+        {
+          url: expect.stringContaining("/api/admin/search-prices"),
+          method: "POST",
+          body: {
+            backend: "linkup",
+            per_request: "0.007",
+            currency: null,
+            tier: null,
+            effective_from: null,
+          },
+        },
+      ]),
+    );
+  });
+
+  it("sends 0 as a price, since that is how out of band is said", async () => {
+    const writes: Writes = { captured: [] };
+    vi.stubGlobal("fetch", searchRoutes(undefined, { writes, searchPrices: [searchPrice()] }));
+    const user = userEvent.setup();
+    renderScreen(<AdminSearch />);
+
+    const buttons = await screen.findAllByRole("button", { name: "Set price" });
+    await user.click(buttons[1]!);
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/0 means billed out of band/),
+    ).toBeTruthy();
+    await user.type(within(dialog).getByLabelText("Price per request"), "0");
+    await user.type(within(dialog).getByLabelText("Tier (optional)"), "deep");
+    await user.click(within(dialog).getByRole("button", { name: "Set price" }));
+
+    await waitFor(() =>
+      expect(writes.captured[0]?.body).toEqual({
+        backend: "exa",
+        per_request: "0",
+        currency: null,
+        tier: "deep",
+        effective_from: null,
+      }),
+    );
   });
 });
