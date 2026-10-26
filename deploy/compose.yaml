@@ -155,6 +155,7 @@ services:
       GATEWAY_REDACTION__LANGUAGE: ${REDACTION_LANGUAGE:-en}
       GATEWAY_REDACTION__FAIL_OPEN: "false"
       GATEWAY_EXTRACTOR__ENDPOINT: ${GATEWAY_EXTRACTOR__ENDPOINT:-}
+      GATEWAY_EXTRACTOR__TIMEOUT_SECONDS: ${GATEWAY_EXTRACTOR__TIMEOUT_SECONDS:-180}
       # Identity: OIDC only. The env seeds the first provider row;
       # after that the console owns it. INTERNAL_BASE_URL is the back-channel:
       # the gateway reaches the bundled Authelia at http://authelia:9091, never

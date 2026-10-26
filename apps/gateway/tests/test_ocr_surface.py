@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 import orjson
+import pytest
 from conftest import FakeUpstream, Seeded
 from gateway.models import (
     ApiSurface,
@@ -649,6 +650,41 @@ class FakeExtractor:
             return httpx.Response(200, json=self._payload)
 
         return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+class SlowExtractor:
+    """An extractor that takes `seconds` to answer, without sleeping.
+
+    The handler honours the timeout httpx would have applied to the request
+    (`request.extensions["timeout"]`): if the simulated duration exceeds the read
+    timeout it raises `ReadTimeout`, exactly what a real slow server does to a
+    client with a short deadline.
+    """
+
+    def __init__(self, seconds: float) -> None:
+        self.seconds = seconds
+        self.read_timeouts: list[float | None] = []
+
+    def client(self) -> httpx.AsyncClient:
+        def handler(request: httpx.Request) -> httpx.Response:
+            read = request.extensions["timeout"]["read"]
+            self.read_timeouts.append(read)
+            if read is not None and self.seconds > read:
+                raise httpx.ReadTimeout("simulated slow extraction", request=request)
+            return httpx.Response(
+                200,
+                json={
+                    "kind": "text",
+                    "text": "slow but fine",
+                    "extractor": "markitdown",
+                    "pages": 50,
+                },
+            )
+
+        # The control-plane client's own default: what production had.
+        return httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), timeout=httpx.Timeout(10.0)
+        )
 
 
 async def add_local_model(
@@ -1308,3 +1344,57 @@ class TestDiscoverAgainstTheBuiltInExtractor:
         assert row["input_per_mtok"] is None
         assert row["per_page"] is None
         assert row["blocked_reason"] is not None
+
+
+class TestSlowExtraction:
+    async def test_a_24_second_extraction_succeeds_on_the_default_timeout(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        """Regression: a 50-page PDF took ~24 s and the shared 10 s control
+        client cut it off, so a successful extraction surfaced as a 502."""
+        extractor = SlowExtractor(24.0)
+        app.state.control_http = extractor.client()
+        model = await add_local_model(session, seeded, name="local-slow")
+
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": INLINE_DOCX},
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["pages"][0]["markdown"] == "slow but fine"
+        assert extractor.read_timeouts == [180.0]
+
+    async def test_a_timeout_says_which_setting_to_raise(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        app.state.settings.extractor.timeout_seconds = 5.0
+        app.state.control_http = SlowExtractor(24.0).client()
+        model = await add_local_model(session, seeded, name="local-timeout")
+
+        with caplog.at_level("WARNING", logger="gateway.extraction"):
+            response = await client.post(
+                "/v1/ocr",
+                json={
+                    "model": model.name,
+                    "document": {"type": "document_url", "document_url": INLINE_DOCX},
+                },
+                headers=seeded.auth,
+            )
+        assert response.status_code == 502
+        assert "GATEWAY_EXTRACTOR__TIMEOUT_SECONDS" in response.json()["error"]["message"]
+        warned = [r.getMessage() for r in caplog.records if "timed out" in r.getMessage()]
+        assert warned and "GATEWAY_EXTRACTOR__TIMEOUT_SECONDS" in warned[0]
+        assert "limit 5s" in warned[0]

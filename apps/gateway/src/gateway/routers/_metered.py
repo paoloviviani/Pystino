@@ -614,7 +614,9 @@ class Metered:
         """
         return self.accounting.plugin.prepare_payload(payload, surface=surface)
 
-    async def upstream_unreachable(self, exc: Exception) -> UpstreamUnavailableError:
+    async def upstream_unreachable(
+        self, exc: Exception, *, message: str | None = None
+    ) -> UpstreamUnavailableError:
         """Record the failure, settle at the true cost, and build the 503.
 
         Nothing was generated, so the actuals are zero and the reservation is
@@ -626,7 +628,7 @@ class Metered:
             error_message=str(exc),
         )
         await self.quota.settle(self.reservation, actuals)
-        error = UpstreamUnavailableError("The upstream provider could not be reached.")
+        error = UpstreamUnavailableError(message or "The upstream provider could not be reached.")
         if self.may_fall_back:
             raise AttemptFailed("upstream_unreachable", error=error)
         return error

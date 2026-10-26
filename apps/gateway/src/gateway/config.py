@@ -886,6 +886,14 @@ class ExtractorSettings(BaseModel):
     #: plugin's rows fall back to.
     endpoint: str = "http://extractor:8080"
 
+    #: How long one document may take to read, in seconds
+    #: (``GATEWAY_EXTRACTOR__TIMEOUT_SECONDS``). Deliberately its own setting and
+    #: far longer than the 10 s the control-plane client allows OIDC discovery
+    #: and the like: markitdown reads a 50-page PDF in 20-30 s, and a client
+    #: that gives up at 10 s turns a successful extraction into a 502. When it
+    #: fires, the gateway logs a WARN naming this setting and the elapsed time.
+    timeout_seconds: float = Field(default=180.0, gt=0)
+
 
 class RedactionSettings(BaseModel):
     """Redaction/guardrail layer.

@@ -172,7 +172,11 @@ class LocalExtractorPlugin(GenericOpenAIPlugin):
 
         try:
             outcome = await extraction.extract_document(
-                client, base, _probe_document(), media_type="application/pdf"
+                client,
+                base,
+                _probe_document(),
+                media_type="application/pdf",
+                timeout_seconds=extraction.PROBE_TIMEOUT_SECONDS,
             )
         except UpstreamError as exc:
             return ProbeResult(ok=False, detail=str(exc))
