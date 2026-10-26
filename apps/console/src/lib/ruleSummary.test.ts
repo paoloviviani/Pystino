@@ -95,6 +95,11 @@ describe("an allowlist the gateway ignores", () => {
 describe("isWideRoute", () => {
   it("is wide for the list and for one rule's page, new or edit", () => {
     expect(isWideRoute("/admin/redaction")).toBe(true);
+    // Usage and summary pages match the listing pages' width.
+    expect(isWideRoute("/reports")).toBe(true);
+    expect(isWideRoute("/admin/reports")).toBe(true);
+    expect(isWideRoute("/")).toBe(true);
+    expect(isWideRoute("/admin/settings")).toBe(false);
     expect(isWideRoute("/admin/redaction/rules/new")).toBe(true);
     expect(isWideRoute("/admin/redaction/rules/3f2c/")).toBe(true);
   });

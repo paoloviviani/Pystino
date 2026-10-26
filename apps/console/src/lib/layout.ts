@@ -212,14 +212,18 @@ export const FORM_STACK = "flex flex-col gap-4";
 /* -- page width -------------------------------------------------------------- */
 
 /**
- * Listing screens, which opt in to the wide layout. A table of six or seven
+ * Listing and reporting screens (usage, summaries), which opt in to the wide layout. A table of six or seven
  * columns plus its actions wants more than the 76rem that keeps a form's lines
  * readable, so on a wide screen these routes raise `--layout-max-width` (the
  * header and the content both read it, so they stay aligned). Forms, settings
  * and detail pages are not listed and keep the default.
  */
 const WIDE_ROUTES = new Set([
+  "/",
+  "/reports",
   "/requests",
+  "/admin",
+  "/admin/reports",
   "/admin/models",
   "/admin/routing",
   "/admin/providers",
