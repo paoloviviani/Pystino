@@ -1131,6 +1131,45 @@ class TestByProvider:
         assert rows[0]["label"] == "fake"
 
 
+class TestDayBoundary:
+    """Which calendar day a record lands on near local midnight and across DST.
+
+    Fixed instants, so the result never depends on the wall clock. On PostgreSQL
+    the day is the billing-timezone day (Europe/Rome); SQLite, used by the unit
+    tests only, buckets by UTC day (documented on ``_day_expression``).
+    """
+
+    async def _days(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, instants: list[datetime]
+    ) -> list[str]:
+        for at in instants:
+            await record(session, at=at)
+        body = (
+            await admin_client.get("/api/admin/reports/usage?period=2026-10&group_by=day")
+        ).json()
+        return sorted(row["label"] for row in body["rows"])
+
+    async def test_local_midnight_and_the_dst_change(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        # Rome fell back from UTC+2 to UTC+1 at 01:00 UTC on 2026-10-25.
+        days = await self._days(
+            admin_client,
+            session,
+            [
+                datetime(2026, 10, 24, 21, 59, tzinfo=UTC),  # 23:59 CEST on the 24th
+                datetime(2026, 10, 24, 22, 0, tzinfo=UTC),  # 00:00 CEST on the 25th
+                datetime(2026, 10, 25, 22, 59, tzinfo=UTC),  # 23:59 CET on the 25th
+                datetime(2026, 10, 25, 23, 0, tzinfo=UTC),  # 00:00 CET on the 26th
+            ],
+        )
+        dialect = session.get_bind().dialect.name
+        if dialect == "postgresql":
+            assert days == ["2026-10-24", "2026-10-25", "2026-10-26"]
+        else:
+            assert days == ["2026-10-24", "2026-10-25"]
+
+
 class TestDailySplit:
     """The chart endpoint is the report endpoint with a second key."""
 
@@ -1138,7 +1177,12 @@ class TestDailySplit:
         self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
     ) -> None:
         other = await second_provider(session)
-        day1 = inside_this_month(48)
+        # Noon UTC is the same calendar day in UTC and in the billing timezone, so
+        # the expected labels do not depend on when the suite runs. (Taking "48
+        # hours ago" put the record on the wrong side of local midnight whenever
+        # the suite ran in the last hour or two of the UTC day.) The boundary
+        # itself is pinned by TestDayBoundary.
+        day1 = inside_this_month(48).replace(hour=12, minute=0, second=0, microsecond=0)
         day2 = day1 + timedelta(days=1)
         await record(session, model_id=seeded.model.id, cost="1", at=day1)
         await record(session, model="other-model", model_id=other.id, cost="2", at=day1)
