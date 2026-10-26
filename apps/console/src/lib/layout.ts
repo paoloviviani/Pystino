@@ -214,9 +214,9 @@ export const FORM_STACK = "flex flex-col gap-4";
 /**
  * Listing and reporting screens (usage, summaries), which opt in to the wide layout. A table of six or seven
  * columns plus its actions wants more than the 76rem that keeps a form's lines
- * readable, so on a wide screen these routes raise `--layout-max-width` (the
- * header and the content both read it, so they stay aligned). Forms, settings
- * and detail pages are not listed and keep the default.
+ * readable, so these routes use the whole shell width. Forms, settings and detail pages
+ * are not listed: their content column is capped at NARROW_CONTENT_MAX_WIDTH,
+ * while the shell (header and sidebar) keeps one width everywhere.
  */
 const WIDE_ROUTES = new Set([
   "/",
@@ -236,8 +236,19 @@ const WIDE_ROUTES = new Set([
   "/admin/users",
 ]);
 
-/** The width cap for listing screens, in place of the token's default. */
+/**
+ * The shell's width cap, on every page: the header and the sidebar sit in the
+ * same place whichever page is open.
+ */
 export const WIDE_LAYOUT_MAX_WIDTH = "104rem";
+
+/**
+ * The content column of a page not listed above (forms, settings, details):
+ * as wide as it was when such pages narrowed the whole shell to the 76rem
+ * token (76rem less the shell's padding, the sidebar and the gap), so their
+ * lines stay readable while the sidebar stays put.
+ */
+export const NARROW_CONTENT_MAX_WIDTH = "57rem";
 
 /**
  * One rule's page (new, edit, clone) is not a listing, but it is wide for the

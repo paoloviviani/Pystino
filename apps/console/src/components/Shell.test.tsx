@@ -358,6 +358,33 @@ describe("Shell: the sidebar", () => {
  * a provider's invoice, where a divergence can be smaller than a milli-unit and
  * still be the thing they are looking for.
  */
+describe("Shell: page width", () => {
+  /** The shell's width cap, as the element that carries it sets it. */
+  function shellWidth(container: HTMLElement): string {
+    const shell = container.firstElementChild as HTMLElement;
+    return shell.style.getPropertyValue("--layout-max-width");
+  }
+
+  it("keeps one shell width on every page, so the sidebar never moves", () => {
+    const listing = renderShell(me(), "/admin/models");
+    const listingWidth = shellWidth(listing.container);
+    listing.unmount();
+    const form = renderShell(me(), "/admin/settings");
+    expect(shellWidth(form.container)).toBe(listingWidth);
+    expect(listingWidth).not.toBe("");
+  });
+
+  it("narrows only the content column of a form page", () => {
+    renderShell(me(), "/admin/settings");
+    expect(screen.getByText("content").parentElement?.style.maxWidth).not.toBe("");
+  });
+
+  it("leaves a listing page's content at the full width", () => {
+    renderShell(me(), "/admin/models");
+    expect(screen.getByText("content").parentElement?.style.maxWidth).toBe("");
+  });
+});
+
 describe("Shell: exact figures", () => {
   afterEach(() => {
     try {

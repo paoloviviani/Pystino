@@ -19,6 +19,7 @@ import { NavLink, useLocation } from "react-router";
 import { ADMIN_GROUPS } from "../lib/adminNav";
 import { request } from "../lib/api";
 import {
+  NARROW_CONTENT_MAX_WIDTH,
   WIDE_LAYOUT_MAX_WIDTH,
   isWideRoute,
   SIDEBAR_GROUP,
@@ -204,7 +205,9 @@ export function Shell({ me, children }: ShellProps) {
   return (
     <div
       className="flex min-h-dvh flex-col"
-      style={wide ? ({ "--layout-max-width": WIDE_LAYOUT_MAX_WIDTH } as CSSProperties) : undefined}
+      // One shell width on every page, so the sidebar never moves; a form page
+      // narrows its content column instead (NARROW_CONTENT_MAX_WIDTH).
+      style={{ "--layout-max-width": WIDE_LAYOUT_MAX_WIDTH } as CSSProperties}
     >
       <header className="sticky top-0 z-20 border-b border-line bg-surface">
         <div className="mx-auto flex h-15 w-full max-w-[var(--layout-max-width)] items-center gap-1 px-5 max-[40rem]:px-3">
@@ -320,7 +323,7 @@ export function Shell({ me, children }: ShellProps) {
         </aside>
 
         <main className="min-w-0 flex-1 pt-6 pb-7 max-[40rem]:pt-5 max-[40rem]:pb-6">
-          {children}
+          <div style={wide ? undefined : { maxWidth: NARROW_CONTENT_MAX_WIDTH }}>{children}</div>
         </main>
       </div>
     </div>
