@@ -117,6 +117,9 @@ MERGE_RULES: tuple[MergeRule, ...] = (
     MergeRule("redaction_rules", "created_by", MergeRuleKind.REASSIGN),
     MergeRule("directory_sync_runs", "started_by", MergeRuleKind.REASSIGN),
     MergeRule("quota_resets", "created_by", MergeRuleKind.REASSIGN),
+    # A per-user reset follows the person: it is about their consumption, and
+    # their usage moves to the target with it.
+    MergeRule("quota_resets", "user_id", MergeRuleKind.REASSIGN),
     MergeRule("directory_entries", "user_id", MergeRuleKind.REASSIGN),
     MergeRule("refresh_credentials", "user_id", MergeRuleKind.DELETE),
     MergeRule("idp_authorization_codes", "user_id", MergeRuleKind.DELETE),

@@ -293,6 +293,7 @@ describe("Shell: the sidebar", () => {
       "/admin/reports",
       "/admin/requests",
       "/admin/quotas",
+      "/admin/quota-usage",
       "/admin/providers",
       "/admin/models",
       "/admin/routing",

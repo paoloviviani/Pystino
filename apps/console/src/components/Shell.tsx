@@ -88,6 +88,7 @@ const ADMIN_ICONS: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = {
   "/admin/reports": ChartColumnIcon,
   "/admin/requests": ListIcon,
   "/admin/quotas": GaugeIcon,
+  "/admin/quota-usage": ListIcon,
   "/admin/providers": ServerIcon,
   "/admin/models": BoxIcon,
   "/admin/routing": ShuffleIcon,

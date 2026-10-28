@@ -272,6 +272,27 @@ must not raise a ceiling someone else set.
 - An admin reset (`POST /api/admin/limits/{id}/reset`) zeroes a quota's
   *consumption*; a reason is optional and recorded in the audit log when given.
   Billing history is never touched.
+- A rule that is enforced **per user** (a group rule applied to each member, or
+  a global rule applied to each user) can also be reset **for one user**: the
+  same endpoint with `"user_id": "<id>"`. That user's count for that rule goes
+  back to zero and nobody else's moves. A shared rule (a group's total, a
+  global total) has no per-user count, so naming a user on it is refused
+  (`422`); a user who is not subject to the rule (not a member of its group) is
+  a `404`. `GET /api/admin/limits/{id}/resets` lists both kinds, the per-user
+  ones with the user's email. A per-user reset is stored as a `quota_resets`
+  row carrying `user_id`, audited as `limit.reset`, and is deleted with the
+  user on erasure (it would otherwise read as a reset of everyone) and moved to
+  the surviving account on a merge.
+- **Quota usage** (`GET /api/admin/quota-usage`, and `/{user_id}`) shows, per
+  user, every active rule that applies to them: their own `scope=user` rules,
+  the global each-user rules, their groups' per-member rules, and the shared
+  group or global totals they count towards (marked shared, with the shared
+  figure and no per-user reset). Each carries the figure for that user, read
+  through the engine so resets apply, the window, when it next resets (a
+  calendar period's end; for a rolling window, the estimated moment its oldest
+  counted use leaves it) and the latest reset with who made it. An each-user
+  rule that a user's override replaces is listed as *replaced*, not as a
+  second budget. Non-administrators get `403`.
 
 ### Group rules: the total, or each member
 
@@ -341,7 +362,10 @@ refund per request however many such rules apply, and seeding or reconciling
 either repairs both. Counters stay apart where it matters, because a quota
 **reset** is part of the counter key: resetting the global rule restarts every
 person's count for it without touching an explicit user rule's counter, and
-the other way round.
+the other way round. The same holds for a reset **for one user**: it moves only
+that person's counter for the each-user rule to a new key, so for them the rule
+counts from zero while their own `scope=user` rule keeps its count, even though
+the two normally share one counter.
 
 Interactions, all of them the ordinary *all rules must pass*:
 

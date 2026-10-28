@@ -2643,7 +2643,10 @@ class QuotaReset(Base):
     """
 
     __tablename__ = "quota_resets"
-    __table_args__ = (Index("ix_quota_resets_rule_effective", "rule_id", "effective_at"),)
+    __table_args__ = (
+        Index("ix_quota_resets_rule_effective", "rule_id", "effective_at"),
+        Index("ix_quota_resets_rule_user", "rule_id", "user_id"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     rule_id: Mapped[uuid.UUID] = mapped_column(
@@ -2659,6 +2662,15 @@ class QuotaReset(Base):
     )
     reason: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    # Null: the whole rule, everyone. Set: one user's consumption of a per-user
+    # rule (``each_member`` or ``each_user``) and nobody else's. It is the user the
+    # reset is *about*, unlike ``created_by``, who did it. CASCADE, not SET NULL:
+    # a null would turn the row into a whole-rule reset and zero everyone, so an
+    # erased user's resets go with them (the admin audit event keeps the trail),
+    # and a merge moves them to the surviving account.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), default=None
+    )
 
     rule: Mapped[LimitRule] = relationship(back_populates="resets")
 

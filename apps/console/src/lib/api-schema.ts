@@ -1327,6 +1327,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/quota-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Quota Usage
+         * @description Each user's binding quota: the enforced rule they have used most of.
+         *
+         *     Paged and searched like the Users list (same ``q``). Invitations that were
+         *     never accepted are left out: they can spend nothing. The figure for each
+         *     user goes through the engine with that user as the subject, so resets
+         *     apply; the full list for one user is ``/quota-usage/{user_id}``.
+         */
+        get: operations["list_quota_usage_api_admin_quota_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/quota-usage/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Quota Usage
+         * @description Every rule that applies to one user, with their own figure for each.
+         *
+         *     Shared rules (a group's total, the deployment's total) carry the shared
+         *     figure and no per-user reset; per-user ones carry the user's own.
+         */
+        get: operations["get_quota_usage_api_admin_quota_usage__user_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/quota/health": {
         parameters: {
             query?: never;
@@ -4292,6 +4340,8 @@ export interface components {
              * @default
              */
             reason?: string;
+            /** User Id */
+            user_id?: string | null;
         };
         /** LimitRuleResponse */
         LimitRuleResponse: {
@@ -5166,6 +5216,17 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** Page[UserQuotaSummary] */
+        Page_UserQuotaSummary_: {
+            /** Items */
+            items: components["schemas"]["UserQuotaSummary"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /** PasswordResetResponse */
         PasswordResetResponse: {
             /** Password */
@@ -5576,6 +5637,10 @@ export interface components {
              * Format: uuid
              */
             rule_id: string;
+            /** User Email */
+            user_email: string | null;
+            /** User Id */
+            user_id: string | null;
         };
         /**
          * QuotaWindowHealth
@@ -6609,6 +6674,93 @@ export interface components {
              * @default false
              */
             send_email?: boolean;
+        };
+        /**
+         * UserQuotaEntry
+         * @description One rule as it applies to one user (``GET /quota-usage/{user_id}``).
+         */
+        UserQuotaEntry: {
+            /**
+             * Can Reset For User
+             * @default false
+             */
+            can_reset_for_user: boolean;
+            /** Current Value */
+            current_value: string | null;
+            /** Kind */
+            kind: string;
+            /** Last Reset At */
+            last_reset_at: string | null;
+            /** Last Reset By Email */
+            last_reset_by_email: string | null;
+            /**
+             * Last Reset For User
+             * @default false
+             */
+            last_reset_for_user: boolean;
+            /** Limit Value */
+            limit_value: string;
+            /** Metric */
+            metric: string;
+            /** Percent */
+            percent: number | null;
+            /** Period */
+            period: string | null;
+            /** Replaced By Name */
+            replaced_by_name: string | null;
+            /** Replaced By Rule Id */
+            replaced_by_rule_id: string | null;
+            /** Resets At */
+            resets_at: string | null;
+            /**
+             * Rule Id
+             * Format: uuid
+             */
+            rule_id: string;
+            /** Rule Name */
+            rule_name: string;
+            /** Scope */
+            scope: string;
+            /** Scope Label */
+            scope_label: string | null;
+            /** Window Label */
+            window_label: string;
+            /** Window Seconds */
+            window_seconds: number | null;
+        };
+        /**
+         * UserQuotaSummary
+         * @description One row of the Quota usage page: a user and their binding quota.
+         */
+        UserQuotaSummary: {
+            /** Display Name */
+            display_name: string | null;
+            /** Email */
+            email: string | null;
+            /** Is Active */
+            is_active: boolean;
+            most_constrained: components["schemas"]["UserQuotaEntry"] | null;
+            /** Rules */
+            rules: number;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+        };
+        /** UserQuotaUsage */
+        UserQuotaUsage: {
+            /** Display Name */
+            display_name: string | null;
+            /** Email */
+            email: string | null;
+            /** Entries */
+            entries: components["schemas"]["UserQuotaEntry"][];
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
         };
         /**
          * UserStatusCounts
@@ -8643,6 +8795,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderTestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_quota_usage_api_admin_quota_usage_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                /** @description Rows to return, at most 200. */
+                limit?: number;
+                /** @description Rows to skip. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_UserQuotaSummary_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_quota_usage_api_admin_quota_usage__user_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserQuotaUsage"];
                 };
             };
             /** @description Validation Error */

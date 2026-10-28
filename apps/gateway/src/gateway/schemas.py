@@ -2236,6 +2236,11 @@ class LimitRuleResetRequest(BaseModel):
     """
 
     reason: str = Field(default="", max_length=500)
+    #: Reset one user's consumption of a per-user rule (``each_member`` or
+    #: ``each_user``) and nobody else's. Null resets the whole rule, for everyone.
+    #: Refused (422) on a rule that is not per-user, 404 for a user who is not
+    #: subject to it.
+    user_id: uuid.UUID | None = None
 
 
 class QuotaResetResponse(ResponseModel):
@@ -2246,6 +2251,65 @@ class QuotaResetResponse(ResponseModel):
     created_by: uuid.UUID | None
     # Null when the account has since been erased; the reset itself stays.
     created_by_email: str | None = None
+    #: Null for a reset of the whole rule; else whose consumption it zeroed.
+    user_id: uuid.UUID | None = None
+    user_email: str | None = None
+
+
+class UserQuotaEntry(ResponseModel):
+    """One rule as it applies to one user (``GET /quota-usage/{user_id}``)."""
+
+    rule_id: uuid.UUID
+    rule_name: str
+    #: "own" (a ``scope=user`` rule), "each_user" (global, per user),
+    #: "each_member" (a group's, per member) or "shared" (a group's or the
+    #: deployment's total, which the user only counts towards).
+    kind: str
+    scope: str
+    #: The group's name for a group rule; null otherwise.
+    scope_label: str | None = None
+    metric: str
+    limit_value: Money
+    #: Null when the counter store could not be read: unknown, not zero.
+    current_value: Money | None = None
+    #: current / limit as a whole percentage, uncapped; null with no value.
+    percent: int | None = None
+    window_label: str
+    window_seconds: int | None = None
+    period: str | None = None
+    #: A calendar window's end; a rolling one's estimate of when its oldest
+    #: counted traffic leaves it. Null when nothing is counted yet.
+    resets_at: datetime | None = None
+    #: The latest reset that moved this user's counter (whole-rule or their own).
+    last_reset_at: datetime | None = None
+    last_reset_by_email: str | None = None
+    last_reset_for_user: bool = False
+    #: True where "Reset for this user" is offered: a per-user, enforced rule.
+    can_reset_for_user: bool = False
+    #: Set when a user rule with ``overrides_each_user`` replaces this each-user
+    #: rule for this person; the rule is then not a budget they are held to.
+    replaced_by_rule_id: uuid.UUID | None = None
+    replaced_by_name: str | None = None
+
+
+class UserQuotaSummary(ResponseModel):
+    """One row of the Quota usage page: a user and their binding quota."""
+
+    user_id: uuid.UUID
+    email: str | None
+    display_name: str | None
+    is_active: bool
+    rules: int
+    #: The enforced rule with the highest percentage used; null when the user has
+    #: no rule or no counter could be read.
+    most_constrained: UserQuotaEntry | None = None
+
+
+class UserQuotaUsage(ResponseModel):
+    user_id: uuid.UUID
+    email: str | None
+    display_name: str | None
+    entries: list[UserQuotaEntry]
 
 
 class GroupUsageRow(ResponseModel):
