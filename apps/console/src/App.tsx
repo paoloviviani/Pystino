@@ -10,6 +10,7 @@ import { AdminModels } from "./routes/AdminModels";
 import { AdminRouting } from "./routes/AdminRouting";
 import { AdminProviders } from "./routes/AdminProviders";
 import { AdminSearch } from "./routes/AdminSearch";
+import { AdminQuotaUsage } from "./routes/AdminQuotaUsage";
 import { AdminQuotas } from "./routes/AdminQuotas";
 import { AdminRedaction } from "./routes/AdminRedaction";
 import { AdminRedactionRule } from "./routes/AdminRedactionRule";
@@ -147,6 +148,22 @@ export function App() {
           element={
             <RequireAdmin me={me_}>
               <AdminQuotas />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/quota-usage"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminQuotaUsage />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/quota-usage/:userId"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminQuotaUsage />
             </RequireAdmin>
           }
         />

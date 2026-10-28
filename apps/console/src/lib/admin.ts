@@ -42,6 +42,8 @@ import type {
   ProviderPlugin,
   ProviderTestResult,
   QuotaReset,
+  UserQuotaSummary,
+  UserQuotaUsage,
   RedactionPolicy,
   RedactionPreview,
   RedactionRule,
@@ -96,6 +98,7 @@ export const adminKeys = {
   limits: ["admin", "limits"] as const,
   quotaHealth: ["admin", "quota", "health"] as const,
   resets: (ruleId: string) => ["admin", "limits", ruleId, "resets"] as const,
+  quotaUsage: ["admin", "quota-usage"] as const,
   users: ["admin", "users"] as const,
   pendingErasures: ["admin", "erasures", "pending"] as const,
   identityEvents: (userId: string) =>
@@ -995,21 +998,45 @@ export function useReconcileQuota() {
   });
 }
 
+/**
+ * Reset a rule's consumption: the whole rule, or with `userId` one user's
+ * consumption of a per-user rule and nobody else's.
+ */
 export function useResetLimit() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+    mutationFn: ({ id, reason, userId }: { id: string; reason: string; userId?: string }) =>
       request<QuotaReset>(`/api/admin/limits/${id}/reset`, {
         method: "POST",
-        body: { reason },
+        body: userId ? { reason, user_id: userId } : { reason },
       }),
     onSuccess: (_reset, variables) => {
       client.invalidateQueries({ queryKey: adminKeys.limits });
+      client.invalidateQueries({ queryKey: adminKeys.quotaUsage });
       client.invalidateQueries({ queryKey: adminKeys.resets(variables.id) });
       // Deliberately NOT the reports: a reset moves enforcement and leaves the
       // billing figures exactly where they were (ADR 0025). Invalidating them
       // here would imply otherwise to anyone reading this file.
     },
+  });
+}
+
+/** The Quota usage page: each user's most constrained quota, a page at a time. */
+export function useQuotaUsage(query: PageQuery = {}) {
+  const search = pageParams(query);
+  return useQuery({
+    queryKey: pagedKey(adminKeys.quotaUsage, search),
+    queryFn: () => request<Page<UserQuotaSummary>>(`/api/admin/quota-usage?${search}`),
+    ...pagedOptions,
+  });
+}
+
+/** Every rule that applies to one user, with their own figure for each. */
+export function useUserQuotaUsage(userId: string | null) {
+  return useQuery({
+    queryKey: [...adminKeys.quotaUsage, "user", userId],
+    queryFn: () => request<UserQuotaUsage>(`/api/admin/quota-usage/${userId}`),
+    enabled: userId !== null,
   });
 }
 

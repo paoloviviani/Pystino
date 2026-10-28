@@ -43,6 +43,7 @@ describe("Admin", () => {
       "/admin/reports",
       "/admin/requests",
       "/admin/quotas",
+      "/admin/quota-usage",
       // Serving: where requests go and what they cost, web search with them
       // (a search backend is a provider).
       "/admin/providers",

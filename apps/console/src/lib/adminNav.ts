@@ -52,6 +52,12 @@ export const ADMIN_GROUPS: AdminGroup[] = [
         title: m["admin.sections.quotas.title"],
         description: m["admin.sections.quotas.description"],
       },
+      {
+        // Beside Quotas: the rules there, each user's consumption of them here.
+        to: "/admin/quota-usage",
+        title: m["admin.sections.quota_usage.title"],
+        description: m["admin.sections.quota_usage.description"],
+      },
     ],
   },
   {

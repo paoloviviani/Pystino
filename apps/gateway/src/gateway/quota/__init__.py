@@ -13,6 +13,7 @@ from gateway.quota.counters import (
     to_units,
 )
 from gateway.quota.engine import (
+    Measurement,
     QuotaAmounts,
     QuotaEngine,
     QuotaExceeded,
@@ -31,6 +32,7 @@ __all__ = [
     "CounterStore",
     "DatabaseCounterStore",
     "InMemoryCounterStore",
+    "Measurement",
     "QuotaAmounts",
     "QuotaEngine",
     "QuotaExceeded",

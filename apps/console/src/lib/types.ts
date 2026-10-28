@@ -240,6 +240,24 @@ export type QuotaReconcileResult = Schemas["QuotaReconcileResponse"];
 
 export type QuotaReset = Schemas["QuotaResetResponse"];
 
+/** One rule as it applies to one user (`GET /api/admin/quota-usage/{id}`). */
+export type UserQuotaEntry = Narrow<
+  Schemas["UserQuotaEntry"],
+  {
+    kind: "own" | "each_user" | "each_member" | "shared";
+    scope: "global" | "group" | "user" | "api_key";
+    metric: "requests" | "tokens" | "cost" | "own_search_requests";
+  }
+>;
+
+/** A row of the Quota usage page: a user and their most constrained quota. */
+export type UserQuotaSummary = Narrow<
+  Schemas["UserQuotaSummary"],
+  { most_constrained: UserQuotaEntry | null }
+>;
+
+export type UserQuotaUsage = Narrow<Schemas["UserQuotaUsage"], { entries: UserQuotaEntry[] }>;
+
 export type DiscoveredModel = Narrow<
   Schemas["DiscoveredModel"],
   {

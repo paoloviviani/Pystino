@@ -46,7 +46,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import InstrumentedAttribute, selectinload
+from sqlalchemy.orm import InstrumentedAttribute, aliased, selectinload
 
 from gateway import identity_policy
 from gateway.accounting.cost import select_price
@@ -192,6 +192,8 @@ from gateway.pricing import (
 )
 from gateway.providers import ProviderConfigurationError
 from gateway.quota import QuotaUnavailable
+from gateway.quota.engine import is_per_user
+from gateway.quota_usage import override_replacing, user_quota_entries
 from gateway.redaction import Redactor
 from gateway.redaction import registry as redaction_registry
 from gateway.redaction.http import apply_spans
@@ -295,6 +297,8 @@ from gateway.schemas import (
     UsageReport,
     UserAdminResponse,
     UserCreateRequest,
+    UserQuotaSummary,
+    UserQuotaUsage,
     UserStatusCounts,
     UserUpdateRequest,
 )
@@ -357,6 +361,14 @@ class NotFoundError(GatewayError):
     status_code = status.HTTP_404_NOT_FOUND
     error_type = "invalid_request_error"
     code = "not_found"
+
+
+class UnprocessableError(GatewayError):
+    """Well-formed, but names something the object cannot do."""
+
+    status_code = 422
+    error_type = "invalid_request_error"
+    code = "unprocessable"
 
 
 async def _unpriced_counts(session: SessionDep) -> dict[uuid.UUID | None, int]:
@@ -3398,7 +3410,11 @@ def _limit_response(rule: LimitRule, current: Decimal | None = None) -> LimitRul
         # Requires `resets` to be loaded; every caller here does so explicitly,
         # because touching an unloaded relationship from async code raises
         # MissingGreenlet rather than quietly emitting a query.
-        last_reset_at=max((reset.effective_at for reset in rule.resets), default=None),
+        # Whole-rule resets only: a per-user reset moves one user's counter, so
+        # it is not "when this rule was last reset" for anyone else reading it.
+        last_reset_at=max(
+            (reset.effective_at for reset in rule.resets if reset.user_id is None), default=None
+        ),
     )
 
 
@@ -3675,8 +3691,57 @@ async def reset_limit(
     The reason is optional; when given it is kept, since the audit trail is the point.
     """
     rule = await _load_rule(session, rule_id)
-    reset = QuotaReset(rule_id=rule.id, created_by=admin.id, reason=payload.reason.strip())
+    subject: User | None = None
+    if payload.user_id is not None:
+        # A per-user reset zeroes one person's counter of a rule that keeps one
+        # per person. On a shared rule there is no such counter, and answering
+        # "done" would reset nothing (or, worse, everyone).
+        if not is_per_user(rule):
+            raise UnprocessableError(
+                "A reset for one user applies only to a per-user rule: a group rule "
+                "applied to each member, or a global rule applied to each user. "
+                "Reset the whole rule instead."
+            )
+        subject = await session.get(User, payload.user_id)
+        if subject is None:
+            raise NotFoundError(f"No user with id {payload.user_id}.")
+        if rule.scope is LimitScope.GROUP:
+            member = await session.scalar(
+                select(Membership.user_id).where(
+                    Membership.group_id == rule.scope_id, Membership.user_id == subject.id
+                )
+            )
+            if member is None:
+                raise NotFoundError(f"User {payload.user_id} is not a member of this rule's group.")
+        replacing = await override_replacing(session, rule, subject.id)
+        if replacing is not None:
+            raise UnprocessableError(
+                f"This user is held to their own rule {replacing.name!r} instead of this one, "
+                "so resetting this rule for them would change nothing."
+            )
+    reset = QuotaReset(
+        rule_id=rule.id,
+        created_by=admin.id,
+        reason=payload.reason.strip(),
+        user_id=subject.id if subject else None,
+    )
     session.add(reset)
+    # The audit row records the reset itself; the quota_resets row alone says who,
+    # but an erased user takes their per-user resets with them (ON DELETE CASCADE),
+    # and the trail must outlive that.
+    record_audit(
+        session,
+        admin,
+        "limit.reset",
+        "limit",
+        rule.id,
+        rule.name,
+        after={
+            "reset": "user" if subject else "rule",
+            "user": subject.email or str(subject.id) if subject else None,
+            "reason": reset.reason,
+        },
+    )
     await session.commit()
     await session.refresh(reset)
     return QuotaResetResponse(
@@ -3686,6 +3751,8 @@ async def reset_limit(
         reason=reset.reason,
         created_by=reset.created_by,
         created_by_email=admin.email,
+        user_id=reset.user_id,
+        user_email=subject.email if subject else None,
     )
 
 
@@ -3699,9 +3766,11 @@ async def list_resets(
     it, by design, since it is the audit trail for overriding a budget.
     """
     await _load_rule(session, rule_id)
+    subject = aliased(User)
     stmt = (
-        select(QuotaReset, User.email)
+        select(QuotaReset, User.email, subject.email)
         .outerjoin(User, User.id == QuotaReset.created_by)
+        .outerjoin(subject, subject.id == QuotaReset.user_id)
         .where(QuotaReset.rule_id == rule_id)
         .order_by(QuotaReset.effective_at.desc())
     )
@@ -3718,10 +3787,70 @@ async def list_resets(
                 # Null once the account is erased. The reset row itself survives,
                 # which is why created_by is ON DELETE SET NULL, not CASCADE.
                 created_by_email=email,
+                user_id=reset.user_id,
+                user_email=user_email,
             )
-            for reset, email in rows
+            for reset, email, user_email in rows
         ],
         total,
+    )
+
+
+@router.get("/quota-usage", response_model=Page[UserQuotaSummary])
+async def list_quota_usage(
+    admin: AdminUserDep,
+    session: SessionDep,
+    quota: QuotaDep,
+    page: PageDep,
+    q: str = "",
+) -> Page[UserQuotaSummary]:
+    """Each user's binding quota: the enforced rule they have used most of.
+
+    Paged and searched like the Users list (same ``q``). Invitations that were
+    never accepted are left out: they can spend nothing. The figure for each
+    user goes through the engine with that user as the subject, so resets
+    apply; the full list for one user is ``/quota-usage/{user_id}``.
+    """
+    stmt = select(User).where(User.issuer != PENDING_USER_ISSUER).order_by(User.email)
+    if needle := q.strip():
+        stmt = stmt.where(
+            _matches(needle, User.email, User.display_name, User.username, User.subject)
+        )
+    total = await count_of(session, stmt)
+    users = list((await session.execute(page.apply(stmt))).scalars().all())
+    entries = await user_quota_entries(session, quota, users)
+    rows = []
+    for user in users:
+        mine = entries.get(user.id, [])
+        enforced = [e for e in mine if e.replaced_by_rule_id is None]
+        rows.append(
+            UserQuotaSummary(
+                user_id=user.id,
+                email=user.email,
+                display_name=user.display_name,
+                is_active=user.is_active,
+                rules=len(enforced),
+                most_constrained=next((e for e in enforced if e.percent is not None), None),
+            )
+        )
+    return page.page(rows, total)
+
+
+@router.get("/quota-usage/{user_id}", response_model=UserQuotaUsage)
+async def get_quota_usage(
+    user_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, quota: QuotaDep
+) -> UserQuotaUsage:
+    """Every rule that applies to one user, with their own figure for each.
+
+    Shared rules (a group's total, the deployment's total) carry the shared
+    figure and no per-user reset; per-user ones carry the user's own.
+    """
+    user = await session.get(User, user_id)
+    if user is None:
+        raise NotFoundError(f"No user with id {user_id}.")
+    entries = (await user_quota_entries(session, quota, [user]))[user.id]
+    return UserQuotaUsage(
+        user_id=user.id, email=user.email, display_name=user.display_name, entries=entries
     )
 
 

@@ -3293,6 +3293,18 @@
             "maxLength": 500,
             "title": "Reason",
             "type": "string"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
           }
         },
         "title": "LimitRuleResetRequest",
@@ -5687,6 +5699,40 @@
         "title": "Page[UserAdminResponse]",
         "type": "object"
       },
+      "Page_UserQuotaSummary_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UserQuotaSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[UserQuotaSummary]",
+        "type": "object"
+      },
       "PasswordResetResponse": {
         "properties": {
           "password": {
@@ -6797,6 +6843,29 @@
             "format": "uuid",
             "title": "Rule Id",
             "type": "string"
+          },
+          "user_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Email"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
           }
         },
         "required": [
@@ -6805,7 +6874,9 @@
           "effective_at",
           "reason",
           "created_by",
-          "created_by_email"
+          "created_by_email",
+          "user_id",
+          "user_email"
         ],
         "title": "QuotaResetResponse",
         "type": "object"
@@ -9206,6 +9277,298 @@
           }
         },
         "title": "UserCreateRequest",
+        "type": "object"
+      },
+      "UserQuotaEntry": {
+        "description": "One rule as it applies to one user (``GET /quota-usage/{user_id}``).",
+        "properties": {
+          "can_reset_for_user": {
+            "default": false,
+            "title": "Can Reset For User",
+            "type": "boolean"
+          },
+          "current_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Value"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_reset_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Reset At"
+          },
+          "last_reset_by_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Reset By Email"
+          },
+          "last_reset_for_user": {
+            "default": false,
+            "title": "Last Reset For User",
+            "type": "boolean"
+          },
+          "limit_value": {
+            "title": "Limit Value",
+            "type": "string"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "percent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent"
+          },
+          "period": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period"
+          },
+          "replaced_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced By Name"
+          },
+          "replaced_by_rule_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced By Rule Id"
+          },
+          "resets_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resets At"
+          },
+          "resets_at_is_estimate": {
+            "default": false,
+            "title": "Resets At Is Estimate",
+            "type": "boolean"
+          },
+          "rule_id": {
+            "format": "uuid",
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "rule_name": {
+            "title": "Rule Name",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "scope_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Label"
+          },
+          "window_label": {
+            "title": "Window Label",
+            "type": "string"
+          },
+          "window_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Seconds"
+          }
+        },
+        "required": [
+          "rule_id",
+          "rule_name",
+          "kind",
+          "scope",
+          "scope_label",
+          "metric",
+          "limit_value",
+          "current_value",
+          "percent",
+          "window_label",
+          "window_seconds",
+          "period",
+          "resets_at",
+          "resets_at_is_estimate",
+          "last_reset_at",
+          "last_reset_by_email",
+          "last_reset_for_user",
+          "can_reset_for_user",
+          "replaced_by_rule_id",
+          "replaced_by_name"
+        ],
+        "title": "UserQuotaEntry",
+        "type": "object"
+      },
+      "UserQuotaSummary": {
+        "description": "One row of the Quota usage page: a user and their binding quota.",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "most_constrained": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserQuotaEntry"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rules": {
+            "title": "Rules",
+            "type": "integer"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "email",
+          "display_name",
+          "is_active",
+          "rules",
+          "most_constrained"
+        ],
+        "title": "UserQuotaSummary",
+        "type": "object"
+      },
+      "UserQuotaUsage": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/UserQuotaEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "email",
+          "display_name",
+          "entries"
+        ],
+        "title": "UserQuotaUsage",
         "type": "object"
       },
       "UserStatusCounts": {
@@ -12586,6 +12949,121 @@
           }
         },
         "summary": "Test Provider",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/quota-usage": {
+      "get": {
+        "description": "Each user's binding quota: the enforced rule they have used most of.\n\nPaged and searched like the Users list (same ``q``). Invitations that were\nnever accepted are left out: they can spend nothing. The figure for each\nuser goes through the engine with that user as the subject, so resets\napply; the full list for one user is ``/quota-usage/{user_id}``.",
+        "operationId": "list_quota_usage_api_admin_quota_usage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Rows to return, at most 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Rows to return, at most 200.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Rows to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Rows to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_UserQuotaSummary_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Quota Usage",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/quota-usage/{user_id}": {
+      "get": {
+        "description": "Every rule that applies to one user, with their own figure for each.\n\nShared rules (a group's total, the deployment's total) carry the shared\nfigure and no per-user reset; per-user ones carry the user's own.",
+        "operationId": "get_quota_usage_api_admin_quota_usage__user_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserQuotaUsage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Quota Usage",
         "tags": [
           "administration"
         ]

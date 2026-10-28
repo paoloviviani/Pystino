@@ -24,7 +24,7 @@ import logging
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -39,6 +39,7 @@ from gateway.models import (
     LimitRule,
     LimitScope,
     Membership,
+    QuotaReset,
     UsageRecord,
     UsageStatus,
     User,
@@ -204,6 +205,26 @@ def _negate(delta: CounterDelta) -> CounterDelta:
     )
 
 
+def is_per_user(rule: LimitRule) -> bool:
+    """A rule enforced per user, so one user's consumption of it can be reset."""
+    return (rule.scope is LimitScope.GROUP and rule.applies_to is LimitAppliesTo.EACH_MEMBER) or (
+        rule.scope is LimitScope.GLOBAL and rule.applies_to is LimitAppliesTo.EACH_USER
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Measurement:
+    """One rule's consumption for a subject, and when its window next moves."""
+
+    value: Decimal
+    #: A calendar window's end; for a rolling one, when its oldest counted
+    #: traffic leaves the window. None when nothing counts yet or the store
+    #: keeps no buckets.
+    resets_at: datetime | None
+    #: True when *resets_at* is a rolling window's estimate, not a boundary.
+    resets_at_is_estimate: bool = False
+
+
 @dataclass(frozen=True, slots=True)
 class WindowHealth:
     """One rule's current window as the counter and the ledger each see it.
@@ -274,6 +295,18 @@ class QuotaEngine:
             max_buckets_per_window=self._settings.max_buckets_per_window,
         )
 
+    @staticmethod
+    def _resets_visible_to(subject: QuotaSubject) -> Any:
+        """Whole-rule resets and this subject's own, not every user's.
+
+        A per-user rule can accumulate one reset row per user; admission loads
+        the rule's resets on every request, so it takes only the two kinds that
+        can change this subject's epoch.
+        """
+        if subject.user_id is None:
+            return QuotaReset.user_id.is_(None)
+        return or_(QuotaReset.user_id.is_(None), QuotaReset.user_id == subject.user_id)
+
     async def load_rules(self, session: AsyncSession, subject: QuotaSubject) -> list[LimitRule]:
         """Active rules applying to *subject*.
 
@@ -300,7 +333,7 @@ class QuotaEngine:
             .where(LimitRule.is_active.is_(True), or_(*conditions))
             # Resets come along: the watermark is part of evaluating the rule, not a
             # separate lookup, and loading it lazily here would be a query per rule.
-            .options(selectinload(LimitRule.resets))
+            .options(selectinload(LimitRule.resets.and_(self._resets_visible_to(subject))))
             # Sessions are created with expire_on_commit=False (db.py), so an
             # already-loaded `resets` collection is *not* refreshed by a later
             # selectinload in the same session — SQLAlchemy leaves populated
@@ -352,15 +385,32 @@ class QuotaEngine:
         return self._spec(rule.window_seconds), None
 
     @staticmethod
-    def reset_epoch_for(rule: LimitRule) -> int:
+    def reset_epoch_for(rule: LimitRule, user_id: uuid.UUID | None = None) -> int:
         """Seconds-since-epoch of the rule's latest reset, or 0 if never reset.
 
         Goes into the counter key rather than being subtracted afterwards, so a reset
         renames the keys and the old values orphan (ADR 0025).
+
+        A reset is either the whole rule's (``user_id`` null: everyone) or one
+        user's under a per-user rule. *user_id* is the subject the counter is
+        read or written for: the epoch is the latest of the whole-rule resets
+        and that user's own, never another user's. Reserve and settle must see
+        the same value, so the epoch is computed once per request in
+        ``check_and_reserve`` and travels in the delta; callers that have no
+        subject (a shared rule's counter) get the whole-rule epoch only.
         """
-        if not rule.resets:
+        # A per-user row on a shared rule is stray (the API refuses to write
+        # one): ignored, so it can never zero the shared total.
+        per_user = is_per_user(rule)
+        moments = [
+            reset.effective_at
+            for reset in rule.resets
+            if reset.user_id is None
+            or (per_user and user_id is not None and reset.user_id == user_id)
+        ]
+        if not moments:
             return 0
-        return int(max(reset.effective_at for reset in rule.resets).timestamp())
+        return int(max(moments).timestamp())
 
     @staticmethod
     def scope_for_rule(rule: LimitRule, subject: QuotaSubject) -> ScopeRef | None:
@@ -409,37 +459,84 @@ class QuotaEngine:
         all, because a page rendering "EUR 0.00 of EUR 10" during an outage is
         worse than one rendering nothing.
         """
-        if not rules:
-            return {}
+        measured = await self.measure(rules, now=now, subject=subject)
+        return {rule_id: m.value for rule_id, m in measured.items()}
+
+    async def measure(
+        self,
+        rules: Sequence[LimitRule],
+        *,
+        now: float | None = None,
+        subject: QuotaSubject | None = None,
+    ) -> dict[uuid.UUID, Measurement]:
+        """:meth:`current_values` with the window's next reset or roll-over.
+
+        The one reader of the counters for display, so the value and the time
+        it next moves can never come from two different queries. Same
+        subject rules and same all-or-nothing outage behaviour.
+        """
+        batch = await self.measure_many([(subject or QuotaSubject(None, None), rules)], now=now)
+        return batch[0]
+
+    async def measure_many(
+        self,
+        items: Sequence[tuple[QuotaSubject, Sequence[LimitRule]]],
+        *,
+        now: float | None = None,
+    ) -> list[dict[uuid.UUID, Measurement]]:
+        """:meth:`measure` for several subjects with one counter read in all.
+
+        The console's user list measures a page of people; reading per person
+        would make the page cost grow with its length. Same all-or-nothing
+        outage behaviour: every answer is empty when the store cannot be read.
+        """
         moment = now if now is not None else utcnow().timestamp()
         as_datetime = datetime.fromtimestamp(moment, tz=UTC)
 
-        queries = []
-        answerable = []
-        for rule in rules:
-            spec, period = self.window_for(rule, as_datetime)
-            scope = self.scope_for_rule(rule, subject or QuotaSubject(None, None))
-            if scope is None:
-                continue
-            answerable.append(rule)
-            queries.append(
-                WindowQuery(
-                    scope=scope,
-                    metric=rule.metric,
-                    spec=spec,
-                    period=period,
-                    reset_epoch=self.reset_epoch_for(rule),
+        queries: list[WindowQuery] = []
+        answerable: list[tuple[int, LimitRule]] = []
+        for index, (subject, rules) in enumerate(items):
+            for rule in rules:
+                spec, period = self.window_for(rule, as_datetime)
+                scope = self.scope_for_rule(rule, subject)
+                if scope is None:
+                    continue
+                answerable.append((index, rule))
+                queries.append(
+                    WindowQuery(
+                        scope=scope,
+                        metric=rule.metric,
+                        spec=spec,
+                        period=period,
+                        reset_epoch=self.reset_epoch_for(rule, subject.user_id),
+                    )
                 )
-            )
 
+        out: list[dict[uuid.UUID, Measurement]] = [{} for _ in items]
+        if not queries:
+            return out
         try:
             totals = await self._totals(queries, now=moment)
         except QuotaUnavailable:
-            return {}
-        return {
-            rule.id: from_units(rule.metric, total.units)
-            for rule, total in zip(answerable, totals, strict=True)
-        }
+            return out
+        for (index, rule), query, total in zip(answerable, queries, totals, strict=True):
+            resets_at: datetime | None = None
+            estimate = False
+            if query.period is not None:
+                # A calendar window resets at its boundary, exactly.
+                resets_at = query.period.end
+            elif query.spec is not None and any(v > 0 for v in total.buckets.values()):
+                # A rolling window has no reset, only the moment its oldest
+                # traffic leaves it: an estimate (see retry_after_seconds), and
+                # unknown from a store that does not bucket.
+                estimate = True
+                resets_at = as_datetime + timedelta(
+                    seconds=query.spec.retry_after_seconds(moment, total.buckets)
+                )
+            out[index][rule.id] = Measurement(
+                from_units(rule.metric, total.units), resets_at, estimate
+            )
+        return out
 
     def query_for(
         self, rule: LimitRule, moment: float, member_id: uuid.UUID | None = None
@@ -473,7 +570,7 @@ class QuotaEngine:
             metric=rule.metric,
             spec=spec,
             period=period,
-            reset_epoch=self.reset_epoch_for(rule),
+            reset_epoch=self.reset_epoch_for(rule, member_id),
         )
 
     async def _active_rules(self, session: AsyncSession) -> list[LimitRule]:
@@ -939,7 +1036,7 @@ class QuotaEngine:
                         metric=rule.metric,
                         spec=spec,
                         period=period,
-                        reset_epoch=self.reset_epoch_for(rule),
+                        reset_epoch=self.reset_epoch_for(rule, subject.user_id),
                     ),
                 )
             )

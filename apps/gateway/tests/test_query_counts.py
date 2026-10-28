@@ -636,3 +636,55 @@ class TestTheRoutedAliasPath:
         # writes nothing: renewal waits for the last half of the window.
         assert len(selects) <= 7, f"{len(selects)} selects:\n{summarise(selects)}"
         assert len(writes) <= 2, f"{len(writes)} writes:\n{summarise(writes)}"
+
+
+class TestTheQuotaUsagePage:
+    async def test_the_user_list_costs_the_same_for_one_user_as_for_twenty(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Counters and rules are read once per page, not once per listed user."""
+
+        from gateway.models import QuotaReset
+        from gateway.quota import QuotaSubject
+        from test_admin import as_user, make_admin
+        from test_quota_per_member import add_member_rule, make_member
+        from test_quota_per_user import add_user_rule, one_request
+
+        as_user(app, await make_admin(session_factory, seeded))  # type: ignore[arg-type]
+        rule = await add_member_rule(session, scope_id=seeded.group.id, limit="50")
+        await add_user_rule(session, limit="50")
+        quota = app.state.quota_engine  # type: ignore[attr-defined]
+        engine = app.state.engine  # type: ignore[attr-defined]
+
+        reads: list[int] = []
+        original = quota._totals
+
+        async def spy(queries: object, *, now: float) -> object:
+            reads.append(1)
+            return await original(queries, now=now)
+
+        quota._totals = spy
+
+        async def page(limit: int) -> int:
+            reads.clear()
+            with counted(engine) as statements:
+                response = await client.get("/api/admin/quota-usage", params={"limit": limit})
+            assert response.status_code == 200, response.text
+            assert len(reads) == 1, f"{len(reads)} counter reads for a page of {limit}"
+            return len([s for s in statements if s.lstrip().upper().startswith("SELECT")])
+
+        await page(1)  # warm anything one-off
+        one = await page(1)
+        for _ in range(19):
+            member = await make_member(session, seeded.group)
+            await one_request(quota, session, QuotaSubject(member.id, seeded.group.id))
+            session.add(QuotaReset(rule_id=rule.id, user_id=member.id))
+        await session.commit()
+        twenty = await page(20)
+        print(f"\n  /quota-usage: {one} selects for 1 user, {twenty} for 20")
+        assert twenty == one, f"{one} selects for 1 user, {twenty} for 20"

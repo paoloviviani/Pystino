@@ -72,6 +72,9 @@ async def caller_limits(
             ),
         )
         .order_by(LimitRule.scope, LimitRule.metric)
+        # `resets` is loaded for this caller only (`_resets_visible_to` filters
+        # elsewhere); refresh a collection another subject loaded in this session.
+        .execution_options(populate_existing=True)
     )
     rules = QuotaEngine.drop_overridden(list((await session.execute(stmt)).scalars().all()))
 

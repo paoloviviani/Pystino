@@ -762,6 +762,12 @@ function HistoryDialog({ rule, onClose }: { rule: LimitRule | null; onClose: () 
               // why created_by is ON DELETE SET NULL rather than CASCADE.
               render: (row) => row.created_by_email ?? m["admin_quotas.history.erased"](),
             },
+            {
+              key: "for",
+              header: m["admin_quotas.history.user"](),
+              // A reset is the whole rule's (everyone) or one user's.
+              render: (row) => row.user_email ?? row.user_id ?? m["admin_quotas.history.whole"](),
+            },
             { key: "why", header: m["admin_quotas.history.column.why"](), render: (row) => row.reason },
           ]}
           rows={resets.data?.items ?? []}
