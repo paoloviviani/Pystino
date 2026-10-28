@@ -518,15 +518,20 @@ class TestUserLifecycle:
         # Not nulled into a whole-rule reset, which would zero everyone.
         assert sorted(map(str, remaining), key=str) == sorted([str(stays.id), "None"], key=str)
 
-    async def test_a_merge_moves_per_user_resets_to_the_survivor(
+    async def test_a_merge_drops_per_user_resets_and_leaves_the_survivor_alone(
         self, session: AsyncSession, seeded: Seeded
     ) -> None:
         group = await make_group(session)
         source = await make_member(session, group)
         target = await make_member(session, group)
-        rule = await add_member_rule(session, scope_id=group.id)
+        rule = await add_member_rule(session, scope_id=group.id, limit="5")
+        quota = engine_for()
+        for _ in range(2):
+            await one_request(quota, session, QuotaSubject(target.id, group.id))
         await reset_for(session, rule, source)
         await session.commit()
+        subject = QuotaSubject(target.id, group.id)
+        assert await value(quota, session, rule, subject) == 2
 
         await merge_users(
             session,
@@ -537,4 +542,119 @@ class TestUserLifecycle:
         )
         await session.commit()
 
-        assert (await session.execute(select(QuotaReset.user_id))).scalars().all() == [target.id]
+        # The source's reset is gone, not handed to the survivor, whose own
+        # consumption is exactly what it was.
+        assert (await session.execute(select(QuotaReset.user_id))).scalars().all() == []
+        assert await value(quota, session, rule, subject) == 2
+
+    async def test_load_rules_leaves_out_other_users_reset_rows(
+        self, session: AsyncSession
+    ) -> None:
+        group = await make_group(session)
+        mine = await make_member(session, group)
+        other = await make_member(session, group)
+        rule = await add_member_rule(session, scope_id=group.id)
+        whole = await reset_for(session, rule, None)
+        own = await reset_for(session, rule, mine)
+        await reset_for(session, rule, other)
+
+        loaded = await engine_for().load_rules(session, QuotaSubject(mine.id, group.id))
+
+        assert {r.id for r in loaded[0].resets} == {whole.id, own.id}
+
+    async def test_the_usage_page_loads_resets_only_for_the_listed_users(
+        self, session: AsyncSession
+    ) -> None:
+        from gateway.quota_usage import user_quota_entries
+
+        group = await make_group(session)
+        listed = await make_member(session, group)
+        unlisted = await make_member(session, group)
+        rule = await add_member_rule(session, scope_id=group.id)
+        whole = await reset_for(session, rule, None)
+        own = await reset_for(session, rule, listed)
+        await reset_for(session, rule, unlisted)
+
+        await user_quota_entries(session, engine_for(), [listed])
+
+        assert {r.id for r in rule.resets} == {whole.id, own.id}
+
+    async def test_a_filtered_resets_collection_does_not_leak_between_subjects(
+        self, session: AsyncSession
+    ) -> None:
+        from gateway.caller_usage import caller_limits
+
+        group = await make_group(session)
+        first = await make_member(session, group)
+        second = await make_member(session, group)
+        rule = await add_member_rule(session, scope_id=group.id, limit="5")
+        quota = engine_for()
+        for _ in range(2):
+            await one_request(quota, session, QuotaSubject(second.id, group.id))
+        await reset_for(session, rule, second)
+        # The same session loads the rule for `first`, whose view of `resets`
+        # holds no reset of `second`'s.
+        await quota.load_rules(session, QuotaSubject(first.id, group.id))
+
+        limits = await caller_limits(session, quota, user_id=second.id, group_ids=[group.id])
+
+        assert limits[0].current_value == 0
+
+
+class TestStrayAndOverriddenResets:
+    def test_a_user_row_on_a_shared_rule_is_ignored(self) -> None:
+        user = uuid.uuid4()
+        rule = LimitRule(
+            name="shared",
+            scope=LimitScope.GLOBAL,
+            metric=LimitMetric.REQUESTS,
+            window_seconds=60,
+            limit_value=Decimal(1),
+        )
+        rule.resets = [QuotaReset(user_id=user, effective_at=datetime(2026, 10, 1, tzinfo=UTC))]
+        assert QuotaEngine.reset_epoch_for(rule, user) == 0
+
+    async def test_a_reset_for_a_user_whose_override_replaces_the_rule_is_422(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        replaced = await make_rule(
+            session, scope=LimitScope.GLOBAL, applies_to=LimitAppliesTo.EACH_USER, name="each"
+        )
+        await make_rule(
+            session,
+            scope=LimitScope.USER,
+            scope_id=seeded.user.id,
+            overrides_each_user=True,
+            name="mine",
+        )
+        other = await make_user(session)
+        await session.commit()
+
+        refused = await admin_client.post(
+            f"/api/admin/limits/{replaced.id}/reset", json={"user_id": str(seeded.user.id)}
+        )
+        assert refused.status_code == 422, refused.text
+        assert (await session.execute(select(QuotaReset))).first() is None
+        # Someone without an override can still be reset.
+        ok = await admin_client.post(
+            f"/api/admin/limits/{replaced.id}/reset", json={"user_id": str(other.id)}
+        )
+        assert ok.status_code == 200, ok.text
+
+    async def test_a_rolling_window_time_is_marked_an_estimate(
+        self, app: Any, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        fleet = await build_fleet(session, seeded)
+        quota = app.state.quota_engine
+        await one_request(
+            quota,
+            session,
+            QuotaSubject(seeded.user.id, seeded.group.id),
+            tokens=Decimal(5),
+        )
+        body = (await admin_client.get(f"/api/admin/quota-usage/{seeded.user.id}")).json()
+        by_id = {e["rule_id"]: e for e in body["entries"]}
+        rolling = by_id[str(fleet.rules["each_user"].id)]
+        calendar = by_id[str(fleet.rules["each_member"].id)]
+        assert rolling["resets_at"] is not None and rolling["resets_at_is_estimate"] is True
+        assert calendar["resets_at"] is not None and calendar["resets_at_is_estimate"] is False

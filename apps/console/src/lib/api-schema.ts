@@ -6713,6 +6713,11 @@ export interface components {
             /** Resets At */
             resets_at: string | null;
             /**
+             * Resets At Is Estimate
+             * @default false
+             */
+            resets_at_is_estimate: boolean;
+            /**
              * Rule Id
              * Format: uuid
              */

@@ -205,6 +205,13 @@ def _negate(delta: CounterDelta) -> CounterDelta:
     )
 
 
+def is_per_user(rule: LimitRule) -> bool:
+    """A rule enforced per user, so one user's consumption of it can be reset."""
+    return (rule.scope is LimitScope.GROUP and rule.applies_to is LimitAppliesTo.EACH_MEMBER) or (
+        rule.scope is LimitScope.GLOBAL and rule.applies_to is LimitAppliesTo.EACH_USER
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Measurement:
     """One rule's consumption for a subject, and when its window next moves."""
@@ -214,6 +221,8 @@ class Measurement:
     #: traffic leaves the window. None when nothing counts yet or the store
     #: keeps no buckets.
     resets_at: datetime | None
+    #: True when *resets_at* is a rolling window's estimate, not a boundary.
+    resets_at_is_estimate: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -390,10 +399,14 @@ class QuotaEngine:
         ``check_and_reserve`` and travels in the delta; callers that have no
         subject (a shared rule's counter) get the whole-rule epoch only.
         """
+        # A per-user row on a shared rule is stray (the API refuses to write
+        # one): ignored, so it can never zero the shared total.
+        per_user = is_per_user(rule)
         moments = [
             reset.effective_at
             for reset in rule.resets
-            if reset.user_id is None or (user_id is not None and reset.user_id == user_id)
+            if reset.user_id is None
+            or (per_user and user_id is not None and reset.user_id == user_id)
         ]
         if not moments:
             return 0
@@ -462,36 +475,53 @@ class QuotaEngine:
         it next moves can never come from two different queries. Same
         subject rules and same all-or-nothing outage behaviour.
         """
-        if not rules:
-            return {}
+        batch = await self.measure_many([(subject or QuotaSubject(None, None), rules)], now=now)
+        return batch[0]
+
+    async def measure_many(
+        self,
+        items: Sequence[tuple[QuotaSubject, Sequence[LimitRule]]],
+        *,
+        now: float | None = None,
+    ) -> list[dict[uuid.UUID, Measurement]]:
+        """:meth:`measure` for several subjects with one counter read in all.
+
+        The console's user list measures a page of people; reading per person
+        would make the page cost grow with its length. Same all-or-nothing
+        outage behaviour: every answer is empty when the store cannot be read.
+        """
         moment = now if now is not None else utcnow().timestamp()
         as_datetime = datetime.fromtimestamp(moment, tz=UTC)
 
-        queries = []
-        answerable = []
-        for rule in rules:
-            spec, period = self.window_for(rule, as_datetime)
-            scope = self.scope_for_rule(rule, subject or QuotaSubject(None, None))
-            if scope is None:
-                continue
-            answerable.append(rule)
-            queries.append(
-                WindowQuery(
-                    scope=scope,
-                    metric=rule.metric,
-                    spec=spec,
-                    period=period,
-                    reset_epoch=self.reset_epoch_for(rule, subject.user_id if subject else None),
+        queries: list[WindowQuery] = []
+        answerable: list[tuple[int, LimitRule]] = []
+        for index, (subject, rules) in enumerate(items):
+            for rule in rules:
+                spec, period = self.window_for(rule, as_datetime)
+                scope = self.scope_for_rule(rule, subject)
+                if scope is None:
+                    continue
+                answerable.append((index, rule))
+                queries.append(
+                    WindowQuery(
+                        scope=scope,
+                        metric=rule.metric,
+                        spec=spec,
+                        period=period,
+                        reset_epoch=self.reset_epoch_for(rule, subject.user_id),
+                    )
                 )
-            )
 
+        out: list[dict[uuid.UUID, Measurement]] = [{} for _ in items]
+        if not queries:
+            return out
         try:
             totals = await self._totals(queries, now=moment)
         except QuotaUnavailable:
-            return {}
-        out: dict[uuid.UUID, Measurement] = {}
-        for rule, query, total in zip(answerable, queries, totals, strict=True):
+            return out
+        for (index, rule), query, total in zip(answerable, queries, totals, strict=True):
             resets_at: datetime | None = None
+            estimate = False
             if query.period is not None:
                 # A calendar window resets at its boundary, exactly.
                 resets_at = query.period.end
@@ -499,10 +529,13 @@ class QuotaEngine:
                 # A rolling window has no reset, only the moment its oldest
                 # traffic leaves it: an estimate (see retry_after_seconds), and
                 # unknown from a store that does not bucket.
+                estimate = True
                 resets_at = as_datetime + timedelta(
                     seconds=query.spec.retry_after_seconds(moment, total.buckets)
                 )
-            out[rule.id] = Measurement(from_units(rule.metric, total.units), resets_at)
+            out[index][rule.id] = Measurement(
+                from_units(rule.metric, total.units), resets_at, estimate
+            )
         return out
 
     def query_for(

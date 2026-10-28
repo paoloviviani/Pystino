@@ -217,7 +217,7 @@ function UserDetail({ userId }: { userId: string }) {
       header: m["quota_usage.column.resets"](),
       render: (entry) =>
         entry.replaced_by_rule_id ? null : entry.resets_at ? (
-          entry.period ? (
+          !entry.resets_at_is_estimate ? (
             m["quota_usage.resets_at"]({ date: formatDateTime(entry.resets_at) })
           ) : (
             m["quota_usage.resets_rolling"]({ date: formatDateTime(entry.resets_at) })

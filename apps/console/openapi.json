@@ -9395,6 +9395,11 @@
             ],
             "title": "Resets At"
           },
+          "resets_at_is_estimate": {
+            "default": false,
+            "title": "Resets At Is Estimate",
+            "type": "boolean"
+          },
           "rule_id": {
             "format": "uuid",
             "title": "Rule Id",
@@ -9449,6 +9454,7 @@
           "window_seconds",
           "period",
           "resets_at",
+          "resets_at_is_estimate",
           "last_reset_at",
           "last_reset_by_email",
           "last_reset_for_user",

@@ -29,6 +29,7 @@ function entry(overrides: Partial<UserQuotaEntry> = {}): UserQuotaEntry {
     window_seconds: null,
     period: "month",
     resets_at: "2026-11-01T00:00:00Z",
+    resets_at_is_estimate: false,
     last_reset_at: null,
     last_reset_by_email: null,
     last_reset_for_user: false,
@@ -59,6 +60,19 @@ const REPLACED = entry({
   can_reset_for_user: false,
   replaced_by_rule_id: "r-own",
   replaced_by_name: "my requests",
+});
+
+const ROLLING = entry({
+  rule_id: "r-rolling",
+  rule_name: "tokens per day",
+  kind: "each_user",
+  scope: "global",
+  scope_label: null,
+  period: null,
+  window_seconds: 86400,
+  window_label: "1 day",
+  resets_at: "2026-10-29T16:00:00Z",
+  resets_at_is_estimate: true,
 });
 
 function summary(overrides: Partial<UserQuotaSummary> = {}): UserQuotaSummary {
@@ -93,7 +107,7 @@ function serve(): Server {
         user_id: "u1",
         email: "ada@example.org",
         display_name: "Ada Lovelace",
-        entries: [entry({ current_value: used }), SHARED, REPLACED],
+        entries: [entry({ current_value: used }), SHARED, REPLACED, ROLLING],
       });
     }
     if (url.includes("/api/admin/quota-usage")) {
@@ -167,5 +181,16 @@ describe("AdminQuotaUsage", () => {
     expect(within(replaced).queryByRole("button")).toBeNull();
     // Only the per-user quota offers the reset.
     expect(screen.getAllByRole("button", { name: "Reset for this user" })).toHaveLength(1);
+  });
+
+  it("words a rolling window's time as an estimate and a calendar one as exact", async () => {
+    vi.stubGlobal("fetch", serve().fetch);
+    renderAt("/admin/quota-usage/u1");
+
+    const rolling = (await screen.findByText("tokens per day")).closest("tr")!;
+    expect(within(rolling).getByText(/usage starts falling ~.*\(estimate\)/)).toBeInTheDocument();
+    const calendar = screen.getByText("per member").closest("tr")!;
+    expect(within(calendar).getByText(/^Resets /)).toBeInTheDocument();
+    expect(within(calendar).queryByText(/estimate/)).toBeNull();
   });
 });

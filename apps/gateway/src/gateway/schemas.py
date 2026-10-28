@@ -2280,6 +2280,8 @@ class UserQuotaEntry(ResponseModel):
     #: A calendar window's end; a rolling one's estimate of when its oldest
     #: counted traffic leaves it. Null when nothing is counted yet.
     resets_at: datetime | None = None
+    #: True when *resets_at* is a rolling window's estimate rather than a boundary.
+    resets_at_is_estimate: bool = False
     #: The latest reset that moved this user's counter (whole-rule or their own).
     last_reset_at: datetime | None = None
     last_reset_by_email: str | None = None

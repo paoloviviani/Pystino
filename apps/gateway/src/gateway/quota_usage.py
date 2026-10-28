@@ -33,15 +33,9 @@ from gateway.models import (
     User,
 )
 from gateway.quota import Measurement, QuotaEngine, QuotaSubject
+from gateway.quota.engine import is_per_user
 from gateway.schemas import UserQuotaEntry
 from gateway.types import utcnow
-
-
-def is_per_user(rule: LimitRule) -> bool:
-    """A rule enforced per user, so one user's consumption of it can be reset."""
-    return (rule.scope is LimitScope.GROUP and rule.applies_to is LimitAppliesTo.EACH_MEMBER) or (
-        rule.scope is LimitScope.GLOBAL and rule.applies_to is LimitAppliesTo.EACH_USER
-    )
 
 
 def kind_of(rule: LimitRule) -> str:
@@ -61,7 +55,7 @@ async def user_quota_entries(
 
     Rules, memberships, group names and reset authors are read once for the
     whole set, so a page of users costs a constant number of queries plus one
-    counter read per user.
+    counter read for the whole page.
     """
     ids = [user.id for user in users]
     if not ids:
@@ -79,7 +73,15 @@ async def user_quota_entries(
         (
             await session.execute(
                 select(LimitRule)
-                .options(selectinload(LimitRule.resets))
+                # Only the whole-rule resets and those of the listed users: a
+                # per-user rule may hold one reset row per user in the system.
+                .options(
+                    selectinload(
+                        LimitRule.resets.and_(
+                            or_(QuotaReset.user_id.is_(None), QuotaReset.user_id.in_(ids))
+                        )
+                    )
+                )
                 .where(
                     LimitRule.is_active.is_(True),
                     or_(
@@ -125,20 +127,27 @@ async def user_quota_entries(
     )
 
     now = utcnow().timestamp()
-    out: dict[uuid.UUID, list[UserQuotaEntry]] = {}
+    applicable: dict[uuid.UUID, list[LimitRule]] = {}
     for user in users:
-        mine = [
+        applicable[user.id] = [
             rule
             for rule in rules
             if rule.scope is LimitScope.GLOBAL
             or (rule.scope is LimitScope.USER and rule.scope_id == user.id)
             or (rule.scope is LimitScope.GROUP and rule.scope_id in memberships[user.id])
         ]
-        enforced = QuotaEngine.drop_overridden(mine)
-        kept = {rule.id for rule in enforced}
-        measured = await quota.measure(
-            enforced, now=now, subject=QuotaSubject(user_id=user.id, group_id=None)
-        )
+    enforced_by_user = {uid: QuotaEngine.drop_overridden(mine) for uid, mine in applicable.items()}
+    batch = await quota.measure_many(
+        [
+            (QuotaSubject(user_id=user.id, group_id=None), enforced_by_user[user.id])
+            for user in users
+        ],
+        now=now,
+    )
+    out: dict[uuid.UUID, list[UserQuotaEntry]] = {}
+    for user, measured in zip(users, batch, strict=True):
+        mine = applicable[user.id]
+        kept = {rule.id for rule in enforced_by_user[user.id]}
         entries = [
             _entry(
                 rule,
@@ -161,6 +170,29 @@ async def user_quota_entries(
         )
         out[user.id] = entries
     return out
+
+
+async def override_replacing(
+    session: AsyncSession, rule: LimitRule, user_id: uuid.UUID
+) -> LimitRule | None:
+    """The user's active override that replaces *rule* for them, if any."""
+    if rule.scope is not LimitScope.GLOBAL or rule.applies_to is not LimitAppliesTo.EACH_USER:
+        return None
+    candidates = (
+        (
+            await session.execute(
+                select(LimitRule).where(
+                    LimitRule.is_active.is_(True),
+                    LimitRule.scope == LimitScope.USER,
+                    LimitRule.scope_id == user_id,
+                    LimitRule.overrides_each_user.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return _replacement(rule, candidates)
 
 
 def _replacement(rule: LimitRule, applicable: Sequence[LimitRule]) -> LimitRule | None:
@@ -188,8 +220,10 @@ def _entry(
 ) -> UserQuotaEntry:
     value: Decimal | None = None
     resets_at: datetime | None = None
+    estimate = False
     if measured is not None:
         value, resets_at = measured.value, measured.resets_at
+        estimate = measured.resets_at_is_estimate
     percent = (
         int(value / rule.limit_value * 100) if value is not None and rule.limit_value > 0 else None
     )
@@ -211,6 +245,7 @@ def _entry(
         window_seconds=rule.window_seconds,
         period=rule.period.value if rule.period else None,
         resets_at=resets_at,
+        resets_at_is_estimate=estimate,
         last_reset_at=latest.effective_at if latest else None,
         last_reset_by_email=emails.get(latest.created_by) if latest and latest.created_by else None,
         last_reset_for_user=latest is not None and latest.user_id is not None,

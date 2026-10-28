@@ -192,7 +192,8 @@ from gateway.pricing import (
 )
 from gateway.providers import ProviderConfigurationError
 from gateway.quota import QuotaUnavailable
-from gateway.quota_usage import is_per_user, user_quota_entries
+from gateway.quota.engine import is_per_user
+from gateway.quota_usage import override_replacing, user_quota_entries
 from gateway.redaction import Redactor
 from gateway.redaction import registry as redaction_registry
 from gateway.redaction.http import apply_spans
@@ -3712,6 +3713,12 @@ async def reset_limit(
             )
             if member is None:
                 raise NotFoundError(f"User {payload.user_id} is not a member of this rule's group.")
+        replacing = await override_replacing(session, rule, subject.id)
+        if replacing is not None:
+            raise UnprocessableError(
+                f"This user is held to their own rule {replacing.name!r} instead of this one, "
+                "so resetting this rule for them would change nothing."
+            )
     reset = QuotaReset(
         rule_id=rule.id,
         created_by=admin.id,
