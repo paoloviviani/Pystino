@@ -73,6 +73,9 @@ const ROLLING = entry({
   window_label: "1 day",
   resets_at: "2026-10-29T16:00:00Z",
   resets_at_is_estimate: true,
+  current_value: "7",
+  limit_value: "9",
+  can_reset_for_user: false,
 });
 
 function summary(overrides: Partial<UserQuotaSummary> = {}): UserQuotaSummary {
