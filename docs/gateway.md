@@ -72,7 +72,8 @@ default — is on [Billing groups](billing-groups.md).
 `max_input_tokens`, `max_output_tokens`, `input_modalities`,
 `output_modalities` and `supported_features`, so a client
 can pick a model that does tool calling or reads images without taking a 400 to
-find out. These are non-standard fields, which OpenAI clients ignore. `max_input_tokens` is the one limit the gateway itself enforces:
+find out. `supported_features` includes `tool_images` for a vision model that
+can be shown images returned by a tool (see the console's *Images in tool results*). These are non-standard fields, which OpenAI clients ignore. `max_input_tokens` is the one limit the gateway itself enforces:
 a prompt estimated above it is a 400 `prompt_too_long` before any
 reservation is made, and it is unset for most models — no catalogue reports
 a provider's real input cap, so an operator records it by hand and null

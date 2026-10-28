@@ -675,7 +675,19 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
           hint={m["admin_models.create.accepts_hint"]()}
           known={KNOWN_INPUTS}
           value={inputs}
-          onChange={setInputs}
+          onChange={(next) => {
+            // Accepting images pre-ticks "Images in tool results" (the default
+            // every catalogued vision model gets); dropping them clears it,
+            // since it means nothing without image input.
+            const hadImage = inputs.includes("image");
+            const hasImage = next.includes("image");
+            if (hasImage && !hadImage) {
+              setFeatures((current) => [...new Set([...current, "tool_images"])]);
+            } else if (!hasImage && hadImage) {
+              setFeatures((current) => current.filter((item) => item !== "tool_images"));
+            }
+            setInputs(next);
+          }}
         />
         <CapabilityPicker
           key={`outputs-${generation}`}
@@ -694,6 +706,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
           known={KNOWN_FEATURES}
           value={features}
           onChange={setFeatures}
+          inputs={inputs}
         />
 
         {/* Both are deliberate: a new model is invisible until someone chooses to

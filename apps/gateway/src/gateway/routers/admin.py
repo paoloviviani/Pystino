@@ -175,6 +175,7 @@ from gateway.pricing import (
     LITELLM_CATALOGUE_URL,
     CataloguePrice,
     CatalogueUnavailable,
+    default_features,
     fetch_catalogue,
     kinds_by_id,
     limits_by_id,
@@ -1675,7 +1676,9 @@ async def discover_models(
                 kind=price.kind.value,
                 input_modalities=list(price.input_modalities),
                 output_modalities=list(price.output_modalities),
-                supported_features=list(price.supported_features),
+                supported_features=default_features(
+                    price.input_modalities, price.supported_features
+                ),
                 blocked_reason=None,
                 price_source=filled.get(upstream_id, "provider"),
             )
@@ -2183,7 +2186,7 @@ async def import_models(
             kind=price.kind,
             input_modalities=list(price.input_modalities),
             output_modalities=list(price.output_modalities),
-            supported_features=list(price.supported_features),
+            supported_features=default_features(price.input_modalities, price.supported_features),
         )
         model.id = uuid.uuid4()
         session.add(model)
