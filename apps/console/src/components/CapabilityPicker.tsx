@@ -59,6 +59,19 @@ export interface Vocabulary {
    * module-level constant is frozen against the language the page loaded in.
    */
   gloss?: () => string;
+  /**
+   * What to show in place of the raw value, for a value that is this
+   * gateway's own and not a provider's word (so the operator reads a sentence).
+   */
+  label?: () => string;
+  /** One line of help under the box. */
+  help?: () => string;
+  /**
+   * An input modality the model must accept for this value to mean anything.
+   * Without it the box is shown disabled, not hidden: a disabled box says the
+   * option exists and what it waits for.
+   */
+  needs?: string;
 }
 
 /**
@@ -97,6 +110,14 @@ export const KNOWN_FEATURES: readonly Vocabulary[] = [
   { value: "tools", gloss: m["capability_picker.gloss.tools"] },
   { value: "json_mode", gloss: m["capability_picker.gloss.json_mode"] },
   { value: "reasoning" },
+  // This gateway's own capability (migration 0073), not a provider's: whether
+  // the chat may show the model images returned by a tool, as `look_doc` does.
+  {
+    value: "tool_images",
+    label: m["capability_picker.tool_images.label"],
+    help: m["capability_picker.tool_images.help"],
+    needs: "image",
+  },
 ];
 
 /**
@@ -134,6 +155,7 @@ export function CapabilityPicker({
   known,
   value,
   onChange,
+  inputs,
 }: {
   label: string;
   otherLabel: string;
@@ -141,6 +163,8 @@ export function CapabilityPicker({
   known: readonly Vocabulary[];
   value: string[];
   onChange: (next: string[]) => void;
+  /** The model's input modalities, for the values that depend on one. */
+  inputs?: readonly string[];
 }) {
   const vocabulary = known.map((entry) => entry.value);
 
@@ -161,26 +185,39 @@ export function CapabilityPicker({
     <fieldset className={PICKER_FIELDSET}>
       <legend className={FIELD_LABEL}>{label}</legend>
       <div className={CHECK_LIST}>
-        {known.map((entry) => (
-          <label key={entry.value} className={CHECK_ITEM}>
-            <input
-              type="checkbox"
-              checked={value.includes(entry.value)}
-              onChange={(event) =>
-                emit(
-                  vocabulary.filter((item) =>
-                    item === entry.value ? event.target.checked : value.includes(item),
-                  ),
-                  other,
-                )
-              }
-            />
-            <span>
-              {entry.value}
-              {entry.gloss && <span className={MUTED}> ({entry.gloss()})</span>}
-            </span>
-          </label>
-        ))}
+        {known.map((entry) => {
+          const blocked = entry.needs !== undefined && !(inputs ?? []).includes(entry.needs);
+          return (
+            <label
+              key={entry.value}
+              className={entry.help ? `${CHECK_ITEM} col-span-full` : CHECK_ITEM}
+            >
+              <input
+                type="checkbox"
+                disabled={blocked}
+                checked={value.includes(entry.value)}
+                onChange={(event) =>
+                  emit(
+                    vocabulary.filter((item) =>
+                      item === entry.value ? event.target.checked : value.includes(item),
+                    ),
+                    other,
+                  )
+                }
+              />
+              <span>
+                {entry.label ? entry.label() : entry.value}
+                {entry.gloss && <span className={MUTED}> ({entry.gloss()})</span>}
+                {entry.help && (
+                  <span className={`${MUTED} block`}>
+                    {entry.help()}
+                    {blocked && ` ${m["capability_picker.tool_images.needs_image"]()}`}
+                  </span>
+                )}
+              </span>
+            </label>
+          );
+        })}
       </div>
       <Input
         label={otherLabel}

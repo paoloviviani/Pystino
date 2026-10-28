@@ -60,6 +60,19 @@ price after all, theirs is the one that is kept and the result says your
 figure was not used. See
 [Importing models from a provider's catalogue](gateway.md#importing-models-from-a-providers-catalogue).
 
+A model's **Features** (on the model page, and when you add one by hand) are
+what it can do. **Images in tool results** is the gateway's own: it lets the
+chat show the model page images that come back from a tool, for example the
+slides of a document, as users of a vision model expect. It is available only
+when the model accepts images (**Accepts: image**), and it starts ticked for
+every model that does: for models that already existed when it arrived, for
+models imported from a provider's catalogue, and for a model you add by hand
+once you tick image input. Turn it off for a model that ignores or mishandles
+images placed after a tool result. The chat reads the setting from
+`supported_features` on `GET /v1/models`, and the change is recorded in the
+[audit log](#the-administrator-audit-log). Removing it from a model stays
+removed: the catalogue is read only when a model is created.
+
 **Reasons are optional.** Every form that offers one (resetting a quota, merging
 users, a redaction rule, the sign-in policy) labels the field *Reason
 (optional)*; a reason you give is kept in the audit log.

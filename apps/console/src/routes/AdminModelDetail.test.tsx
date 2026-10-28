@@ -255,6 +255,89 @@ describe("AdminModelDetail", () => {
     expect(group("Features").getByRole("checkbox", { name: /^reasoning/ })).not.toBeChecked();
   });
 
+  describe("Images in tool results", () => {
+    const box = () => group("Features").getByRole("checkbox", { name: /^Images in tool results/ });
+
+    it("is offered, ticked, for a model that accepts images", async () => {
+      vi.stubGlobal(
+        "fetch",
+        routes(
+          model({
+            input_modalities: ["text", "image"],
+            supported_features: ["tool_images", "tools"],
+          }),
+        ),
+      );
+      renderScreen();
+      await ready();
+
+      expect(box()).toBeEnabled();
+      expect(box()).toBeChecked();
+      // A named option with its help line, not the raw value, and not in Other.
+      expect(screen.getByText(/Lets the chat show this model page images from tools/)).toBeVisible();
+      expect(screen.getByLabelText("Other features")).toHaveValue("");
+    });
+
+    it("is disabled for a model that does not accept images", async () => {
+      vi.stubGlobal("fetch", routes(model({ input_modalities: ["text"] })));
+      renderScreen();
+      await ready();
+
+      expect(box()).toBeDisabled();
+      expect(box()).not.toBeChecked();
+    });
+
+    it("sends the change when it is turned off", async () => {
+      const user = userEvent.setup({ delay: null });
+      const captured: Captured = { bodies: [], prices: [] };
+      vi.stubGlobal(
+        "fetch",
+        routes(
+          model({
+            input_modalities: ["text", "image"],
+            supported_features: ["tool_images", "tools"],
+          }),
+          [price()],
+          captured,
+        ),
+      );
+      renderScreen();
+      await ready();
+      await user.click(box());
+      await save(user);
+
+      await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+      const body = captured.bodies[0] as Record<string, unknown>;
+      expect(body.supported_features).toEqual(["tools"]);
+    });
+
+    it("is dropped from the update when image input is unticked", async () => {
+      const user = userEvent.setup({ delay: null });
+      const captured: Captured = { bodies: [], prices: [] };
+      vi.stubGlobal(
+        "fetch",
+        routes(
+          model({
+            input_modalities: ["text", "image"],
+            supported_features: ["tool_images", "tools"],
+          }),
+          [price()],
+          captured,
+        ),
+      );
+      renderScreen();
+      await ready();
+      await user.click(group("Accepts").getByRole("checkbox", { name: /^image/ }));
+      expect(box()).toBeDisabled();
+      await save(user);
+
+      await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+      expect((captured.bodies[0] as Record<string, unknown>).supported_features).toEqual([
+        "tools",
+      ]);
+    });
+  });
+
   it("unticking a box takes the capability away", async () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [], prices: [] };

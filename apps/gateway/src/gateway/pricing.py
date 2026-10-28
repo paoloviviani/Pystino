@@ -124,6 +124,31 @@ class CataloguePrice:
     supported_features: tuple[str, ...] = ()
 
 
+#: The feature that says a model can be shown images a tool returned (the chat's
+#: `look_doc`). It is this gateway's own vocabulary: no provider catalogue emits
+#: it, so a catalogue entry can never state it either way.
+TOOL_IMAGES = "tool_images"
+
+
+def default_features(
+    input_modalities: Sequence[str], supported_features: Sequence[str]
+) -> list[str]:
+    """The features a newly catalogued model starts with.
+
+    A model that accepts images starts with `tool_images`, because most do
+    handle them after a tool result and an operator should not have to visit
+    every model before the chat's document tools work. Applied only where a row
+    is *created* from a catalogue entry, never to a row that exists: an
+    administrator who removed it keeps it removed, because nothing re-reads the
+    catalogue into an existing model. A model with no image input is returned
+    as it came.
+    """
+    features = list(supported_features)
+    if "image" in input_modalities and TOOL_IMAGES not in features:
+        features.append(TOOL_IMAGES)
+    return sorted(features)
+
+
 @dataclass
 class ImportReport:
     """What an import did. Everything skipped is named, never silently dropped."""

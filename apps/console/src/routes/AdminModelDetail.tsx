@@ -448,7 +448,14 @@ function Describe({ model }: { model: AdminModel }) {
           hint={m["model_detail.describe.accepts_hint"]()}
           known={KNOWN_INPUTS}
           value={inputs}
-          onChange={setInputs}
+          onChange={(next) => {
+            // "Images in tool results" means nothing without image input, so
+            // it is dropped with it rather than saved on a model that cannot use it.
+            if (!next.includes("image")) {
+              setFeatures((current) => current.filter((item) => item !== "tool_images"));
+            }
+            setInputs(next);
+          }}
         />
         <CapabilityPicker
           label={m["model_detail.describe.produces"]()}
@@ -465,6 +472,7 @@ function Describe({ model }: { model: AdminModel }) {
           known={KNOWN_FEATURES}
           value={features}
           onChange={setFeatures}
+          inputs={inputs}
         />
         <Input
           label={m["model_detail.describe.context_window"]()}
