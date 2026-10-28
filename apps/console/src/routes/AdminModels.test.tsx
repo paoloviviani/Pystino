@@ -826,6 +826,26 @@ describe("AdminModels", () => {
     ).toBeTruthy();
   });
 
+  it("pre-ticks Images in tool results when a hand-made model accepts images", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", routes([model()]));
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Add model" }));
+    const dialog = await screen.findByRole("dialog");
+    const features = within(within(dialog).getByRole("group", { name: "Features" }));
+    const option = () => features.getByRole("checkbox", { name: /^Images in tool results/ });
+
+    // Only meaningful with image input, so it waits for it.
+    expect(option()).toBeDisabled();
+    expect(option()).not.toBeChecked();
+
+    const accepts = within(within(dialog).getByRole("group", { name: "Accepts" }));
+    await user.click(accepts.getByRole("checkbox", { name: /^image/ }));
+    expect(option()).toBeEnabled();
+    expect(option()).toBeChecked();
+  });
+
   it("leaves the deployment's own plumbing out of the provider pickers", async () => {
     // The extractor's row is infrastructure with a fixed builtin catalogue —
     // the model list already hides its rows, and offering it in the pickers
