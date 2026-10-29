@@ -302,12 +302,13 @@ class PlaceholderMap:
     invertible view over a non-invertible function, not a store of record.
     """
 
-    __slots__ = ("_claimed", "_to_original", "_to_placeholder")
+    __slots__ = ("_claimed", "_json_cache", "_to_original", "_to_placeholder")
 
     def __init__(self) -> None:
         self._to_original: dict[str, str] = {}
         self._to_placeholder: dict[tuple[str, str], str] = {}
         self._claimed: dict[str, str] = {}
+        self._json_cache: tuple[int, re.Pattern[str]] | None = None
 
     def claim(self, placeholder: str, original: str) -> bool:
         """Reserve *placeholder* for *original*; False if another value holds it.
@@ -378,6 +379,9 @@ class PlaceholderMap:
         return self._json_pattern().sub(lambda match: self._json_match(text, match), text)
 
     def _json_pattern(self) -> re.Pattern[str]:
+        # Rebuilt only when a placeholder has been added since.
+        if self._json_cache is not None and self._json_cache[0] == len(self._to_original):
+            return self._json_cache[1]
         pieces = []
         for placeholder in sorted(self._to_original, key=len, reverse=True):
             if placeholder.startswith("<") and placeholder.endswith(">"):
@@ -386,7 +390,9 @@ class PlaceholderMap:
                 )
             else:
                 pieces.append(re.escape(placeholder))
-        return re.compile("|".join(pieces))
+        compiled = re.compile("|".join(pieces))
+        self._json_cache = (len(self._to_original), compiled)
+        return compiled
 
     def _json_match(self, text: str, match: re.Match[str]) -> str:
         raw = match.group(0)

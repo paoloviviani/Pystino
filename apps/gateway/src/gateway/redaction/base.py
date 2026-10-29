@@ -368,6 +368,11 @@ class TextRewriteStage(ABC):
         the tail of the first comes out inside the second.
         """
         index, field = wire
+        if field.startswith(f"{ARGUMENTS}:") and field.split(":")[1].isdigit():
+            # A numbered call is the open one too: a provider may number the
+            # first fragment and send the rest bare.
+            self._open_call[index] = field
+            return wire
         if field == f"{ARGUMENTS}:last":
             return (index, self._open_call.get(index, field))
         if field.startswith(f"{ARGUMENTS}:id:"):

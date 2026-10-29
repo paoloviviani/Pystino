@@ -17,6 +17,7 @@ import copy
 import hashlib
 import json
 import logging
+import re
 from collections import Counter, OrderedDict
 from functools import lru_cache
 from typing import Any
@@ -112,6 +113,28 @@ class _Cache:
 
     def __len__(self) -> int:
         return len(self._entries)
+
+
+#: A placeholder already in a text: left alone by the known-value pass, so an
+#: original that happens to appear inside one is not rewritten inside it.
+_PLACEHOLDER_SPAN = r"<[A-Z][A-Z0-9_]*>|#[A-Z2-7]{6,}#"
+
+#: The shortest original the known-value pass will look for. Shorter strings
+#: are too likely to be ordinary words to replace everywhere.
+_KNOWN_MIN = 3
+
+
+def _known_values(issued: dict[str, str]) -> re.Pattern[str] | None:
+    """A pattern for every original substituted in this request, or None.
+
+    Longest first, whole words only, and a placeholder already in the text is
+    matched first so it is skipped rather than rewritten inside.
+    """
+    originals = sorted((o for o in issued if len(o) >= _KNOWN_MIN), key=len, reverse=True)
+    if not originals:
+        return None
+    alternatives = "|".join(re.escape(o) for o in originals)
+    return re.compile(rf"(?P<skip>{_PLACEHOLDER_SPAN})|(?<!\w)(?P<known>{alternatives})(?!\w)")
 
 
 #: Request items that are not messages and carry no role: the Responses API's
@@ -301,6 +324,7 @@ def apply_spans(
     default_threshold: float = 0.0,
     scope: str | None = None,
     tally: Counter[str] | None = None,
+    issued: dict[str, str] | None = None,
 ) -> tuple[str, int]:
     """Substitute placeholders for *spans* in *text*, according to *policy*.
 
@@ -403,6 +427,8 @@ def apply_spans(
         text = text[: span.start] + placeholder + text[span.end :]
         if tally is not None:
             tally[mode.value] += 1
+        if issued is not None:
+            issued[original] = placeholder
 
     return text, len(chosen)
 
@@ -675,6 +701,7 @@ class HttpDetectionRedactor:
         tally: Counter[str] = Counter()
 
         documents: dict[int, _JsonText] = {}
+        issued: dict[str, str] = {}
         for target, spans in zip(targets, found, strict=True):
             redacted, count = apply_spans(
                 target.text,
@@ -685,12 +712,39 @@ class HttpDetectionRedactor:
                 default_threshold=self._settings.score_threshold,
                 scope=scope,
                 tally=tally,
+                issued=issued,
             )
             total += count
             if count:
                 target.write(redacted)
                 if target.document is not None:
                     documents[id(target.document)] = target.document
+
+        # A value found in one place is a value everywhere in this request. The
+        # detector sees an echoed tool-call leaf or a reasoning fragment alone,
+        # without the sentence that made it recognisable, and can miss a short
+        # name it caught in the user's own turn. So every exact occurrence of an
+        # original already substituted is replaced too, with the same stand-in.
+        known = _known_values(issued)
+        if known is not None:
+            for target in targets:
+                current = target.holder[target.key]
+                hits = 0
+
+                def swap(match: re.Match[str]) -> str:
+                    nonlocal hits
+                    original = match.group("known")
+                    if original is None:
+                        return match.group(0)
+                    hits += 1
+                    return issued[original]
+
+                swapped = known.sub(swap, current)
+                if hits:
+                    total += hits
+                    target.write(swapped)
+                    if target.document is not None:
+                        documents[id(target.document)] = target.document
         for document in documents.values():
             document.commit()
 

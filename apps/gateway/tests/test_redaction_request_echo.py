@@ -387,3 +387,135 @@ class TestResponsesInstructions:
         )
         note = system_note(app.state.redactor._settings.policy)
         assert note and note in fake_upstream.last_body["instructions"]
+
+
+class TestIndexedFirstFragment:
+    async def test_bare_continuations_join_the_numbered_call(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
+    ) -> None:
+        install(app)
+        placeholder = await issued(app)
+        arguments = f'{{"who": "{placeholder}", "n": 1234567890}}'
+
+        def fragment(text: str, first: bool) -> dict[str, Any]:
+            call: dict[str, Any] = {"function": {"arguments": text}}
+            if first:
+                call.update({"index": 0, "id": "c1"})
+            return {
+                "id": "x",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "m",
+                "choices": [{"index": 0, "delta": {"tool_calls": [call]}}],
+            }
+
+        for size in (3, 8, 20):
+            chunks = [fragment(p, i == 0) for i, p in enumerate(pieces(arguments, size))]
+            chunks.append(delta_chunk({"content": "tail text"}))
+            chunks.append(delta_chunk({}, "tool_calls"))
+            fake_upstream.set_stream(frames(chunks))
+            events = await post_stream(
+                client,
+                "/v1/chat/completions",
+                {
+                    "model": seeded.model.name,
+                    "stream": True,
+                    "messages": [{"role": "user", "content": f"code {CF}"}],
+                },
+                seeded,
+            )
+            joined = "".join(
+                c["function"].get("arguments") or ""
+                for e in events
+                for ch in e.get("choices") or []
+                for c in ch.get("delta", {}).get("tool_calls") or []
+            )
+            assert orjson.loads(joined) == {"who": CF, "n": 1234567890}, size
+
+
+class TestTokenReservation:
+    async def test_instructions_are_counted_once(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        fake_upstream: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        seen: list[str] = []
+        estimator = app.state.token_estimator
+        original = estimator.count_text
+
+        def spy(text: str, *args: Any, **kwargs: Any) -> int:
+            seen.append(text)
+            return int(original(text, *args, **kwargs))
+
+        monkeypatch.setattr(estimator, "count_text", spy)
+        fake_upstream.set_json({"id": "r", "object": "response", "output": [], "usage": {}})
+        await client.post(
+            "/v1/responses",
+            json={"model": seeded.model.name, "instructions": "Be brief.", "input": "hi"},
+            headers=seeded.auth,
+        )
+        # Once, inside the system message the redactor returned; not again on top.
+        assert seen.count("Be brief.") == 1
+
+
+class TestKnownValues:
+    async def test_a_value_found_once_is_replaced_everywhere_in_the_request(self) -> None:
+        from test_redaction_http import FakeDetector
+
+        class OnlyInProse(FakeDetector):
+            """Misses `Rossi` when it stands alone, as NER does on a bare JSON leaf."""
+
+            def _handle(self, request: httpx.Request) -> httpx.Response:
+                response = super()._handle(request)
+                body = orjson.loads(response.content)
+                texts = orjson.loads(request.content)["texts"]
+                for finding in body["findings"]:
+                    if texts[finding["index"]] == "Rossi":
+                        finding["spans"] = []
+                return httpx.Response(200, json=body)
+
+        detector = OnlyInProse({"Rossi": "PERSON"})
+        outcome = await detector.redactor().redact_request(
+            [
+                {"role": "user", "content": "my surname is Rossi"},
+                {
+                    "role": "assistant",
+                    "reasoning_content": "Rossi, said the user.",
+                    "tool_calls": [
+                        {"function": {"name": "f", "arguments": '{"surname": "Rossi"}'}}
+                    ],
+                },
+                {"role": "tool", "content": "Rossi"},
+            ]
+        )
+        sent = orjson.dumps(outcome.messages).decode()
+        assert "Rossi" not in sent
+        placeholder = outcome.messages[0]["content"].removeprefix("my surname is ")
+        args = orjson.loads(outcome.messages[1]["tool_calls"][0]["function"]["arguments"])
+        assert args == {"surname": placeholder}
+        assert outcome.messages[2]["content"] == placeholder
+        # Restoring still maps back.
+        assert outcome.placeholder_map.restore(placeholder) == "Rossi"
+
+    async def test_nothing_substituted_means_nothing_extra(self) -> None:
+        from test_redaction_http import FakeDetector
+
+        detector = FakeDetector()
+        messages = [{"role": "user", "content": "Rossi"}]
+        outcome = await detector.redactor().redact_request(messages)
+        assert outcome.messages == messages
+
+    def test_only_whole_words_and_never_inside_a_placeholder(self) -> None:
+        from gateway.redaction.http import _known_values
+
+        pattern = _known_values({"Rossi": "<PERSON_X>", "ab": "<SHORT>"})
+        assert pattern is not None
+        hits = [
+            m.group("known")
+            for m in pattern.finditer("Rossini, Rossi; <PERSON_ROSSI> ab")
+            if m.group("known")
+        ]
+        assert hits == ["Rossi"]
