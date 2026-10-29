@@ -211,3 +211,57 @@ class TestContractModels:
     def test_score_is_bounded(self) -> None:
         with pytest.raises(ValueError):
             EntitySpan(start=0, end=1, entity_type="PERSON", score=1.5)
+
+
+class TestSameLengthPlaceholders:
+    KEY = b"k" * 32
+
+    def test_it_has_exactly_the_length_of_the_original(self) -> None:
+        from llmp_shared import same_length_placeholder
+
+        for original in ("RSSMRA80A01F205X", "IT60X0542811101000000123456", "x" * 8, "y" * 200):
+            stand_in = same_length_placeholder("IT_FISCAL_CODE", original, key=self.KEY)
+            assert stand_in is not None
+            assert len(stand_in) == len(original)
+            assert stand_in[0] == stand_in[-1] == "#"
+            assert stand_in[1:-1].isalnum() and stand_in[1:-1].isupper()
+
+    def test_the_same_value_maps_to_the_same_stand_in_and_others_differ(self) -> None:
+        from llmp_shared import same_length_placeholder
+
+        a = same_length_placeholder("T", "RSSMRA80A01F205X", key=self.KEY)
+        assert a == same_length_placeholder("T", "RSSMRA80A01F205X", key=self.KEY)
+        assert a != same_length_placeholder("T", "RSSMRA80A01F205Y", key=self.KEY)
+        assert a != same_length_placeholder("T", "RSSMRA80A01F205X", key=b"other" * 8)
+
+    def test_the_token_is_the_tagged_placeholders_own_digest(self) -> None:
+        from llmp_shared import same_length_placeholder
+
+        tagged = placeholder_for("PERSON", "Mario Rossi Junior", key=self.KEY)
+        stand_in = same_length_placeholder("PERSON", "Mario Rossi Junior", key=self.KEY)
+        assert stand_in is not None
+        token = tagged.removeprefix("<PERSON_").removesuffix(">")
+        assert stand_in[1:].startswith(token)
+
+    def test_a_short_value_gets_none(self) -> None:
+        from llmp_shared import SAME_LENGTH_MIN, same_length_placeholder
+
+        assert same_length_placeholder("T", "x" * (SAME_LENGTH_MIN - 1), key=self.KEY) is None
+        assert same_length_placeholder("T", "x" * SAME_LENGTH_MIN, key=self.KEY) is not None
+
+    def test_it_restores_literally_and_streaming_sizes_by_its_real_length(self) -> None:
+        from llmp_shared import same_length_placeholder
+
+        original = "RSSMRA80A01F205X"
+        stand_in = same_length_placeholder("T", original, key=self.KEY)
+        assert stand_in is not None
+        mapping = PlaceholderMap()
+        mapping.add("T", original, stand_in)
+        assert mapping.restore(f"use `{stand_in}` here") == f"use `{original}` here"
+        assert [len(p) for p in mapping.placeholders()] == [len(original)]
+
+    def test_a_claim_is_refused_for_a_second_value(self) -> None:
+        mapping = PlaceholderMap()
+        assert mapping.claim("#ABCDEFGH#", "one") is True
+        assert mapping.claim("#ABCDEFGH#", "one") is True
+        assert mapping.claim("#ABCDEFGH#", "two") is False

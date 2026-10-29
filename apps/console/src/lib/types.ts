@@ -344,11 +344,19 @@ export type RedactionConfigChange = Schemas["RedactionConfigChange"];
 export type EntityMode =
   "off" | "anonymise_restore" | "anonymise" | "redact" | "block";
 
+/**
+ * How a placeholder is written. `same_length` is `#TOKEN#` with the length of
+ * the value it replaces, for forms and fixed-width fields; it tells the
+ * provider how long the value is, so the tagged form is the default.
+ */
+export type PlaceholderStyle = "tagged" | "same_length";
+
 export type EntityPolicy = Narrow<
   Schemas["EntityPolicy"],
   {
     mode: EntityMode;
     threshold: number | null;
+    placeholder?: PlaceholderStyle;
   }
 >;
 
@@ -363,6 +371,7 @@ export type CustomPattern = Narrow<
   Schemas["CustomPattern"],
   {
     mode: EntityMode;
+    placeholder?: PlaceholderStyle;
   }
 >;
 

@@ -580,10 +580,30 @@ class EntityMode(StrEnum):
     BLOCK = "block"
 
 
+class PlaceholderStyle(StrEnum):
+    """How a placeholder is written, for the modes that write a derived one.
+
+    Applies to ``anonymise_restore`` and ``anonymise``; ``redact`` writes the
+    bare label and has no token to shape.
+    """
+
+    #: ``<LABEL_TOKEN>``: the form the model is told about, whatever the value's
+    #: own length. The default, and the one that reveals nothing about the value.
+    TAGGED = "tagged"
+    #: ``#TOKEN#`` with exactly the length of the original, for forms and
+    #: fixed-width fields where a stand-in of the wrong width is refused. Best
+    #: effort: a value shorter than 8 characters, or one whose stand-in would
+    #: collide, gets the tagged form. It does tell the provider how long the
+    #: value is, which is why a scope cannot loosen it (see ``combine``).
+    SAME_LENGTH = "same_length"
+
+
 class EntityPolicy(BaseModel):
     """How one entity type is treated, and how sure the detector must be."""
 
     mode: EntityMode = EntityMode.ANONYMISE_RESTORE
+    #: How the placeholder is written. See :class:`PlaceholderStyle`.
+    placeholder: PlaceholderStyle = PlaceholderStyle.TAGGED
     #: Overrides ``score_threshold`` for this type alone. ``PERSON`` at 0.85 and
     #: ``URL`` at 0.5 are not the same judgement, and one global number forces
     #: them to be. None means the global value applies.
@@ -609,6 +629,8 @@ class CustomPattern(BaseModel):
     #: pattern somebody wrote by hand is a value they went out of their way to
     #: name, and the gateway should not guess that they wanted it back.
     mode: EntityMode = EntityMode.REDACT
+    #: How the placeholder is written. See :class:`PlaceholderStyle`.
+    placeholder: PlaceholderStyle = PlaceholderStyle.TAGGED
 
     @field_validator("regex")
     @classmethod
@@ -706,6 +728,17 @@ class RedactionPolicy(BaseModel):
                 return pattern.mode
         return self.default_mode
 
+    def placeholder_style_for(self, entity_type: str) -> PlaceholderStyle:
+        """How a placeholder for this type is written; resolved like the mode."""
+        name = entity_type.upper()
+        entry = self.entities.get(name)
+        if entry is not None:
+            return entry.placeholder
+        for pattern in self.patterns:
+            if pattern.name == name:
+                return pattern.placeholder
+        return PlaceholderStyle.TAGGED
+
     def threshold_for(self, entity_type: str, default: float) -> float:
         entry = self.entities.get(entity_type.upper())
         if entry is None or entry.threshold is None:
@@ -789,17 +822,33 @@ class RedactionPolicy(BaseModel):
                 and entry.threshold is not None
                 and entry.mode is not EntityMode.OFF
             ]
+            # Same-length only if every policy that speaks asks for it: it tells
+            # the provider how long the value is, so any scope can veto it and
+            # none can impose it.
+            style = (
+                PlaceholderStyle.SAME_LENGTH
+                if all(
+                    p.entities[name].placeholder is PlaceholderStyle.SAME_LENGTH for p in speaking
+                )
+                else PlaceholderStyle.TAGGED
+            )
             entities[name] = EntityPolicy(
-                mode=mode, threshold=min(thresholds) if thresholds else None
+                mode=mode, threshold=min(thresholds) if thresholds else None, placeholder=style
             )
 
         patterns: list[CustomPattern] = []
-        seen: set[tuple[str, str]] = set()
+        seen: dict[tuple[str, str], int] = {}
         for policy in policies:
             for pattern in policy.patterns:
-                if (key := (pattern.name, pattern.regex)) not in seen:
-                    seen.add(key)
+                key = (pattern.name, pattern.regex)
+                if key not in seen:
+                    seen[key] = len(patterns)
                     patterns.append(pattern)
+                elif pattern.placeholder is PlaceholderStyle.TAGGED:
+                    # The same pattern written twice: the tagged one vetoes.
+                    patterns[seen[key]] = patterns[seen[key]].model_copy(
+                        update={"placeholder": PlaceholderStyle.TAGGED}
+                    )
 
         return cls(
             default_mode=max((p.default_mode for p in policies), key=order.index),
@@ -831,6 +880,12 @@ class RedactionPolicy(BaseModel):
             # the mode is unchanged — the failure this whole check exists for,
             # dressed as a tightening.
             if self.threshold_for(name, 0.0) > previous.threshold_for(name, 0.0):
+                return True
+            # A same-length stand-in tells the provider how long the value is.
+            if (
+                self.placeholder_style_for(name) is PlaceholderStyle.SAME_LENGTH
+                and previous.placeholder_style_for(name) is PlaceholderStyle.TAGGED
+            ):
                 return True
         # Exempting more values is the same decision by another route: an
         # allow-list entry means "never redact this", whatever the detector says.

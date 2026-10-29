@@ -11,18 +11,33 @@ from typing import Any
 import httpx
 import pytest
 from conftest import Seeded
-from gateway.config import EntityMode, EntityPolicy, RedactionPolicy
+from gateway.config import (
+    CustomPattern,
+    EntityMode,
+    EntityPolicy,
+    PlaceholderStyle,
+    RedactionPolicy,
+)
 from gateway.models import ApiSurface
 from gateway.redaction.base import RedactionOutcome
-from gateway.redaction.note import HIDDEN_NOTE, RESTORABLE_NOTE, inject_system_note, system_note
+from gateway.redaction.note import (
+    HIDDEN_NOTE,
+    RESTORABLE_NOTE,
+    SAME_LENGTH_NOTE,
+    inject_system_note,
+    system_note,
+)
 from helpers import completion_body
 from test_redaction_http import FakeDetector
 from test_redaction_restore_surfaces import CF
 
-RESTORABLE = system_note(
-    RedactionOutcome(messages=[], restorable_substitutions=1, restore_arguments=True)
-)
-HIDDEN = system_note(RedactionOutcome(messages=[], hidden_substitutions=1))
+
+def _policy(mode: EntityMode, **kw: Any) -> RedactionPolicy:
+    return RedactionPolicy(entities={"IT_FISCAL_CODE": EntityPolicy(mode=mode, **kw)})
+
+
+RESTORABLE = system_note(_policy(EntityMode.ANONYMISE_RESTORE))
+HIDDEN = system_note(_policy(EntityMode.ANONYMISE))
 SURFACES = {
     "/v1/chat/completions": {"messages": [{"role": "user", "content": f"code {CF}"}]},
     "/v1/responses": {"input": f"code {CF}"},
@@ -102,26 +117,50 @@ class TestPerSurface:
         sent = await call(client, seeded, fake_upstream, path)
         assert HIDDEN and HIDDEN in system_text(path, sent)
 
-    async def test_nothing_substituted_means_no_note(
+    async def test_a_rule_in_force_adds_the_note_even_when_nothing_matched(
         self, path: str, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
     ) -> None:
-        """A policy that matched nothing leaves the prompt as the caller sent it."""
+        """The note follows the policy, so the system text is the same every turn."""
         detector = install(app)
         detector.spans_for.clear()
         sent = await call(client, seeded, fake_upstream, path)
-        assert system_text(path, sent) == ""
+        assert RESTORABLE and RESTORABLE in system_text(path, sent)
+
+    async def test_two_turns_one_with_a_match_one_without_have_identical_system_text(
+        self, path: str, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
+    ) -> None:
+        detector = install(app)
+        first = system_text(path, await call(client, seeded, fake_upstream, path))
+        detector.spans_for.clear()
+        later: dict[str, Any] = {
+            "/v1/chat/completions": {"messages": [{"role": "user", "content": "thanks"}]},
+            "/v1/responses": {"input": "thanks"},
+            "/v1/messages": {"max_tokens": 10, "messages": [{"role": "user", "content": "thanks"}]},
+        }
+        fake_upstream.set_json(upstream_reply(path))
+        await client.post(
+            path, json={"model": seeded.model.name, **later[path]}, headers=seeded.auth
+        )
+        assert system_text(path, fake_upstream.last_body) == first != ""
 
     async def test_every_match_being_off_means_no_note(
         self, path: str, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
     ) -> None:
         policy = RedactionPolicy(
-            default_mode=EntityMode.ANONYMISE_RESTORE,
+            default_mode=EntityMode.OFF,
             entities={"IT_FISCAL_CODE": EntityPolicy(mode=EntityMode.OFF)},
         )
         install(app, policy)
         sent = await call(client, seeded, fake_upstream, path)
         assert system_text(path, sent) == ""
         assert CF in str(sent)
+
+    async def test_redact_only_rules_get_the_hidden_note(
+        self, path: str, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
+    ) -> None:
+        install(app, RedactionPolicy(default_mode=EntityMode.REDACT))
+        sent = await call(client, seeded, fake_upstream, path)
+        assert HIDDEN and HIDDEN in system_text(path, sent)
 
     async def test_redaction_off_means_no_note(
         self, path: str, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
@@ -169,16 +208,30 @@ class TestTheText:
         assert "put back" not in HIDDEN
 
     def test_without_argument_restoration_it_does_not_promise_it(self) -> None:
-        note = system_note(
-            RedactionOutcome(messages=[], restorable_substitutions=1, restore_arguments=False)
-        )
+        note = system_note(_policy(EntityMode.ANONYMISE_RESTORE), restore_arguments=False)
         assert note and "tool" not in note
 
-    def test_a_request_with_a_hidden_value_among_restorable_ones_gets_the_cautious_note(
-        self,
-    ) -> None:
-        mixed = RedactionOutcome(messages=[], restorable_substitutions=2, hidden_substitutions=1)
-        assert system_note(mixed) == HIDDEN
+    def test_restoring_off_or_no_restorable_entity_means_hidden(self) -> None:
+        assert system_note(_policy(EntityMode.ANONYMISE_RESTORE), restore_text=False) == HIDDEN
+        assert system_note(_policy(EntityMode.REDACT)) == HIDDEN
+
+    def test_only_off_and_block_means_no_note(self) -> None:
+        assert system_note(RedactionPolicy()) is None
+        assert system_note(_policy(EntityMode.OFF)) is None
+        assert system_note(_policy(EntityMode.BLOCK)) is None
+
+    def test_a_custom_pattern_counts_as_a_rule_in_force(self) -> None:
+        policy = RedactionPolicy(
+            patterns=[CustomPattern(name="X", regex="y", mode=EntityMode.REDACT)]
+        )
+        assert system_note(policy) == HIDDEN
+
+    def test_the_same_length_sentence_follows_the_policy_only(self) -> None:
+        plain = system_note(_policy(EntityMode.ANONYMISE_RESTORE))
+        same = system_note(
+            _policy(EntityMode.ANONYMISE_RESTORE, placeholder=PlaceholderStyle.SAME_LENGTH)
+        )
+        assert same == f"{plain} {SAME_LENGTH_NOTE}"
 
     def test_the_wording_is_a_constant_and_short(self) -> None:
         for constant in (RESTORABLE_NOTE, HIDDEN_NOTE):
@@ -189,8 +242,20 @@ class TestTheText:
         payload = {"messages": messages}
         inject_system_note(
             payload,
-            RedactionOutcome(messages=[], restorable_substitutions=1),
+            RedactionOutcome(messages=[], note="NOTE"),
             surface=ApiSurface.CHAT_COMPLETIONS,
         )
         assert messages[0]["content"] == "Be brief."
-        assert payload["messages"][0]["content"].startswith("Be brief.")
+        assert payload["messages"][0]["content"] == "Be brief.\n\nNOTE"
+
+    def test_the_callers_cached_anthropic_blocks_are_untouched(self) -> None:
+        blocks = [
+            {"type": "text", "text": "Long prefix", "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "More"},
+        ]
+        payload: dict[str, Any] = {"system": [dict(b) for b in blocks]}
+        inject_system_note(
+            payload, RedactionOutcome(messages=[], note="NOTE"), surface=ApiSurface.MESSAGES
+        )
+        assert payload["system"][:2] == blocks
+        assert payload["system"][2] == {"type": "text", "text": "NOTE"}

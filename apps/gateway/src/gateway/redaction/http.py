@@ -28,18 +28,21 @@ from llmp_shared import (
     Restored,
     opaque_placeholder,
     placeholder_for,
+    same_length_placeholder,
 )
 
 from gateway.config import (
     DEFAULT_REDACTION_POLICY,
     EffectivePolicy,
     EntityMode,
+    PlaceholderStyle,
     RedactionPolicy,
     RedactionSettings,
 )
 from gateway.errors import ContentBlockedError, GatewayError
 from gateway.models import ApiSurface
 from gateway.redaction.base import RedactionOutcome, TextRewriteStage
+from gateway.redaction.note import system_note
 from gateway.sse.pipeline import StreamStage, passthrough
 
 logger = logging.getLogger(__name__)
@@ -174,7 +177,7 @@ def apply_spans(
     policy: RedactionPolicy | None = None,
     default_threshold: float = 0.0,
     scope: str | None = None,
-    tally: Counter[EntityMode] | None = None,
+    tally: Counter[str] | None = None,
 ) -> tuple[str, int]:
     """Substitute placeholders for *spans* in *text*, according to *policy*.
 
@@ -250,13 +253,25 @@ def apply_spans(
             continue
         chosen.append(span)
 
+    # What the caller wrote, before any of our own substitutions: a stand-in is
+    # compared against that, not against text this loop has already rewritten,
+    # or the second occurrence of one value would collide with the first.
+    written = text
     for span in reversed(chosen):
         original = span.slice_of(text)
         mode = policy.mode_for(span.entity_type)
         if mode is EntityMode.REDACT:
             placeholder = opaque_placeholder(span.entity_type)
         else:
-            placeholder = placeholder_for(span.entity_type, original, key=key)
+            placeholder = _derived_placeholder(
+                span.entity_type,
+                original,
+                key=key,
+                style=policy.placeholder_style_for(span.entity_type),
+                placeholders=placeholders,
+                text=written,
+                tally=tally,
+            )
             if mode is EntityMode.ANONYMISE_RESTORE:
                 # The map is the only thing that makes a placeholder reversible,
                 # so *not* adding is how "anonymise" differs from "anonymise and
@@ -264,9 +279,45 @@ def apply_spans(
                 placeholders.add(span.entity_type, original, placeholder)
         text = text[: span.start] + placeholder + text[span.end :]
         if tally is not None:
-            tally[mode] += 1
+            tally[mode.value] += 1
 
     return text, len(chosen)
+
+
+#: The tally key for stand-ins written as ``#TOKEN#``. Not a mode, so it cannot
+#: collide with one.
+SAME_LENGTH_KEY = "same_length"
+
+
+def _derived_placeholder(
+    entity_type: str,
+    original: str,
+    *,
+    key: bytes,
+    style: PlaceholderStyle,
+    placeholders: PlaceholderMap,
+    text: str,
+    tally: Counter[str] | None,
+) -> str:
+    """The stand-in for *original*: ``#TOKEN#`` when asked and safe, else tagged.
+
+    Safe means the value is long enough, that no other value of this request
+    already holds the same ``#TOKEN#``, and that it does not already occur in
+    the text around it — in either case restoring it later could not tell which
+    was meant. Falling back is silent on purpose: this is best effort, and the
+    tagged form always works.
+    """
+    if style is PlaceholderStyle.SAME_LENGTH:
+        candidate = same_length_placeholder(entity_type, original, key=key)
+        if (
+            candidate is not None
+            and candidate not in text
+            and placeholders.claim(candidate, original)
+        ):
+            if tally is not None:
+                tally[SAME_LENGTH_KEY] += 1
+            return candidate
+    return placeholder_for(entity_type, original, key=key)
 
 
 class RestoreStage(TextRewriteStage):
@@ -473,9 +524,15 @@ class HttpDetectionRedactor:
 
         scope = policy.scope if policy is not None else None
         rule_id = policy.rule_id if policy is not None else None
+        note = system_note(
+            effective,
+            restore_text=self._settings.restore_in_response,
+            restore_arguments=self._settings.restore_in_response
+            and self._settings.restore_in_tool_arguments,
+        )
         if not texts:
             return RedactionOutcome(
-                messages=messages, engine=self.name, scope=scope, rule_id=rule_id
+                messages=messages, engine=self.name, scope=scope, rule_id=rule_id, note=note
             )
 
         found = await self.detect(texts, policy=effective)
@@ -486,7 +543,7 @@ class HttpDetectionRedactor:
         # still available to the caller.
         rewritten = [dict(message) for message in messages]
         total = 0
-        tally: Counter[EntityMode] = Counter()
+        tally: Counter[str] = Counter()
 
         for (message_index, part_index), text, spans in zip(locations, texts, found, strict=True):
             redacted, count = apply_spans(
@@ -517,9 +574,9 @@ class HttpDetectionRedactor:
             engine=self.name,
             scope=scope,
             rule_id=rule_id,
+            note=note,
             restore_text=self._settings.restore_in_response,
-            restorable_substitutions=tally[EntityMode.ANONYMISE_RESTORE],
-            hidden_substitutions=total - tally[EntityMode.ANONYMISE_RESTORE],
+            same_length_substitutions=tally[SAME_LENGTH_KEY],
             restore_arguments=self._settings.restore_in_response
             and self._settings.restore_in_tool_arguments,
         )

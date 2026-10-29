@@ -3709,6 +3709,8 @@ export interface components {
             mode?: components["schemas"]["EntityMode"];
             /** Name */
             name: string;
+            /** @default tagged */
+            placeholder?: components["schemas"]["PlaceholderStyle"];
             /** Regex */
             regex: string;
         };
@@ -3894,6 +3896,8 @@ export interface components {
         EntityPolicy: {
             /** @default anonymise_restore */
             mode?: components["schemas"]["EntityMode"];
+            /** @default tagged */
+            placeholder?: components["schemas"]["PlaceholderStyle"];
             /** Threshold */
             threshold?: number | null;
         };
@@ -5267,6 +5271,15 @@ export interface components {
             /** Timezone */
             timezone: string;
         };
+        /**
+         * PlaceholderStyle
+         * @description How a placeholder is written, for the modes that write a derived one.
+         *
+         *     Applies to ``anonymise_restore`` and ``anonymise``; ``redact`` writes the
+         *     bare label and has no token to shape.
+         * @enum {string}
+         */
+        PlaceholderStyle: "tagged" | "same_length";
         /**
          * PluginBaseURLOption
          * @description One endpoint a provider type documents: the URL and what it is.

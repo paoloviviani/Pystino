@@ -396,7 +396,8 @@ class TestBlocking:
         )
 
         assert response.status_code == 200, response.text
-        sent = fake_upstream.bodies[-1]["messages"][0]["content"]
+        # The user's turn is last: a rule in force also adds a system note first.
+        sent = fake_upstream.bodies[-1]["messages"][-1]["content"]
         assert "123-45-6789" not in sent
         assert "<US_SSN>" in sent
 

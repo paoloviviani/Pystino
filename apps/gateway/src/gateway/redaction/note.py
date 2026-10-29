@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from gateway.config import EntityMode, PlaceholderStyle, RedactionPolicy
 from gateway.models import ApiSurface
 from gateway.redaction.base import RedactionOutcome
 
@@ -39,26 +40,59 @@ HIDDEN_NOTE = (
 )
 
 
-def system_note(outcome: RedactionOutcome) -> str | None:
-    """The note for this request, or None when nothing was substituted."""
-    restorable = outcome.restorable_substitutions if outcome.restore_text else 0
-    hidden = outcome.hidden_substitutions + (
-        0 if outcome.restore_text else outcome.restorable_substitutions
-    )
-    if restorable + hidden == 0:
+#: Appended when any stand-in was written as ``#TOKEN#``, with the length of the
+#: value it replaced.
+SAME_LENGTH_NOTE = (
+    "Values written as #TOKEN# are stand-ins of the same kind, made as long as the real "
+    "value; treat them the same way."
+)
+
+
+_ANONYMISING = (EntityMode.ANONYMISE_RESTORE, EntityMode.ANONYMISE, EntityMode.REDACT)
+
+
+def system_note(
+    policy: RedactionPolicy, *, restore_text: bool = True, restore_arguments: bool = True
+) -> str | None:
+    """The note the policy in force calls for, or None when it calls for none.
+
+    A pure function of the **policy** and the restore settings, never of what a
+    request happened to contain. Providers cache the start of a request, and the
+    system prompt is the start: a note that appeared on the turns that matched
+    something and vanished on the ones that did not would change the prefix
+    from turn to turn and throw the cache away for the whole history. The same
+    policy gives the same bytes on every turn.
+
+    "In force" means at least one entity type, custom pattern or the default
+    names an anonymising mode (``anonymise_restore``, ``anonymise``,
+    ``redact``). Redaction off, or only ``off`` and ``block``, gets nothing.
+    """
+    modes = [entry.mode for entry in policy.entities.values()]
+    modes += [pattern.mode for pattern in policy.patterns]
+    modes.append(policy.default_mode)
+    if not any(mode in _ANONYMISING for mode in modes):
         return None
-    if hidden:
-        # Mixed, or none restorable: the safe statement is the one that is true
-        # of every placeholder in the request.
-        text = HIDDEN_NOTE
-    else:
-        tools = outcome.restore_arguments
+    restorable = restore_text and EntityMode.ANONYMISE_RESTORE in modes
+    if restorable:
         text = RESTORABLE_NOTE.format(
-            where="in your answer and in tool calls" if tools else "in your answer",
+            where="in your answer and in tool calls" if restore_arguments else "in your answer",
             including=", including in tool arguments and documents"
-            if tools
+            if restore_arguments
             else ", including in documents",
         )
+    else:
+        text = HIDDEN_NOTE
+    same_length = any(
+        entry.placeholder is PlaceholderStyle.SAME_LENGTH
+        and entry.mode in (EntityMode.ANONYMISE_RESTORE, EntityMode.ANONYMISE)
+        for entry in policy.entities.values()
+    ) or any(
+        pattern.placeholder is PlaceholderStyle.SAME_LENGTH
+        and pattern.mode in (EntityMode.ANONYMISE_RESTORE, EntityMode.ANONYMISE)
+        for pattern in policy.patterns
+    )
+    if same_length:
+        text = f"{text} {SAME_LENGTH_NOTE}"
     return text
 
 
@@ -69,9 +103,11 @@ def inject_system_note(
 
     Appended to the existing system prompt rather than sent as a second one:
     several chat templates refuse, or silently drop, a system message that is
-    not the only one. The caller's own instructions come first.
+    not the only one. The caller's own instructions come first, and on
+    Anthropic Messages the note is a separate final block, so blocks the caller
+    marked with ``cache_control`` are not touched.
     """
-    note = system_note(outcome)
+    note = outcome.note
     if note is None:
         return
     if surface is ApiSurface.RESPONSES:

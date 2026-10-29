@@ -59,11 +59,12 @@ class RedactionOutcome:
     #: :attr:`restore_text` is.
     restore_arguments: bool = True
 
-    #: How many values were replaced, by what a reader of the answer gets back.
-    #: Counted per occurrence. They are what decides whether the model is told
-    #: what a placeholder is, and which of two things it is told.
-    restorable_substitutions: int = 0
-    hidden_substitutions: int = 0
+    #: The system note this request's policy calls for, or None. Fixed by the
+    #: policy, not by what matched, so it is the same on every turn.
+    note: str | None = None
+    #: How many substitutions were written as ``#TOKEN#``, keeping the original's
+    #: length, rather than as ``<LABEL_TOKEN>``.
+    same_length_substitutions: int = 0
 
     @property
     def changed(self) -> bool:

@@ -117,6 +117,52 @@ def placeholder_for(
     return f"<{label}_{token}>"
 
 
+#: Shortest original that gets a same-length placeholder: ``#`` + a token of at
+#: least six characters + ``#``. Anything shorter has too little room for a token
+#: that is both unmistakably synthetic and unlikely to collide.
+SAME_LENGTH_MIN: Final = 8
+
+
+def same_length_placeholder(entity_type: str, value: str, *, key: bytes) -> str | None:
+    """A ``#TOKEN#`` stand-in with exactly the length of *value*, or None.
+
+    For forms and fixed-width fields, where a model has to be handed something
+    of the right width. The token is the **same keyed digest** the tagged
+    placeholder uses (base32, uppercase), cut to ``len(value) - 2``: the same
+    value always yields the same stand-in, different values differ, and the
+    gateway holds no state. A value longer than one digest has room for is
+    extended with further blocks of the same HMAC.
+
+    The token is deliberately not a realistic fake. A stand-in that looks like a
+    fiscal code or an IBAN would be mistaken for the real thing — by the model,
+    by a person reading the transcript, by a downstream system that accepts it —
+    and ``#K3QF7RZM2A…#`` cannot be.
+
+    None when *value* is shorter than :data:`SAME_LENGTH_MIN`; the caller falls
+    back to the tagged placeholder. Counted in characters, as the original's
+    length is what a form field sees.
+    """
+    if not key:
+        raise ValueError("placeholder key must not be empty")
+    if len(value) < SAME_LENGTH_MIN:
+        return None
+    label = _safe_label(entity_type)
+    message = label.encode() + _SEP + normalise_entity(label, value).encode()
+    wanted = len(value) - 2
+    token = ""
+    block = 0
+    while len(token) < wanted:
+        # Block 0 is exactly the tagged placeholder's digest. Later blocks are
+        # the same HMAC over the message plus a counter, never a rehash of the
+        # token, so a longer value does not make a shorter one's token a prefix
+        # of anything it should not be.
+        suffix = b"" if block == 0 else _SEP + str(block).encode()
+        digest = hmac.new(key, message + suffix, hashlib.sha256).digest()
+        token += base64.b32encode(digest).decode("ascii").rstrip("=")
+        block += 1
+    return f"#{token[:wanted]}#"
+
+
 def opaque_placeholder(entity_type: str) -> str:
     """The label-only placeholder, e.g. ``<PERSON>``.
 
@@ -256,11 +302,26 @@ class PlaceholderMap:
     invertible view over a non-invertible function, not a store of record.
     """
 
-    __slots__ = ("_to_original", "_to_placeholder")
+    __slots__ = ("_claimed", "_to_original", "_to_placeholder")
 
     def __init__(self) -> None:
         self._to_original: dict[str, str] = {}
         self._to_placeholder: dict[tuple[str, str], str] = {}
+        self._claimed: dict[str, str] = {}
+
+    def claim(self, placeholder: str, original: str) -> bool:
+        """Reserve *placeholder* for *original*; False if another value holds it.
+
+        For stand-ins that are not guaranteed to be unique by their shape. A
+        tagged placeholder carries 50 bits and a collision merely shares a
+        label; a same-length one may be 30, and two values sharing it would
+        restore one as the other. The caller falls back to the tagged form
+        instead. Claims cover every mode, restorable or not, because two
+        different hidden values written the same way are as confusing for the
+        model.
+        """
+        holder = self._claimed.setdefault(placeholder, original)
+        return holder == original
 
     def add(self, entity_type: str, original: str, placeholder: str) -> None:
         self._to_original.setdefault(placeholder, original)

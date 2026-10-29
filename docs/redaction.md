@@ -183,24 +183,79 @@ Only placeholders issued in mode `anonymise_restore` are ever restored;
 
 A model that sees `<IT_FISCAL_CODE_Y5RD4GZTEK>` where a fiscal code belongs
 tends to call it a malformed value, remark on its length, and ask the user for
-the real one. So when a request was **actually rewritten** — at least one value
-replaced by a placeholder — the gateway adds one short note to the outbound
-system prompt (the `system` message on chat completions, `instructions` on the
-Responses surface, `system` on Anthropic Messages). It is appended to the
-caller's own system prompt rather than sent as a second one, because several
-chat templates refuse a system message that is not the only one.
+the real one. So whenever a rule is **in force** for a request, the gateway
+appends one short note to the end of the outbound system prompt (the `system`
+message on chat completions, `instructions` on the Responses surface, `system`
+on Anthropic Messages). A rule is in force when at least one entity type,
+custom pattern or the default is in an anonymising mode (`anonymise_restore`,
+`anonymise` or `redact`), whether or not this particular request matched
+anything.
 
-There are two wordings. When every substitution is restorable (`anonymise_restore`,
-with restoring on) the note says the real values are put back automatically in
-the answer and in tool calls, and asks the model to use them exactly as written
-without commenting on their format or length. Otherwise (`anonymise` or `redact`,
-restoring off, or a mix) it says they are hidden stand-ins that stay hidden and
-must not be guessed. The text is the constants in `gateway/redaction/note.py`.
+The note is a function of the **policy alone**, never of the request's content.
+Providers cache the start of a request, and the system prompt is the start: a
+note that came and went with the turns that happened to match something would
+change that prefix and discard the cache for the whole history. The same policy
+gives byte-identical text on every turn. It is appended after the caller's own
+system prompt, never before it; on chat completions it joins the first system
+message (a new one is created only if there is none), and on Anthropic Messages
+it is a separate final block, so blocks the caller marked with `cache_control`
+are untouched.
 
-Nothing is added when redaction is off, when no value matched, or when every
-match was mode `off`. The note is added after redaction, so it is never screened
-itself, and it is not part of what the caller sent, so it appears in no
-transcript; its tokens are billed as input like any other system text.
+There are two wordings. When any in-force entity is `anonymise_restore` and
+restoring is on, the note says the real values are put back automatically in
+the answer (and in tool calls, if `restore_in_tool_arguments` is on) and asks
+the model to use them exactly as written without commenting on their format or
+length. Otherwise it says they are hidden stand-ins that stay hidden and must
+not be guessed. A third sentence describes `#...#` stand-ins when any in-force
+entity uses `same_length` (below). The text is the constants in
+`gateway/redaction/note.py`.
+
+Nothing is added when redaction is off or every entity is `off` or `block`.
+The note is added after redaction, so it is never screened itself, and it is
+not part of what the caller sent, so it appears in no transcript; its tokens
+are billed as input like any other system text.
+
+### Same-length placeholders, for forms
+
+Some things the model writes into have a fixed width: a PDF form field that
+takes 16 characters, a column, a masked input. `<IT_FISCAL_CODE_Y5RD4GZTEK>` is
+27 characters and a model asked to fill a 16-character field with it will,
+reasonably, refuse. Each entity type and each custom pattern can therefore ask
+for `placeholder: same_length` (default `tagged`, today's form), edited on the
+Redaction screen under the type's action:
+
+```
+RSSMRA80A01F205X   ->   #J45PBO2XY7TXCF#     (16 characters, as the original)
+```
+
+The stand-in is `#`, a token, `#`, and its total length equals the original's.
+The token is cut from the **same keyed HMAC** as the tagged form (base32,
+uppercase), so the same value always gets the same stand-in, different values
+differ, and the gateway still holds no state. It applies to `anonymise_restore`
+and `anonymise`; `redact` writes the bare label and has no token to shape.
+
+It is **best effort**. The tagged form is used instead when the original is
+shorter than 8 characters (too little room for a token that is both clearly
+synthetic and unlikely to collide), when another value in the same request would
+get the same stand-in (types that compare digits only, such as fiscal codes, can
+do this for two values that differ only in letters), or when the stand-in already
+appears in the text around the value. Restoring is a literal substitution from
+the request's map, as for any placeholder, and a stream holds back one character
+less than the longest placeholder issued, so a 40-character stand-in is held
+back as 39.
+
+The token is **deliberately not a realistic fake**. A stand-in that looked like a
+fiscal code or an IBAN would be mistaken for the real one by the model, by
+whoever reads the transcript and by any system downstream that accepts it;
+`#J45PBO2XY7TXCF#` cannot be mistaken for anything. When a rule uses same-length
+stand-ins the system note describes them too.
+
+The cost is that it tells the provider how long the value is. For that reason a
+scope can only veto it, never impose it: when several rules name the same type,
+same-length applies only if every one of them asks for it, and moving a rule
+from tagged to same-length is recorded as a weakening. Rules saved before this
+option existed load as `tagged`; the policy is stored as JSON, so no migration
+is involved.
 
 Each type can also carry its own detector **threshold** (`PERSON` at 0.85 and
 `URL` at 0.5 are not the same judgement), and the deployment can define
