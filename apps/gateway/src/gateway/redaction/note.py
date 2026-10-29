@@ -5,11 +5,12 @@ will, left to itself, call it a malformed value, comment on how many characters
 it has, and ask the user for the real one — the exact thing the redaction was
 meant to make unnecessary. One short instruction removes that.
 
-Added **only when the request was actually rewritten**: a policy that exists but
-matched nothing leaves the prompt exactly as the caller sent it. It is added to
-the outbound payload *after* redaction, so it is never itself screened, and it
-is never part of what the caller sent, so nothing downstream counts it as the
-user's text.
+Added **when a rule is in force**, not when a request happened to match: the
+text depends on the policy alone, so every turn of a conversation carries the
+same bytes and the provider's prompt cache survives. It is appended to the end
+of the system content, after the caller's own text, and goes onto the outbound
+payload *after* redaction, so it is never itself screened and nothing downstream
+counts it as the user's text.
 
 The wording lives here, in one place.
 """
@@ -34,11 +35,17 @@ RESTORABLE_NOTE = (
 
 #: The values stay hidden: tell the model not to try to see through them.
 HIDDEN_NOTE = (
-    "Values written like <LABEL_TOKEN> or <LABEL> are hidden stand-ins for the user's "
+    "Values written like <LABEL_TOKEN> are hidden stand-ins for the user's "
     "real data, and they stay hidden. Use them exactly as written when you need them, "
     "and do not try to guess the real value."
 )
 
+
+#: Appended when a rule removes values outright, leaving only their label.
+REDACT_NOTE = (
+    "Values written as a bare <LABEL>, with no token, were removed entirely and cannot "
+    "be told apart or recovered."
+)
 
 #: Appended when any stand-in was written as ``#TOKEN#``, with the length of the
 #: value it replaced.
@@ -73,6 +80,10 @@ def system_note(
     if not any(mode in _ANONYMISING for mode in modes):
         return None
     restorable = restore_text and EntityMode.ANONYMISE_RESTORE in modes
+    tokens = any(mode in (EntityMode.ANONYMISE_RESTORE, EntityMode.ANONYMISE) for mode in modes)
+    if not tokens:
+        # Only `redact`: there are no tokens to explain, just removed values.
+        return REDACT_NOTE
     if restorable:
         text = RESTORABLE_NOTE.format(
             where="in your answer and in tool calls" if restore_arguments else "in your answer",
@@ -91,6 +102,8 @@ def system_note(
         and pattern.mode in (EntityMode.ANONYMISE_RESTORE, EntityMode.ANONYMISE)
         for pattern in policy.patterns
     )
+    if EntityMode.REDACT in modes:
+        text = f"{text} {REDACT_NOTE}"
     if same_length:
         text = f"{text} {SAME_LENGTH_NOTE}"
     return text

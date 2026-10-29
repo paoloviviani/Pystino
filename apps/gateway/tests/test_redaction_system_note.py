@@ -22,6 +22,7 @@ from gateway.models import ApiSurface
 from gateway.redaction.base import RedactionOutcome
 from gateway.redaction.note import (
     HIDDEN_NOTE,
+    REDACT_NOTE,
     RESTORABLE_NOTE,
     SAME_LENGTH_NOTE,
     inject_system_note,
@@ -160,7 +161,7 @@ class TestPerSurface:
     ) -> None:
         install(app, RedactionPolicy(default_mode=EntityMode.REDACT))
         sent = await call(client, seeded, fake_upstream, path)
-        assert HIDDEN and HIDDEN in system_text(path, sent)
+        assert system_text(path, sent) == REDACT_NOTE
 
     async def test_redaction_off_means_no_note(
         self, path: str, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
@@ -213,7 +214,16 @@ class TestTheText:
 
     def test_restoring_off_or_no_restorable_entity_means_hidden(self) -> None:
         assert system_note(_policy(EntityMode.ANONYMISE_RESTORE), restore_text=False) == HIDDEN
-        assert system_note(_policy(EntityMode.REDACT)) == HIDDEN
+        assert system_note(_policy(EntityMode.REDACT)) == REDACT_NOTE
+
+    def test_redact_alongside_tokens_adds_the_bare_label_sentence(self) -> None:
+        policy = RedactionPolicy(
+            entities={
+                "A": EntityPolicy(mode=EntityMode.ANONYMISE),
+                "B": EntityPolicy(mode=EntityMode.REDACT),
+            }
+        )
+        assert system_note(policy) == f"{HIDDEN} {REDACT_NOTE}"
 
     def test_only_off_and_block_means_no_note(self) -> None:
         assert system_note(RedactionPolicy()) is None
@@ -224,7 +234,7 @@ class TestTheText:
         policy = RedactionPolicy(
             patterns=[CustomPattern(name="X", regex="y", mode=EntityMode.REDACT)]
         )
-        assert system_note(policy) == HIDDEN
+        assert system_note(policy) == REDACT_NOTE
 
     def test_the_same_length_sentence_follows_the_policy_only(self) -> None:
         plain = system_note(_policy(EntityMode.ANONYMISE_RESTORE))

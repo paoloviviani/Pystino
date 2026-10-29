@@ -13,7 +13,9 @@ turns, and can be swapped without re-labelling anything already shown to a user.
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import json
 import logging
 from collections import Counter, OrderedDict
 from functools import lru_cache
@@ -112,23 +114,144 @@ class _Cache:
         return len(self._entries)
 
 
-def _message_texts(message: dict[str, Any]) -> list[tuple[Any, str]]:
-    """``(location, text)`` for each redactable string in a message.
+#: Request items that are not messages and carry no role: the Responses API's
+#: function calls, their outputs and reasoning items.
+_ITEM_TYPES = frozenset({"function_call", "function_call_output", "reasoning"})
 
-    Handles both content shapes: a plain string, and the multimodal list of parts.
-    ``location`` is ``None`` for the plain form and the part's index for the list
-    form, so the caller can write the redacted text back where it came from.
+#: Where a model's reasoning is replayed in a conversation history.
+_REASONING_KEYS = ("reasoning_content", "reasoning", "reasoning_text")
+
+
+class _JsonText:
+    """A JSON document held as text, whose string values are redacted one by one.
+
+    A tool call's arguments are JSON text. Redacting the text as it stands would
+    put a placeholder next to a quote or a backslash and could split a value
+    the detector sees whole, and restoring puts original values back into
+    arguments — so on the way in they are redacted the same way: decode, redact
+    every string value, serialise again. Written back only when something changed,
+    so an untouched call goes out byte for byte as it came.
     """
-    content = message.get("content")
-    if isinstance(content, str):
-        return [(None, content)]
-    if isinstance(content, list):
-        found: list[tuple[Any, str]] = []
-        for index, part in enumerate(content):
-            if isinstance(part, dict) and isinstance(text := part.get("text"), str):
-                found.append((index, text))
-        return found
-    return []
+
+    __slots__ = ("changed", "holder", "key", "root")
+
+    def __init__(self, holder: dict[str, Any], key: str, root: Any) -> None:
+        self.holder = holder
+        self.key = key
+        self.root = root
+        self.changed = False
+
+    def commit(self) -> None:
+        if self.changed:
+            self.holder[self.key] = json.dumps(self.root, ensure_ascii=False)
+
+
+class _Target:
+    """One string that is sent for detection, and where it lives."""
+
+    __slots__ = ("document", "holder", "key", "text")
+
+    def __init__(self, holder: Any, key: Any, document: _JsonText | None = None) -> None:
+        self.holder = holder
+        self.key = key
+        self.text: str = holder[key]
+        self.document = document
+
+    def write(self, text: str) -> None:
+        self.holder[self.key] = text
+        if self.document is not None:
+            self.document.changed = True
+
+
+def _text_targets(holder: dict[str, Any], key: str, out: list[_Target]) -> None:
+    if isinstance(holder.get(key), str) and holder[key]:
+        out.append(_Target(holder, key))
+
+
+def _json_leaves(node: Any, document: _JsonText | None, out: list[_Target]) -> None:
+    """Every string value in a decoded JSON document (keys are not values)."""
+    if isinstance(node, dict):
+        children: Any = list(node.keys())
+    elif isinstance(node, list):
+        children = range(len(node))
+    else:
+        return
+    for key in children:
+        value = node[key]
+        if isinstance(value, str):
+            if value:
+                out.append(_Target(node, key, document))
+        else:
+            _json_leaves(value, document, out)
+
+
+def _json_text_targets(holder: dict[str, Any], key: str, out: list[_Target]) -> None:
+    """Targets for a field that holds JSON as text, or plain text if it is not."""
+    raw = holder.get(key)
+    if not isinstance(raw, str) or not raw:
+        return
+    try:
+        root = json.loads(raw)
+    except ValueError:
+        root = None
+    if isinstance(root, dict | list):
+        _json_leaves(root, _JsonText(holder, key, root), out)
+        return
+    # Not JSON (a model can emit a broken call): the text itself is screened.
+    out.append(_Target(holder, key))
+
+
+def _content_targets(holder: dict[str, Any], key: str, out: list[_Target]) -> None:
+    """A ``content``-like field: a string, or a list of blocks.
+
+    Blocks may be text, a Messages ``tool_result`` (whose own ``content`` is a
+    string or more blocks) or a ``tool_use`` (whose ``input`` is an object).
+    """
+    value = holder.get(key)
+    if isinstance(value, str):
+        _text_targets(holder, key, out)
+        return
+    if not isinstance(value, list):
+        return
+    for part in value:
+        if not isinstance(part, dict):
+            continue
+        _text_targets(part, "text", out)
+        if part.get("type") == "tool_result":
+            _content_targets(part, "content", out)
+        if part.get("type") == "tool_use" and isinstance(part.get("input"), dict | list):
+            _json_leaves(part["input"], None, out)
+
+
+def _message_targets(message: dict[str, Any]) -> list[_Target]:
+    """Every string in *message* that must be screened before it is sent.
+
+    The caller's own text, and also what *we* put there on an earlier turn: a
+    follow-up request echoes the assistant's tool calls and reasoning, and since
+    those are restored on the way out, the echo carries the real values back in.
+    Leaving them unscreened would send them to the provider.
+    """
+    out: list[_Target] = []
+    kind = message.get("type")
+    if message.get("role") not in _TEXT_ROLES and kind not in _ITEM_TYPES:
+        return out
+    _content_targets(message, "content", out)
+    for key in _REASONING_KEYS:
+        _text_targets(message, key, out)
+    for call in message.get("tool_calls") or []:
+        function = call.get("function") if isinstance(call, dict) else None
+        if isinstance(function, dict):
+            _json_text_targets(function, "arguments", out)
+    if kind == "function_call":
+        _json_text_targets(message, "arguments", out)
+    elif kind == "function_call_output":
+        _content_targets(message, "output", out)
+    elif kind == "reasoning":
+        for field in ("summary", "content"):
+            for block in message.get(field) or []:
+                if isinstance(block, dict):
+                    _text_targets(block, "text", out)
+    return out
 
 
 @lru_cache(maxsize=256)
@@ -320,6 +443,11 @@ def _derived_placeholder(
     return placeholder_for(entity_type, original, key=key)
 
 
+#: What a placeholder gains when JSON spells both its angle brackets as
+#: ``\\u003c`` and ``\\u003e``: five characters each.
+ESCAPED_ANGLE_SLACK = 10
+
+
 class RestoreStage(TextRewriteStage):
     """Puts the real values back into a streamed response.
 
@@ -337,7 +465,12 @@ class RestoreStage(TextRewriteStage):
         surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS,
         arguments: bool = False,
     ) -> None:
-        super().__init__(tail_size=tail_size, surface=surface, arguments=arguments)
+        super().__init__(
+            tail_size=tail_size,
+            surface=surface,
+            arguments=arguments,
+            arguments_slack=ESCAPED_ANGLE_SLACK if arguments else 0,
+        )
         self._placeholders = placeholders
 
     def transform(self, text: str, *, final: bool) -> str:
@@ -512,15 +645,15 @@ class HttpDetectionRedactor:
         # a cold cache, which is the failure the resolver's own docstring names
         # for a ten-second rebuild — arriving once per request instead.
         effective = policy.policy if policy is not None else self._settings.policy
-        locations: list[tuple[int, Any]] = []
-        texts: list[str] = []
-        for message_index, message in enumerate(messages):
-            if message.get("role") not in _TEXT_ROLES:
-                continue
-            for part_index, text in _message_texts(message):
-                if text:
-                    locations.append((message_index, part_index))
-                    texts.append(text)
+        # Copied, so a failure part-way cannot leave the caller's list half
+        # rewritten — and so the transcript of what the user actually sent is
+        # still available to the caller. Deep, because tool calls and content
+        # blocks are rewritten in place below.
+        rewritten = copy.deepcopy(messages)
+        targets: list[_Target] = []
+        for message in rewritten:
+            targets.extend(_message_targets(message))
+        texts = [target.text for target in targets]
 
         scope = policy.scope if policy is not None else None
         rule_id = policy.rule_id if policy is not None else None
@@ -538,16 +671,13 @@ class HttpDetectionRedactor:
         found = await self.detect(texts, policy=effective)
 
         placeholders = PlaceholderMap()
-        # Copied, so a failure part-way cannot leave the caller's list half
-        # rewritten — and so the transcript of what the user actually sent is
-        # still available to the caller.
-        rewritten = [dict(message) for message in messages]
         total = 0
         tally: Counter[str] = Counter()
 
-        for (message_index, part_index), text, spans in zip(locations, texts, found, strict=True):
+        documents: dict[int, _JsonText] = {}
+        for target, spans in zip(targets, found, strict=True):
             redacted, count = apply_spans(
-                text,
+                target.text,
                 spans,
                 key=self._key,
                 placeholders=placeholders,
@@ -557,15 +687,12 @@ class HttpDetectionRedactor:
                 tally=tally,
             )
             total += count
-            if not count:
-                continue
-            message = rewritten[message_index]
-            if part_index is None:
-                message["content"] = redacted
-            else:
-                parts = [dict(part) for part in message["content"]]
-                parts[part_index]["text"] = redacted
-                message["content"] = parts
+            if count:
+                target.write(redacted)
+                if target.document is not None:
+                    documents[id(target.document)] = target.document
+        for document in documents.values():
+            document.commit()
 
         return RedactionOutcome(
             messages=rewritten,

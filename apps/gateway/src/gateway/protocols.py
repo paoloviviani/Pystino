@@ -69,7 +69,7 @@ def is_answer(slot: Slot) -> bool:
 
     Citations point into this one, so it is the only text kept for them.
     """
-    return slot[1] == "content" or slot[1].startswith("text")
+    return slot[1].startswith("content") or slot[1].startswith("text")
 
 
 #: The fields OpenAI-compatible providers put a model's reasoning in. They all
@@ -228,17 +228,23 @@ class ChatCompletionsReader:
             delta = choice.get("delta")
             if not isinstance(delta, dict):
                 continue
-            if isinstance(content := delta.get("content"), str):
+            content = delta.get("content")
+            if isinstance(content, str):
                 out.append(((index, "content"), content))
+            elif isinstance(content, list):
+                # Some providers stream the content as a list of parts.
+                for position, part in enumerate(content):
+                    if isinstance(part, dict) and isinstance(text := part.get("text"), str):
+                        out.append(((index, f"content:{position}"), text))
             for field in REASONING_FIELDS:
                 if isinstance(thought := delta.get(field), str) and thought:
                     out.append(((index, field), thought))
-            for position, call in enumerate(delta.get("tool_calls") or []):
+            for call in delta.get("tool_calls") or []:
                 function = call.get("function") if isinstance(call, dict) else None
                 if not isinstance(function, dict):
                     continue
                 if isinstance(arguments := function.get("arguments"), str) and arguments:
-                    out.append(((index, f"{ARGUMENTS}:{_call_index(call, position)}"), arguments))
+                    out.append(((index, _call_field(call)), arguments))
         return out
 
     def set_stream_text(self, payload: dict[str, Any], slot: Slot, text: str) -> None:
@@ -253,15 +259,18 @@ class ChatCompletionsReader:
             delta = choice.get("delta")
             if not isinstance(delta, dict):
                 continue
+            if field.startswith("content:"):
+                parts = delta.get("content")
+                position = int(field.partition(":")[2])
+                if isinstance(parts, list) and position < len(parts):
+                    parts[position]["text"] = text
+                continue
             if not field.startswith(ARGUMENTS):
                 delta[field] = text
                 continue
-            for position, call in enumerate(delta.get("tool_calls") or []):
+            for call in delta.get("tool_calls") or []:
                 function = call.get("function") if isinstance(call, dict) else None
-                if (
-                    isinstance(function, dict)
-                    and f"{ARGUMENTS}:{_call_index(call, position)}" == field
-                ):
+                if isinstance(function, dict) and _call_field(call) == field:
                     function["arguments"] = text
 
     def shift_citations(self, payload: dict[str, Any], shift: Shift) -> bool:
@@ -295,13 +304,20 @@ class ChatCompletionsReader:
             if not isinstance(choice, dict):
                 continue
             message = choice.get("message")
-            if (
-                isinstance(message, dict)
-                and isinstance(text := message.get("content"), str)
-                and (new := rewrite(text)) != text
-            ):
+            if not isinstance(message, dict):
+                continue
+            if isinstance(text := message.get("content"), str) and (new := rewrite(text)) != text:
                 message["content"] = new
                 changed = True
+            elif isinstance(message.get("content"), list):
+                for part in message["content"]:
+                    if (
+                        isinstance(part, dict)
+                        and isinstance(text := part.get("text"), str)
+                        and (new := rewrite(text)) != text
+                    ):
+                        part["text"] = new
+                        changed = True
         return changed
 
     def rewrite_reasoning(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
@@ -345,9 +361,15 @@ class ChatCompletionsReader:
         index, field = slot
         if field.startswith(ARGUMENTS):
             _, _, number = field.partition(":")
-            delta: dict[str, Any] = {
-                "tool_calls": [{"index": int(number or 0), "function": {"arguments": text}}]
-            }
+            call: dict[str, Any] = {"function": {"arguments": text}}
+            if number.isdigit():
+                call["index"] = int(number)
+            # Otherwise a continuation with neither index nor id, which is how a
+            # provider that never sends an index continues the call before it.
+            delta: dict[str, Any] = {"tool_calls": [call]}
+        elif field.startswith("content:"):
+            # In the shape the provider was using: a list of parts.
+            delta = {"content": [{"type": "text", "text": text}]}
         else:
             delta = {field: text}
         # Copying the last real payload keeps `id`, `model` and `created`
@@ -363,14 +385,21 @@ class ChatCompletionsReader:
         }
 
 
-def _call_index(call: dict[str, Any], position: int) -> int:
-    """Which tool call a streamed fragment belongs to.
+def _call_field(call: dict[str, Any]) -> str:
+    """Which tool call a streamed fragment belongs to, as a slot field.
 
-    The declared ``index``, falling back to the fragment's position: a few
-    providers omit it on single-call responses.
+    The declared ``index`` when there is one, which is what every provider that
+    streams several calls sends. A few omit it and identify a call by its
+    ``id`` on the first fragment only, so that is the next best key. With
+    neither, the fragment continues whatever call was open last, and the stage
+    resolves it (``args:last``) because a reader holds no state.
     """
     declared = call.get("index")
-    return declared if isinstance(declared, int) else position
+    if isinstance(declared, int):
+        return f"{ARGUMENTS}:{declared}"
+    if isinstance(identifier := call.get("id"), str) and identifier:
+        return f"{ARGUMENTS}:id:{identifier}"
+    return f"{ARGUMENTS}:last"
 
 
 class ResponsesReader:

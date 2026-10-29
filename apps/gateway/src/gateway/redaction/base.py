@@ -31,7 +31,7 @@ from llmp_shared import PlaceholderMap, Restored
 
 from gateway.config import EffectivePolicy
 from gateway.models import ApiSurface
-from gateway.protocols import Slot, is_answer, is_arguments, reader_for
+from gateway.protocols import ARGUMENTS, Slot, is_answer, is_arguments, reader_for
 from gateway.sse.events import SSEEvent
 from gateway.sse.pipeline import StreamStage
 
@@ -164,8 +164,16 @@ class TextRewriteStage(ABC):
         tail_size: int = 0,
         surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS,
         arguments: bool = False,
+        arguments_slack: int = 0,
     ) -> None:
         self._tail_size = max(0, tail_size)
+        #: Extra characters held back for arguments. JSON may spell a
+        #: placeholder's two angle brackets as ``\u003c`` and ``\u003e``, which
+        #: is five characters longer each, so the longest thing a transform can
+        #: match there is longer than the longest placeholder.
+        self._arguments_slack = max(0, arguments_slack)
+        # The slot an index-less tool-call fragment continues, per choice.
+        self._open_call: dict[int, str] = {}
         #: Whether tool-call arguments go through :meth:`transform_arguments`.
         #: Off, they are not buffered at all: a subclass that never learned
         #: about them must not delay them for nothing.
@@ -270,7 +278,12 @@ class TextRewriteStage(ABC):
             terminal = self._proto.is_terminal(payload)
             mutated = False
             here: set[Slot] = set()
-            for slot, text in texts:
+            before: list[SSEEvent] = []
+            for wire, text in texts:
+                # `wire` is where the reader found the text in this frame; `slot`
+                # is the buffer it belongs to, which differs only for a tool
+                # call the provider did not number.
+                slot = self._resolve(wire, before)
                 self._templates[slot] = payload
                 if is_answer(slot):
                     self._remember(slot[0], text)
@@ -283,7 +296,9 @@ class TextRewriteStage(ABC):
                 here.add(slot)
                 if rewritten != text:
                     mutated = True
-                self._proto.set_stream_text(payload, slot, rewritten)
+                self._proto.set_stream_text(payload, wire, rewritten)
+            for extra in before:
+                yield extra
 
             if terminal:
                 # Anything held for a slot this frame does not speak of goes out
@@ -333,13 +348,36 @@ class TextRewriteStage(ABC):
             return self._apply(slot, buffered, final=False) if buffered else ""
 
         transformed = self._apply(slot, buffered, final=False) if buffered else ""
-        boundary = len(transformed) - self._tail_size
+        tail = self._tail_size + (self._arguments_slack if is_arguments(slot) else 0)
+        boundary = len(transformed) - tail
         if boundary <= 0:
             self._pending[slot] = transformed
             return ""
 
         self._pending[slot] = transformed[boundary:]
         return transformed[:boundary]
+
+    def _resolve(self, wire: Slot, before: list[SSEEvent]) -> Slot:
+        """The buffer a fragment belongs to.
+
+        Tool calls are normally told apart by ``index``. A provider that sends
+        none identifies a call by its ``id`` on the first fragment and sends the
+        rest bare. A new ``id`` therefore closes the call before it (what is held
+        for it is released, ahead of this frame), and a bare fragment continues
+        the call that is open. Without this, two such calls share one buffer and
+        the tail of the first comes out inside the second.
+        """
+        index, field = wire
+        if field == f"{ARGUMENTS}:last":
+            return (index, self._open_call.get(index, field))
+        if field.startswith(f"{ARGUMENTS}:id:"):
+            previous = self._open_call.get(index)
+            if previous is not None and previous != field:
+                held = self._drain((index, previous))
+                if held:
+                    before.append(self._synthesise((index, previous), held))
+            self._open_call[index] = field
+        return wire
 
     def _drain(self, slot: Slot) -> str:
         """Release what is held for *slot*, now that nothing more will come."""

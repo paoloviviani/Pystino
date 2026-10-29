@@ -367,21 +367,44 @@ class PlaceholderMap:
         otherwise close the string early and hand the caller arguments that do
         not parse.
 
-        Some serialisers escape ``<`` and ``>`` as ``\\u003c`` / ``\\u003e``.
-        Those are put back first, which changes the spelling and not the value,
-        so a placeholder written that way is still found.
+        Some serialisers escape ``<`` and ``>`` as ``\\u003c`` / ``\\u003e``, so
+        a placeholder is also found written that way. Only a *known placeholder*
+        is touched, and only where the backslash opening the escape is itself
+        not escaped (``\\\\u003c`` is a literal backslash followed by text), so
+        everything else in the document stays byte for byte as it was.
         """
         if not self._to_original:
             return text
-        if "\\u003" in text:
-            text = _ANGLE_ESCAPE_RE.sub(lambda m: "<" if m.group(1) in "cC" else ">", text)
-        return self.restore_with_edits(text, json_string=True).text
+        return self._json_pattern().sub(lambda match: self._json_match(text, match), text)
 
-    def restore_with_edits(self, text: str, *, json_string: bool = False) -> Restored:
+    def _json_pattern(self) -> re.Pattern[str]:
+        pieces = []
+        for placeholder in sorted(self._to_original, key=len, reverse=True):
+            if placeholder.startswith("<") and placeholder.endswith(">"):
+                pieces.append(
+                    r"(?:<|\\u003[cC])" + re.escape(placeholder[1:-1]) + r"(?:>|\\u003[eE])"
+                )
+            else:
+                pieces.append(re.escape(placeholder))
+        return re.compile("|".join(pieces))
+
+    def _json_match(self, text: str, match: re.Match[str]) -> str:
+        raw = match.group(0)
+        original = self._to_original.get(
+            _ANGLE_ESCAPE_RE.sub(lambda m: "<" if m.group(1) in "cC" else ">", raw)
+        )
+        if original is None:
+            return raw
+        if raw.startswith("\\"):
+            # The backslash that opens the escape must not itself be escaped:
+            # an odd run before it means it is a literal backslash.
+            run = len(text[: match.start()]) - len(text[: match.start()].rstrip("\\"))
+            if run % 2:
+                return raw
+        return json.dumps(original, ensure_ascii=False)[1:-1]
+
+    def restore_with_edits(self, text: str) -> Restored:
         """:meth:`restore`, and *where* each substitution happened.
-
-        ``json_string`` writes each original JSON-escaped (see
-        :meth:`restore_in_json`).
 
         The positions are what a citation needs. A provider that returns
         character offsets into the assistant's text — OpenAI's ``url_citation``
@@ -423,8 +446,6 @@ class PlaceholderMap:
                 # match won; this one was never really there.
                 continue
             original = self._to_original[placeholder]
-            if json_string:
-                original = json.dumps(original, ensure_ascii=False)[1:-1]
             pieces.append(text[cursor:start])
             pieces.append(original)
             edits.append(TextEdit(at=start, was=len(placeholder), now=len(original)))

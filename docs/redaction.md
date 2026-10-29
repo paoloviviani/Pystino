@@ -176,6 +176,23 @@ environment:
   tool-call arguments. It only has an effect while the first one is on. Turn it
   off if a tool must never receive a value that was hidden from the model.
 
+**Restored arguments reach the tools.** Whatever executes the call, including an
+external connector or MCP tool the client runs, receives the real value. That is
+the point of restoring them, and it is also the reason for the second setting:
+turn `RESTORE_IN_TOOL_ARGUMENTS` off when a tool must never see a value that was
+hidden from the model.
+
+**What comes back in the next request is screened too.** A client replays the
+assistant's tool calls and reasoning in the follow-up request of the same turn,
+and since those were restored on the way out they carry the real values back in.
+Request redaction therefore also covers `tool_calls[].function.arguments`
+(decoded, each string value redacted, and written back as JSON), the reasoning
+fields, Responses `function_call`, `function_call_output` and `reasoning` items,
+and Anthropic `tool_use` input and `tool_result` blocks, all into the same
+placeholder map. A tool call with nothing to hide is sent byte for byte as it
+came. A provider that sends `content` as a list of parts is restored too, and a
+provider that streams tool calls without an `index` is told apart by `id`.
+
 Only placeholders issued in mode `anonymise_restore` are ever restored;
 `anonymise` and `redact` stay as they are everywhere.
 
@@ -197,7 +214,7 @@ note that came and went with the turns that happened to match something would
 change that prefix and discard the cache for the whole history. The same policy
 gives byte-identical text on every turn. It is appended after the caller's own
 system prompt, never before it; on chat completions it joins the first system
-message (a new one is created only if there is none), and on Anthropic Messages
+message (a new one is created at index 0 only if there is none), and on Anthropic Messages
 it is a separate final block, so blocks the caller marked with `cache_control`
 are untouched.
 

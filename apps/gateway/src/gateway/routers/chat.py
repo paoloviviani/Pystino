@@ -342,6 +342,11 @@ async def _buffered_response(
             restored = await redactor.restore_response(message["content"], outcome)
             message["content"] = restored.text
             restored_by_choice[which] = restored
+        elif isinstance(message, dict) and isinstance(message.get("content"), list):
+            # Some providers return the content as a list of parts.
+            for part in message["content"]:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    part["text"] = (await redactor.restore_response(part["text"], outcome)).text
 
     # The reasoning and the tool calls' arguments hold placeholders too.
     restore_reasoning_and_arguments(body_payload, outcome, surface=SURFACE)
