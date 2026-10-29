@@ -942,6 +942,10 @@ class RedactionSettings(BaseModel):
     # Swap placeholders back to real values in the response. See the asymmetry
     # note in llmp_shared.redaction.
     restore_in_response: bool = True
+    # Also restore inside a tool call's arguments, so a tool the model calls
+    # receives the real value it was told about by placeholder. Only in effect
+    # while ``restore_in_response`` is on: arguments are part of the response.
+    restore_in_tool_arguments: bool = True
 
     # Detection results cached per process, keyed by a hash of the text. On turn
     # 40 the client resends all 40 messages; without this, inference re-runs over

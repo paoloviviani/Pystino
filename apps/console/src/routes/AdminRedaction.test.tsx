@@ -56,6 +56,7 @@ function status(overrides: Partial<RedactionStatus> = {}): RedactionStatus {
     propagation_seconds: 10,
     fail_open: false,
     restore_in_response: true,
+    restore_in_tool_arguments: true,
     language: "en",
     score_threshold: 0.5,
     entity_types: null,

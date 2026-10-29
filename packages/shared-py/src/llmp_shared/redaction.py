@@ -31,6 +31,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -45,6 +46,8 @@ PLACEHOLDER_RE: Final = re.compile(r"<([A-Z][A-Z0-9_]*?)_([A-Z2-7]{4,32})>")
 # HMAC domain separator. 0x1f (unit separator) cannot occur in an entity type
 # name, so "AB" + "C" can never collide with "A" + "BC".
 _SEP: Final = b"\x1f"
+
+_ANGLE_ESCAPE_RE: Final = re.compile(r"\\u003([cCeE])")
 
 _WHITESPACE_RE: Final = re.compile(r"\s+")
 _NON_DIGIT_RE: Final = re.compile(r"\D+")
@@ -294,8 +297,30 @@ class PlaceholderMap:
         """
         return self.restore_with_edits(text).text
 
-    def restore_with_edits(self, text: str) -> Restored:
+    def restore_in_json(self, text: str) -> str:
+        """Restore placeholders inside *JSON text*, keeping it valid JSON.
+
+        For a tool call's ``arguments``: a string the model wrote as JSON, so a
+        restored value is written as it would be inside a JSON string. An
+        original containing a quote, a backslash or a control character would
+        otherwise close the string early and hand the caller arguments that do
+        not parse.
+
+        Some serialisers escape ``<`` and ``>`` as ``\\u003c`` / ``\\u003e``.
+        Those are put back first, which changes the spelling and not the value,
+        so a placeholder written that way is still found.
+        """
+        if not self._to_original:
+            return text
+        if "\\u003" in text:
+            text = _ANGLE_ESCAPE_RE.sub(lambda m: "<" if m.group(1) in "cC" else ">", text)
+        return self.restore_with_edits(text, json_string=True).text
+
+    def restore_with_edits(self, text: str, *, json_string: bool = False) -> Restored:
         """:meth:`restore`, and *where* each substitution happened.
+
+        ``json_string`` writes each original JSON-escaped (see
+        :meth:`restore_in_json`).
 
         The positions are what a citation needs. A provider that returns
         character offsets into the assistant's text — OpenAI's ``url_citation``
@@ -337,6 +362,8 @@ class PlaceholderMap:
                 # match won; this one was never really there.
                 continue
             original = self._to_original[placeholder]
+            if json_string:
+                original = json.dumps(original, ensure_ascii=False)[1:-1]
             pieces.append(text[cursor:start])
             pieces.append(original)
             edits.append(TextEdit(at=start, was=len(placeholder), now=len(original)))

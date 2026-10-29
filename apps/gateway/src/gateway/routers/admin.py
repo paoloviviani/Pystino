@@ -6481,6 +6481,7 @@ async def _redaction_response(
         propagation_seconds=(resolver.refresh_seconds if resolver is not None else 0.0),
         fail_open=config.fail_open,
         restore_in_response=config.restore_in_response,
+        restore_in_tool_arguments=config.restore_in_tool_arguments,
         language=config.language,
         score_threshold=config.score_threshold,
         presidio_pattern_matching=pattern_matching,

@@ -55,25 +55,31 @@ class RedactionOutcome:
     #: be swapped between the two, and a request is restored under the rules it
     #: was redacted under.
     restore_text: bool = True
+    #: Whether a tool call's arguments get them back too. Never true unless
+    #: :attr:`restore_text` is.
+    restore_arguments: bool = True
 
     @property
     def changed(self) -> bool:
         return self.entity_count > 0
 
 
-def restore_reasoning(
+def restore_reasoning_and_arguments(
     payload: dict[str, Any], outcome: RedactionOutcome, *, surface: ApiSurface
 ) -> None:
-    """Restore the reasoning of a whole response body.
+    """Restore the reasoning and the tool-call arguments of a whole response body.
 
     The answer text is not handled here: it goes through
     :meth:`Redactor.restore_response`, which also reports where it edited so a
-    citation can be moved. Reasoning has no offsets to keep, and no engine hook
-    of its own — the outcome records whether the request asked for it.
+    citation can be moved. These two have no offsets to keep, and no engine
+    hook of their own — the outcome records whether the request asked for them.
     """
     if not outcome.placeholder_map or not outcome.restore_text:
         return
-    reader_for(surface).rewrite_reasoning(payload, outcome.placeholder_map.restore)
+    reader = reader_for(surface)
+    reader.rewrite_reasoning(payload, outcome.placeholder_map.restore)
+    if outcome.restore_arguments:
+        reader.rewrite_arguments(payload, outcome.placeholder_map.restore_in_json)
 
 
 @runtime_checkable

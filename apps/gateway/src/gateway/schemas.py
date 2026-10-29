@@ -2636,6 +2636,9 @@ class RedactionStatusResponse(ResponseModel):
     #: and true deserves to be shown as a warning rather than a setting.
     fail_open: bool
     restore_in_response: bool
+    #: Whether a tool call's arguments get their real values back too. Reported
+    #: as configured; it only takes effect while ``restore_in_response`` is on.
+    restore_in_tool_arguments: bool
     language: str
     score_threshold: float
     presidio_pattern_matching: bool | None = None

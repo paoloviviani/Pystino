@@ -46,7 +46,7 @@ from gateway.deps import (
 )
 from gateway.errors import BadRequestError, error_payload
 from gateway.models import ApiSurface
-from gateway.redaction import restore_reasoning
+from gateway.redaction import restore_reasoning_and_arguments
 from gateway.routers import _metered
 from gateway.routers.chat import STREAM_HEADERS, settle_completed, spawn_finalisation
 from gateway.routing import affinity_key
@@ -184,7 +184,7 @@ async def create_message(
                 # `.text` alone: this surface's citations carry their own copy of
                 # the quoted text rather than offsets into ours (ADR 0059).
                 block["text"] = (await redactor.restore_response(block["text"], outcome)).text
-        restore_reasoning(out, outcome, surface=SURFACE)
+        restore_reasoning_and_arguments(out, outcome, surface=SURFACE)
 
         # Finalised after the answer is sent, not before it (ADR 0060).
         return JSONResponse(

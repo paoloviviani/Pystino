@@ -149,6 +149,36 @@ where silently replacing it would tell nobody it happened. The 403 names the
 entity type and the rule that decided, and **never echoes the matched text**:
 an error body gets logged and pasted into tickets.
 
+### Restoring the answer, and tool calls
+
+With `anonymise_restore`, the real value is put back in what the model returns:
+the answer, and the model's reasoning when the provider streams it (as
+`reasoning_content`, `reasoning` or `reasoning_text`, or as reasoning summaries
+on the Responses surface). Thinking blocks on the Anthropic Messages surface are
+left as the provider wrote them: they are signed over their own text, and
+restoring one would make the provider refuse the next turn.
+
+A tool call's **arguments** are restored as well. The model only knows a value
+by its placeholder, so when it calls a tool it writes the placeholder into the
+arguments, and the tool needs the real value. The arguments are JSON text, so
+the value goes back JSON-escaped: an original containing a quote, a backslash or
+a line break leaves the arguments valid JSON. A streamed call is buffered per
+tool call with the same hold-back rule as prose. This covers chat completions
+(`tool_calls`), the Responses surface (`function_call`) and Anthropic Messages
+(`tool_use`).
+
+Two settings, both read-only on the Redaction screen because they come from the
+environment:
+
+- `GATEWAY_REDACTION__RESTORE_IN_RESPONSE` (default on) puts real values back in
+  the response at all. Off, callers receive the placeholders.
+- `GATEWAY_REDACTION__RESTORE_IN_TOOL_ARGUMENTS` (default on) extends that to
+  tool-call arguments. It only has an effect while the first one is on. Turn it
+  off if a tool must never receive a value that was hidden from the model.
+
+Only placeholders issued in mode `anonymise_restore` are ever restored;
+`anonymise` and `redact` stay as they are everywhere.
+
 Each type can also carry its own detector **threshold** (`PERSON` at 0.85 and
 `URL` at 0.5 are not the same judgement), and the deployment can define
 **custom patterns** — operator-written regexes treated as one more entity type,

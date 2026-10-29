@@ -6103,6 +6103,8 @@ export interface components {
             propagation_seconds: number;
             /** Restore In Response */
             restore_in_response: boolean;
+            /** Restore In Tool Arguments */
+            restore_in_tool_arguments: boolean;
             /** Score Threshold */
             score_threshold: number;
             service: components["schemas"]["RedactionServiceHealth"] | null;

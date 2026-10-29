@@ -46,7 +46,7 @@ from gateway.deps import (
 from gateway.errors import BadRequestError, error_payload
 from gateway.models import ApiSurface
 from gateway.protocols import shift_annotations
-from gateway.redaction import restore_reasoning
+from gateway.redaction import restore_reasoning_and_arguments
 from gateway.routers import _metered
 from gateway.routers.chat import STREAM_HEADERS, settle_completed, spawn_finalisation
 from gateway.routing import affinity_key
@@ -225,7 +225,7 @@ async def _restore_body(out: dict[str, Any], redactor: Any, outcome: Any) -> Non
             block["text"] = restored.text
             if restored.moved:
                 shift_annotations(block.get("annotations"), partial(_shift_by, restored), 0)
-    restore_reasoning(out, outcome, surface=SURFACE)
+    restore_reasoning_and_arguments(out, outcome, surface=SURFACE)
 
 
 async def _stream(

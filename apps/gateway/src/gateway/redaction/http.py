@@ -281,12 +281,22 @@ class RestoreStage(TextRewriteStage):
         *,
         tail_size: int,
         surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS,
+        arguments: bool = False,
     ) -> None:
-        super().__init__(tail_size=tail_size, surface=surface)
+        super().__init__(tail_size=tail_size, surface=surface, arguments=arguments)
         self._placeholders = placeholders
 
     def transform(self, text: str, *, final: bool) -> str:
         return self._placeholders.restore(text)
+
+    def transform_arguments(self, text: str, *, final: bool) -> str:
+        """Restore inside JSON text, writing each original JSON-escaped.
+
+        Per fragment, with the same tail rule as prose: the placeholder is
+        plain text inside the JSON string, so it can straddle two fragments
+        exactly as it can straddle two chunks of an answer.
+        """
+        return self._placeholders.restore_in_json(text)
 
     def edits_in(self, text: str) -> Restored:
         return self._placeholders.restore_with_edits(text)
@@ -503,6 +513,8 @@ class HttpDetectionRedactor:
             scope=scope,
             rule_id=rule_id,
             restore_text=self._settings.restore_in_response,
+            restore_arguments=self._settings.restore_in_response
+            and self._settings.restore_in_tool_arguments,
         )
 
     def response_stage(
@@ -516,6 +528,7 @@ class HttpDetectionRedactor:
             outcome.placeholder_map,
             tail_size=_longest_placeholder(outcome.placeholder_map),
             surface=surface,
+            arguments=outcome.restore_arguments,
         )
 
     async def restore_response(self, text: str, outcome: RedactionOutcome) -> Restored:

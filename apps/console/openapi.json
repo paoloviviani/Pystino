@@ -7911,6 +7911,10 @@
             "title": "Restore In Response",
             "type": "boolean"
           },
+          "restore_in_tool_arguments": {
+            "title": "Restore In Tool Arguments",
+            "type": "boolean"
+          },
           "score_threshold": {
             "title": "Score Threshold",
             "type": "number"
@@ -7953,6 +7957,7 @@
           "propagation_seconds",
           "fail_open",
           "restore_in_response",
+          "restore_in_tool_arguments",
           "language",
           "score_threshold",
           "presidio_pattern_matching",

@@ -8,7 +8,7 @@ from gateway.redaction.base import (
     Redactor,
     TextRewriteStage,
     iter_choice_text,
-    restore_reasoning,
+    restore_reasoning_and_arguments,
 )
 from gateway.redaction.http import HttpDetectionRedactor, RedactionUnavailableError
 from gateway.redaction.noop import NoOpRedactor
@@ -37,7 +37,7 @@ __all__ = [
     "describe_engines",
     "iter_choice_text",
     "register_engine",
-    "restore_reasoning",
+    "restore_reasoning_and_arguments",
 ]
 
 register(
