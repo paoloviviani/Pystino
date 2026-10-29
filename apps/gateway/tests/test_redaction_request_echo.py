@@ -334,3 +334,56 @@ class TestListContent:
         )
         part = response.json()["choices"][0]["message"]["content"][0]
         assert part["text"] == f"Use {CF}"
+
+
+class TestResponsesInstructions:
+    async def test_an_original_in_instructions_never_reaches_the_provider(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
+    ) -> None:
+        install(app)
+        fake_upstream.set_json({"id": "r", "object": "response", "output": [], "usage": {}})
+        for body in ({"input": "hello"}, {"input": [{"role": "user", "content": "hello"}]}):
+            response = await client.post(
+                "/v1/responses",
+                json={"model": seeded.model.name, "instructions": f"The user is {CF}.", **body},
+                headers=seeded.auth,
+            )
+            assert response.status_code == 200, response.text
+            sent = fake_upstream.last_body
+            assert CF not in orjson.dumps(sent).decode()
+            assert sent["instructions"].startswith("The user is <IT_FISCAL_CODE_")
+            # The input is still the input, not shifted by the instructions.
+            assert sent["input"] in ("hello", [{"role": "user", "content": "hello"}])
+
+    async def test_nothing_to_hide_leaves_instructions_byte_identical_plus_the_note(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
+    ) -> None:
+        from gateway.redaction.note import system_note
+
+        detector = install(app)
+        detector.spans_for.clear()
+        fake_upstream.set_json({"id": "r", "object": "response", "output": [], "usage": {}})
+        await client.post(
+            "/v1/responses",
+            json={"model": seeded.model.name, "instructions": "Be  brief.\n", "input": "hi"},
+            headers=seeded.auth,
+        )
+        note = system_note(app.state.redactor._settings.policy)
+        assert fake_upstream.last_body["instructions"] == f"Be  brief.\n\n\n{note}"
+        assert fake_upstream.last_body["input"] == "hi"
+
+    async def test_the_note_is_not_screened(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
+    ) -> None:
+        from gateway.redaction.note import system_note
+
+        detector = install(app)
+        detector.spans_for["stand in for the user's real data"] = "PERSON"
+        fake_upstream.set_json({"id": "r", "object": "response", "output": [], "usage": {}})
+        await client.post(
+            "/v1/responses",
+            json={"model": seeded.model.name, "instructions": "Be brief.", "input": "hi"},
+            headers=seeded.auth,
+        )
+        note = system_note(app.state.redactor._settings.policy)
+        assert note and note in fake_upstream.last_body["instructions"]

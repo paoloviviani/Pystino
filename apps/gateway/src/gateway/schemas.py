@@ -195,9 +195,17 @@ class ResponsesRequest(BaseModel):
         put back in place afterwards. Dropping them would under-count the
         prompt and, worse, leave un-redacted text on the wire.
         """
+        # `instructions` is a system prompt by another name, so it is screened
+        # like one: first, as a system message, and split off again afterwards.
+        prefix = self._instruction_messages()
         if isinstance(self.input, str):
-            return [{"role": "user", "content": self.input}]
-        return [dict(item) for item in self.input if isinstance(item, dict)]
+            return [*prefix, {"role": "user", "content": self.input}]
+        return [*prefix, *(dict(item) for item in self.input if isinstance(item, dict))]
+
+    def _instruction_messages(self) -> list[dict[str, Any]]:
+        if isinstance(self.instructions, str) and self.instructions:
+            return [{"role": "system", "content": self.instructions}]
+        return []
 
     def upstream_payload(
         self, outcome: RedactionOutcomeLike, *, upstream_model: str
@@ -207,11 +215,15 @@ class ResponsesRequest(BaseModel):
         # Returned in the shape it arrived in: a caller who sent a string gets
         # a string. Wrapping it in a list would change what the provider sees
         # and, for some, how it is templated.
+        split = len(self._instruction_messages())
+        if split and outcome.messages:
+            payload["instructions"] = str(outcome.messages[0].get("content") or "")
+        rest = outcome.messages[split:]
         if isinstance(self.input, str):
-            first = outcome.messages[0] if outcome.messages else {}
+            first = rest[0] if rest else {}
             payload["input"] = str(first.get("content") or "")
         else:
-            payload["input"] = outcome.messages
+            payload["input"] = rest
         # Never forwarded: both are refused by the route, and leaving a default
         # in the payload would send `store: false` to a provider that has no
         # such field.

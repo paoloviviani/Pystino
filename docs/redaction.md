@@ -185,7 +185,7 @@ hidden from the model.
 **What comes back in the next request is screened too.** A client replays the
 assistant's tool calls and reasoning in the follow-up request of the same turn,
 and since those were restored on the way out they carry the real values back in.
-Request redaction therefore also covers `tool_calls[].function.arguments`
+Request redaction therefore also covers the Responses `instructions` field and `tool_calls[].function.arguments`
 (decoded, each string value redacted, and written back as JSON), the reasoning
 fields, Responses `function_call`, `function_call_output` and `reasoning` items,
 and Anthropic `tool_use` input and `tool_result` blocks, all into the same
