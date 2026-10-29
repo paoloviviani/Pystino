@@ -59,6 +59,12 @@ class RedactionOutcome:
     #: :attr:`restore_text` is.
     restore_arguments: bool = True
 
+    #: How many values were replaced, by what a reader of the answer gets back.
+    #: Counted per occurrence. They are what decides whether the model is told
+    #: what a placeholder is, and which of two things it is told.
+    restorable_substitutions: int = 0
+    hidden_substitutions: int = 0
+
     @property
     def changed(self) -> bool:
         return self.entity_count > 0

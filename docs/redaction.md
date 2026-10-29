@@ -179,6 +179,29 @@ environment:
 Only placeholders issued in mode `anonymise_restore` are ever restored;
 `anonymise` and `redact` stay as they are everywhere.
 
+### Telling the model what a placeholder is
+
+A model that sees `<IT_FISCAL_CODE_Y5RD4GZTEK>` where a fiscal code belongs
+tends to call it a malformed value, remark on its length, and ask the user for
+the real one. So when a request was **actually rewritten** — at least one value
+replaced by a placeholder — the gateway adds one short note to the outbound
+system prompt (the `system` message on chat completions, `instructions` on the
+Responses surface, `system` on Anthropic Messages). It is appended to the
+caller's own system prompt rather than sent as a second one, because several
+chat templates refuse a system message that is not the only one.
+
+There are two wordings. When every substitution is restorable (`anonymise_restore`,
+with restoring on) the note says the real values are put back automatically in
+the answer and in tool calls, and asks the model to use them exactly as written
+without commenting on their format or length. Otherwise (`anonymise` or `redact`,
+restoring off, or a mix) it says they are hidden stand-ins that stay hidden and
+must not be guessed. The text is the constants in `gateway/redaction/note.py`.
+
+Nothing is added when redaction is off, when no value matched, or when every
+match was mode `off`. The note is added after redaction, so it is never screened
+itself, and it is not part of what the caller sent, so it appears in no
+transcript; its tokens are billed as input like any other system text.
+
 Each type can also carry its own detector **threshold** (`PERSON` at 0.85 and
 `URL` at 0.5 are not the same judgement), and the deployment can define
 **custom patterns** — operator-written regexes treated as one more entity type,

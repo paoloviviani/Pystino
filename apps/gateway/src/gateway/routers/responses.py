@@ -46,7 +46,7 @@ from gateway.deps import (
 from gateway.errors import BadRequestError, error_payload
 from gateway.models import ApiSurface
 from gateway.protocols import shift_annotations
-from gateway.redaction import restore_reasoning_and_arguments
+from gateway.redaction import inject_system_note, restore_reasoning_and_arguments
 from gateway.routers import _metered
 from gateway.routers.chat import STREAM_HEADERS, settle_completed, spawn_finalisation
 from gateway.routing import affinity_key
@@ -155,6 +155,7 @@ async def create_response(
 
         payload = body.upstream_payload(outcome, upstream_model=resolved.upstream_model)
         search.apply(payload)
+        inject_system_note(payload, outcome, surface=SURFACE)
         payload = metered.shape_payload(payload, surface=SURFACE)
 
         if body.stream:

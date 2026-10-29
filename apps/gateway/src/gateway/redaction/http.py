@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from functools import lru_cache
 from typing import Any
 
@@ -174,6 +174,7 @@ def apply_spans(
     policy: RedactionPolicy | None = None,
     default_threshold: float = 0.0,
     scope: str | None = None,
+    tally: Counter[EntityMode] | None = None,
 ) -> tuple[str, int]:
     """Substitute placeholders for *spans* in *text*, according to *policy*.
 
@@ -262,6 +263,8 @@ def apply_spans(
                 # restore". RestoreStage leaves what it did not issue alone.
                 placeholders.add(span.entity_type, original, placeholder)
         text = text[: span.start] + placeholder + text[span.end :]
+        if tally is not None:
+            tally[mode] += 1
 
     return text, len(chosen)
 
@@ -483,6 +486,7 @@ class HttpDetectionRedactor:
         # still available to the caller.
         rewritten = [dict(message) for message in messages]
         total = 0
+        tally: Counter[EntityMode] = Counter()
 
         for (message_index, part_index), text, spans in zip(locations, texts, found, strict=True):
             redacted, count = apply_spans(
@@ -493,6 +497,7 @@ class HttpDetectionRedactor:
                 policy=effective,
                 default_threshold=self._settings.score_threshold,
                 scope=scope,
+                tally=tally,
             )
             total += count
             if not count:
@@ -513,6 +518,8 @@ class HttpDetectionRedactor:
             scope=scope,
             rule_id=rule_id,
             restore_text=self._settings.restore_in_response,
+            restorable_substitutions=tally[EntityMode.ANONYMISE_RESTORE],
+            hidden_substitutions=total - tally[EntityMode.ANONYMISE_RESTORE],
             restore_arguments=self._settings.restore_in_response
             and self._settings.restore_in_tool_arguments,
         )
