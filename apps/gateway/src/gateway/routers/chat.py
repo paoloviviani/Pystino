@@ -55,7 +55,7 @@ from gateway.quota import (
     QuotaEngine,
     Reservation,
 )
-from gateway.redaction import RedactionOutcome, Redactor
+from gateway.redaction import RedactionOutcome, Redactor, restore_reasoning
 from gateway.routers import _metered
 from gateway.routing import affinity_key
 from gateway.schemas import ChatCompletionRequest
@@ -336,6 +336,9 @@ async def _buffered_response(
             restored = await redactor.restore_response(message["content"], outcome)
             message["content"] = restored.text
             restored_by_choice[which] = restored
+
+    # The reasoning and the tool calls' arguments hold placeholders too.
+    restore_reasoning(body_payload, outcome, surface=SURFACE)
 
     # A citation is character offsets into the text just rewritten, so it moves
     # with it or it points at the wrong words (ADR 0059).

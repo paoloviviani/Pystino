@@ -27,8 +27,9 @@ surface names its reader explicitly instead of sniffing the keys.
 from __future__ import annotations
 
 import copy
+import json
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 from gateway.accounting.cost import TokenCounts
 from gateway.models import ApiSurface
@@ -47,8 +48,37 @@ Rewrite = Callable[[str], str]
 #: maps and the caller has to say which one it is asking about.
 Shift = Callable[[int, int], int]
 
+#: Where one run of incremental text lives in a stream: ``(choice or block
+#: index, field)``. Text is buffered per slot, because the answer, the model's
+#: reasoning and each tool call's arguments are separate strings that arrive
+#: interleaved, and a placeholder begun in one must never be completed by the
+#: next.
+Slot = tuple[int, str]
 
-def _shift_annotations(annotations: Any, shift: Shift, choice: int) -> bool:
+#: Slots whose field starts with this are a tool call's JSON arguments, which
+#: are restored differently (the original is written JSON-escaped).
+ARGUMENTS = "args"
+
+
+def is_arguments(slot: Slot) -> bool:
+    return slot[1].startswith(ARGUMENTS)
+
+
+def is_answer(slot: Slot) -> bool:
+    """The answer text itself, as opposed to reasoning or tool arguments.
+
+    Citations point into this one, so it is the only text kept for them.
+    """
+    return slot[1] == "content" or slot[1].startswith("text")
+
+
+#: The fields OpenAI-compatible providers put a model's reasoning in. They all
+#: exist in the wild: vLLM and DeepSeek say ``reasoning_content``, OpenRouter
+#: and newer vLLM say ``reasoning``, and some say ``reasoning_text``.
+REASONING_FIELDS = ("reasoning_content", "reasoning", "reasoning_text")
+
+
+def shift_annotations(annotations: Any, shift: Shift, choice: int) -> bool:
     """Move the offsets in one OpenAI-shaped ``annotations`` array.
 
     A ``url_citation`` says which characters of the assistant's message a source
@@ -110,11 +140,25 @@ class SurfaceProtocol(Protocol):
     # rewriter. A *whole* field arrives complete and is rewritten in place —
     # buffering it would hold back text that is already finished.
 
-    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[int, str]]:
-        """Incremental assistant text in this frame, needing buffered rewriting."""
+    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[Slot, str]]:
+        """Incremental text in this frame, needing buffered rewriting.
+
+        The answer, reasoning and tool-call arguments, each in its own slot.
+        """
         ...
 
-    def set_stream_text(self, payload: dict[str, Any], index: int, text: str) -> None: ...
+    def set_stream_text(self, payload: dict[str, Any], slot: Slot, text: str) -> None: ...
+
+    def rewrite_reasoning(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        """Rewrite every complete reasoning field in place; True if any changed."""
+        ...
+
+    def rewrite_arguments(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        """Rewrite every complete tool-call argument string in place.
+
+        *rewrite* is handed JSON text and must return JSON text.
+        """
+        ...
 
     def shift_citations(self, payload: dict[str, Any], shift: Shift) -> bool:
         """Move any character offsets this frame holds into the assistant's text.
@@ -144,7 +188,7 @@ class SurfaceProtocol(Protocol):
         """
         ...
 
-    def synthesise(self, template: dict[str, Any] | None, index: int, text: str) -> dict[str, Any]:
+    def synthesise(self, template: dict[str, Any] | None, slot: Slot, text: str) -> dict[str, Any]:
         """A frame carrying *text*, shaped like the ones the provider sends."""
         ...
 
@@ -174,19 +218,31 @@ class ChatCompletionsReader:
                 out.append((index, {"__finish_reason__": str(reason)}))
         return out
 
-    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[int, str]]:
-        out: list[tuple[int, str]] = []
+    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[Slot, str]]:
+        out: list[tuple[Slot, str]] = []
         for choice in payload.get("choices") or []:
             if not isinstance(choice, dict):
                 continue
             index = choice.get("index")
             index = index if isinstance(index, int) else 0
             delta = choice.get("delta")
-            if isinstance(delta, dict) and isinstance(content := delta.get("content"), str):
-                out.append((index, content))
+            if not isinstance(delta, dict):
+                continue
+            if isinstance(content := delta.get("content"), str):
+                out.append(((index, "content"), content))
+            for field in REASONING_FIELDS:
+                if isinstance(thought := delta.get(field), str) and thought:
+                    out.append(((index, field), thought))
+            for position, call in enumerate(delta.get("tool_calls") or []):
+                function = call.get("function") if isinstance(call, dict) else None
+                if not isinstance(function, dict):
+                    continue
+                if isinstance(arguments := function.get("arguments"), str) and arguments:
+                    out.append(((index, f"{ARGUMENTS}:{_call_index(call, position)}"), arguments))
         return out
 
-    def set_stream_text(self, payload: dict[str, Any], index: int, text: str) -> None:
+    def set_stream_text(self, payload: dict[str, Any], slot: Slot, text: str) -> None:
+        index, field = slot
         for choice in payload.get("choices") or []:
             if not isinstance(choice, dict):
                 continue
@@ -194,8 +250,19 @@ class ChatCompletionsReader:
             choice_index = choice_index if isinstance(choice_index, int) else 0
             if choice_index != index:
                 continue
-            if isinstance(delta := choice.get("delta"), dict):
-                delta["content"] = text
+            delta = choice.get("delta")
+            if not isinstance(delta, dict):
+                continue
+            if not field.startswith(ARGUMENTS):
+                delta[field] = text
+                continue
+            for position, call in enumerate(delta.get("tool_calls") or []):
+                function = call.get("function") if isinstance(call, dict) else None
+                if (
+                    isinstance(function, dict)
+                    and f"{ARGUMENTS}:{_call_index(call, position)}" == field
+                ):
+                    function["arguments"] = text
 
     def shift_citations(self, payload: dict[str, Any], shift: Shift) -> bool:
         """``annotations`` hangs off the message, and off the delta when streamed.
@@ -215,7 +282,7 @@ class ChatCompletionsReader:
             which = declared if isinstance(declared, int) else position
             for holder in ("message", "delta"):
                 part = choice.get(holder)
-                if isinstance(part, dict) and _shift_annotations(
+                if isinstance(part, dict) and shift_annotations(
                     part.get("annotations"), shift, which
                 ):
                     moved = True
@@ -237,24 +304,73 @@ class ChatCompletionsReader:
                 changed = True
         return changed
 
+    def rewrite_reasoning(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        changed = False
+        for choice in payload.get("choices") or []:
+            if not isinstance(choice, dict):
+                continue
+            message = choice.get("message")
+            if not isinstance(message, dict):
+                continue
+            for field in REASONING_FIELDS:
+                if isinstance(text := message.get(field), str) and (new := rewrite(text)) != text:
+                    message[field] = new
+                    changed = True
+        return changed
+
+    def rewrite_arguments(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        changed = False
+        for choice in payload.get("choices") or []:
+            if not isinstance(choice, dict):
+                continue
+            message = choice.get("message")
+            for call in (message.get("tool_calls") if isinstance(message, dict) else None) or []:
+                function = call.get("function") if isinstance(call, dict) else None
+                if (
+                    isinstance(function, dict)
+                    and isinstance(text := function.get("arguments"), str)
+                    and (new := rewrite(text)) != text
+                ):
+                    function["arguments"] = new
+                    changed = True
+        return changed
+
     def is_terminal(self, payload: dict[str, Any]) -> bool:
         return any(
             isinstance(choice, dict) and choice.get("finish_reason")
             for choice in payload.get("choices") or []
         )
 
-    def synthesise(self, template: dict[str, Any] | None, index: int, text: str) -> dict[str, Any]:
+    def synthesise(self, template: dict[str, Any] | None, slot: Slot, text: str) -> dict[str, Any]:
+        index, field = slot
+        if field.startswith(ARGUMENTS):
+            _, _, number = field.partition(":")
+            delta: dict[str, Any] = {
+                "tool_calls": [{"index": int(number or 0), "function": {"arguments": text}}]
+            }
+        else:
+            delta = {field: text}
         # Copying the last real payload keeps `id`, `model` and `created`
         # consistent, which strict clients check.
         if template is not None:
             payload = copy.deepcopy(template)
-            payload["choices"] = [{"index": index, "delta": {"content": text}}]
+            payload["choices"] = [{"index": index, "delta": delta}]
             payload.pop("usage", None)
             return payload
         return {
             "object": "chat.completion.chunk",
-            "choices": [{"index": index, "delta": {"content": text}}],
+            "choices": [{"index": index, "delta": delta}],
         }
+
+
+def _call_index(call: dict[str, Any], position: int) -> int:
+    """Which tool call a streamed fragment belongs to.
+
+    The declared ``index``, falling back to the fragment's position: a few
+    providers omit it on single-call responses.
+    """
+    declared = call.get("index")
+    return declared if isinstance(declared, int) else position
 
 
 class ResponsesReader:
@@ -298,7 +414,7 @@ class ResponsesReader:
         # A single annotation, arriving on its own event while streaming. Wrapped
         # in a list because the helper reads arrays, and this surface has no
         # choices, so the map is always the only one there is.
-        if _shift_annotations([payload.get("annotation")], shift, 0):
+        if shift_annotations([payload.get("annotation")], shift, 0):
             moved = True
         for envelope in (payload, payload.get("response")):
             if not isinstance(envelope, dict):
@@ -307,7 +423,7 @@ class ResponsesReader:
                 if not isinstance(item, dict):
                     continue
                 for part in item.get("content") or []:
-                    if isinstance(part, dict) and _shift_annotations(
+                    if isinstance(part, dict) and shift_annotations(
                         part.get("annotations"), shift, 0
                     ):
                         moved = True
@@ -323,69 +439,130 @@ class ResponsesReader:
             return [(0, {"content": text})]
         return []
 
-    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[int, str]]:
-        if payload.get("type") != "response.output_text.delta":
-            return []
-        text = payload.get("delta")
-        return [(0, text)] if isinstance(text, str) else []
+    #: Streamed delta events, and the slot each one's text is buffered in.
+    _DELTAS: ClassVar[dict[str, str]] = {
+        "response.output_text.delta": "text",
+        "response.reasoning_summary_text.delta": "reasoning_summary",
+        "response.reasoning_text.delta": "reasoning",
+        "response.function_call_arguments.delta": ARGUMENTS,
+    }
+    _DELTA_TYPE: ClassVar[dict[str, str]] = {
+        "text": "response.output_text.delta",
+        "reasoning_summary": "response.reasoning_summary_text.delta",
+        "reasoning": "response.reasoning_text.delta",
+        ARGUMENTS: "response.function_call_arguments.delta",
+    }
 
-    def set_stream_text(self, payload: dict[str, Any], index: int, text: str) -> None:
+    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[Slot, str]]:
+        field = self._DELTAS.get(str(payload.get("type")))
+        text = payload.get("delta")
+        if field is None or not isinstance(text, str):
+            return []
+        return [((0, field), text)]
+
+    def set_stream_text(self, payload: dict[str, Any], slot: Slot, text: str) -> None:
         payload["delta"] = text
+
+    @staticmethod
+    def _items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        """Every output item this event or body carries."""
+        found: list[Any] = [payload.get("item")]
+        for envelope in (payload, payload.get("response")):
+            if isinstance(envelope, dict):
+                found.extend(envelope.get("output") or [])
+        return [item for item in found if isinstance(item, dict)]
+
+    @staticmethod
+    def _rewrite_key(holder: dict[str, Any], key: str, rewrite: Rewrite) -> bool:
+        if isinstance(text := holder.get(key), str) and (new := rewrite(text)) != text:
+            holder[key] = new
+            return True
+        return False
 
     def rewrite_whole(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
         """The completed text, wherever this surface repeats it.
 
-        It repeats it in three places — the `.done` event, the assembled
-        `output_text`, and the content blocks of the output items — and all
-        three reach the client. Restoring the deltas and leaving these would
-        show the caller placeholders in the very field most clients read.
+        It repeats it in several places — the `.done` event, the content part,
+        the output item, the assembled `output_text`, and the content blocks of
+        the output items in the terminal envelope — and all of them reach the
+        client. Restoring the deltas and leaving these would show the caller
+        placeholders in the very field most clients read.
         """
         changed = False
-
-        # `response.output_text.done` carries the finished text for one item.
-        if (
-            payload.get("type") == "response.output_text.done"
-            and isinstance(text := payload.get("text"), str)
-            and (new := rewrite(text)) != text
-        ):
-            payload["text"] = new
-            changed = True
+        kind = payload.get("type")
+        if kind == "response.output_text.done":
+            changed |= self._rewrite_key(payload, "text", rewrite)
+        part = payload.get("part")
+        if kind == "response.content_part.done" and isinstance(part, dict):
+            changed |= self._rewrite_key(part, "text", rewrite)
 
         target = payload.get("response") if isinstance(payload.get("response"), dict) else payload
-        if not isinstance(target, dict):
-            return changed
+        if isinstance(target, dict):
+            changed |= self._rewrite_key(target, "output_text", rewrite)
 
-        if isinstance(text := target.get("output_text"), str) and (new := rewrite(text)) != text:
-            target["output_text"] = new
-            changed = True
-
-        for item in target.get("output") or []:
-            if not isinstance(item, dict):
+        for item in self._items(payload):
+            if item.get("type") in ("reasoning", "function_call"):
                 continue
             for block in item.get("content") or []:
-                if not isinstance(block, dict):
-                    continue
-                if isinstance(text := block.get("text"), str) and (new := rewrite(text)) != text:
-                    block["text"] = new
-                    changed = True
+                if isinstance(block, dict):
+                    changed |= self._rewrite_key(block, "text", rewrite)
         return changed
 
-    def is_terminal(self, payload: dict[str, Any]) -> bool:
+    def rewrite_reasoning(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        """Reasoning summaries and reasoning text. Never ``encrypted_content``."""
+        changed = False
         kind = payload.get("type")
+        if kind in ("response.reasoning_summary_text.done", "response.reasoning_text.done"):
+            changed |= self._rewrite_key(payload, "text", rewrite)
+        part = payload.get("part")
+        if kind == "response.reasoning_summary_part.done" and isinstance(part, dict):
+            changed |= self._rewrite_key(part, "text", rewrite)
+        for item in self._items(payload):
+            if item.get("type") != "reasoning":
+                continue
+            for field in ("summary", "content"):
+                for block in item.get(field) or []:
+                    if isinstance(block, dict):
+                        changed |= self._rewrite_key(block, "text", rewrite)
+        return changed
+
+    def rewrite_arguments(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        changed = False
+        if payload.get("type") == "response.function_call_arguments.done":
+            changed |= self._rewrite_key(payload, "arguments", rewrite)
+        for item in self._items(payload):
+            if item.get("type") == "function_call":
+                changed |= self._rewrite_key(item, "arguments", rewrite)
+        return changed
+
+    #: Events after which no more text arrives for what they close.
+    _CLOSERS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "response.output_text.done",
+            "response.reasoning_summary_text.done",
+            "response.reasoning_text.done",
+            "response.function_call_arguments.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.completed",
+        }
+    )
+
+    def is_terminal(self, payload: dict[str, Any]) -> bool:
         # Flush at `.done` rather than at `response.completed`: the completed
         # event repeats the assembled text, so held-back deltas released after
         # it would duplicate content the client already has.
-        return kind in ("response.output_text.done", "response.completed")
+        return payload.get("type") in self._CLOSERS
 
-    def synthesise(self, template: dict[str, Any] | None, index: int, text: str) -> dict[str, Any]:
+    def synthesise(self, template: dict[str, Any] | None, slot: Slot, text: str) -> dict[str, Any]:
         base: dict[str, Any] = {
-            "type": "response.output_text.delta",
+            "type": self._DELTA_TYPE[slot[1]],
             "delta": text,
             "output_index": 0,
             "content_index": 0,
         }
         if isinstance(template, dict):
-            for key in ("item_id", "output_index", "content_index"):
+            for key in ("item_id", "output_index", "content_index", "summary_index"):
                 if key in template:
                     base[key] = template[key]
         return base
@@ -457,23 +634,61 @@ class MessagesReader:
             return out
         return []
 
-    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[int, str]]:
+    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[Slot, str]]:
         if payload.get("type") != "content_block_delta":
             return []
         delta = payload.get("delta")
-        # Only prose is rewritten. A tool call's `partial_json` fragment is not
-        # text a placeholder can be substituted into without corrupting the
-        # JSON it is half of, and `thinking` is not shown to the caller as
-        # answer content.
-        if isinstance(delta, dict) and isinstance(text := delta.get("text"), str):
-            index = payload.get("index")
-            return [(index if isinstance(index, int) else 0, text)]
+        if not isinstance(delta, dict):
+            return []
+        index = payload.get("index")
+        index = index if isinstance(index, int) else 0
+        # Prose, and a tool call's `partial_json` fragments. The fragments are
+        # half of a JSON document, so they are restored with the original
+        # JSON-escaped. `thinking` is left alone: a thinking block is signed
+        # over its text, and the caller replays it, so restoring it would make
+        # the provider reject the next turn.
+        if isinstance(text := delta.get("text"), str):
+            return [((index, "text"), text)]
+        if isinstance(fragment := delta.get("partial_json"), str) and fragment:
+            return [((index, ARGUMENTS), fragment)]
         return []
 
-    def set_stream_text(self, payload: dict[str, Any], index: int, text: str) -> None:
+    def set_stream_text(self, payload: dict[str, Any], slot: Slot, text: str) -> None:
         delta = payload.get("delta")
         if isinstance(delta, dict):
-            delta["text"] = text
+            delta["partial_json" if slot[1] == ARGUMENTS else "text"] = text
+
+    def rewrite_reasoning(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        """Nothing: a thinking block is signed over its own text."""
+        return False
+
+    def rewrite_arguments(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        """``tool_use`` blocks carry their arguments as an object, not as text.
+
+        Round-tripped through JSON so the same JSON-aware *rewrite* serves every
+        surface; a result that no longer parses is discarded rather than sent.
+        """
+        blocks: list[Any] = []
+        if payload.get("type") == "content_block_start":
+            blocks.append(payload.get("content_block"))
+        elif payload.get("type") == "message":
+            blocks.extend(payload.get("content") or [])
+        changed = False
+        for block in blocks:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            arguments = block.get("input")
+            if not arguments:
+                continue
+            text = json.dumps(arguments, ensure_ascii=False)
+            if (new := rewrite(text)) == text:
+                continue
+            try:
+                block["input"] = json.loads(new)
+            except ValueError:
+                continue
+            changed = True
+        return changed
 
     def rewrite_whole(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
         changed = False
@@ -490,7 +705,7 @@ class MessagesReader:
             return changed
         if kind == "message":
             for block in payload.get("content") or []:
-                if not isinstance(block, dict):
+                if not isinstance(block, dict) or block.get("type") not in (None, "text"):
                     continue
                 if isinstance(text := block.get("text"), str) and (new := rewrite(text)) != text:
                     block["text"] = new
@@ -500,15 +715,27 @@ class MessagesReader:
     def is_terminal(self, payload: dict[str, Any]) -> bool:
         return payload.get("type") in ("content_block_stop", "message_delta", "message_stop")
 
-    def synthesise(self, template: dict[str, Any] | None, index: int, text: str) -> dict[str, Any]:
-        return {
-            "type": "content_block_delta",
-            "index": index,
-            "delta": {"type": "text_delta", "text": text},
-        }
+    def synthesise(self, template: dict[str, Any] | None, slot: Slot, text: str) -> dict[str, Any]:
+        index, field = slot
+        delta = (
+            {"type": "input_json_delta", "partial_json": text}
+            if field == ARGUMENTS
+            else {"type": "text_delta", "text": text}
+        )
+        return {"type": "content_block_delta", "index": index, "delta": delta}
 
 
-class ImagesReader:
+class _NoStreamedExtras:
+    """The readers for surfaces that carry no reasoning and no tool calls."""
+
+    def rewrite_reasoning(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        return False
+
+    def rewrite_arguments(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        return False
+
+
+class ImagesReader(_NoStreamedExtras):
     """Image generation.
 
     Never streamed, and the usage object is optional — a per-image-priced model
@@ -543,10 +770,10 @@ class ImagesReader:
         """
         return []
 
-    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[int, str]]:
+    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[Slot, str]]:
         return []
 
-    def set_stream_text(self, payload: dict[str, Any], index: int, text: str) -> None:
+    def set_stream_text(self, payload: dict[str, Any], slot: Slot, text: str) -> None:
         return None
 
     def rewrite_whole(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
@@ -570,11 +797,11 @@ class ImagesReader:
     def is_terminal(self, payload: dict[str, Any]) -> bool:
         return True
 
-    def synthesise(self, template: dict[str, Any] | None, index: int, text: str) -> dict[str, Any]:
+    def synthesise(self, template: dict[str, Any] | None, slot: Slot, text: str) -> dict[str, Any]:
         raise NotImplementedError("the image route does not stream")
 
 
-class OcrReader:
+class OcrReader(_NoStreamedExtras):
     """Document extraction, `POST /v1/ocr`.
 
     Three things sit differently here from every other surface, and all three
@@ -623,10 +850,10 @@ class OcrReader:
         """Nothing: pages are counted, never inferred from the text."""
         return []
 
-    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[int, str]]:
+    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[Slot, str]]:
         return []
 
-    def set_stream_text(self, payload: dict[str, Any], index: int, text: str) -> None:
+    def set_stream_text(self, payload: dict[str, Any], slot: Slot, text: str) -> None:
         return None
 
     def rewrite_whole(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
@@ -649,11 +876,11 @@ class OcrReader:
     def is_terminal(self, payload: dict[str, Any]) -> bool:
         return True
 
-    def synthesise(self, template: dict[str, Any] | None, index: int, text: str) -> dict[str, Any]:
+    def synthesise(self, template: dict[str, Any] | None, slot: Slot, text: str) -> dict[str, Any]:
         raise NotImplementedError("the ocr route does not stream")
 
 
-class SearchReader:
+class SearchReader(_NoStreamedExtras):
     """``POST /v1/search``: the one surface with nothing to read.
 
     Every other reader here exists to find a number in a response. This one
@@ -692,10 +919,10 @@ class SearchReader:
     def deltas(self, payload: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
         return []
 
-    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[int, str]]:
+    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[Slot, str]]:
         return []
 
-    def set_stream_text(self, payload: dict[str, Any], index: int, text: str) -> None:
+    def set_stream_text(self, payload: dict[str, Any], slot: Slot, text: str) -> None:
         return None
 
     def rewrite_whole(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
@@ -704,11 +931,11 @@ class SearchReader:
     def is_terminal(self, payload: dict[str, Any]) -> bool:
         return True
 
-    def synthesise(self, template: dict[str, Any] | None, index: int, text: str) -> dict[str, Any]:
+    def synthesise(self, template: dict[str, Any] | None, slot: Slot, text: str) -> dict[str, Any]:
         raise NotImplementedError("the search route does not stream")
 
 
-class DecisionsReader:
+class DecisionsReader(_NoStreamedExtras):
     """``POST /v1/decisions`` and ``POST /v1/systemone`` (ADR 0100).
 
     Nothing here is read except the usage object and the model, and that is
@@ -737,10 +964,10 @@ class DecisionsReader:
     def deltas(self, payload: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
         return []
 
-    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[int, str]]:
+    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[Slot, str]]:
         return []
 
-    def set_stream_text(self, payload: dict[str, Any], index: int, text: str) -> None:
+    def set_stream_text(self, payload: dict[str, Any], slot: Slot, text: str) -> None:
         return None
 
     def rewrite_whole(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
@@ -749,7 +976,7 @@ class DecisionsReader:
     def is_terminal(self, payload: dict[str, Any]) -> bool:
         return True
 
-    def synthesise(self, template: dict[str, Any] | None, index: int, text: str) -> dict[str, Any]:
+    def synthesise(self, template: dict[str, Any] | None, slot: Slot, text: str) -> dict[str, Any]:
         raise NotImplementedError("the decisions routes do not stream")
 
 

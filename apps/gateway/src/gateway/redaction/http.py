@@ -502,12 +502,13 @@ class HttpDetectionRedactor:
             engine=self.name,
             scope=scope,
             rule_id=rule_id,
+            restore_text=self._settings.restore_in_response,
         )
 
     def response_stage(
         self, outcome: RedactionOutcome, *, surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS
     ) -> StreamStage:
-        if not self._settings.restore_in_response or not outcome.placeholder_map:
+        if not outcome.restore_text or not outcome.placeholder_map:
             # Nothing was replaced, so nothing can need restoring. Skips the
             # buffering and the per-frame JSON round trip entirely.
             return passthrough
