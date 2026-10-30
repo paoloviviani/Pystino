@@ -11,10 +11,10 @@ to release, how this repository relates to Cerea, and the traps.
 Break none of these, whatever a task seems to need. If a task cannot be done
 without breaking one, stop and ask the owner.
 
-1. **No AI attribution in git.** Commit messages and pull requests carry no
-   `Co-Authored-By` line naming an AI or a tool, no "Generated with" line, and
-   nothing of the kind. Never pass `--author`; commits use the configured git
-   identity.
+1. **AI attribution in git: Claude only.** A `Co-Authored-By: Claude …`
+   trailer and a Claude session link are allowed (the owner's decision,
+   2026-10-30); no other AI or tool attribution. Never pass `--author`; commits
+   use the configured git identity.
 2. **Licences.** All first-party code is Apache-2.0. A dependency must be under
    an OSI-approved licence, with no CLA and no open-core model; ask before
    adopting anything else. When describing the project's licensing, say
@@ -231,7 +231,7 @@ Two repositories, released separately, shipped together by Cerea's deploy kit.
 7. **Update the docs in the same branch.** The page that describes the
    behaviour must match the code when the branch lands; check each name,
    flag, route and default you write against the code.
-8. **Commit** with a plain message that says why (no AI trailer, rule 1), and
+8. **Commit** with a plain message that says why (rule 1 on attribution), and
    push the branch: `git push -u origin <branch>`. Do not merge it unless the
    owner asked. When asked:
    `git switch main && git pull --ff-only && git merge --no-ff <branch> -m "Merge <branch>: <what it does>" && git push origin main`.
