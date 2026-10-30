@@ -3,6 +3,7 @@
 from llmp_shared.documents import ExtractionKind, ExtractionResponse, PageImage
 from llmp_shared.redaction import (
     PLACEHOLDER_RE,
+    SAME_LENGTH_MIN,
     DetectionRequest,
     DetectionResponse,
     EntitySpan,
@@ -13,10 +14,12 @@ from llmp_shared.redaction import (
     normalise_entity,
     opaque_placeholder,
     placeholder_for,
+    same_length_placeholder,
 )
 
 __all__ = [
     "PLACEHOLDER_RE",
+    "SAME_LENGTH_MIN",
     "DetectionRequest",
     "DetectionResponse",
     "EntitySpan",
@@ -30,4 +33,5 @@ __all__ = [
     "normalise_entity",
     "opaque_placeholder",
     "placeholder_for",
+    "same_length_placeholder",
 ]

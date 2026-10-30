@@ -55,7 +55,12 @@ from gateway.quota import (
     QuotaEngine,
     Reservation,
 )
-from gateway.redaction import RedactionOutcome, Redactor
+from gateway.redaction import (
+    RedactionOutcome,
+    Redactor,
+    inject_system_note,
+    restore_reasoning_and_arguments,
+)
 from gateway.routers import _metered
 from gateway.routing import affinity_key
 from gateway.schemas import ChatCompletionRequest
@@ -254,6 +259,7 @@ async def chat_completions(
             body, outcome=outcome, upstream_model=resolved.upstream_model
         )
         search.apply(payload)
+        inject_system_note(payload, outcome, surface=SURFACE)
         payload = metered.shape_payload(payload, surface=SURFACE)
 
         if body.stream:
@@ -336,6 +342,14 @@ async def _buffered_response(
             restored = await redactor.restore_response(message["content"], outcome)
             message["content"] = restored.text
             restored_by_choice[which] = restored
+        elif isinstance(message, dict) and isinstance(message.get("content"), list):
+            # Some providers return the content as a list of parts.
+            for part in message["content"]:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    part["text"] = (await redactor.restore_response(part["text"], outcome)).text
+
+    # The reasoning and the tool calls' arguments hold placeholders too.
+    restore_reasoning_and_arguments(body_payload, outcome, surface=SURFACE)
 
     # A citation is character offsets into the text just rewritten, so it moves
     # with it or it points at the wrong words (ADR 0059).

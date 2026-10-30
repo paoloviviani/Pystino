@@ -4,7 +4,12 @@ import { useState } from "react";
 import { MODES, entityLabel, entitySource, modeRank } from "../lib/entities";
 import { m } from "../paraglide/messages.js";
 import { REDACTION_PATTERN_TEMPLATES } from "../lib/redactionTemplates";
-import type { EntityMode, EntityPolicy, RedactionPolicy } from "../lib/types";
+import type {
+  EntityMode,
+  EntityPolicy,
+  PlaceholderStyle,
+  RedactionPolicy,
+} from "../lib/types";
 import { CODE, FIELD_LABEL, FORM, MUTED } from "../lib/layout";
 
 export interface PolicyFieldsProps {
@@ -77,6 +82,12 @@ export function PolicyFields({
             patch.threshold !== undefined
               ? patch.threshold
               : (policy.entities[entity]?.threshold ?? null),
+          // Only written once somebody has chosen: an absent field means
+          // tagged to the gateway, and rules saved before the option existed
+          // should round-trip unchanged.
+          ...((patch.placeholder ?? policy.entities[entity]?.placeholder) !== undefined && {
+            placeholder: patch.placeholder ?? policy.entities[entity]?.placeholder,
+          }),
         },
       },
     });
@@ -216,6 +227,19 @@ export function PolicyFields({
                         >
                           {m["policy_fields.remove_type_short"]()}
                         </Button>
+                        {/* Only the two modes that write a derived token have a
+                            form to choose; redact writes the bare label. */}
+                        {(policy.entities[entity]?.mode ?? policy.default_mode) !== "off" &&
+                          (policy.entities[entity]?.mode ?? policy.default_mode) !== "block" &&
+                          (policy.entities[entity]?.mode ?? policy.default_mode) !== "redact" && (
+                            <div className="col-span-full max-w-md">
+                              <PlaceholderSelect
+                                label={m["policy_fields.placeholder_for"]({ name })}
+                                value={policy.entities[entity]?.placeholder ?? "tagged"}
+                                onChange={(placeholder) => setEntity(entity, { placeholder })}
+                              />
+                            </div>
+                          )}
                       </li>
                     );
                   })}
@@ -338,6 +362,17 @@ export function PolicyFields({
                     {m["policy_fields.pattern_remove"]()}
                   </Button>
                 </div>
+                {(pattern.mode === "anonymise_restore" || pattern.mode === "anonymise") && (
+                  <div className="col-span-full max-w-md">
+                    <PlaceholderSelect
+                      label={m["policy_fields.pattern_placeholder_label"]({
+                        number: index + 1,
+                      })}
+                      value={pattern.placeholder ?? "tagged"}
+                      onChange={(placeholder) => setPattern(index, { placeholder })}
+                    />
+                  </div>
+                )}
               </div>
             ))}
             <p className="m-0 text-small text-ink-faint">{m["policy_fields.pattern_note"]()}</p>
@@ -637,6 +672,35 @@ function ModeKey() {
         </div>
       ))}
     </dl>
+  );
+}
+
+/**
+ * How a placeholder is written, for the modes that write one.
+ *
+ * A select rather than segments: it is a two-way choice that is rarely
+ * changed, and the hint beside it carries the one thing worth knowing — that
+ * the same-length form tells the provider how long the value is.
+ */
+function PlaceholderSelect({
+  label,
+  value,
+  onChange,
+}: {
+  label: ReactNode;
+  value: PlaceholderStyle;
+  onChange: (value: PlaceholderStyle) => void;
+}) {
+  return (
+    <Select
+      label={label}
+      value={value}
+      hint={m["policy_fields.placeholder_hint"]()}
+      onChange={(event) => onChange(event.target.value as PlaceholderStyle)}
+    >
+      <option value="tagged">{m["policy_fields.placeholder_tagged"]()}</option>
+      <option value="same_length">{m["policy_fields.placeholder_same_length"]()}</option>
+    </Select>
   );
 }
 

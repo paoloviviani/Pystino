@@ -25,11 +25,13 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack
+from functools import partial
 from typing import Any
 
 import orjson
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from llmp_shared import Restored
 
 from gateway.accounting import TokenCounts
 from gateway.deps import (
@@ -43,7 +45,8 @@ from gateway.deps import (
 )
 from gateway.errors import BadRequestError, error_payload
 from gateway.models import ApiSurface
-from gateway.protocols import reader_for
+from gateway.protocols import shift_annotations
+from gateway.redaction import inject_system_note, restore_reasoning_and_arguments
 from gateway.routers import _metered
 from gateway.routers.chat import STREAM_HEADERS, settle_completed, spawn_finalisation
 from gateway.routing import affinity_key
@@ -116,8 +119,7 @@ async def create_response(
         )
 
         prompt_tokens = estimator.count_messages(outcome.messages)
-        # `instructions` is a system prompt by another name and is charged like one.
-        prompt_tokens += estimator.count_text(body.instructions or "")
+        # `instructions` is already in `outcome.messages`, as a system message.
         _metered.enforce_input_limit(model, prompt_tokens)
         max_output = body.max_output_tokens or settings.quota.default_max_output_tokens
         # Server-side web search is charged per search on top of tokens, and
@@ -152,6 +154,7 @@ async def create_response(
 
         payload = body.upstream_payload(outcome, upstream_model=resolved.upstream_model)
         search.apply(payload)
+        inject_system_note(payload, outcome, surface=SURFACE)
         payload = metered.shape_payload(payload, surface=SURFACE)
 
         if body.stream:
@@ -186,13 +189,7 @@ async def create_response(
         # this surface repeats the answer.
         if out.get("model") is not None:
             out["model"] = resolved.requested_name
-        if assembled := _assembled_text(out):
-            restored = await redactor.restore_response(assembled, outcome)
-            _rewrite_all(out, restored.text)
-            if restored.moved:
-                reader_for(SURFACE).shift_citations(
-                    out, lambda _choice, offset: restored.shift(offset)
-                )
+        await _restore_body(out, redactor, outcome)
 
         return JSONResponse(
             status_code=response.status_code,
@@ -203,26 +200,32 @@ async def create_response(
     return await _metered.serve_with_failover(session, plan, serve)
 
 
-def _assembled_text(payload: dict[str, Any]) -> str:
-    text = payload.get("output_text")
-    return text if isinstance(text, str) else ""
+def _shift_by(restored: Restored, _choice: int, offset: int) -> int:
+    return restored.shift(offset)
 
 
-def _rewrite_all(payload: dict[str, Any], restored: str) -> None:
-    """Write the restored text back everywhere the response repeats it.
+async def _restore_body(out: dict[str, Any], redactor: Any, outcome: Any) -> None:
+    """Restore every text the response carries, each from its own provider text.
 
-    Restoring once and copying is deliberate: the substitution is a pure
-    mapping over the same string, so running it per field would produce the
-    same result at N times the cost, and any divergence between the fields
-    would be a bug the caller could see.
+    The wire body has no ``output_text`` — that is a convenience an SDK adds —
+    so the text lives in the content blocks of the output items, and each block
+    is restored from what the provider wrote in *that* block. The assembled
+    field is restored too when a provider includes it. Citations are offsets
+    into one block's text, so each block's own edits move its own annotations.
     """
-    payload["output_text"] = restored
-    for item in payload.get("output") or []:
-        if not isinstance(item, dict):
+    if isinstance(assembled := out.get("output_text"), str):
+        out["output_text"] = (await redactor.restore_response(assembled, outcome)).text
+    for item in out.get("output") or []:
+        if not isinstance(item, dict) or item.get("type") in ("reasoning", "function_call"):
             continue
         for block in item.get("content") or []:
-            if isinstance(block, dict) and isinstance(block.get("text"), str):
-                block["text"] = restored
+            if not isinstance(block, dict) or not isinstance(block.get("text"), str):
+                continue
+            restored = await redactor.restore_response(block["text"], outcome)
+            block["text"] = restored.text
+            if restored.moved:
+                shift_annotations(block.get("annotations"), partial(_shift_by, restored), 0)
+    restore_reasoning_and_arguments(out, outcome, surface=SURFACE)
 
 
 async def _stream(

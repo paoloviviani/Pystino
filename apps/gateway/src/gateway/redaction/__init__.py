@@ -8,9 +8,11 @@ from gateway.redaction.base import (
     Redactor,
     TextRewriteStage,
     iter_choice_text,
+    restore_reasoning_and_arguments,
 )
 from gateway.redaction.http import HttpDetectionRedactor, RedactionUnavailableError
 from gateway.redaction.noop import NoOpRedactor
+from gateway.redaction.note import inject_system_note, system_note
 from gateway.redaction.registry import (
     ENTRY_POINT_GROUP,
     EngineInfo,
@@ -34,8 +36,11 @@ __all__ = [
     "available_engines",
     "build_redactor",
     "describe_engines",
+    "inject_system_note",
     "iter_choice_text",
     "register_engine",
+    "restore_reasoning_and_arguments",
+    "system_note",
 ]
 
 register(

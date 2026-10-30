@@ -31,6 +31,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -45,6 +46,8 @@ PLACEHOLDER_RE: Final = re.compile(r"<([A-Z][A-Z0-9_]*?)_([A-Z2-7]{4,32})>")
 # HMAC domain separator. 0x1f (unit separator) cannot occur in an entity type
 # name, so "AB" + "C" can never collide with "A" + "BC".
 _SEP: Final = b"\x1f"
+
+_ANGLE_ESCAPE_RE: Final = re.compile(r"\\u003([cCeE])")
 
 _WHITESPACE_RE: Final = re.compile(r"\s+")
 _NON_DIGIT_RE: Final = re.compile(r"\D+")
@@ -112,6 +115,52 @@ def placeholder_for(
     # '+', '/' and '=', which interact badly with markdown, URLs and tokenizers.
     token = base64.b32encode(digest).decode("ascii").rstrip("=")[:length]
     return f"<{label}_{token}>"
+
+
+#: Shortest original that gets a same-length placeholder: ``#`` + a token of at
+#: least six characters + ``#``. Anything shorter has too little room for a token
+#: that is both unmistakably synthetic and unlikely to collide.
+SAME_LENGTH_MIN: Final = 8
+
+
+def same_length_placeholder(entity_type: str, value: str, *, key: bytes) -> str | None:
+    """A ``#TOKEN#`` stand-in with exactly the length of *value*, or None.
+
+    For forms and fixed-width fields, where a model has to be handed something
+    of the right width. The token is the **same keyed digest** the tagged
+    placeholder uses (base32, uppercase), cut to ``len(value) - 2``: the same
+    value always yields the same stand-in, different values differ, and the
+    gateway holds no state. A value longer than one digest has room for is
+    extended with further blocks of the same HMAC.
+
+    The token is deliberately not a realistic fake. A stand-in that looks like a
+    fiscal code or an IBAN would be mistaken for the real thing — by the model,
+    by a person reading the transcript, by a downstream system that accepts it —
+    and ``#K3QF7RZM2A…#`` cannot be.
+
+    None when *value* is shorter than :data:`SAME_LENGTH_MIN`; the caller falls
+    back to the tagged placeholder. Counted in characters, as the original's
+    length is what a form field sees.
+    """
+    if not key:
+        raise ValueError("placeholder key must not be empty")
+    if len(value) < SAME_LENGTH_MIN:
+        return None
+    label = _safe_label(entity_type)
+    message = label.encode() + _SEP + normalise_entity(label, value).encode()
+    wanted = len(value) - 2
+    token = ""
+    block = 0
+    while len(token) < wanted:
+        # Block 0 is exactly the tagged placeholder's digest. Later blocks are
+        # the same HMAC over the message plus a counter, never a rehash of the
+        # token, so a longer value does not make a shorter one's token a prefix
+        # of anything it should not be.
+        suffix = b"" if block == 0 else _SEP + str(block).encode()
+        digest = hmac.new(key, message + suffix, hashlib.sha256).digest()
+        token += base64.b32encode(digest).decode("ascii").rstrip("=")
+        block += 1
+    return f"#{token[:wanted]}#"
 
 
 def opaque_placeholder(entity_type: str) -> str:
@@ -253,11 +302,27 @@ class PlaceholderMap:
     invertible view over a non-invertible function, not a store of record.
     """
 
-    __slots__ = ("_to_original", "_to_placeholder")
+    __slots__ = ("_claimed", "_json_cache", "_to_original", "_to_placeholder")
 
     def __init__(self) -> None:
         self._to_original: dict[str, str] = {}
         self._to_placeholder: dict[tuple[str, str], str] = {}
+        self._claimed: dict[str, str] = {}
+        self._json_cache: tuple[int, re.Pattern[str]] | None = None
+
+    def claim(self, placeholder: str, original: str) -> bool:
+        """Reserve *placeholder* for *original*; False if another value holds it.
+
+        For stand-ins that are not guaranteed to be unique by their shape. A
+        tagged placeholder carries 50 bits and a collision merely shares a
+        label; a same-length one may be 30, and two values sharing it would
+        restore one as the other. The caller falls back to the tagged form
+        instead. Claims cover every mode, restorable or not, because two
+        different hidden values written the same way are as confusing for the
+        model.
+        """
+        holder = self._claimed.setdefault(placeholder, original)
+        return holder == original
 
     def add(self, entity_type: str, original: str, placeholder: str) -> None:
         self._to_original.setdefault(placeholder, original)
@@ -293,6 +358,56 @@ class PlaceholderMap:
         substituted inside it.
         """
         return self.restore_with_edits(text).text
+
+    def restore_in_json(self, text: str) -> str:
+        """Restore placeholders inside *JSON text*, keeping it valid JSON.
+
+        For a tool call's ``arguments``: a string the model wrote as JSON, so a
+        restored value is written as it would be inside a JSON string. An
+        original containing a quote, a backslash or a control character would
+        otherwise close the string early and hand the caller arguments that do
+        not parse.
+
+        Some serialisers escape ``<`` and ``>`` as ``\\u003c`` / ``\\u003e``, so
+        a placeholder is also found written that way. Only a *known placeholder*
+        is touched, and only where the backslash opening the escape is itself
+        not escaped (``\\\\u003c`` is a literal backslash followed by text), so
+        everything else in the document stays byte for byte as it was.
+        """
+        if not self._to_original:
+            return text
+        return self._json_pattern().sub(lambda match: self._json_match(text, match), text)
+
+    def _json_pattern(self) -> re.Pattern[str]:
+        # Rebuilt only when a placeholder has been added since.
+        if self._json_cache is not None and self._json_cache[0] == len(self._to_original):
+            return self._json_cache[1]
+        pieces = []
+        for placeholder in sorted(self._to_original, key=len, reverse=True):
+            if placeholder.startswith("<") and placeholder.endswith(">"):
+                pieces.append(
+                    r"(?:<|\\u003[cC])" + re.escape(placeholder[1:-1]) + r"(?:>|\\u003[eE])"
+                )
+            else:
+                pieces.append(re.escape(placeholder))
+        compiled = re.compile("|".join(pieces))
+        self._json_cache = (len(self._to_original), compiled)
+        return compiled
+
+    def _json_match(self, text: str, match: re.Match[str]) -> str:
+        raw = match.group(0)
+        original = self._to_original.get(
+            _ANGLE_ESCAPE_RE.sub(lambda m: "<" if m.group(1) in "cC" else ">", raw)
+        )
+        if original is None:
+            return raw
+        if raw.startswith("\\"):
+            # The backslash that opens the escape must not itself be escaped:
+            # an odd run before it means it is a literal backslash.
+            run = len(text[: match.start()]) - len(text[: match.start()].rstrip("\\"))
+            if run % 2:
+                return raw
+        return json.dumps(original, ensure_ascii=False)[1:-1]
 
     def restore_with_edits(self, text: str) -> Restored:
         """:meth:`restore`, and *where* each substitution happened.

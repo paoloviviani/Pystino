@@ -127,4 +127,78 @@ describe("PolicyFields", () => {
     render(<Harness allowList={false} />);
     expect(screen.queryByText("Never hide")).not.toBeInTheDocument();
   });
+
+  describe("placeholder style", () => {
+    it("is offered for a type that writes a token, and written back when changed", async () => {
+      const user = userEvent.setup({ delay: null });
+      render(
+        <Harness
+          initial={{
+            ...seededPolicy(),
+            entities: { EMAIL_ADDRESS: { mode: "anonymise_restore", threshold: null } },
+          }}
+        />,
+      );
+
+      const select = screen.getByLabelText("Placeholder for Email address");
+      expect(select).toHaveValue("tagged");
+      await user.selectOptions(select, "same_length");
+      expect(written().entities.EMAIL_ADDRESS).toMatchObject({
+        mode: "anonymise_restore",
+        placeholder: "same_length",
+      });
+    });
+
+    it("is not offered where there is no token to shape", () => {
+      render(
+        <Harness
+          initial={{
+            ...seededPolicy(),
+            entities: {
+              EMAIL_ADDRESS: { mode: "redact", threshold: null },
+              URL: { mode: "block", threshold: null },
+            },
+          }}
+        />,
+      );
+      expect(screen.queryByLabelText(/^Placeholder for/)).not.toBeInTheDocument();
+    });
+
+    it("keeps the choice when the mode changes", async () => {
+      const user = userEvent.setup({ delay: null });
+      render(
+        <Harness
+          initial={{
+            ...seededPolicy(),
+            entities: {
+              EMAIL_ADDRESS: {
+                mode: "anonymise_restore",
+                threshold: null,
+                placeholder: "same_length",
+              },
+            },
+          }}
+        />,
+      );
+      const row = screen.getByRole("group", { name: /EMAIL_ADDRESS/ });
+      await user.click(within(row).getByRole("radio", { name: "Block" }));
+      expect(written().entities.EMAIL_ADDRESS?.placeholder).toBe("same_length");
+    });
+
+    it("can be chosen for a custom pattern", async () => {
+      const user = userEvent.setup({ delay: null });
+      render(
+        <Harness
+          initial={{
+            ...seededPolicy(),
+            patterns: [
+              { name: "BADGE", regex: "B-[0-9]+", mode: "anonymise_restore", placeholder: "tagged" },
+            ],
+          }}
+        />,
+      );
+      await user.selectOptions(screen.getByLabelText("Pattern 1 placeholder"), "same_length");
+      expect(written().patterns[0]?.placeholder).toBe("same_length");
+    });
+  });
 });

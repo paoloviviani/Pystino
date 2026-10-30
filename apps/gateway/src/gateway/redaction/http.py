@@ -13,9 +13,12 @@ turns, and can be swapped without re-labelling anything already shown to a user.
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import json
 import logging
-from collections import OrderedDict
+import re
+from collections import Counter, OrderedDict
 from functools import lru_cache
 from typing import Any
 
@@ -28,18 +31,21 @@ from llmp_shared import (
     Restored,
     opaque_placeholder,
     placeholder_for,
+    same_length_placeholder,
 )
 
 from gateway.config import (
     DEFAULT_REDACTION_POLICY,
     EffectivePolicy,
     EntityMode,
+    PlaceholderStyle,
     RedactionPolicy,
     RedactionSettings,
 )
 from gateway.errors import ContentBlockedError, GatewayError
 from gateway.models import ApiSurface
 from gateway.redaction.base import RedactionOutcome, TextRewriteStage
+from gateway.redaction.note import system_note
 from gateway.sse.pipeline import StreamStage, passthrough
 
 logger = logging.getLogger(__name__)
@@ -109,23 +115,166 @@ class _Cache:
         return len(self._entries)
 
 
-def _message_texts(message: dict[str, Any]) -> list[tuple[Any, str]]:
-    """``(location, text)`` for each redactable string in a message.
+#: A placeholder already in a text: left alone by the known-value pass, so an
+#: original that happens to appear inside one is not rewritten inside it.
+_PLACEHOLDER_SPAN = r"<[A-Z][A-Z0-9_]*>|#[A-Z2-7]{6,}#"
 
-    Handles both content shapes: a plain string, and the multimodal list of parts.
-    ``location`` is ``None`` for the plain form and the part's index for the list
-    form, so the caller can write the redacted text back where it came from.
+#: The shortest original the known-value pass will look for. Shorter strings
+#: are too likely to be ordinary words to replace everywhere.
+_KNOWN_MIN = 3
+
+
+def _known_values(issued: dict[str, str]) -> re.Pattern[str] | None:
+    """A pattern for every original substituted in this request, or None.
+
+    Longest first, whole words only, and a placeholder already in the text is
+    matched first so it is skipped rather than rewritten inside.
     """
-    content = message.get("content")
-    if isinstance(content, str):
-        return [(None, content)]
-    if isinstance(content, list):
-        found: list[tuple[Any, str]] = []
-        for index, part in enumerate(content):
-            if isinstance(part, dict) and isinstance(text := part.get("text"), str):
-                found.append((index, text))
-        return found
-    return []
+    originals = sorted((o for o in issued if len(o) >= _KNOWN_MIN), key=len, reverse=True)
+    if not originals:
+        return None
+    alternatives = "|".join(re.escape(o) for o in originals)
+    return re.compile(rf"(?P<skip>{_PLACEHOLDER_SPAN})|(?<!\w)(?P<known>{alternatives})(?!\w)")
+
+
+#: Request items that are not messages and carry no role: the Responses API's
+#: function calls, their outputs and reasoning items.
+_ITEM_TYPES = frozenset({"function_call", "function_call_output", "reasoning"})
+
+#: Where a model's reasoning is replayed in a conversation history.
+_REASONING_KEYS = ("reasoning_content", "reasoning", "reasoning_text")
+
+
+class _JsonText:
+    """A JSON document held as text, whose string values are redacted one by one.
+
+    A tool call's arguments are JSON text. Redacting the text as it stands would
+    put a placeholder next to a quote or a backslash and could split a value
+    the detector sees whole, and restoring puts original values back into
+    arguments — so on the way in they are redacted the same way: decode, redact
+    every string value, serialise again. Written back only when something changed,
+    so an untouched call goes out byte for byte as it came.
+    """
+
+    __slots__ = ("changed", "holder", "key", "root")
+
+    def __init__(self, holder: dict[str, Any], key: str, root: Any) -> None:
+        self.holder = holder
+        self.key = key
+        self.root = root
+        self.changed = False
+
+    def commit(self) -> None:
+        if self.changed:
+            self.holder[self.key] = json.dumps(self.root, ensure_ascii=False)
+
+
+class _Target:
+    """One string that is sent for detection, and where it lives."""
+
+    __slots__ = ("document", "holder", "key", "text")
+
+    def __init__(self, holder: Any, key: Any, document: _JsonText | None = None) -> None:
+        self.holder = holder
+        self.key = key
+        self.text: str = holder[key]
+        self.document = document
+
+    def write(self, text: str) -> None:
+        self.holder[self.key] = text
+        if self.document is not None:
+            self.document.changed = True
+
+
+def _text_targets(holder: dict[str, Any], key: str, out: list[_Target]) -> None:
+    if isinstance(holder.get(key), str) and holder[key]:
+        out.append(_Target(holder, key))
+
+
+def _json_leaves(node: Any, document: _JsonText | None, out: list[_Target]) -> None:
+    """Every string value in a decoded JSON document (keys are not values)."""
+    if isinstance(node, dict):
+        children: Any = list(node.keys())
+    elif isinstance(node, list):
+        children = range(len(node))
+    else:
+        return
+    for key in children:
+        value = node[key]
+        if isinstance(value, str):
+            if value:
+                out.append(_Target(node, key, document))
+        else:
+            _json_leaves(value, document, out)
+
+
+def _json_text_targets(holder: dict[str, Any], key: str, out: list[_Target]) -> None:
+    """Targets for a field that holds JSON as text, or plain text if it is not."""
+    raw = holder.get(key)
+    if not isinstance(raw, str) or not raw:
+        return
+    try:
+        root = json.loads(raw)
+    except ValueError:
+        root = None
+    if isinstance(root, dict | list):
+        _json_leaves(root, _JsonText(holder, key, root), out)
+        return
+    # Not JSON (a model can emit a broken call): the text itself is screened.
+    out.append(_Target(holder, key))
+
+
+def _content_targets(holder: dict[str, Any], key: str, out: list[_Target]) -> None:
+    """A ``content``-like field: a string, or a list of blocks.
+
+    Blocks may be text, a Messages ``tool_result`` (whose own ``content`` is a
+    string or more blocks) or a ``tool_use`` (whose ``input`` is an object).
+    """
+    value = holder.get(key)
+    if isinstance(value, str):
+        _text_targets(holder, key, out)
+        return
+    if not isinstance(value, list):
+        return
+    for part in value:
+        if not isinstance(part, dict):
+            continue
+        _text_targets(part, "text", out)
+        if part.get("type") == "tool_result":
+            _content_targets(part, "content", out)
+        if part.get("type") == "tool_use" and isinstance(part.get("input"), dict | list):
+            _json_leaves(part["input"], None, out)
+
+
+def _message_targets(message: dict[str, Any]) -> list[_Target]:
+    """Every string in *message* that must be screened before it is sent.
+
+    The caller's own text, and also what *we* put there on an earlier turn: a
+    follow-up request echoes the assistant's tool calls and reasoning, and since
+    those are restored on the way out, the echo carries the real values back in.
+    Leaving them unscreened would send them to the provider.
+    """
+    out: list[_Target] = []
+    kind = message.get("type")
+    if message.get("role") not in _TEXT_ROLES and kind not in _ITEM_TYPES:
+        return out
+    _content_targets(message, "content", out)
+    for key in _REASONING_KEYS:
+        _text_targets(message, key, out)
+    for call in message.get("tool_calls") or []:
+        function = call.get("function") if isinstance(call, dict) else None
+        if isinstance(function, dict):
+            _json_text_targets(function, "arguments", out)
+    if kind == "function_call":
+        _json_text_targets(message, "arguments", out)
+    elif kind == "function_call_output":
+        _content_targets(message, "output", out)
+    elif kind == "reasoning":
+        for field in ("summary", "content"):
+            for block in message.get(field) or []:
+                if isinstance(block, dict):
+                    _text_targets(block, "text", out)
+    return out
 
 
 @lru_cache(maxsize=256)
@@ -174,6 +323,8 @@ def apply_spans(
     policy: RedactionPolicy | None = None,
     default_threshold: float = 0.0,
     scope: str | None = None,
+    tally: Counter[str] | None = None,
+    issued: dict[str, str] | None = None,
 ) -> tuple[str, int]:
     """Substitute placeholders for *spans* in *text*, according to *policy*.
 
@@ -249,21 +400,78 @@ def apply_spans(
             continue
         chosen.append(span)
 
+    # What the caller wrote, before any of our own substitutions: a stand-in is
+    # compared against that, not against text this loop has already rewritten,
+    # or the second occurrence of one value would collide with the first.
+    written = text
     for span in reversed(chosen):
         original = span.slice_of(text)
         mode = policy.mode_for(span.entity_type)
         if mode is EntityMode.REDACT:
             placeholder = opaque_placeholder(span.entity_type)
         else:
-            placeholder = placeholder_for(span.entity_type, original, key=key)
+            placeholder = _derived_placeholder(
+                span.entity_type,
+                original,
+                key=key,
+                style=policy.placeholder_style_for(span.entity_type),
+                placeholders=placeholders,
+                text=written,
+                tally=tally,
+            )
             if mode is EntityMode.ANONYMISE_RESTORE:
                 # The map is the only thing that makes a placeholder reversible,
                 # so *not* adding is how "anonymise" differs from "anonymise and
                 # restore". RestoreStage leaves what it did not issue alone.
                 placeholders.add(span.entity_type, original, placeholder)
         text = text[: span.start] + placeholder + text[span.end :]
+        if tally is not None:
+            tally[mode.value] += 1
+        if issued is not None:
+            issued[original] = placeholder
 
     return text, len(chosen)
+
+
+#: The tally key for stand-ins written as ``#TOKEN#``. Not a mode, so it cannot
+#: collide with one.
+SAME_LENGTH_KEY = "same_length"
+
+
+def _derived_placeholder(
+    entity_type: str,
+    original: str,
+    *,
+    key: bytes,
+    style: PlaceholderStyle,
+    placeholders: PlaceholderMap,
+    text: str,
+    tally: Counter[str] | None,
+) -> str:
+    """The stand-in for *original*: ``#TOKEN#`` when asked and safe, else tagged.
+
+    Safe means the value is long enough, that no other value of this request
+    already holds the same ``#TOKEN#``, and that it does not already occur in
+    the text around it — in either case restoring it later could not tell which
+    was meant. Falling back is silent on purpose: this is best effort, and the
+    tagged form always works.
+    """
+    if style is PlaceholderStyle.SAME_LENGTH:
+        candidate = same_length_placeholder(entity_type, original, key=key)
+        if (
+            candidate is not None
+            and candidate not in text
+            and placeholders.claim(candidate, original)
+        ):
+            if tally is not None:
+                tally[SAME_LENGTH_KEY] += 1
+            return candidate
+    return placeholder_for(entity_type, original, key=key)
+
+
+#: What a placeholder gains when JSON spells both its angle brackets as
+#: ``\\u003c`` and ``\\u003e``: five characters each.
+ESCAPED_ANGLE_SLACK = 10
 
 
 class RestoreStage(TextRewriteStage):
@@ -281,12 +489,27 @@ class RestoreStage(TextRewriteStage):
         *,
         tail_size: int,
         surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS,
+        arguments: bool = False,
     ) -> None:
-        super().__init__(tail_size=tail_size, surface=surface)
+        super().__init__(
+            tail_size=tail_size,
+            surface=surface,
+            arguments=arguments,
+            arguments_slack=ESCAPED_ANGLE_SLACK if arguments else 0,
+        )
         self._placeholders = placeholders
 
     def transform(self, text: str, *, final: bool) -> str:
         return self._placeholders.restore(text)
+
+    def transform_arguments(self, text: str, *, final: bool) -> str:
+        """Restore inside JSON text, writing each original JSON-escaped.
+
+        Per fragment, with the same tail rule as prose: the placeholder is
+        plain text inside the JSON string, so it can straddle two fragments
+        exactly as it can straddle two chunks of an answer.
+        """
+        return self._placeholders.restore_in_json(text)
 
     def edits_in(self, text: str) -> Restored:
         return self._placeholders.restore_with_edits(text)
@@ -448,52 +671,82 @@ class HttpDetectionRedactor:
         # a cold cache, which is the failure the resolver's own docstring names
         # for a ten-second rebuild — arriving once per request instead.
         effective = policy.policy if policy is not None else self._settings.policy
-        locations: list[tuple[int, Any]] = []
-        texts: list[str] = []
-        for message_index, message in enumerate(messages):
-            if message.get("role") not in _TEXT_ROLES:
-                continue
-            for part_index, text in _message_texts(message):
-                if text:
-                    locations.append((message_index, part_index))
-                    texts.append(text)
+        # Copied, so a failure part-way cannot leave the caller's list half
+        # rewritten — and so the transcript of what the user actually sent is
+        # still available to the caller. Deep, because tool calls and content
+        # blocks are rewritten in place below.
+        rewritten = copy.deepcopy(messages)
+        targets: list[_Target] = []
+        for message in rewritten:
+            targets.extend(_message_targets(message))
+        texts = [target.text for target in targets]
 
         scope = policy.scope if policy is not None else None
         rule_id = policy.rule_id if policy is not None else None
+        note = system_note(
+            effective,
+            restore_text=self._settings.restore_in_response,
+            restore_arguments=self._settings.restore_in_response
+            and self._settings.restore_in_tool_arguments,
+        )
         if not texts:
             return RedactionOutcome(
-                messages=messages, engine=self.name, scope=scope, rule_id=rule_id
+                messages=messages, engine=self.name, scope=scope, rule_id=rule_id, note=note
             )
 
         found = await self.detect(texts, policy=effective)
 
         placeholders = PlaceholderMap()
-        # Copied, so a failure part-way cannot leave the caller's list half
-        # rewritten — and so the transcript of what the user actually sent is
-        # still available to the caller.
-        rewritten = [dict(message) for message in messages]
         total = 0
+        tally: Counter[str] = Counter()
 
-        for (message_index, part_index), text, spans in zip(locations, texts, found, strict=True):
+        documents: dict[int, _JsonText] = {}
+        issued: dict[str, str] = {}
+        for target, spans in zip(targets, found, strict=True):
             redacted, count = apply_spans(
-                text,
+                target.text,
                 spans,
                 key=self._key,
                 placeholders=placeholders,
                 policy=effective,
                 default_threshold=self._settings.score_threshold,
                 scope=scope,
+                tally=tally,
+                issued=issued,
             )
             total += count
-            if not count:
-                continue
-            message = rewritten[message_index]
-            if part_index is None:
-                message["content"] = redacted
-            else:
-                parts = [dict(part) for part in message["content"]]
-                parts[part_index]["text"] = redacted
-                message["content"] = parts
+            if count:
+                target.write(redacted)
+                if target.document is not None:
+                    documents[id(target.document)] = target.document
+
+        # A value found in one place is a value everywhere in this request. The
+        # detector sees an echoed tool-call leaf or a reasoning fragment alone,
+        # without the sentence that made it recognisable, and can miss a short
+        # name it caught in the user's own turn. So every exact occurrence of an
+        # original already substituted is replaced too, with the same stand-in.
+        known = _known_values(issued)
+        if known is not None:
+            for target in targets:
+                current = target.holder[target.key]
+                hits = 0
+
+                def swap(match: re.Match[str]) -> str:
+                    nonlocal hits
+                    original = match.group("known")
+                    if original is None:
+                        return match.group(0)
+                    hits += 1
+                    return issued[original]
+
+                swapped = known.sub(swap, current)
+                if hits:
+                    total += hits
+                    target.write(swapped)
+                    if target.document is not None:
+                        documents[id(target.document)] = target.document
+        for document in documents.values():
+            document.commit()
 
         return RedactionOutcome(
             messages=rewritten,
@@ -502,12 +755,17 @@ class HttpDetectionRedactor:
             engine=self.name,
             scope=scope,
             rule_id=rule_id,
+            note=note,
+            restore_text=self._settings.restore_in_response,
+            same_length_substitutions=tally[SAME_LENGTH_KEY],
+            restore_arguments=self._settings.restore_in_response
+            and self._settings.restore_in_tool_arguments,
         )
 
     def response_stage(
         self, outcome: RedactionOutcome, *, surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS
     ) -> StreamStage:
-        if not self._settings.restore_in_response or not outcome.placeholder_map:
+        if not outcome.restore_text or not outcome.placeholder_map:
             # Nothing was replaced, so nothing can need restoring. Skips the
             # buffering and the per-frame JSON round trip entirely.
             return passthrough
@@ -515,6 +773,7 @@ class HttpDetectionRedactor:
             outcome.placeholder_map,
             tail_size=_longest_placeholder(outcome.placeholder_map),
             surface=surface,
+            arguments=outcome.restore_arguments,
         )
 
     async def restore_response(self, text: str, outcome: RedactionOutcome) -> Restored:

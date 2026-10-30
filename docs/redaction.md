@@ -149,6 +149,131 @@ where silently replacing it would tell nobody it happened. The 403 names the
 entity type and the rule that decided, and **never echoes the matched text**:
 an error body gets logged and pasted into tickets.
 
+### Restoring the answer, and tool calls
+
+With `anonymise_restore`, the real value is put back in what the model returns:
+the answer, and the model's reasoning when the provider streams it (as
+`reasoning_content`, `reasoning` or `reasoning_text`, or as reasoning summaries
+on the Responses surface). Thinking blocks on the Anthropic Messages surface are
+left as the provider wrote them: they are signed over their own text, and
+restoring one would make the provider refuse the next turn.
+
+A tool call's **arguments** are restored as well. The model only knows a value
+by its placeholder, so when it calls a tool it writes the placeholder into the
+arguments, and the tool needs the real value. The arguments are JSON text, so
+the value goes back JSON-escaped: an original containing a quote, a backslash or
+a line break leaves the arguments valid JSON. A streamed call is buffered per
+tool call with the same hold-back rule as prose. This covers chat completions
+(`tool_calls`), the Responses surface (`function_call`) and Anthropic Messages
+(`tool_use`).
+
+Two settings, both read-only on the Redaction screen because they come from the
+environment:
+
+- `GATEWAY_REDACTION__RESTORE_IN_RESPONSE` (default on) puts real values back in
+  the response at all. Off, callers receive the placeholders.
+- `GATEWAY_REDACTION__RESTORE_IN_TOOL_ARGUMENTS` (default on) extends that to
+  tool-call arguments. It only has an effect while the first one is on. Turn it
+  off if a tool must never receive a value that was hidden from the model.
+
+**Restored arguments reach the tools.** Whatever executes the call, including an
+external connector or MCP tool the client runs, receives the real value. That is
+the point of restoring them, and it is also the reason for the second setting:
+turn `RESTORE_IN_TOOL_ARGUMENTS` off when a tool must never see a value that was
+hidden from the model.
+
+**What comes back in the next request is screened too.** A client replays the
+assistant's tool calls and reasoning in the follow-up request of the same turn,
+and since those were restored on the way out they carry the real values back in.
+Request redaction therefore also covers the Responses `instructions` field and `tool_calls[].function.arguments`
+(decoded, each string value redacted, and written back as JSON), the reasoning
+fields, Responses `function_call`, `function_call_output` and `reasoning` items,
+and Anthropic `tool_use` input and `tool_result` blocks, all into the same
+placeholder map. A tool call with nothing to hide is sent byte for byte as it
+came. A provider that sends `content` as a list of parts is restored too, and a
+provider that streams tool calls without an `index` is told apart by `id`.
+
+Only placeholders issued in mode `anonymise_restore` are ever restored;
+`anonymise` and `redact` stay as they are everywhere.
+
+### Telling the model what a placeholder is
+
+A model that sees `<IT_FISCAL_CODE_Y5RD4GZTEK>` where a fiscal code belongs
+tends to call it a malformed value, remark on its length, and ask the user for
+the real one. So whenever a rule is **in force** for a request, the gateway
+appends one short note to the end of the outbound system prompt (the `system`
+message on chat completions, `instructions` on the Responses surface, `system`
+on Anthropic Messages). A rule is in force when at least one entity type,
+custom pattern or the default is in an anonymising mode (`anonymise_restore`,
+`anonymise` or `redact`), whether or not this particular request matched
+anything.
+
+The note is a function of the **policy alone**, never of the request's content.
+Providers cache the start of a request, and the system prompt is the start: a
+note that came and went with the turns that happened to match something would
+change that prefix and discard the cache for the whole history. The same policy
+gives byte-identical text on every turn. It is appended after the caller's own
+system prompt, never before it; on chat completions it joins the first system
+message (a new one is created at index 0 only if there is none), and on Anthropic Messages
+it is a separate final block, so blocks the caller marked with `cache_control`
+are untouched.
+
+There are two wordings. When any in-force entity is `anonymise_restore` and
+restoring is on, the note says the real values are put back automatically in
+the answer (and in tool calls, if `restore_in_tool_arguments` is on) and asks
+the model to use them exactly as written without commenting on their format or
+length. Otherwise it says they are hidden stand-ins that stay hidden and must
+not be guessed. A third sentence describes `#...#` stand-ins when any in-force
+entity uses `same_length` (below). The text is the constants in
+`gateway/redaction/note.py`.
+
+Nothing is added when redaction is off or every entity is `off` or `block`.
+The note is added after redaction, so it is never screened itself, and it is
+not part of what the caller sent, so it appears in no transcript; its tokens
+are billed as input like any other system text.
+
+### Same-length placeholders, for forms
+
+Some things the model writes into have a fixed width: a PDF form field that
+takes 16 characters, a column, a masked input. `<IT_FISCAL_CODE_Y5RD4GZTEK>` is
+27 characters and a model asked to fill a 16-character field with it will,
+reasonably, refuse. Each entity type and each custom pattern can therefore ask
+for `placeholder: same_length` (default `tagged`, today's form), edited on the
+Redaction screen under the type's action:
+
+```
+RSSMRA80A01F205X   ->   #J45PBO2XY7TXCF#     (16 characters, as the original)
+```
+
+The stand-in is `#`, a token, `#`, and its total length equals the original's.
+The token is cut from the **same keyed HMAC** as the tagged form (base32,
+uppercase), so the same value always gets the same stand-in, different values
+differ, and the gateway still holds no state. It applies to `anonymise_restore`
+and `anonymise`; `redact` writes the bare label and has no token to shape.
+
+It is **best effort**. The tagged form is used instead when the original is
+shorter than 8 characters (too little room for a token that is both clearly
+synthetic and unlikely to collide), when another value in the same request would
+get the same stand-in (types that compare digits only, such as fiscal codes, can
+do this for two values that differ only in letters), or when the stand-in already
+appears in the text around the value. Restoring is a literal substitution from
+the request's map, as for any placeholder, and a stream holds back one character
+less than the longest placeholder issued, so a 40-character stand-in is held
+back as 39.
+
+The token is **deliberately not a realistic fake**. A stand-in that looked like a
+fiscal code or an IBAN would be mistaken for the real one by the model, by
+whoever reads the transcript and by any system downstream that accepts it;
+`#J45PBO2XY7TXCF#` cannot be mistaken for anything. When a rule uses same-length
+stand-ins the system note describes them too.
+
+The cost is that it tells the provider how long the value is. For that reason a
+scope can only veto it, never impose it: when several rules name the same type,
+same-length applies only if every one of them asks for it, and moving a rule
+from tagged to same-length is recorded as a weakening. Rules saved before this
+option existed load as `tagged`; the policy is stored as JSON, so no migration
+is involved.
+
 Each type can also carry its own detector **threshold** (`PERSON` at 0.85 and
 `URL` at 0.5 are not the same judgement), and the deployment can define
 **custom patterns** — operator-written regexes treated as one more entity type,

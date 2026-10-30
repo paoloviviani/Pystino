@@ -1912,6 +1912,10 @@
             "title": "Name",
             "type": "string"
           },
+          "placeholder": {
+            "$ref": "#/components/schemas/PlaceholderStyle",
+            "default": "tagged"
+          },
           "regex": {
             "maxLength": 512,
             "minLength": 1,
@@ -2334,6 +2338,10 @@
           "mode": {
             "$ref": "#/components/schemas/EntityMode",
             "default": "anonymise_restore"
+          },
+          "placeholder": {
+            "$ref": "#/components/schemas/PlaceholderStyle",
+            "default": "tagged"
           },
           "threshold": {
             "anyOf": [
@@ -5803,6 +5811,15 @@
         "title": "PeriodResponse",
         "type": "object"
       },
+      "PlaceholderStyle": {
+        "description": "How a placeholder is written, for the modes that write a derived one.\n\nApplies to ``anonymise_restore`` and ``anonymise``; ``redact`` writes the\nbare label and has no token to shape.",
+        "enum": [
+          "tagged",
+          "same_length"
+        ],
+        "title": "PlaceholderStyle",
+        "type": "string"
+      },
       "PluginBaseURLOption": {
         "description": "One endpoint a provider type documents: the URL and what it is.\n\nThe label is the plugin's knowledge — which host is the EU-only one is a\nfact about the counterparty, not a sentence the console should have to\nhold — which is why the pair travels together instead of the console\nstyling URLs it cannot vouch for.",
         "properties": {
@@ -7911,6 +7928,10 @@
             "title": "Restore In Response",
             "type": "boolean"
           },
+          "restore_in_tool_arguments": {
+            "title": "Restore In Tool Arguments",
+            "type": "boolean"
+          },
           "score_threshold": {
             "title": "Score Threshold",
             "type": "number"
@@ -7953,6 +7974,7 @@
           "propagation_seconds",
           "fail_open",
           "restore_in_response",
+          "restore_in_tool_arguments",
           "language",
           "score_threshold",
           "presidio_pattern_matching",

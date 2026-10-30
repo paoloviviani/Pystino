@@ -46,6 +46,7 @@ from gateway.deps import (
 )
 from gateway.errors import BadRequestError, error_payload
 from gateway.models import ApiSurface
+from gateway.redaction import inject_system_note, restore_reasoning_and_arguments
 from gateway.routers import _metered
 from gateway.routers.chat import STREAM_HEADERS, settle_completed, spawn_finalisation
 from gateway.routing import affinity_key
@@ -142,6 +143,7 @@ async def create_message(
 
         payload = body.upstream_payload(outcome, upstream_model=resolved.upstream_model)
         search.apply(payload)
+        inject_system_note(payload, outcome, surface=SURFACE)
         payload = metered.shape_payload(payload, surface=SURFACE)
 
         if body.stream:
@@ -175,10 +177,15 @@ async def create_message(
         if out.get("model") is not None:
             out["model"] = resolved.requested_name
         for block in out.get("content") or []:
-            if isinstance(block, dict) and isinstance(block.get("text"), str):
+            if (
+                isinstance(block, dict)
+                and block.get("type") in (None, "text")
+                and isinstance(block.get("text"), str)
+            ):
                 # `.text` alone: this surface's citations carry their own copy of
                 # the quoted text rather than offsets into ours (ADR 0059).
                 block["text"] = (await redactor.restore_response(block["text"], outcome)).text
+        restore_reasoning_and_arguments(out, outcome, surface=SURFACE)
 
         # Finalised after the answer is sent, not before it (ADR 0060).
         return JSONResponse(
