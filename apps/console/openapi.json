@@ -1612,6 +1612,18 @@
             ],
             "title": "Per Image"
           },
+          "per_minute": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Minute"
+          },
           "per_page": {
             "anyOf": [
               {
@@ -1634,7 +1646,8 @@
           "cache_read_per_mtok",
           "cache_write_per_mtok",
           "per_image",
-          "per_page"
+          "per_page",
+          "per_minute"
         ],
         "title": "CataloguePriceHintResponse",
         "type": "object"
@@ -2156,6 +2169,17 @@
             ],
             "title": "Output Per Mtok"
           },
+          "per_minute": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Minute"
+          },
           "per_page": {
             "anyOf": [
               {
@@ -2200,6 +2224,7 @@
           "input_per_mtok",
           "output_per_mtok",
           "per_page",
+          "per_minute",
           "currency",
           "context_window",
           "max_output_tokens",
@@ -3563,6 +3588,22 @@
             ],
             "title": "Output Per Mtok"
           },
+          "per_minute": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Minute"
+          },
           "per_page": {
             "anyOf": [
               {
@@ -4268,6 +4309,7 @@
               "embedding",
               "image",
               "ocr",
+              "transcription",
               "search",
               "decision"
             ],
@@ -4571,6 +4613,7 @@
                   "embedding",
                   "image",
                   "ocr",
+                  "transcription",
                   "search",
                   "decision"
                 ],
@@ -5977,6 +6020,22 @@
             ],
             "title": "Per Image By Size"
           },
+          "per_minute": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Minute"
+          },
           "per_page": {
             "anyOf": [
               {
@@ -6088,6 +6147,17 @@
             ],
             "title": "Per Image By Size"
           },
+          "per_minute": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Minute"
+          },
           "per_page": {
             "anyOf": [
               {
@@ -6124,6 +6194,7 @@
           "per_image",
           "per_image_by_size",
           "per_page",
+          "per_minute",
           "per_search",
           "currency",
           "effective_from",
@@ -8825,6 +8896,11 @@
       },
       "UsageReportRow": {
         "properties": {
+          "audio_seconds": {
+            "default": "0",
+            "title": "Audio Seconds",
+            "type": "string"
+          },
           "completion_tokens": {
             "title": "Completion Tokens",
             "type": "integer"
@@ -8954,6 +9030,7 @@
           "total_tokens",
           "images",
           "searches",
+          "audio_seconds",
           "own_searches",
           "unpriced_own_searches",
           "cost",
@@ -16801,6 +16878,148 @@
         "summary": "Replace User",
         "tags": [
           "scim"
+        ]
+      }
+    },
+    "/v1/audio/transcriptions": {
+      "post": {
+        "operationId": "transcribe_v1_audio_transcriptions_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "format": "binary",
+                    "type": "string"
+                  },
+                  "language": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "response_format": {
+                    "enum": [
+                      "json",
+                      "text",
+                      "verbose_json",
+                      "srt",
+                      "vtt"
+                    ],
+                    "type": "string"
+                  },
+                  "temperature": {
+                    "type": "number"
+                  },
+                  "timestamp_granularities[]": {
+                    "items": {
+                      "enum": [
+                        "word",
+                        "segment"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "file",
+                  "model"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Transcribe",
+        "tags": [
+          "openai"
+        ]
+      }
+    },
+    "/v1/audio/translations": {
+      "post": {
+        "operationId": "translate_v1_audio_translations_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "format": "binary",
+                    "type": "string"
+                  },
+                  "language": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "response_format": {
+                    "enum": [
+                      "json",
+                      "text",
+                      "verbose_json",
+                      "srt",
+                      "vtt"
+                    ],
+                    "type": "string"
+                  },
+                  "temperature": {
+                    "type": "number"
+                  },
+                  "timestamp_granularities[]": {
+                    "items": {
+                      "enum": [
+                        "word",
+                        "segment"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "file",
+                  "model"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Translate",
+        "tags": [
+          "openai"
         ]
       }
     },

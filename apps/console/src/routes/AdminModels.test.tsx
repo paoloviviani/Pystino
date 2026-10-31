@@ -38,6 +38,7 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
       input_per_mtok: "1.000000000000",
       output_per_mtok: "2.000000000000",
       per_page: null,
+      per_minute: null,
       per_search: null,
       cache_read_per_mtok: null,
       cache_write_per_mtok: null,
@@ -67,6 +68,7 @@ const DISCOVERY: CatalogueDiscovery = {
       input_per_mtok: "0.500000000000",
       output_per_mtok: "1.500000000000",
       per_page: null,
+      per_minute: null,
       currency: "EUR",
       context_window: 32000,
       kind: "chat",
@@ -84,6 +86,7 @@ const DISCOVERY: CatalogueDiscovery = {
       input_per_mtok: "0.900000000000",
       output_per_mtok: "1.900000000000",
       per_page: null,
+      per_minute: null,
       currency: "USD",
       context_window: null,
       kind: "chat",
@@ -121,6 +124,7 @@ const DISCOVERY_FILLED: CatalogueDiscovery = {
       input_per_mtok: "0.250000000000",
       output_per_mtok: "0.750000000000",
       per_page: null,
+      per_minute: null,
       currency: "USD",
       context_window: 8000,
       kind: "chat",
@@ -138,6 +142,7 @@ const DISCOVERY_FILLED: CatalogueDiscovery = {
       input_per_mtok: null,
       output_per_mtok: null,
       per_page: null,
+      per_minute: null,
       currency: null,
       context_window: null,
       kind: "chat",
@@ -334,6 +339,18 @@ describe("AdminModels", () => {
     // Nothing of that kind, so no empty section: "no image models" is not
     // information anybody needs on this screen.
     expect(screen.queryByRole("heading", { name: /^Image/ })).not.toBeInTheDocument();
+  });
+
+  it("gives transcription models their own section, with the route that serves them", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routes([model(), model({ id: "m5", name: "whisper", kind: "transcription" })]),
+    );
+    renderScreen(<AdminModels />);
+
+    await waitFor(() => expect(screen.getByText("whisper")).toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: /^Transcription/ })).toBeInTheDocument();
+    expect(screen.getByText(/\/v1\/audio\/transcriptions/)).toBeInTheDocument();
   });
 
   it("gives decision models their own section, with the routes that serve them", async () => {
@@ -1003,6 +1020,7 @@ describe("AdminModels", () => {
       input_per_mtok: null,
       output_per_mtok: null,
       per_page: null,
+      per_minute: null,
       currency: null,
       context_window: null,
       kind,
@@ -1066,6 +1084,7 @@ describe("AdminModels", () => {
       input_per_mtok: null,
       output_per_mtok: null,
       per_page: null,
+      per_minute: null,
       currency: null,
       context_window: null,
       kind: "chat",
@@ -1131,6 +1150,7 @@ describe("AdminModels", () => {
       input_per_mtok: null,
       output_per_mtok: null,
       per_page: null,
+      per_minute: null,
       currency: null,
       context_window: null,
       kind,
@@ -1225,6 +1245,23 @@ describe("AdminModels", () => {
           ?.manual_price,
       ).toEqual({
         per_page: "0.002",
+      });
+    });
+
+    it("asks a transcription row for a rate per minute of audio and sends it", async () => {
+      const { user, calls } = await setup([
+        unpriced("provider/whisper-large", "transcription"),
+      ]);
+      await user.click(screen.getByRole("checkbox", { name: "Import whisper-large" }));
+      // Priced per minute: no token rates, no cache fields, no page rate.
+      expect(screen.queryByLabelText("Input per Mtok")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Per page")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Cache read per Mtok")).not.toBeInTheDocument();
+      await user.type(screen.getByLabelText("Per minute of audio"), "0.006");
+      await user.click(screen.getByRole("button", { name: /^Import/ }));
+      await waitFor(() => expect(calls.importBodies).toHaveLength(1));
+      expect(calls.importBodies![0]!.models[0]?.manual_price).toEqual({
+        per_minute: "0.006",
       });
     });
 

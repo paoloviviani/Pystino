@@ -79,6 +79,21 @@ export function Reports() {
         row.images ? formatNumber(row.images) : <span className={MUTED}>—</span>,
     },
     {
+      key: "audio",
+      header: m["reports.column.audio"](),
+      numeric: true,
+      // A dash, not a zero, for the reason the images column has one. Seconds
+      // as billed (a minute rate is applied to them), so the figure reconciles
+      // with the provider's invoice.
+      hideBelow: "md",
+      render: (row) =>
+        Number(row.audio_seconds) > 0 ? (
+          formatNumber(Number(row.audio_seconds))
+        ) : (
+          <span className={MUTED}>—</span>
+        ),
+    },
+    {
       key: "searches",
       header: m["reports.column.searches"](),
       numeric: true,

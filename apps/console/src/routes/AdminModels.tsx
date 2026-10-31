@@ -87,6 +87,11 @@ const KIND_SECTIONS: {
     description: m["admin_models.section.ocr_description"],
   },
   {
+    kind: "transcription",
+    title: m["admin_models.section.transcription"],
+    description: m["admin_models.section.transcription_description"],
+  },
+  {
     kind: "decision",
     title: m["admin_models.section.decision"],
     description: m["admin_models.section.decision_description"],
@@ -663,6 +668,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
           <option value="chat">{m["admin_models.kind.chat"]()}</option>
           <option value="embedding">{m["admin_models.kind.embedding"]()}</option>
           <option value="image">{m["admin_models.kind.image"]()}</option>
+          <option value="transcription">{m["admin_models.kind.transcription"]()}</option>
           <option value="decision">{m["admin_models.kind.decision"]()}</option>
         </Select>
 
@@ -738,6 +744,7 @@ interface ManualPriceDraft {
   input: string;
   output: string;
   perPage: string;
+  perMinute: string;
   cacheRead: string;
   cacheWrite: string;
   currency: string;
@@ -747,6 +754,7 @@ const EMPTY_DRAFT: ManualPriceDraft = {
   input: "",
   output: "",
   perPage: "",
+  perMinute: "",
   cacheRead: "",
   cacheWrite: "",
   currency: "",
@@ -764,14 +772,15 @@ const takesCacheRates = (row: DiscoveredModel) => CACHE_KINDS.has(row.kind);
  * The rates a kind is metered on, mirrored from the gateway's `_KIND_RATES` so
  * a row asks for what the import will demand and no more: a chat model bills
  * output tokens too, an embedding model generates none, an OCR model charges
- * by the page, and a search tier is metered per request — never priced per
+ * by the page, a transcription model by the minute of audio, and a search tier is metered per request — never priced per
  * token at all.
  */
-const RATE_FIELDS: Record<string, ("input" | "output" | "perPage")[]> = {
+const RATE_FIELDS: Record<string, ("input" | "output" | "perPage" | "perMinute")[]> = {
   chat: ["input", "output"],
   embedding: ["input"],
   image: ["input"],
   ocr: ["perPage"],
+  transcription: ["perMinute"],
   decision: ["input", "output"],
 };
 
@@ -779,6 +788,7 @@ const RATE_LABELS: Record<string, () => string> = {
   input: m["admin_models.discover.manual_rate.input"],
   output: m["admin_models.discover.manual_rate.output"],
   perPage: m["admin_models.discover.manual_rate.per_page"],
+  perMinute: m["admin_models.discover.manual_rate.per_minute"],
 };
 
 /** Money is a string end to end, so a draft is judged by shape and never by
@@ -824,6 +834,7 @@ function manualPricePayload(
   if (fields.includes("input")) price.input_per_mtok = draft.input;
   if (fields.includes("output")) price.output_per_mtok = draft.output;
   if (fields.includes("perPage")) price.per_page = draft.perPage;
+  if (fields.includes("perMinute")) price.per_minute = draft.perMinute;
   if (takesCacheRates(row)) {
     if (draft.cacheRead !== "") price.cache_read_per_mtok = draft.cacheRead;
     if (draft.cacheWrite !== "") price.cache_write_per_mtok = draft.cacheWrite;

@@ -42,6 +42,7 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
         searches: 0,
         own_searches: 0,
         unpriced_own_searches: 0,
+        audio_seconds: "0",
         cost: "0.003",
         native_cost: null,
         native_currency: null,
@@ -64,6 +65,7 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
       searches: 0,
       own_searches: 0,
       unpriced_own_searches: 0,
+      audio_seconds: "0",
       cost: "3.250000000000",
       native_cost: null,
       native_currency: null,
@@ -142,6 +144,26 @@ describe("Reports", () => {
 
     expect(await screen.findByText("(2 unpriced)")).toBeInTheDocument();
     expect(screen.getByText("€0.035")).toBeInTheDocument();
+  });
+
+  it("shows the seconds of audio on a transcription row, a dash elsewhere", async () => {
+    const base = report();
+    const row = base.rows[0]!;
+    vi.stubGlobal(
+      "fetch",
+      respondWith(
+        report({
+          rows: [
+            { ...row, audio_seconds: "754.5", cost: "0.0754" },
+            { ...row, key: "other", label: "gpt-4o-mini", audio_seconds: "0" },
+          ],
+        }),
+      ),
+    );
+    renderScreen();
+
+    expect(await screen.findByText("754.5")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Audio (s)" })).toBeInTheDocument();
   });
 
   it("does not mention unpriced searches when every search had a price", async () => {

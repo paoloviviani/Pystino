@@ -2626,6 +2626,40 @@ export interface paths {
         patch: operations["patch_user_scim_v2__provider__Users__entry_id__patch"];
         trace?: never;
     };
+    "/v1/audio/transcriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transcribe */
+        post: operations["transcribe_v1_audio_transcriptions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/audio/translations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Translate */
+        post: operations["translate_v1_audio_translations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/billing/groups": {
         parameters: {
             query?: never;
@@ -3588,6 +3622,8 @@ export interface components {
             output_per_mtok: string | null;
             /** Per Image */
             per_image: string | null;
+            /** Per Minute */
+            per_minute: string | null;
             /** Per Page */
             per_page: string | null;
         };
@@ -3817,6 +3853,8 @@ export interface components {
             output_modalities: string[];
             /** Output Per Mtok */
             output_per_mtok: string | null;
+            /** Per Minute */
+            per_minute: string | null;
             /** Per Page */
             per_page: string | null;
             /** Price Source */
@@ -4429,6 +4467,8 @@ export interface components {
             input_per_mtok?: number | string | null;
             /** Output Per Mtok */
             output_per_mtok?: number | string | null;
+            /** Per Minute */
+            per_minute?: number | string | null;
             /** Per Page */
             per_page?: number | string | null;
         };
@@ -4711,7 +4751,7 @@ export interface components {
              * @default chat
              * @enum {string}
              */
-            kind?: "chat" | "embedding" | "image" | "ocr" | "search" | "decision";
+            kind?: "chat" | "embedding" | "image" | "ocr" | "transcription" | "search" | "decision";
             /** Max Input Tokens */
             max_input_tokens?: number | null;
             /** Max Output Tokens */
@@ -4795,7 +4835,7 @@ export interface components {
             /** Is Public */
             is_public?: boolean | null;
             /** Kind */
-            kind?: ("chat" | "embedding" | "image" | "ocr" | "search" | "decision") | null;
+            kind?: ("chat" | "embedding" | "image" | "ocr" | "transcription" | "search" | "decision") | null;
             /** Max Input Tokens */
             max_input_tokens?: number | null;
             /** Max Output Tokens */
@@ -5323,6 +5363,8 @@ export interface components {
             per_image_by_size?: {
                 [key: string]: number | string;
             } | null;
+            /** Per Minute */
+            per_minute?: number | string | null;
             /** Per Page */
             per_page?: number | string | null;
             /** Per Search */
@@ -5356,6 +5398,8 @@ export interface components {
             per_image_by_size: {
                 [key: string]: string;
             } | null;
+            /** Per Minute */
+            per_minute: string | null;
             /** Per Page */
             per_page: string | null;
             /** Per Search */
@@ -6521,6 +6565,11 @@ export interface components {
         };
         /** UsageReportRow */
         UsageReportRow: {
+            /**
+             * Audio Seconds
+             * @default 0
+             */
+            audio_seconds: string;
             /** Completion Tokens */
             completion_tokens: number;
             /** Cost */
@@ -10871,6 +10920,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transcribe_v1_audio_transcriptions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                    language?: string;
+                    model: string;
+                    prompt?: string;
+                    /** @enum {string} */
+                    response_format?: "json" | "text" | "verbose_json" | "srt" | "vtt";
+                    temperature?: number;
+                    "timestamp_granularities[]"?: ("word" | "segment")[];
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    translate_v1_audio_translations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                    language?: string;
+                    model: string;
+                    prompt?: string;
+                    /** @enum {string} */
+                    response_format?: "json" | "text" | "verbose_json" | "srt" | "vtt";
+                    temperature?: number;
+                    "timestamp_granularities[]"?: ("word" | "segment")[];
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

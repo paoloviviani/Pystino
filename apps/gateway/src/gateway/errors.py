@@ -78,6 +78,14 @@ class BadRequestError(GatewayError):
     code = "bad_request"
 
 
+class PayloadTooLargeError(GatewayError):
+    """An upload over the configured cap (413)."""
+
+    status_code = status.HTTP_413_CONTENT_TOO_LARGE
+    error_type = "invalid_request_error"
+    code = "file_too_large"
+
+
 class OutsideAccessGroupsError(GatewayError):
     """The join gate refused an authenticated `/v1` caller (ADR 0095).
 

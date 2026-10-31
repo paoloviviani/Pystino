@@ -258,6 +258,9 @@ class ApiSurface(enum.StrEnum):
     #: served either by an upstream OCR model or by this deployment's own
     #: extractor. Metered by the page rather than the token.
     OCR = "ocr"
+    #: Speech to text, `POST /v1/audio/transcriptions`. Metered by the second
+    #: of audio (`usage_records.audio_seconds`), priced per minute.
+    TRANSCRIPTION = "transcription"
     #: A web search this gateway ran itself, `POST /v1/search`. The only
     #: surface metered by a count first: `own_search_requests`, for the reasons
     #: on `LimitMetric.OWN_SEARCH_REQUESTS`. It is billed per request too, at the
@@ -943,6 +946,10 @@ class ModelKind(enum.StrEnum):
     #: carries and not the kind — `/v1/ocr` is one surface with two kinds of
     #: counterparty behind it.
     OCR = "ocr"
+    #: Speech to text: an audio file in, its transcript out, priced per minute
+    #: of audio rather than per token. `POST /v1/audio/transcriptions`. The
+    #: audio cannot be screened before it leaves (docs/redaction.md).
+    TRANSCRIPTION = "transcription"
     #: A web search, served by one of this deployment's own search backends.
     #: A "model" here is a **backend at a tier** — `upstream_model` carries
     #: Linkup's `depth` or Exa's `type` — which is what makes the tier a grant
@@ -1362,6 +1369,10 @@ class ModelPrice(Base):
     # returns a summary is billed for both, and leaving one null is how a real
     # charge records as zero.
     per_page: Mapped[Decimal | None] = mapped_column(default=None)
+    # Per minute of audio, for speech-to-text models. Providers quote it per
+    # minute (or per hour), and a minute is how an operator thinks of it, so it
+    # is stored per minute; the arithmetic divides the metered seconds by 60.
+    per_minute: Mapped[Decimal | None] = mapped_column(default=None)
     # Per server-side web search the provider ran on our behalf (ADR 0058).
     # A third non-token unit, and the one that is a *surcharge*: unlike a page
     # or an image it arrives on top of an ordinary chat request's tokens, so a
@@ -1572,6 +1583,13 @@ class UsageRecord(Base):
     # the ledger cannot be repriced if that pricing is ever modelled properly.
     image_count: Mapped[int] = mapped_column(default=0, server_default=text("0"))
     image_size: Mapped[str | None] = mapped_column(String(32), default=None)
+    # Seconds of audio transcribed, and where the figure came from
+    # (`audio_seconds_source`: `upstream` when the provider reported a duration,
+    # `measured` when we read it from the file header, `estimated` when only
+    # the size was known). Recorded rather than derived, like `image_count`: it
+    # is the billable quantity and cannot be recovered from the money.
+    audio_seconds: Mapped[Decimal | None] = mapped_column(Numeric(14, 3), default=None)
+    audio_seconds_source: Mapped[str | None] = mapped_column(String(16), default=None)
     # Server-side web searches the provider ran and billed for (ADR 0058).
     # A column for the same reason `image_count` is one, and one migration 0023
     # deliberately refused for *cost*: this is the billable **count**, it is

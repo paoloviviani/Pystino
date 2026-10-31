@@ -454,6 +454,7 @@ def _price_response(price: ModelPrice | None) -> PriceResponse | None:
             else None
         ),
         per_page=price.per_page,
+        per_minute=price.per_minute,
         per_search=price.per_search,
         currency=price.currency,
         effective_from=price.effective_from,
@@ -653,6 +654,7 @@ def _catalogue_entry_response(entry: CatalogueEntry) -> CatalogueEntryResponse:
                 cache_write_per_mtok=h.cache_write_per_mtok,
                 per_image=h.per_image,
                 per_page=h.per_page,
+                per_minute=h.per_minute,
             )
             for h in entry.prices
         ],
@@ -1521,6 +1523,7 @@ def _fill_from_hints(
                 cache_read_per_mtok=hint.cache_read_per_mtok,
                 cache_write_per_mtok=hint.cache_write_per_mtok,
                 per_page=hint.per_page,
+                per_minute=hint.per_minute,
             )
         )
     return out
@@ -1675,6 +1678,7 @@ async def discover_models(
                 input_per_mtok=price.input_per_mtok,
                 output_per_mtok=price.output_per_mtok,
                 per_page=price.per_page,
+                per_minute=price.per_minute,
                 currency=price.currency,
                 context_window=price.context_window or limits.get(upstream_id, (None, None))[0],
                 max_output_tokens=(
@@ -1916,6 +1920,7 @@ _KIND_RATES: dict[ModelKind, tuple[str, ...]] = {
     ModelKind.EMBEDDING: ("input_per_mtok",),
     ModelKind.IMAGE: ("input_per_mtok",),
     ModelKind.OCR: ("per_page",),
+    ModelKind.TRANSCRIPTION: ("per_minute",),
     # Metered on input tokens, and a provider may quote an output rate (zero
     # on every decision model seen), so both are required: a rate of zero is
     # accepted, an absent one is not (ADR 0100).
@@ -1926,6 +1931,7 @@ _RATE_PHRASES: dict[str, str] = {
     "input_per_mtok": "an input rate per million tokens",
     "output_per_mtok": "an output rate per million tokens",
     "per_page": "a rate per page",
+    "per_minute": "a rate per minute of audio",
 }
 
 
@@ -1973,6 +1979,7 @@ async def _manual_catalogue_price(
             cache_read_per_mtok=manual.cache_read_per_mtok,
             cache_write_per_mtok=manual.cache_write_per_mtok,
             per_page=manual.per_page,
+            per_minute=manual.per_minute,
             kind=kind,
         ),
         None,
@@ -2230,6 +2237,7 @@ async def import_models(
             cache_write_per_mtok=price.cache_write_per_mtok,
             # An OCR model's whole price is here; the token rates are zero.
             per_page=price.per_page,
+            per_minute=price.per_minute,
             currency=price.currency,
             effective_from=utcnow(),
             source=source,
@@ -2367,6 +2375,7 @@ async def create_price(
             else None
         ),
         per_page=payload.per_page,
+        per_minute=payload.per_minute,
         per_search=payload.per_search,
         currency=currency,
         effective_from=payload.effective_from or utcnow(),

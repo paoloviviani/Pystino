@@ -232,7 +232,7 @@ def list_price(
     tokens = price.input_per_mtok * input_weight + price.output_per_mtok * output_weight
     if tokens > 0:
         return tokens, price.currency
-    for unit in (price.per_image, price.per_page):
+    for unit in (price.per_image, price.per_page, price.per_minute):
         if unit is not None and unit > 0:
             return unit, price.currency
     return None

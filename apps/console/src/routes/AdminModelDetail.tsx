@@ -439,6 +439,7 @@ function Describe({ model }: { model: AdminModel }) {
           <option value="chat">{m["model_detail.kind.chat"]()}</option>
           <option value="embedding">{m["model_detail.kind.embedding"]()}</option>
           <option value="image">{m["model_detail.kind.image"]()}</option>
+          <option value="transcription">{m["model_detail.kind.transcription"]()}</option>
           <option value="decision">{m["model_detail.kind.decision"]()}</option>
         </Select>
 
@@ -632,6 +633,13 @@ function Pricing({ model }: { model: AdminModel }) {
       hideBelow: "md",
     },
     {
+      key: "minute",
+      header: m["model_detail.price.column.minute"](),
+      numeric: true,
+      render: (price) => <Rate amount={price.per_minute} currency={price.currency} />,
+      hideBelow: "md",
+    },
+    {
       key: "search",
       header: m["model_detail.price.column.search"](),
       numeric: true,
@@ -730,6 +738,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
   const [perImage, setPerImage] = useState("");
   const [perSize, setPerSize] = useState("");
   const [perPage, setPerPage] = useState("");
+  const [perMinute, setPerMinute] = useState("");
   const [perSearch, setPerSearch] = useState("");
   const [effective, setEffective] = useState("");
 
@@ -750,6 +759,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
         per_image: perImage === "" ? null : perImage,
         per_image_by_size: sizes,
         per_page: perPage === "" ? null : perPage,
+        per_minute: perMinute === "" ? null : perMinute,
         per_search: perSearch === "" ? null : perSearch,
         // A datetime-local value carries no zone; converting through Date makes
         // the browser's zone explicit rather than letting the server guess.
@@ -765,6 +775,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
           setPerImage("");
           setPerSize("");
           setPerPage("");
+          setPerMinute("");
           setPerSearch("");
           setEffective("");
         },
@@ -849,6 +860,15 @@ function AppendPrice({ model }: { model: AdminModel }) {
             value={perPage}
             onChange={(event) => setPerPage(event.target.value)}
             hint={m["model_detail.append.per_page_hint"]()}
+          />
+          <Input
+            label={m["model_detail.append.per_minute"]()}
+            type="number"
+            min="0"
+            step="0.0000001"
+            value={perMinute}
+            onChange={(event) => setPerMinute(event.target.value)}
+            hint={m["model_detail.append.per_minute_hint"]()}
           />
           <Input
             label={m["model_detail.append.per_search"]()}

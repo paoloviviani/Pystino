@@ -146,6 +146,7 @@ class PricePatch(_Strict):
     cache_write_per_mtok: Money | None = None
     per_image: Money | None = None
     per_page: Money | None = None
+    per_minute: Money | None = None
     currency: Annotated[str, Field(pattern=r"^[A-Z]{3}$")] | None = None
 
 
@@ -207,6 +208,7 @@ class PriceHint:
     cache_write_per_mtok: Decimal | None = None
     per_image: Decimal | None = None
     per_page: Decimal | None = None
+    per_minute: Decimal | None = None
     currency: str = "EUR"
 
 
@@ -455,12 +457,13 @@ def _finish(entry_id: str, draft: _Draft, errors: list[str]) -> CatalogueEntry |
     hints: list[PriceHint] = []
     for (model, effective_from), values in sorted(draft.prices.items()):
         path = f"prices.{model}@{effective_from.isoformat()}"
-        has_unit = any(values.get(k) is not None for k in ("per_image", "per_page"))
+        has_unit = any(values.get(k) is not None for k in ("per_image", "per_page", "per_minute"))
         if not has_unit and (
             values.get("input_per_mtok") is None or values.get("output_per_mtok") is None
         ):
             problems.append(
-                f"{path}: needs input_per_mtok and output_per_mtok (or per_image / per_page)"
+                f"{path}: needs input_per_mtok and output_per_mtok "
+                "(or per_image / per_page / per_minute)"
             )
             continue
         hints.append(

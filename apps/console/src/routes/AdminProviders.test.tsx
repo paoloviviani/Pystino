@@ -156,6 +156,7 @@ function entry(overrides: Partial<CatalogueEntry> = {}): CatalogueEntry {
         cache_write_per_mtok: null,
         per_image: null,
         per_page: null,
+        per_minute: null,
       },
     ],
     origins: [

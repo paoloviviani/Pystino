@@ -40,6 +40,10 @@ dependencies = [
     # sync, directory/authelia_users.py) and should not depend on another
     # package's extras to do it.
     "pyyaml>=6.0",
+    # Reads an audio file's duration from its header, so transcription can be
+    # reserved and billed by the second (gateway/audio.py). MIT, pure Python, no
+    # dependencies of its own (verified at source, 2.3.2).
+    "tinytag>=2.3.2",
 ]
 
 [project.scripts]

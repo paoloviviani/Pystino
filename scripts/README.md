@@ -54,3 +54,12 @@ That work lives in the chat repository (galopin, the Cerea machine agent, in its
 `agent/` directory); the gateway's side of the contract is
 [docs/coding-agents.md](../docs/coding-agents.md). The gateway still has no
 device-flow endpoints of its own, and now needs none.
+
+## `test_transcription_live.py`
+
+Posts a few seconds of generated silence to `/v1/audio/transcriptions` on a running
+gateway, once per response format, and prints each reply with the spend the gateway
+recorded around it; also checks the upload cap answers 413. Reads `GATEWAY_URL`,
+`GATEWAY_KEY` and `TRANSCRIPTION_MODEL` from the environment. It is for a person with a
+real provider key: the unit suite already covers the metering against a fake upstream,
+and this is what shows which duration the provider reports. Never run by CI.

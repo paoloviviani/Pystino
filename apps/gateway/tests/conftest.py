@@ -87,6 +87,8 @@ class FakeUpstream:
         # a test sometimes holds — a provider row pointed at a documented
         # regional host is the case that matters.
         self.urls: list[str] = []
+        #: Files received in multipart uploads: (filename, bytes, content type).
+        self.files: list[tuple[str, bytes, str]] = []
         self._responder: Callable[[httpx.Request], httpx.Response] | None = None
 
     @property
@@ -139,6 +141,32 @@ class FakeUpstream:
         self.urls.append(str(request.url))
         if not request.content:
             self.bodies.append({})
+        elif request.headers.get("content-type", "").startswith("multipart/form-data"):
+            # An audio upload (`/audio/transcriptions`): the text fields as a
+            # dict (repeated names become lists), and the file kept whole in
+            # `files` so a test can compare the bytes that arrived.
+            from email.parser import BytesParser
+            from email.policy import default
+
+            head = b"Content-Type: " + request.headers["content-type"].encode() + b"\r\n\r\n"
+            message = BytesParser(policy=default).parsebytes(head + request.content)
+            fields: dict = {}
+            for part in message.iter_parts():
+                name = part.get_param("name", header="content-disposition")
+                filename = part.get_filename()
+                payload = part.get_payload(decode=True) or b""
+                if filename is not None:
+                    self.files.append((filename, payload, part.get_content_type()))
+                    continue
+                value = payload.decode()
+                if name in fields:
+                    previous = fields[name]
+                    fields[name] = (
+                        [*previous, value] if isinstance(previous, list) else [previous, value]
+                    )
+                else:
+                    fields[name] = value
+            self.bodies.append(fields)
         else:
             try:
                 self.bodies.append(orjson.loads(request.content))

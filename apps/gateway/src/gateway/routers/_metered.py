@@ -104,6 +104,7 @@ _SURFACE_KINDS: dict[ApiSurface, tuple[ModelKind, ...]] = {
     ApiSurface.EMBEDDINGS: (ModelKind.EMBEDDING,),
     ApiSurface.IMAGES: (ModelKind.IMAGE,),
     ApiSurface.OCR: (ModelKind.OCR,),
+    ApiSurface.TRANSCRIPTION: (ModelKind.TRANSCRIPTION,),
     ApiSurface.SEARCH: (ModelKind.SEARCH,),
     ApiSurface.DECISIONS: (ModelKind.DECISION,),
 }
@@ -113,6 +114,7 @@ _KIND_ROUTES: dict[ModelKind, str] = {
     ModelKind.EMBEDDING: "/v1/embeddings",
     ModelKind.IMAGE: "/v1/images/generations",
     ModelKind.OCR: "/v1/ocr",
+    ModelKind.TRANSCRIPTION: "/v1/audio/transcriptions",
     ModelKind.SEARCH: "/v1/search",
     ModelKind.DECISION: "/v1/decisions or /v1/systemone",
 }

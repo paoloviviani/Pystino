@@ -217,6 +217,10 @@ class RequestAccounting:
         # Set by `observe_redaction` when the *response* was the redacted half.
         self._redaction_observed = False
         self._image_size: str | None = None
+        #: Seconds of audio and where the figure came from; set by the
+        #: transcription route, which meters time rather than tokens.
+        self._audio_seconds = Decimal(0)
+        self._audio_source: str | None = None
         #: Calls this gateway made to a search backend of its own, and the
         #: labels for them. Held here rather than on ``TokenCounts`` on
         #: purpose: that structure is multiplied by a per-token rate, and a
@@ -394,6 +398,17 @@ class RequestAccounting:
         self._images = max(0, count)
         self._image_size = size
 
+    def observe_audio(self, seconds: Decimal | float, source: str) -> None:
+        """How many seconds of audio were transcribed, and who said so.
+
+        ``source`` is ``upstream`` (the provider reported a duration),
+        ``measured`` (read from the file's own header) or ``estimated`` (only
+        its size was known). Recorded with the figure so a report can tell an
+        exact duration from a guess.
+        """
+        self._audio_seconds = max(Decimal(0), Decimal(str(seconds)))
+        self._audio_source = source
+
     def observe_own_search(
         self, count: int = 1, *, backend: str | None = None, tier: str | None = None
     ) -> None:
@@ -512,6 +527,18 @@ class RequestAccounting:
 
     def resolve_counts(self, *, failed: bool = False) -> tuple[TokenCounts, UsageSource]:
         """Best available token counts, and an honest label for their provenance."""
+        if self._audio_seconds:
+            # Transcription: the billable quantity is the duration the route
+            # observed, not tokens (a gpt-4o-transcribe reply also carries token
+            # usage, which this surface does not price). An estimate from the
+            # file's size is labelled as one.
+            label = (
+                UsageSource.ESTIMATED
+                if self._audio_source == "estimated"
+                else UsageSource.UPSTREAM_EXACT
+            )
+            return self._with_units(TokenCounts()), label
+
         if self._upstream_usage:
             counts = self._reader.counts(self._upstream_usage)
             # `total` is tokens, and on the OCR surface there are none: the
@@ -574,6 +601,7 @@ class RequestAccounting:
             counts,
             images=self._images or counts.images,
             image_size=self._image_size or counts.image_size,
+            audio_seconds=self._audio_seconds or counts.audio_seconds,
         )
 
     def _was_substituted(self) -> bool:
@@ -794,6 +822,8 @@ class RequestAccounting:
             "cache_write_tokens": counts.cache_write,
             "reasoning_tokens": counts.reasoning,
             "image_count": counts.images,
+            "audio_seconds": counts.audio_seconds or None,
+            "audio_seconds_source": self._audio_source if counts.audio_seconds else None,
             # Recorded whether or not a `per_search` rate existed to price
             # them: the count is what the provider will itemise its invoice
             # by, and an unpriced search that leaves no trace is exactly the
