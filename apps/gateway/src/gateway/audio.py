@@ -122,8 +122,12 @@ def reported(payload: dict[str, Any] | None) -> Decimal | None:
         return None
     candidates: list[Any] = [payload.get("duration")]
     usage = payload.get("usage")
-    if isinstance(usage, dict) and usage.get("type") in (None, "duration"):
-        candidates.append(usage.get("seconds"))
+    if isinstance(usage, dict):
+        # OpenAI: {"type": "duration", "seconds": n}; Cortecs:
+        # {"audio_duration_seconds": n}. A token usage block has neither.
+        if usage.get("type") in (None, "duration"):
+            candidates.append(usage.get("seconds"))
+        candidates.append(usage.get("audio_duration_seconds"))
     for value in candidates:
         if isinstance(value, bool) or value is None:
             continue

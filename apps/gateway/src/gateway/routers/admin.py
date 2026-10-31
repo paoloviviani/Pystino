@@ -179,6 +179,7 @@ from gateway.pricing import (
     fetch_catalogue,
     kinds_by_id,
     limits_by_id,
+    merge_catalogue_payloads,
     parse_catalogue,
     parse_litellm_catalogue,
     parse_openrouter_catalogue,
@@ -1529,6 +1530,29 @@ def _fill_from_hints(
     return out
 
 
+async def _fetch_provider_catalogue(
+    http: Any, provider: Provider, catalogue_url: str, api_key: str | None
+) -> Any:
+    """Fetch a catalogue; an untagged fetch of a sliced one is every slice we serve.
+
+    A counterparty that filters by tag and defaults the filter names the tags it
+    serves in `default_catalogue_tags`; with none in the URL each is fetched and
+    the entries merged by id. An operator's own tag (or the "all" sentinel) is
+    one request, as before.
+    """
+    plugin = plugin_registry.resolve(provider.plugin)
+    default_tags = getattr(plugin, "default_catalogue_tags", None)
+    tags = default_tags() if callable(default_tags) else ()
+    if not tags or "tag=" in catalogue_url:
+        return await fetch_catalogue(http, catalogue_url, api_key)
+    joiner = "&" if "?" in catalogue_url else "?"
+    slices = [
+        await fetch_catalogue(http, f"{catalogue_url}{joiner}tag={quote(tag)}", api_key)
+        for tag in tags
+    ]
+    return merge_catalogue_payloads(slices)
+
+
 async def _catalogue_with_prices(
     # `Any`, as `ControlHttpDep` itself is: the control-plane client is passed
     # through rather than constructed here.
@@ -1566,7 +1590,7 @@ async def _catalogue_with_prices(
     payload = plugin_registry.resolve(provider.plugin).builtin_catalogue()
     if payload is None:
         try:
-            payload = await fetch_catalogue(http, catalogue_url, api_key)
+            payload = await _fetch_provider_catalogue(http, provider, catalogue_url, api_key)
         except CatalogueUnavailable as exc:
             raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
 

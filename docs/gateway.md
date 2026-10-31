@@ -254,9 +254,22 @@ A catalogue entry is imported as a transcription model when its tags say so
 (`Transcription`, `STT`, `ASR`, `speech-to-text`), or when it takes **only**
 audio in and gives text out: a chat model that also hears audio takes text as
 well, and stays a chat model. A rate is read only from a key that names its
-unit (`per_minute`, `transcription_cost_per_minute`, `audio_cost_per_minute`);
-a model whose rate is quoted any other way is imported unpriced and takes a
-hand-typed per-minute rate like any unpriced model, rather than a guessed one.
+unit (`per_minute`, `transcription_cost_per_minute`, `audio_cost_per_minute`),
+plus Cortecs's `pricing.audio_cost`, which is per **second** and is multiplied by
+60 for a model imported as transcription (on a chat model that hears audio it is
+the price of audio input and is left alone). A model whose rate is quoted any
+other way is imported unpriced and takes a hand-typed per-minute rate like any
+unpriced model, rather than a guessed one. The reply's duration is read from
+`duration`, `usage.seconds` or Cortecs's `usage.audio_duration_seconds`;
+`segments` and the rest of the reply pass through untouched. Only the OpenAI
+form fields are forwarded to the provider: Cortecs routing fields
+(`preference`, `allowed_providers`, `eu_native`) are not, as the gateway has no
+pass-through for them on this route.
+
+Cortecs answers an untagged `/models` request with the `Instruct` slice only, so
+Discover on a Cortecs provider with no tag chosen fetches the `Instruct`,
+`Embedding`, `OCR` and `Transcription` slices and merges them by id; choosing a
+tag fetches that one alone.
 
 **Redaction does not apply to the audio.** See
 [Audio is not screened](redaction.md#audio-is-not-screened) for what that means

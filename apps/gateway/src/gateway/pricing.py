@@ -66,6 +66,10 @@ _PAGE_KEYS = ("ocr_cost",)
 #: a bare `transcription_cost` could be per second, minute or hour, and a model
 #: whose rate is not recognised imports unpriced and takes a hand-typed rate
 #: (the manual price in the discovery dialog) instead of a guessed one.
+#: Cortecs's per-second audio rate, converted by the 60 below. Its own constant
+#: because it is the one catalogue rate here whose unit differs from its name.
+_AUDIO_SECOND_KEYS = ("audio_cost",)
+SECONDS_PER_MINUTE = Decimal(60)
 _MINUTE_KEYS = (
     "per_minute",
     "transcription_cost_per_minute",
@@ -192,6 +196,25 @@ def _first(mapping: dict[str, Any], keys: Sequence[str]) -> Any:
         if key in mapping and mapping[key] is not None:
             return mapping[key]
     return None
+
+
+def merge_catalogue_payloads(payloads: Sequence[Any]) -> dict[str, Any]:
+    """Several catalogue slices as one payload, an id appearing once.
+
+    The first slice's entry wins, so a model carrying two of the requested tags
+    is one row, not two.
+    """
+    merged: list[Any] = []
+    seen: set[str] = set()
+    for payload in payloads:
+        for entry in _catalogue_entries(payload):
+            raw_id = _first(entry, _ID_KEYS) if isinstance(entry, dict) else None
+            if raw_id is not None:
+                if str(raw_id) in seen:
+                    continue
+                seen.add(str(raw_id))
+            merged.append(entry)
+    return {"data": merged}
 
 
 def _as_decimal(value: Any) -> Decimal | None:
@@ -512,6 +535,16 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
         page_quote = _as_decimal(_first(source, _PAGE_KEYS))
         per_page = page_quote / PAGES_PER_QUOTE if page_quote is not None else None
         per_minute = _as_decimal(_first(source, _MINUTE_KEYS))
+        kind = _kind_of(entry)
+        if per_minute is None and kind is ModelKind.TRANSCRIPTION:
+            # Cortecs quotes `audio_cost` per **second** ("Audio cost per second
+            # (if supported)", docs.cortecs.ai/api/models). Read only for a model
+            # imported as transcription: on a chat model that hears audio it is
+            # the price of audio *input* in a chat, a different charge that the
+            # chat route has no unit for, and is left alone.
+            per_second = _as_decimal(_first(source, _AUDIO_SECOND_KEYS))
+            if per_second is not None:
+                per_minute = per_second * SECONDS_PER_MINUTE
 
         # An OCR model quotes 0.0 for both token rates and its price in
         # `ocr_cost`; a model with neither is genuinely unreadable. Requiring
@@ -529,8 +562,6 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
             input_rate = Decimal(0)
         if output_rate is None:
             output_rate = Decimal(0)
-
-        kind = _kind_of(entry)
 
         context_window, max_output_tokens = _limits_of(entry)
 

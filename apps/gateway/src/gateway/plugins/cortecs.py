@@ -196,6 +196,17 @@ class CortecsRouterPlugin:
         """Nothing: ask the counterparty what it serves."""
         return None
 
+    def default_catalogue_tags(self) -> tuple[str, ...]:
+        """The slices an untagged discovery fetches, one request each.
+
+        The endpoint answers an untagged request with ``tag=Instruct`` only
+        (docs.cortecs.ai/api/models), so embedding, OCR and transcription models
+        were invisible unless the operator knew to pick their tag. These are the
+        tags whose models this gateway has a kind for; the results are merged by
+        id. Image-Gen and the like stay behind an explicit tag, as before.
+        """
+        return ("Instruct", "Embedding", "OCR", "Transcription")
+
     def catalogue_tag_all(self) -> str | None:
         """``all``, lower-case — the one spelling that lifts the default filter.
 

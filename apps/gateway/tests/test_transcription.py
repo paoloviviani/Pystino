@@ -1150,3 +1150,145 @@ class TestTotalTimeout:
             )
         assert time.perf_counter() - started < 3
         await client.aclose()
+
+
+#: Cortecs's shape for a transcription model and for a chat model that also
+#: hears audio (docs.cortecs.ai/api/models: `audio_cost` is per second).
+CORTECS_WHISPER = {
+    "id": "whisper-large-v3",
+    "tags": ["Transcription"],
+    "input_modalities": ["audio"],
+    "output_modalities": ["text"],
+    "pricing": {
+        "currency": "EUR",
+        "input_token": 0.0,
+        "output_token": 0.0,
+        "audio_cost": 0.00005,
+    },
+}
+CORTECS_VOXTRAL_CHAT = {
+    "id": "voxtral-small-2507",
+    "tags": ["Instruct", "Audio"],
+    "input_modalities": ["text", "audio"],
+    "output_modalities": ["text"],
+    "pricing": {
+        "currency": "EUR",
+        "input_token": 0.1,
+        "output_token": 0.3,
+        "audio_cost": 0.0001,
+    },
+}
+
+
+class TestCortecsShape:
+    def test_audio_cost_per_second_becomes_per_minute_for_a_transcription_model(self) -> None:
+        prices, unparsable = parse_catalogue({"data": [CORTECS_WHISPER]})
+        assert unparsable == []
+        assert prices[0].kind is ModelKind.TRANSCRIPTION
+        # 0.00005 EUR/s x 60 = 0.003 EUR/min, inside the published 0.0008-0.0053.
+        assert prices[0].per_minute == Decimal("0.003")
+
+    def test_a_chat_model_that_hears_audio_keeps_its_audio_cost_out_of_per_minute(self) -> None:
+        prices, _ = parse_catalogue({"data": [CORTECS_VOXTRAL_CHAT]})
+        assert prices[0].kind is ModelKind.CHAT
+        assert prices[0].per_minute is None
+
+    def test_a_transcription_model_with_only_an_audio_cost_is_not_unparsable(self) -> None:
+        entry = {**CORTECS_WHISPER, "pricing": {"currency": "EUR", "audio_cost": 0.00005}}
+        prices, unparsable = parse_catalogue({"data": [entry]})
+        assert unparsable == []
+        assert prices[0].per_minute == Decimal("0.003")
+
+    def test_cortecs_usage_is_read_as_the_upstream_duration(self) -> None:
+        assert audio.reported({"text": "x", "usage": {"audio_duration_seconds": 12.5}}) == Decimal(
+            "12.5"
+        )
+        # Segments ride along untouched; they are not a duration.
+        assert audio.reported({"segments": [{"end": 3.0}]}) is None
+
+    async def test_the_cortecs_duration_is_billed_and_segments_pass_through(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        model = await add_model(session, seeded, per_minute="0.60")
+        reply = {
+            "text": "hi",
+            "segments": [{"id": 0, "start": 0.0, "end": 3.0, "text": "hi"}],
+            "usage": {"audio_duration_seconds": 30},
+        }
+        fake_upstream.set_json(reply)
+        response = await post_audio(client, seeded, model.name, response_format="verbose_json")
+        assert response.json() == reply
+        record = await latest_record(session)
+        assert record.audio_seconds == Decimal("30")
+        assert record.audio_seconds_source == "upstream"
+        assert record.cost == Decimal("0.30")
+
+    async def test_unknown_client_fields_are_not_forwarded(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        model = await add_model(session, seeded)
+        fake_upstream.set_json({"text": "hi", "duration": 3})
+        await post_audio(
+            client, seeded, model.name, preference="cost", eu_native="true", allowed_providers="x"
+        )
+        sent = fake_upstream.last_body
+        assert not {"preference", "eu_native", "allowed_providers"} & set(sent)
+
+
+class TestDiscoveryFetchesEverySlice:
+    async def test_an_untagged_cortecs_fetch_asks_for_each_slice_and_merges_by_id(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        from test_admin import as_user, make_admin
+
+        asked: list[str] = []
+        slices = {
+            "Instruct": [CORTECS_VOXTRAL_CHAT],
+            "Embedding": [],
+            "OCR": [],
+            # whisper also carries Instruct in this fixture: it must appear once.
+            "Transcription": [CORTECS_WHISPER, CORTECS_VOXTRAL_CHAT],
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            asked.append(str(request.url))
+            tag = request.url.params.get("tag")
+            return httpx.Response(200, json={"data": slices.get(tag or "", [])})
+
+        app.state.control_http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        as_user(app, await make_admin(session_factory, seeded))
+        created = await client.post(
+            "/api/admin/providers", json={"name": "cortecs-live", "plugin": "cortecs"}
+        )
+        provider_id = created.json()["id"]
+
+        body = (await client.get(f"/api/admin/models/discover?provider_id={provider_id}")).json()
+        assert sorted(url.rsplit("tag=", 1)[1] for url in asked) == [
+            "Embedding",
+            "Instruct",
+            "OCR",
+            "Transcription",
+        ]
+        kinds = {row["upstream_model"]: row["kind"] for row in body["available"]}
+        assert kinds == {"whisper-large-v3": "transcription", "voxtral-small-2507": "chat"}
+        whisper = next(r for r in body["available"] if r["upstream_model"] == "whisper-large-v3")
+        assert Decimal(whisper["per_minute"]) == Decimal("0.003")
+
+    def test_merging_keeps_the_first_entry_for_an_id(self) -> None:
+        from gateway.pricing import merge_catalogue_payloads
+
+        first = {"id": "a", "n": 1}
+        merged = merge_catalogue_payloads([{"data": [first]}, {"data": [{"id": "a", "n": 2}]}])
+        assert merged["data"] == [first]
