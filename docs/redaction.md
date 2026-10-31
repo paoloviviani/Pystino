@@ -152,10 +152,10 @@ sent. "Active" means the engine is not `noop` and the folded policy for that
 caller (the deployment policy plus every rule that names them, their group, the
 model or its provider) has some entity type, the default, or a custom pattern in
 a mode other than `off`. A rule that only lists types as `off` does not count.
-Do not turn it off unless you accept that those callers can send audio that the
-rule would have kept from the provider had it been text; if you do not accept
-that, turn it to `false`, or do not grant the transcription model to those
-groups.
+Leave it `true` only if you accept that audio from those callers reaches the
+provider unscreened, although the same words typed as text would have been
+substituted or blocked by their rule. If you do not accept that, set it to
+`false`, or do not grant the transcription model to those groups.
 
 ## What happens to a detected entity: the policy model
 

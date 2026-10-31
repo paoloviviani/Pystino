@@ -529,15 +529,20 @@ class RequestAccounting:
         """Best available token counts, and an honest label for their provenance."""
         if self._audio_seconds:
             # Transcription: the billable quantity is the duration the route
-            # observed, not tokens (a gpt-4o-transcribe reply also carries token
-            # usage, which this surface does not price). An estimate from the
-            # file's size is labelled as one.
+            # observed. A model priced per token instead (gpt-4o-transcribe
+            # reports token usage) is billed on those, and `compute_cost` charges
+            # each unit only where the price has a rate for it, so a reply that
+            # carries both is not charged twice for one rate. Only a duration the
+            # *provider* reported is exact: one read from the file's header or
+            # guessed from its size came from the caller's bytes, and the row
+            # says so (`audio_seconds_source` has which).
+            counts = self._reader.counts(self._upstream_usage) if self._upstream_usage else None
             label = (
-                UsageSource.ESTIMATED
-                if self._audio_source == "estimated"
-                else UsageSource.UPSTREAM_EXACT
+                UsageSource.UPSTREAM_EXACT
+                if self._audio_source == "upstream"
+                else UsageSource.ESTIMATED
             )
-            return self._with_units(TokenCounts()), label
+            return self._with_units(counts or TokenCounts()), label
 
         if self._upstream_usage:
             counts = self._reader.counts(self._upstream_usage)

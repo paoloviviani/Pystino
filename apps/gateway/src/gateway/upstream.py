@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.parse import urlencode
 
+import anyio
 import httpx
 import orjson
 
@@ -298,13 +299,21 @@ class OpenAICompatibleUpstream:
         for name, value in fields:
             form.setdefault(name, []).append(value)
         try:
-            response = await self._client.post(
-                f"{self._settings.base_url}{path}",
-                data=form,
-                files={"file": (filename, content, content_type)},
-                headers=headers,
-                timeout=timeout,
-            )
+            # httpx's read timeout restarts with every chunk received, so a
+            # provider that trickles bytes would hold the request for as long as
+            # it likes; this is the total.
+            with anyio.fail_after(timeout_seconds):
+                response = await self._client.post(
+                    f"{self._settings.base_url}{path}",
+                    data=form,
+                    files={"file": (filename, content, content_type)},
+                    headers=headers,
+                    timeout=timeout,
+                )
+        except TimeoutError as exc:
+            raise UpstreamError(
+                f"upstream took longer than {timeout_seconds:.0f}s to transcribe", cause=exc
+            ) from exc
         except httpx.HTTPError as exc:
             raise UpstreamError(f"upstream request failed: {exc}", cause=exc) from exc
 

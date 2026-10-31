@@ -221,19 +221,34 @@ and what the row says about it (`usage_records.audio_seconds_source`):
 
 1. **`upstream`**: the provider's own duration, from `verbose_json`'s `duration`
    or `usage.seconds` on a `json` reply. It is what the provider invoices.
-2. **`measured`**: read from the file's header (WAV, MP3, FLAC, Ogg and Opus,
-   M4A and a few others) by `tinytag`, MIT and pure Python, plus the standard
-   library's `wave`. Used when the reply carries no duration (`text`, `srt`,
-   `vtt`).
+2. **`measured`**: read from the file's header (WAV, and MP3, FLAC, Ogg and Opus,
+   M4A and a few others up to 2 MB) by `tinytag`, MIT and pure Python, plus the
+   standard library's `wave`. Used when the reply carries no duration (`text`,
+   `srt`, `vtt`). The header is the caller's, so it is checked against the
+   file's size: a header that claims fewer seconds than the size allows at the
+   densest plausible rate (the WAV's own rate, otherwise 1.5 Mbit/s) is replaced
+   by that floor and labelled `estimated`. The MP3 reader is slow on crafted
+   input, so it runs in a thread and only on files up to 2 MB.
 3. **`estimated`**: the file's size at 32 kbit/s, for a format neither reader
-   knows. The row's usage source is `estimated`, so reports count it with the
-   other estimates.
+   knows (or a longer one than the reader is run on).
+
+Only `upstream` is exact: the row's usage source is `upstream_exact` for it and
+`estimated` for the other two, so reports count them with the other estimates.
 
 The quota reservation is made before the call, from the file's measured length
 whenever it can be read; for a file that cannot be read it is a pessimistic
 bound from the size (8 kbit/s). Settlement replaces it with the figure above, so
 a provider that reports more than the header said is charged what it reported.
 `x-bill-to`, model access groups and quota rules apply as on any `/v1` route.
+
+A model whose price has a per-token rate and no `per_minute` (gpt-4o-transcribe
+reports tokens, not a duration) is billed on the tokens the provider reports. A
+model with a price row that has neither is refused with a 400
+(`no_per_minute_price`) rather than served free; a model with no price row at
+all is unmetered by cost, as for every other kind. The upload is counted as it
+arrives, so a chunked request with no declared length is cut off with a 413 at
+the cap and never spools more than the cap plus the form's framing to disk; the
+provider call is bounded in total time by the timeout, not per chunk.
 
 A catalogue entry is imported as a transcription model when its tags say so
 (`Transcription`, `STT`, `ASR`, `speech-to-text`), or when it takes **only**

@@ -69,6 +69,7 @@ async def add_model(
     per_minute: str | None = "0.60",
     upstream: str = "whisper-large-v3",
     grant: bool = True,
+    with_price: bool = True,
 ) -> ModelDef:
     model = ModelDef(
         name=name,
@@ -78,16 +79,17 @@ async def add_model(
     )
     session.add(model)
     await session.flush()
-    session.add(
-        ModelPrice(
-            model_id=model.id,
-            # Zero token rates prove the charge is not coming from them.
-            input_per_mtok=Decimal(0),
-            output_per_mtok=Decimal(0),
-            per_minute=Decimal(per_minute) if per_minute else None,
-            currency="EUR",
+    if with_price:
+        session.add(
+            ModelPrice(
+                model_id=model.id,
+                # Zero token rates prove the charge is not coming from them.
+                input_per_mtok=Decimal(0),
+                output_per_mtok=Decimal(0),
+                per_minute=Decimal(per_minute) if per_minute else None,
+                currency="EUR",
+            )
         )
-    )
     if grant:
         session.add(GroupModelAccess(group_id=seeded.group.id, model_id=model.id))
     await session.commit()
@@ -187,7 +189,7 @@ class TestMetering:
         assert record.audio_seconds == Decimal("3")
         assert record.audio_seconds_source == "measured"
         assert record.cost == Decimal("0.03")
-        assert record.usage_source is UsageSource.UPSTREAM_EXACT
+        assert record.usage_source is UsageSource.ESTIMATED
 
     async def test_an_unreadable_file_is_estimated_from_its_size_and_says_so(
         self,
@@ -225,7 +227,7 @@ class TestMetering:
         session: AsyncSession,
         fake_upstream: FakeUpstream,
     ) -> None:
-        model = await add_model(session, seeded, name="unpriced", per_minute=None)
+        model = await add_model(session, seeded, name="unpriced", with_price=False)
         fake_upstream.set_json({"text": "hi", "duration": 60})
         assert (await post_audio(client, seeded, model.name)).status_code == 200
         record = await latest_record(session)
@@ -658,7 +660,7 @@ class TestRedactionSwitch:
 
 class TestAudioDuration:
     def test_a_wav_header_gives_the_exact_length(self) -> None:
-        assert audio.measure(wav_bytes(2.5)) == Decimal("2.5")
+        assert audio.measure(wav_bytes(2.5)).seconds == Decimal("2.5")
 
     def test_garbage_has_no_measurable_length(self) -> None:
         assert audio.measure(b"not audio at all") is None
@@ -879,3 +881,272 @@ class TestManualPriceAndAdmin:
         )
         assert response.status_code == 201, response.text
         assert response.json()["kind"] == "transcription"
+
+
+CRAFTED_MP3 = b"\xff\xfb" * (1_900_000 // 2)
+
+
+class TestCraftedInput:
+    """tinytag's MP3 frame scan is slow on repeating sync bytes (2 MB: ~0.9 s,
+    25 MB: ~15 s). It must not hold the event loop, nor run on big files."""
+
+    def test_a_large_crafted_file_is_not_handed_to_tinytag(self) -> None:
+        import time
+
+        started = time.perf_counter()
+        assert audio.measure(b"\xff\xfb" * 4_000_000) is None  # 8 MB
+        assert time.perf_counter() - started < 0.5
+
+    async def test_the_event_loop_stays_responsive_while_a_crafted_file_is_measured(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        import asyncio
+        import time
+
+        model = await add_model(session, seeded)
+        fake_upstream.set_raw(b"hi", status=200, content_type="text/plain")
+        gaps: list[float] = []
+        stop = False
+
+        async def ticker() -> None:
+            last = time.perf_counter()
+            while not stop:
+                await asyncio.sleep(0.01)
+                now = time.perf_counter()
+                gaps.append(now - last)
+                last = now
+
+        task = asyncio.create_task(ticker())
+        started = time.perf_counter()
+        response = await post_audio(
+            client,
+            seeded,
+            model.name,
+            data=CRAFTED_MP3,
+            filename="x.mp3",
+            content_type="audio/mpeg",
+            response_format="text",
+        )
+        elapsed = time.perf_counter() - started
+        stop = True
+        await task
+        assert response.status_code == 200
+        assert elapsed < 10
+        # A synchronous scan would show up as one gap as long as the scan.
+        assert max(gaps) < 0.5, max(gaps)
+
+
+class TestChunkedUploadIsBounded:
+    async def test_an_oversized_chunked_body_is_cut_off_at_the_cap(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+        settings: Settings,
+    ) -> None:
+        """No Content-Length, so only counting the bytes can stop it: the
+        generator is abandoned long before it has sent its 5 MB."""
+        model = await add_model(session, seeded)
+        settings.transcription.max_upload_bytes = 1000
+        boundary = "XBOUNDARYX"
+        sent = 0
+
+        async def body() -> Any:
+            nonlocal sent
+            head = (
+                f'--{boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n'
+                f"{model.name}\r\n--{boundary}\r\n"
+                'Content-Disposition: form-data; name="file"; filename="a.wav"\r\n'
+                "Content-Type: audio/wav\r\n\r\n"
+            ).encode()
+            sent += len(head)
+            yield head
+            for _ in range(320):
+                chunk = b"\x00" * 16384
+                sent += len(chunk)
+                yield chunk
+            yield f"\r\n--{boundary}--\r\n".encode()
+
+        response = await client.post(
+            "/v1/audio/transcriptions",
+            content=body(),
+            headers={
+                **seeded.auth,
+                "content-type": f"multipart/form-data; boundary={boundary}",
+            },
+        )
+        assert response.status_code == 413
+        assert response.json()["error"]["code"] == "file_too_large"
+        # 320 x 16 KB = 5 MB offered; cap + 64 KB framing + a chunk or two read.
+        assert sent < 300_000, sent
+        assert fake_upstream.bodies == []
+
+
+class TestHeaderIsNotTrusted:
+    async def test_a_header_claiming_one_second_over_megabytes_is_floored_and_labelled(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+        monkeypatch: Any,
+    ) -> None:
+        model = await add_model(session, seeded, per_minute="0.60")
+        fake_upstream.set_raw(b"hi", status=200, content_type="text/plain")
+        data = wav_bytes(1.0, rate=16000) + b"\x00" * 5_000_000
+        captured: list[Decimal] = []
+        original = metered.begin
+
+        async def spy(**kwargs: Any) -> Any:
+            captured.append(kwargs["worst_case"].audio_seconds)
+            return await original(**kwargs)
+
+        monkeypatch.setattr(metered, "begin", spy)
+        response = await post_audio(client, seeded, model.name, data=data, response_format="text")
+        assert response.status_code == 200
+        record = await latest_record(session)
+        floor = Decimal(len(data)) / Decimal(32000)  # 16 kHz 16-bit mono
+        assert record.audio_seconds == pytest.approx(floor, abs=Decimal("0.01"))
+        assert record.audio_seconds > 100
+        assert record.audio_seconds_source == "estimated"
+        assert record.usage_source is UsageSource.ESTIMATED
+        # The reservation was the floor too, not the claimed second.
+        assert captured[0] == record.audio_seconds
+
+    async def test_an_honest_wav_is_still_measured(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        model = await add_model(session, seeded)
+        fake_upstream.set_raw(b"hi", status=200, content_type="text/plain")
+        await post_audio(client, seeded, model.name, data=wav_bytes(30), response_format="text")
+        record = await latest_record(session)
+        assert record.audio_seconds == Decimal("30")
+        assert record.audio_seconds_source == "measured"
+
+    async def test_only_an_upstream_duration_is_labelled_exact(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        model = await add_model(session, seeded)
+        fake_upstream.set_json({"text": "hi", "duration": 3})
+        await post_audio(client, seeded, model.name, response_format="verbose_json")
+        assert (await latest_record(session)).usage_source is UsageSource.UPSTREAM_EXACT
+
+
+class TestTokenPricedTranscription:
+    async def _priced(
+        self, session: AsyncSession, seeded: Seeded, name: str, **rates: str | None
+    ) -> ModelDef:
+        model = ModelDef(
+            name=name,
+            upstream_model="gpt-4o-transcribe",
+            provider_id=seeded.provider.id,
+            kind=ModelKind.TRANSCRIPTION,
+        )
+        session.add(model)
+        await session.flush()
+        session.add(
+            ModelPrice(
+                model_id=model.id,
+                input_per_mtok=Decimal(rates.get("input") or 0),
+                output_per_mtok=Decimal(rates.get("output") or 0),
+                per_minute=Decimal(rates["minute"]) if rates.get("minute") else None,
+                currency="EUR",
+            )
+        )
+        session.add(GroupModelAccess(group_id=seeded.group.id, model_id=model.id))
+        await session.commit()
+        return model
+
+    async def test_a_model_with_token_rates_and_no_minute_rate_bills_the_tokens(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        model = await self._priced(session, seeded, "tok", input="2", output="8")
+        fake_upstream.set_json(
+            {
+                "text": "hi",
+                "usage": {
+                    "type": "tokens",
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                    "total_tokens": 1500,
+                },
+            }
+        )
+        assert (await post_audio(client, seeded, model.name)).status_code == 200
+        record = await latest_record(session)
+        # 1000 x 2/M + 500 x 8/M = 0.006, not free.
+        assert record.cost == Decimal("0.006")
+        assert record.prompt_tokens == 1000
+
+    async def test_a_price_row_with_neither_rate_is_refused_not_served_free(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        model = await self._priced(session, seeded, "nothing")
+        fake_upstream.set_json({"text": "never"})
+        response = await post_audio(client, seeded, model.name)
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "no_per_minute_price"
+        assert fake_upstream.bodies == []
+        assert (await session.execute(select(UsageRecord))).first() is None
+
+    async def test_an_explicit_zero_minute_rate_is_free_by_decision(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        model = await self._priced(session, seeded, "free", minute="0")
+        fake_upstream.set_json({"text": "hi", "duration": 60})
+        assert (await post_audio(client, seeded, model.name)).status_code == 200
+        assert (await latest_record(session)).cost == Decimal(0)
+
+
+class TestTotalTimeout:
+    async def test_a_provider_that_trickles_is_cut_off_at_the_total(self) -> None:
+        """httpx's read timeout restarts per chunk; the deadline must not."""
+        import asyncio
+        import time
+
+        from gateway.config import UpstreamSettings
+        from gateway.upstream import OpenAICompatibleUpstream, UpstreamError
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            await asyncio.sleep(10)
+            return httpx.Response(200, json={"text": "late"})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        upstream = OpenAICompatibleUpstream(UpstreamSettings(base_url="http://provider/v1"), client)
+        started = time.perf_counter()
+        with pytest.raises(UpstreamError, match="longer than"):
+            await upstream.transcribe(
+                "/audio/transcriptions",
+                [("model", "m")],
+                filename="a.wav",
+                content=b"x",
+                content_type="audio/wav",
+                timeout_seconds=0.3,
+            )
+        assert time.perf_counter() - started < 3
+        await client.aclose()

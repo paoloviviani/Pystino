@@ -953,9 +953,14 @@ class ExtractorSettings(BaseModel):
 class TranscriptionSettings(BaseModel):
     """Speech to text (`POST /v1/audio/transcriptions`, ``/translations``).
 
-    Audio is forwarded to the provider as it arrives and is never held beyond
-    the request, so these are the bounds that keep one upload from holding a
-    worker, and the one policy switch redaction needs (docs/redaction.md).
+    An upload is spooled by the web layer (to memory up to 1 MB, then to a
+    temporary file), copied into memory as bytes for the provider call, and
+    dropped when the request ends. So a request holds up to
+    ``max_upload_bytes`` in memory for as long as the provider takes (25 MB by
+    default; concurrent requests multiply it), and the disk holds at most that
+    plus the form framing while it is received. These settings are the bounds
+    that keep one upload from holding a worker, and the one policy switch
+    redaction needs (docs/redaction.md).
     """
 
     #: Largest file accepted, in bytes (``GATEWAY_TRANSCRIPTION__MAX_UPLOAD_BYTES``).

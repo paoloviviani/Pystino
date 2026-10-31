@@ -33,15 +33,15 @@ same kind, same unit, same upload, and no `language` field.
 from __future__ import annotations
 
 import logging
-from decimal import Decimal
 from typing import Any
 
+import anyio.to_thread
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.datastructures import UploadFile
 
 from gateway import audio
-from gateway.accounting import TokenCounts
+from gateway.accounting import TokenCounts, select_price
 from gateway.config import EffectivePolicy, EntityMode, RedactionPolicy, Settings
 from gateway.deps import (
     EstimatorDep,
@@ -67,6 +67,9 @@ RESPONSE_FORMATS = ("json", "text", "verbose_json", "srt", "vtt")
 #: Multipart framing and the small text fields, on top of the file itself, when
 #: judging the Content-Length of the whole request against the file cap.
 _OVERHEAD_BYTES = 64 * 1024
+#: Text fields a transcription form may carry (the documented ones, and
+#: `timestamp_granularities[]` repeated), with room to spare.
+_MAX_FIELDS = 16
 
 _MULTIPART_SCHEMA: dict[str, Any] = {
     "requestBody": {
@@ -189,10 +192,28 @@ async def _serve(
     if declared and declared.isdigit() and int(declared) > cap + _OVERHEAD_BYTES:
         raise too_large
 
+    # The bytes are counted as they arrive, not trusted from a header: a
+    # chunked request declares no length, and starlette spools a file part to
+    # disk with no limit of its own (it bounds only the text fields). Past the
+    # cap plus the framing the read stops with a 413, so no more than that is
+    # ever written, whatever the client sends. One file and a handful of text
+    # fields is all this form has.
+    received = 0
+
+    async def counting_receive() -> Any:
+        nonlocal received
+        message = await request.receive()
+        if message["type"] == "http.request":
+            received += len(message.get("body", b""))
+            if received > cap + _OVERHEAD_BYTES:
+                raise too_large
+        return message
+
+    counted = Request(request.scope, counting_receive)
     # The form is closed as soon as the bytes are copied out of it: starlette
     # spools an upload to a temporary file, and leaving it to the garbage
     # collector is a descriptor held for as long as the provider takes.
-    form = await request.form()
+    form = await counted.form(max_files=1, max_fields=_MAX_FIELDS)
     try:
         upload = form.get("file")
         if not isinstance(upload, UploadFile):
@@ -242,11 +263,32 @@ async def _serve(
             code="transcription_not_allowed_under_redaction",
         )
 
+    # A model with a price row that charges neither per minute nor per token
+    # would serve every request free. Refused here, before anything is spent;
+    # no price row at all stays unmetered by cost, as for every other kind.
+    price = select_price(list(model.prices))
+    if (
+        price is not None
+        and price.per_minute is None
+        and not price.input_per_mtok
+        and not price.output_per_mtok
+    ):
+        raise BadRequestError(
+            f"{model_name!r} has no per-minute price, and no token price to fall back on. "
+            "An administrator needs to set a rate per minute of audio on the model.",
+            code="no_per_minute_price",
+        )
+
     # Read before the call so the reservation is the real figure whenever the
-    # container can be parsed; the size bound is only for files it cannot.
-    measured = audio.measure(data)
-    reserved = measured or audio.estimate(
-        len(data), bytes_per_second=audio.RESERVE_BYTES_PER_SECOND
+    # container can be parsed; the size bound is only for files it cannot. In a
+    # thread: tinytag is pure Python and must not hold the event loop. The
+    # header is caller-controlled, so it is checked against the size.
+    measurement = await anyio.to_thread.run_sync(audio.measure, data)
+    measured = audio.checked(len(data), measurement) if measurement else None
+    reserved = (
+        measured.seconds
+        if measured
+        else audio.estimate(len(data), bytes_per_second=audio.RESERVE_BYTES_PER_SECOND)
     )
     metered = await _metered.begin(
         fx=request.app.state.fx,
@@ -325,11 +367,11 @@ async def _serve(
 
 
 def _duration(
-    payload: dict[str, Any] | None, measured: Decimal | None, size: int
+    payload: dict[str, Any] | None, measured: audio.Duration | None, size: int
 ) -> audio.Duration:
     """The billable seconds, from the best source there is."""
     if (seconds := audio.reported(payload)) is not None:
         return audio.Duration(seconds, audio.UPSTREAM)
     if measured is not None:
-        return audio.Duration(measured, audio.MEASURED)
+        return measured
     return audio.Duration(audio.estimate(size), audio.ESTIMATED)

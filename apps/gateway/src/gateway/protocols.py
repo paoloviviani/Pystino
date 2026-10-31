@@ -912,10 +912,10 @@ class OcrReader(_NoStreamedExtras):
 class TranscriptionReader(_NoStreamedExtras):
     """Speech to text, `POST /v1/audio/transcriptions`.
 
-    Like `ImagesReader` and `OcrReader` it reads no tokens: the billable
-    quantity is the audio's duration, which the route observes itself
-    (`RequestAccounting.observe_audio`). A gpt-4o-transcribe reply carries token
-    usage too; it is deliberately not priced here, the surface is per minute.
+    The billable quantity is normally the audio's duration, which the route
+    observes itself (`RequestAccounting.observe_audio`). A gpt-4o-transcribe
+    reply carries token usage instead of a duration; those tokens are read here
+    and priced only if the model has token rates.
 
     The transcript is the model's whole output and is returned as it came: the
     audio carried no placeholders (it could not be screened before upstream, see
@@ -928,6 +928,15 @@ class TranscriptionReader(_NoStreamedExtras):
         return payload
 
     def counts(self, usage: dict[str, Any] | None) -> TokenCounts:
+        """Token usage, only where the provider reports it as tokens.
+
+        gpt-4o-transcribe answers `usage: {"type": "tokens", "input_tokens": ...}`;
+        whisper answers `{"type": "duration", "seconds": ...}`, which is not a
+        token count and is read by the route as a duration. A model priced per
+        token and not per minute is billed on the former.
+        """
+        if isinstance(usage, dict) and usage.get("type") == "tokens":
+            return TokenCounts.from_responses_usage(usage)
         return TokenCounts()
 
     def shift_citations(self, payload: dict[str, Any], shift: Shift) -> bool:

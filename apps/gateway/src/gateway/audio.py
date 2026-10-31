@@ -34,6 +34,19 @@ ESTIMATE_BYTES_PER_SECOND = 4_000
 #: the thinnest speech codecs. A bound has to be pessimistic, and a file at that
 #: rate is the longest the same bytes could plausibly be.
 RESERVE_BYTES_PER_SECOND = 1_000
+#: The densest audio a header can honestly describe, for a format whose own
+#: rate is not known: 1.5 Mbit/s (48 kHz 16-bit stereo PCM, or FLAC). A header
+#: claiming more bytes per second than this is lying about its length, and the
+#: bill is floored at what the size allows (see `checked`).
+MAX_PLAUSIBLE_BYTES_PER_SECOND = 192_000
+#: A header's duration may fall short of the size-based floor by this factor
+#: before it is distrusted: container overhead and metadata are real.
+TOLERANCE = Decimal("1.25")
+#: tinytag walks MP3 frames in pure Python, and a crafted file of repeating sync
+#: bytes makes that quadratic-ish (measured: 2 MB 0.9 s, 8 MB 4 s, 25 MB 15 s).
+#: It is only run on files up to this size; a larger one is billed from its
+#: size, labelled as an estimate. The header-only WAV reader has no such limit.
+TINYTAG_MAX_BYTES = 2 * 1024 * 1024
 
 #: ``source`` values, as recorded on ``usage_records.audio_seconds_source``.
 UPSTREAM = "upstream"
@@ -47,24 +60,56 @@ class Duration:
     source: str
 
 
-def measure(data: bytes) -> Decimal | None:
-    """The duration of *data* in seconds, read from its header, or None."""
+@dataclass(frozen=True, slots=True)
+class Measurement:
+    """A duration read from a header, and the densest the file could be."""
+
+    seconds: Decimal
+    #: Bytes per second the size-based floor uses: the WAV's exact rate, or the
+    #: general plausible maximum.
+    bytes_per_second: int
+
+
+def measure(data: bytes) -> Measurement | None:
+    """The duration of *data* in seconds, read from its header, or None.
+
+    Synchronous and CPU-bound for the formats `tinytag` reads: call it through
+    a thread (``anyio.to_thread.run_sync``), never on the event loop.
+    """
     try:
         with wave.open(io.BytesIO(data)) as wav:
             rate = wav.getframerate()
-            if rate > 0:
-                return _seconds(wav.getnframes() / rate)
+            width = wav.getsampwidth() * wav.getnchannels()
+            if rate > 0 and width > 0:
+                return Measurement(_seconds(wav.getnframes() / rate), rate * width)
     except (wave.Error, EOFError, ValueError):
         pass
+    if len(data) > TINYTAG_MAX_BYTES:
+        return None
     try:
         from tinytag import TinyTag
 
         tag = TinyTag.get(file_obj=io.BytesIO(data), tags=False, duration=True)
         if tag.duration:
-            return _seconds(tag.duration)
+            return Measurement(_seconds(tag.duration), MAX_PLAUSIBLE_BYTES_PER_SECOND)
     except Exception:  # unsupported or damaged: every parser failure is "unknown"
         logger.debug("could not read an audio duration", exc_info=True)
     return None
+
+
+def checked(size: int, measurement: Measurement) -> Duration:
+    """A header's duration, unless the size says it cannot be true.
+
+    The header is caller-controlled: a WAV that says one second above 20 MB of
+    data would otherwise be reserved and billed as one second whenever the
+    provider reports no duration. The floor is what the size allows at the
+    densest plausible rate; a header that falls short of it is replaced by the
+    floor and the figure is labelled an estimate.
+    """
+    floor = estimate(size, bytes_per_second=measurement.bytes_per_second)
+    if measurement.seconds * TOLERANCE >= floor:
+        return Duration(measurement.seconds, MEASURED)
+    return Duration(floor, ESTIMATED)
 
 
 def estimate(size: int, *, bytes_per_second: int = ESTIMATE_BYTES_PER_SECOND) -> Decimal:
