@@ -1243,8 +1243,93 @@ class TestCortecsShape:
         assert not {"preference", "eu_native", "allowed_providers"} & set(sent)
 
 
-class TestDiscoveryFetchesEverySlice:
-    async def test_an_untagged_cortecs_fetch_asks_for_each_slice_and_merges_by_id(
+def _model(model_id: str, per_second: float) -> dict[str, Any]:
+    return {
+        "id": model_id,
+        "tags": ["Transcription"],
+        "input_modalities": ["audio"],
+        "output_modalities": ["text"],
+        "pricing": {
+            "currency": "EUR",
+            "input_token": 0.0,
+            "output_token": 0.0,
+            "audio_cost": per_second,
+        },
+    }
+
+
+#: The `tag=Transcription` response, in Cortecs's shape: six models, priced per
+#: second (the values here are chosen to multiply to exact per-minute figures).
+TRANSCRIPTION_SLICE = {
+    "data": [
+        _model("voxtral-small-transcribe-3.0", 0.00008),
+        _model("voxtral-mini-transcribe-3.0", 0.00004),
+        _model("whisper-large-v3", 0.00005),
+        _model("faster-whisper-large-v3", 0.00003),
+        _model("voxtral-mini-transcribe-2602", 0.00004),
+        _model("whisper-large-v3-turbo", 0.00001),
+    ]
+}
+
+
+class TestDiscoverWithTheTranscriptionType:
+    async def test_the_selected_type_imports_six_transcription_models_with_minute_prices(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        from test_admin import as_user, make_admin
+
+        asked: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            asked.append(str(request.url))
+            return httpx.Response(200, json=TRANSCRIPTION_SLICE)
+
+        app.state.control_http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        as_user(app, await make_admin(session_factory, seeded))
+        provider_id = (
+            await client.post(
+                "/api/admin/providers", json={"name": "cortecs-live", "plugin": "cortecs"}
+            )
+        ).json()["id"]
+
+        body = (
+            await client.get(
+                f"/api/admin/models/discover?provider_id={provider_id}&tag=Transcription"
+            )
+        ).json()
+        # The chosen tag is what is fetched; the only other request is the
+        # existing whole-catalogue drift check (`tag=all`), as before.
+        assert asked[0].endswith("tag=Transcription")
+        assert all(url.endswith(("tag=Transcription", "tag=all")) for url in asked)
+        rows = {r["upstream_model"]: r for r in body["available"]}
+        assert len(rows) == 6
+        assert {r["kind"] for r in rows.values()} == {"transcription"}
+        assert Decimal(rows["whisper-large-v3"]["per_minute"]) == Decimal("0.003")
+        assert Decimal(rows["whisper-large-v3-turbo"]["per_minute"]) == Decimal("0.0006")
+
+        imported = await client.post(
+            f"/api/admin/models/import?provider_id={provider_id}",
+            json={"models": [{"upstream_model": m} for m in rows]},
+        )
+        assert imported.status_code == 201, imported.text
+        assert all(r["imported"] and r["priced"] for r in imported.json()["results"])
+        stored = (
+            await session.execute(
+                select(ModelDef.upstream_model, ModelDef.kind, ModelPrice.per_minute)
+                .join(ModelPrice, ModelPrice.model_id == ModelDef.id)
+                .where(ModelDef.upstream_model.in_(list(rows)))
+            )
+        ).all()
+        assert len(stored) == 6
+        assert {kind for _, kind, _ in stored} == {ModelKind.TRANSCRIPTION}
+        assert all(minute is not None and minute > 0 for _, _, minute in stored)
+
+    async def test_an_untagged_discover_is_one_unchanged_request(
         self,
         app: FastAPI,
         client: httpx.AsyncClient,
@@ -1254,41 +1339,17 @@ class TestDiscoveryFetchesEverySlice:
         from test_admin import as_user, make_admin
 
         asked: list[str] = []
-        slices = {
-            "Instruct": [CORTECS_VOXTRAL_CHAT],
-            "Embedding": [],
-            "OCR": [],
-            # whisper also carries Instruct in this fixture: it must appear once.
-            "Transcription": [CORTECS_WHISPER, CORTECS_VOXTRAL_CHAT],
-        }
 
         def handler(request: httpx.Request) -> httpx.Response:
             asked.append(str(request.url))
-            tag = request.url.params.get("tag")
-            return httpx.Response(200, json={"data": slices.get(tag or "", [])})
+            return httpx.Response(200, json={"data": []})
 
         app.state.control_http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         as_user(app, await make_admin(session_factory, seeded))
-        created = await client.post(
-            "/api/admin/providers", json={"name": "cortecs-live", "plugin": "cortecs"}
-        )
-        provider_id = created.json()["id"]
-
-        body = (await client.get(f"/api/admin/models/discover?provider_id={provider_id}")).json()
-        assert sorted(url.rsplit("tag=", 1)[1] for url in asked) == [
-            "Embedding",
-            "Instruct",
-            "OCR",
-            "Transcription",
-        ]
-        kinds = {row["upstream_model"]: row["kind"] for row in body["available"]}
-        assert kinds == {"whisper-large-v3": "transcription", "voxtral-small-2507": "chat"}
-        whisper = next(r for r in body["available"] if r["upstream_model"] == "whisper-large-v3")
-        assert Decimal(whisper["per_minute"]) == Decimal("0.003")
-
-    def test_merging_keeps_the_first_entry_for_an_id(self) -> None:
-        from gateway.pricing import merge_catalogue_payloads
-
-        first = {"id": "a", "n": 1}
-        merged = merge_catalogue_payloads([{"data": [first]}, {"data": [{"id": "a", "n": 2}]}])
-        assert merged["data"] == [first]
+        provider_id = (
+            await client.post(
+                "/api/admin/providers", json={"name": "cortecs-live", "plugin": "cortecs"}
+            )
+        ).json()["id"]
+        await client.get(f"/api/admin/models/discover?provider_id={provider_id}")
+        assert len(asked) == 1 and "tag=" not in asked[0]

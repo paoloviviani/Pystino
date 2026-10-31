@@ -267,9 +267,7 @@ form fields are forwarded to the provider: Cortecs routing fields
 pass-through for them on this route.
 
 Cortecs answers an untagged `/models` request with the `Instruct` slice only, so
-Discover on a Cortecs provider with no tag chosen fetches the `Instruct`,
-`Embedding`, `OCR` and `Transcription` slices and merges them by id; choosing a
-tag fetches that one alone.
+to see its transcription models choose the **Transcription** type in Discover.
 
 **Redaction does not apply to the audio.** See
 [Audio is not screened](redaction.md#audio-is-not-screened) for what that means

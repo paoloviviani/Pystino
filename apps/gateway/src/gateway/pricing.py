@@ -198,25 +198,6 @@ def _first(mapping: dict[str, Any], keys: Sequence[str]) -> Any:
     return None
 
 
-def merge_catalogue_payloads(payloads: Sequence[Any]) -> dict[str, Any]:
-    """Several catalogue slices as one payload, an id appearing once.
-
-    The first slice's entry wins, so a model carrying two of the requested tags
-    is one row, not two.
-    """
-    merged: list[Any] = []
-    seen: set[str] = set()
-    for payload in payloads:
-        for entry in _catalogue_entries(payload):
-            raw_id = _first(entry, _ID_KEYS) if isinstance(entry, dict) else None
-            if raw_id is not None:
-                if str(raw_id) in seen:
-                    continue
-                seen.add(str(raw_id))
-            merged.append(entry)
-    return {"data": merged}
-
-
 def _as_decimal(value: Any) -> Decimal | None:
     """Parse a published price without ever going through float."""
     if value is None or isinstance(value, bool):
