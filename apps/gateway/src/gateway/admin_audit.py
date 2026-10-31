@@ -83,6 +83,7 @@ PRICE_FIELDS = (
     "per_image",
     "per_image_by_size",
     "per_page",
+    "per_minute",
     "per_search",
     "currency",
     "effective_from",

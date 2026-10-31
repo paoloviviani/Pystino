@@ -62,6 +62,20 @@ _CACHE_WRITE_KEYS = ("cache_write_cost", "cache_write", "cache_write_input_token
 #: it is a different service, and billing every page at the annotated rate would
 #: overcharge every plain extraction.
 _PAGE_KEYS = ("ocr_cost",)
+#: Per-minute transcription rates. Only keys that carry the unit in the name:
+#: a bare `transcription_cost` could be per second, minute or hour, and a model
+#: whose rate is not recognised imports unpriced and takes a hand-typed rate
+#: (the manual price in the discovery dialog) instead of a guessed one.
+#: Cortecs's per-second audio rate, converted by the 60 below. Its own constant
+#: because it is the one catalogue rate here whose unit differs from its name.
+_AUDIO_SECOND_KEYS = ("audio_cost",)
+SECONDS_PER_MINUTE = Decimal(60)
+_MINUTE_KEYS = (
+    "per_minute",
+    "transcription_cost_per_minute",
+    "audio_cost_per_minute",
+    "transcription_per_minute",
+)
 
 #: What `ocr_cost` is quoted per, and the reason this constant has a name: the
 #: token rates divide by a million four lines away, and a reader skimming for
@@ -110,6 +124,10 @@ class CataloguePrice:
     #: from them, which is exactly the shape of mistake ADR 0053's OpenRouter
     #: parser exists to prevent one order of magnitude up.
     per_page: Decimal | None = None
+    #: Per minute of audio, for transcription models. Read only from keys whose
+    #: name says the unit (`_MINUTE_KEYS`): a rate in an unstated unit is worse
+    #: than none, the rule `usage_info.credits` is refused under.
+    per_minute: Decimal | None = None
     context_window: int | None = None
     #: The most the model can generate in one reply, where the catalogue says.
     max_output_tokens: int | None = None
@@ -497,21 +515,34 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
         # so a parser that read only tokens would import it as free.
         page_quote = _as_decimal(_first(source, _PAGE_KEYS))
         per_page = page_quote / PAGES_PER_QUOTE if page_quote is not None else None
+        per_minute = _as_decimal(_first(source, _MINUTE_KEYS))
+        kind = _kind_of(entry)
+        if per_minute is None and kind is ModelKind.TRANSCRIPTION:
+            # Cortecs quotes `audio_cost` per **second** ("Audio cost per second
+            # (if supported)", docs.cortecs.ai/api/models). Read only for a model
+            # imported as transcription: on a chat model that hears audio it is
+            # the price of audio *input* in a chat, a different charge that the
+            # chat route has no unit for, and is left alone.
+            per_second = _as_decimal(_first(source, _AUDIO_SECOND_KEYS))
+            if per_second is not None:
+                per_minute = per_second * SECONDS_PER_MINUTE
 
         # An OCR model quotes 0.0 for both token rates and its price in
         # `ocr_cost`; a model with neither is genuinely unreadable. Requiring
         # token rates alone reported every OCR model as unparsable, which is a
         # model the operator never sees rather than one they can adopt.
         priced = input_rate is not None and output_rate is not None
-        if not model_id or not currency or not (priced or per_page is not None):
+        if (
+            not model_id
+            or not currency
+            or not (priced or per_page is not None or per_minute is not None)
+        ):
             unparsable.append(model_id or "<unidentified model>")
             continue
         if input_rate is None:
             input_rate = Decimal(0)
         if output_rate is None:
             output_rate = Decimal(0)
-
-        kind = _kind_of(entry)
 
         context_window, max_output_tokens = _limits_of(entry)
 
@@ -525,6 +556,7 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
                 output_per_mtok=output_rate,
                 currency=str(currency).upper(),
                 per_page=per_page,
+                per_minute=per_minute,
                 cache_read_per_mtok=_as_decimal(_first(source, _CACHE_READ_KEYS)),
                 cache_write_per_mtok=_as_decimal(_first(source, _CACHE_WRITE_KEYS)),
                 context_window=context_window,
@@ -547,6 +579,11 @@ def _string_list(value: Any) -> tuple[str, ...]:
         return ()
     seen = {str(item).strip().lower() for item in value if str(item).strip()}
     return tuple(sorted(seen))
+
+
+_TRANSCRIPTION_TAGS = frozenset(
+    {"transcription", "speech-to-text", "speech to text", "stt", "asr", "audio transcription"}
+)
 
 
 def _kind_of(entry: dict[str, Any]) -> ModelKind:
@@ -576,6 +613,10 @@ def _kind_of(entry: dict[str, Any]) -> ModelKind:
         lowered_tags = {str(tag).strip().lower() for tag in tags}
         if "ocr" in lowered_tags:
             return ModelKind.OCR
+        # Speech to text reports `text` out like a chat model, so the tag is
+        # the unambiguous signal where there is one.
+        if lowered_tags & _TRANSCRIPTION_TAGS:
+            return ModelKind.TRANSCRIPTION
         # A decision model reports text in and text out like a chat model, so
         # only the tag tells them apart (ADR 0100). Cortecs's own /models does
         # not list them today (checked 2026-10-22), so in practice they are
@@ -593,6 +634,24 @@ def _kind_of(entry: dict[str, Any]) -> ModelKind:
         # 400 names the route that would have worked.
         if "search" in lowered_tags:
             return ModelKind.SEARCH
+
+    # Audio in, text out, and *no text in*: a speech-to-text model. A chat model
+    # that accepts audio accepts text as well, which is what keeps this from
+    # taking every multimodal chat model off the chat route; a model that is
+    # audio-only on the way in has nothing but `/v1/audio/transcriptions` to be
+    # called through.
+    inputs = entry.get("input_modalities")
+    outputs = entry.get("output_modalities")
+    if isinstance(inputs, list) and isinstance(outputs, list):
+        lowered_in = {str(item).strip().lower() for item in inputs}
+        lowered_out = {str(item).strip().lower() for item in outputs}
+        if (
+            "audio" in lowered_in
+            and not (lowered_in - {"audio"})
+            and "text" in lowered_out
+            and not (lowered_out - {"text"})
+        ):
+            return ModelKind.TRANSCRIPTION
 
     modalities = entry.get("output_modalities")
     if isinstance(modalities, list):
@@ -684,6 +743,7 @@ def _differs(existing: ModelPrice | None, candidate: CataloguePrice) -> bool:
         # Without this a changed page rate re-imports as "unchanged" and the
         # deployment keeps billing yesterday's price.
         or existing.per_page != candidate.per_page
+        or existing.per_minute != candidate.per_minute
         or existing.currency.upper() != candidate.currency
     )
 
@@ -763,6 +823,11 @@ async def import_prices(
                 output_per_mtok=candidate.output_per_mtok,
                 cache_read_per_mtok=candidate.cache_read_per_mtok,
                 cache_write_per_mtok=candidate.cache_write_per_mtok,
+                # The non-token units. `per_page` was missing here, so an OCR
+                # model's price imported with its whole charge dropped and read
+                # as free; found while adding `per_minute` beside it.
+                per_page=candidate.per_page,
+                per_minute=candidate.per_minute,
                 currency=candidate.currency,
                 effective_from=utcnow(),
                 # Whatever provider this catalogue belongs to. It said

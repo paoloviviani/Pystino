@@ -26,6 +26,7 @@ function price(overrides: Partial<Price> = {}): Price {
     input_per_mtok: "1.000000000000",
     output_per_mtok: "2.000000000000",
     per_page: null,
+    per_minute: null,
     per_search: null,
     cache_read_per_mtok: null,
     cache_write_per_mtok: null,
@@ -444,6 +445,28 @@ describe("AdminModelDetail", () => {
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
     expect((captured.bodies[0] as Record<string, unknown>).kind).toBe("embedding");
+  });
+
+  it("offers the transcription kind, and appends a rate per minute", async () => {
+    const user = userEvent.setup({ delay: null });
+    const captured: Captured = { bodies: [], prices: [] };
+    vi.stubGlobal("fetch", routes(model(), [price()], captured));
+    renderScreen();
+    await ready();
+    await user.selectOptions(screen.getByLabelText("Kind"), "transcription");
+    await save(user);
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    expect((captured.bodies[0] as Record<string, unknown>).kind).toBe("transcription");
+
+    await user.type(screen.getByLabelText("Input per Mtok"), "0");
+    await user.type(screen.getByLabelText("Output per Mtok"), "0");
+    await user.type(screen.getByLabelText("Per minute of audio"), "0.006");
+    await user.click(screen.getByRole("button", { name: "Append price" }));
+    await waitFor(() => expect(captured.prices.length).toBe(1));
+    const body = captured.prices[0] as Record<string, unknown>;
+    expect(body.per_minute).toBe("0.006");
+    // Not priced by the page: omitted rather than zero.
+    expect(body.per_page).toBeNull();
   });
 
   it("shows the price history beside the model, not on another screen", async () => {

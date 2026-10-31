@@ -64,6 +64,7 @@ from gateway.routers import (
     pystino,
     scim,
     search,
+    transcription,
 )
 from gateway.routers import responses as responses_router
 from gateway.secrets import SecretBox
@@ -433,6 +434,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(messages.router)
     app.include_router(images.router)
     app.include_router(ocr.router)
+    app.include_router(transcription.router)
     app.include_router(search.router)
     app.include_router(models.router)
     app.include_router(billing.router)

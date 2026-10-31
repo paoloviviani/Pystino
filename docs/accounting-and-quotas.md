@@ -171,6 +171,20 @@ quantity differently. Reading only one would bill those tokens at the input
 rate. The distinction from the rule above is the point — those differ in
 meaning, these differ only in spelling.
 
+## Audio: a price per minute
+
+A transcription model is priced per **minute** of audio (`per_minute` on the
+price row) and metered per **second**: the ledger's `audio_seconds` is the
+billable quantity and the cost is `seconds / 60 × per_minute`. Like an image
+row, an audio row shows real cost against zero tokens, and the usage reports
+carry an `audio_seconds` figure (and a CSV column) beside `images`. The seconds
+come from the provider's reported duration where it gives one, otherwise from
+the file's header, otherwise from its size; `audio_seconds_source` on the row
+says which, and a size-based figure is counted as an estimate. The reservation
+before the call is the file's measured length, or a pessimistic bound from its
+size when it cannot be measured. See
+[Speech to text](gateway.md#speech-to-text-v1audiotranscriptions).
+
 ## Web search: a price per request
 
 A search this gateway runs against a backend of its own (`POST /v1/search`, or

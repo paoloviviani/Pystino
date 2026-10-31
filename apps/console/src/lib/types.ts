@@ -67,7 +67,14 @@ export type MintedApiKey = Schemas["ApiKeyCreatedResponse"];
 // them as `number` would undo that at the last hop.
 
 /** What a model produces, and therefore which route may use it. */
-export type ModelKind = "chat" | "embedding" | "image" | "ocr" | "search" | "decision";
+export type ModelKind =
+  | "chat"
+  | "embedding"
+  | "image"
+  | "ocr"
+  | "transcription"
+  | "search"
+  | "decision";
 
 export type Price = Schemas["PriceResponse"];
 
@@ -289,6 +296,7 @@ export type ManualImportPrice = Narrow<
     input_per_mtok?: string;
     output_per_mtok?: string;
     per_page?: string;
+    per_minute?: string;
     cache_read_per_mtok?: string;
     cache_write_per_mtok?: string;
     currency?: string;

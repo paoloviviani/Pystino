@@ -131,6 +131,32 @@ including the compensation for phone numbers described in
 sit permanently under the gateway's default threshold while the entity was
 still advertised.
 
+## Audio is not screened
+
+`POST /v1/audio/transcriptions` and `/v1/audio/translations` send the caller's
+audio to the provider as it arrived. Redaction works on text, so **nothing is
+detected, substituted or blocked in the audio**, whatever rules are in force; a
+voice recording that names a person reaches the provider with the name in it.
+The transcript that comes back is text and is returned as the provider wrote it:
+nothing was substituted on the way out, so there is nothing to restore, and the
+response is not screened either (the OCR route screens the text it returns
+because there the document is the sensitive half; here the sensitive half is
+the audio, which has already left).
+
+The gateway does not pretend otherwise, and offers one control: a deployment
+switch, `GATEWAY_TRANSCRIPTION__ALLOWED_UNDER_REDACTION`. It defaults to `true`,
+so nothing changes on upgrade. Set it to `false` and a caller for whom an
+*active* redaction rule applies is refused with a 403
+(`transcription_not_allowed_under_redaction`) before anything is reserved or
+sent. "Active" means the engine is not `noop` and the folded policy for that
+caller (the deployment policy plus every rule that names them, their group, the
+model or its provider) has some entity type, the default, or a custom pattern in
+a mode other than `off`. A rule that only lists types as `off` does not count.
+Leave it `true` only if you accept that audio from those callers reaches the
+provider unscreened, although the same words typed as text would have been
+substituted or blocked by their rule. If you do not accept that, set it to
+`false`, or do not grant the transcription model to those groups.
+
 ## What happens to a detected entity: the policy model
 
 For each entity type, a policy names a **mode** — two independent questions, what

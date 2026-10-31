@@ -909,6 +909,58 @@ class OcrReader(_NoStreamedExtras):
         raise NotImplementedError("the ocr route does not stream")
 
 
+class TranscriptionReader(_NoStreamedExtras):
+    """Speech to text, `POST /v1/audio/transcriptions`.
+
+    The billable quantity is normally the audio's duration, which the route
+    observes itself (`RequestAccounting.observe_audio`). A gpt-4o-transcribe
+    reply carries token usage instead of a duration; those tokens are read here
+    and priced only if the model has token rates.
+
+    The transcript is the model's whole output and is returned as it came: the
+    audio carried no placeholders (it could not be screened before upstream, see
+    docs/redaction.md), so there is nothing to restore.
+    """
+
+    accumulates_usage = False
+
+    def frame(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        return payload
+
+    def counts(self, usage: dict[str, Any] | None) -> TokenCounts:
+        """Token usage, only where the provider reports it as tokens.
+
+        gpt-4o-transcribe answers `usage: {"type": "tokens", "input_tokens": ...}`;
+        whisper answers `{"type": "duration", "seconds": ...}`, which is not a
+        token count and is read by the route as a duration. A model priced per
+        token and not per minute is billed on the former.
+        """
+        if isinstance(usage, dict) and usage.get("type") == "tokens":
+            return TokenCounts.from_responses_usage(usage)
+        return TokenCounts()
+
+    def shift_citations(self, payload: dict[str, Any], shift: Shift) -> bool:
+        return False
+
+    def deltas(self, payload: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
+        return []
+
+    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[Slot, str]]:
+        return []
+
+    def set_stream_text(self, payload: dict[str, Any], slot: Slot, text: str) -> None:
+        return None
+
+    def rewrite_whole(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        return False
+
+    def is_terminal(self, payload: dict[str, Any]) -> bool:
+        return True
+
+    def synthesise(self, template: dict[str, Any] | None, slot: Slot, text: str) -> dict[str, Any]:
+        raise NotImplementedError("the transcription route does not stream")
+
+
 class SearchReader(_NoStreamedExtras):
     """``POST /v1/search``: the one surface with nothing to read.
 
@@ -1016,6 +1068,7 @@ _READERS: dict[ApiSurface, SurfaceProtocol] = {
     ApiSurface.MESSAGES: MessagesReader(),
     ApiSurface.IMAGES: ImagesReader(),
     ApiSurface.OCR: OcrReader(),
+    ApiSurface.TRANSCRIPTION: TranscriptionReader(),
     ApiSurface.SEARCH: SearchReader(),
     ApiSurface.DECISIONS: DecisionsReader(),
 }

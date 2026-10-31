@@ -18,12 +18,13 @@ provider would hang a request forever instead of failing fast.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.parse import urlencode
 
+import anyio
 import httpx
 import orjson
 
@@ -263,6 +264,72 @@ class OpenAICompatibleUpstream:
         rule ADR 0032 exists for.
         """
         return await self.post_json("/ocr", payload, request_id=request_id)
+
+    async def transcribe(
+        self,
+        path: str,
+        fields: Sequence[tuple[str, str]],
+        *,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        timeout_seconds: float,
+        request_id: str | None = None,
+    ) -> UpstreamResponse:
+        """Send an audio file to ``/audio/transcriptions`` (or ``/translations``).
+
+        The one multipart POST in the gateway. The reply is JSON for the
+        ``json`` formats and plain text for ``text``/``srt``/``vtt``, so the
+        body is kept whole in ``raw`` and ``payload`` is set only when it parsed
+        as a JSON object. Never streamed. The read timeout is the caller's: the
+        shared client has none (streams idle), and a transcription is one long
+        silent request.
+        """
+        headers = self._headers(request_id=request_id)
+        # httpx writes the multipart content type with its boundary.
+        headers.pop("content-type", None)
+        headers["accept"] = "*/*"
+        timeout = httpx.Timeout(
+            connect=self._client.timeout.connect,
+            read=timeout_seconds,
+            write=self._client.timeout.write,
+            pool=self._client.timeout.pool,
+        )
+        form: dict[str, list[str]] = {}
+        for name, value in fields:
+            form.setdefault(name, []).append(value)
+        try:
+            # httpx's read timeout restarts with every chunk received, so a
+            # provider that trickles bytes would hold the request for as long as
+            # it likes; this is the total.
+            with anyio.fail_after(timeout_seconds):
+                response = await self._client.post(
+                    f"{self._settings.base_url}{path}",
+                    data=form,
+                    files={"file": (filename, content, content_type)},
+                    headers=headers,
+                    timeout=timeout,
+                )
+        except TimeoutError as exc:
+            raise UpstreamError(
+                f"upstream took longer than {timeout_seconds:.0f}s to transcribe", cause=exc
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise UpstreamError(f"upstream request failed: {exc}", cause=exc) from exc
+
+        raw = response.content
+        parsed: dict[str, Any] | None
+        try:
+            candidate = orjson.loads(raw) if raw else None
+            parsed = candidate if isinstance(candidate, dict) else None
+        except orjson.JSONDecodeError:
+            parsed = None
+        return UpstreamResponse(
+            status_code=response.status_code,
+            payload=parsed,
+            raw=raw,
+            headers=dict(response.headers),
+        )
 
     async def decisions(
         self, payload: Mapping[str, Any], *, path: str, request_id: str | None = None

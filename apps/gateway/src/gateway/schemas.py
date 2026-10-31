@@ -944,6 +944,7 @@ class CataloguePriceHintResponse(ResponseModel):
     cache_write_per_mtok: Decimal | None = None
     per_image: Decimal | None = None
     per_page: Decimal | None = None
+    per_minute: Decimal | None = None
 
 
 class CatalogueEntryResponse(ResponseModel):
@@ -1224,7 +1225,9 @@ class ModelCreateRequest(BaseModel):
     # Which endpoint serves it. Required: a model with no provider cannot be
     # routed, and defaulting one would guess at spending money (ADR 0027).
     provider_id: uuid.UUID
-    kind: Literal["chat", "embedding", "image", "ocr", "search", "decision"] = "chat"
+    kind: Literal["chat", "embedding", "image", "ocr", "transcription", "search", "decision"] = (
+        "chat"
+    )
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
@@ -1256,7 +1259,9 @@ class ModelUpdateRequest(BaseModel):
     # and a mis-inferred kind takes a model off the only route that would serve
     # it. Historical usage rows record the surface they actually went through,
     # so correcting this does not make past spend unreadable (ADR 0030).
-    kind: Literal["chat", "embedding", "image", "ocr", "search", "decision"] | None = None
+    kind: (
+        Literal["chat", "embedding", "image", "ocr", "transcription", "search", "decision"] | None
+    ) = None
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
@@ -1281,6 +1286,7 @@ class PriceResponse(ResponseModel):
     per_image: Money | None
     per_image_by_size: dict[str, Money] | None = None
     per_page: Money | None
+    per_minute: Money | None
     per_search: Money | None
     currency: str
     effective_from: datetime
@@ -1306,6 +1312,7 @@ class PriceCreateRequest(BaseModel):
     # counterparty charges by the page, and a page is not a million of
     # anything.
     per_page: Money | None = Field(default=None, ge=0)
+    per_minute: Money | None = Field(default=None, ge=0)
     # Per provider-side web search (ADR 0058). Per *one* search, though every
     # provider publishes it per thousand — $10 per 1,000 is 0.01 — because the
     # ledger multiplies by a count of searches, and a rate whose unit differs
@@ -2414,6 +2421,10 @@ class UsageReportRow(ResponseModel):
     # not tokens, and a reader reconciling against a provider's invoice needs
     # the count the invoice is itemised by.
     searches: int = 0
+    # Seconds of audio transcribed, the unit a speech-to-text model is billed
+    # by (per minute). A row can show real cost against zero tokens for the
+    # same reason an image row can.
+    audio_seconds: Money = Decimal(0)
     # Searches *we* made, against a backend of our own (Exa, Jina, Staan,
     # Linkup). A separate figure from `searches` above and never folded into
     # it: one is the counterparty searching while serving a chat request, the
@@ -2866,6 +2877,7 @@ class DiscoveredModel(ResponseModel):
     #: price is this. Shown before adopting for the same reason the token rates
     #: are: an operator approving a price should see the one that will be charged.
     per_page: Money | None = None
+    per_minute: Money | None = None
     currency: str | None
     context_window: int | None
     #: The model's reply limit as the catalogue states it; imports onto
@@ -2949,6 +2961,7 @@ class ManualImportPrice(BaseModel):
     # Per page read, for an OCR model, whose real price is here. Same field,
     # same meaning, as on the price row itself.
     per_page: Money | None = Field(default=None, ge=0)
+    per_minute: Money | None = Field(default=None, ge=0)
     # Optional, as on the price form, which takes them for any kind: empty bills
     # the cached slice of a prompt at the input rate (accounting/cost.py).
     cache_read_per_mtok: Money | None = Field(default=None, ge=0)

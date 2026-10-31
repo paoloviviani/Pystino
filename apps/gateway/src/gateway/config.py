@@ -950,6 +950,37 @@ class ExtractorSettings(BaseModel):
     timeout_seconds: float = Field(default=180.0, gt=0)
 
 
+class TranscriptionSettings(BaseModel):
+    """Speech to text (`POST /v1/audio/transcriptions`, ``/translations``).
+
+    An upload is spooled by the web layer (to memory up to 1 MB, then to a
+    temporary file), copied into memory as bytes for the provider call, and
+    dropped when the request ends. So a request holds up to
+    ``max_upload_bytes`` in memory for as long as the provider takes (25 MB by
+    default; concurrent requests multiply it), and the disk holds at most that
+    plus the form framing while it is received. These settings are the bounds
+    that keep one upload from holding a worker, and the one policy switch
+    redaction needs (docs/redaction.md).
+    """
+
+    #: Largest file accepted, in bytes (``GATEWAY_TRANSCRIPTION__MAX_UPLOAD_BYTES``).
+    #: 413 beyond it. 25 MB is OpenAI's own limit, which is what clients are
+    #: written against; a provider that accepts more can have it raised here.
+    max_upload_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
+    #: How long the provider may take, in seconds
+    #: (``GATEWAY_TRANSCRIPTION__TIMEOUT_SECONDS``). The shared upstream client
+    #: has no read timeout at all, because a stream idles between tokens; a
+    #: transcription is one long silent request, so it gets its own.
+    timeout_seconds: float = Field(default=300.0, gt=0)
+    #: Whether a caller under an *active* redaction rule may transcribe at all
+    #: (``GATEWAY_TRANSCRIPTION__ALLOWED_UNDER_REDACTION``). Audio cannot be
+    #: screened before it reaches the provider, so for such a caller the route
+    #: delivers the one thing the rule exists to prevent. True by default, so
+    #: nothing changes on upgrade; an operator who needs the guarantee sets
+    #: false and the route refuses those callers with 403.
+    allowed_under_redaction: bool = True
+
+
 class RedactionSettings(BaseModel):
     """Redaction/guardrail layer.
 
@@ -1197,6 +1228,7 @@ class Settings(BaseSettings):
     idp: IdPSettings = Field(default_factory=IdPSettings)
     redaction: RedactionSettings = Field(default_factory=RedactionSettings)
     extractor: ExtractorSettings = Field(default_factory=ExtractorSettings)
+    transcription: TranscriptionSettings = Field(default_factory=TranscriptionSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
     accounting: AccountingSettings = Field(default_factory=AccountingSettings)
 

@@ -39,6 +39,7 @@ from gateway.models import ModelPrice
 from gateway.types import as_decimal, utcnow
 
 MILLION = Decimal(1_000_000)
+SECONDS_PER_MINUTE = Decimal(60)
 
 
 class CurrencyMismatch(Exception):
@@ -72,6 +73,11 @@ class TokenCounts:
     #: from the length of the text, which would be a billing figure with no
     #: source.
     pages: int = 0
+    #: Seconds of audio transcribed, on the transcription route only. From the
+    #: provider's reported duration where there is one, else read off the file,
+    #: else estimated from its size; the route says which (the ledger's
+    #: `audio_seconds_source`). Priced per minute: seconds / 60.
+    audio_seconds: Decimal = Decimal(0)
     #: Server-side web searches the provider ran and charged for (ADR 0058).
     #: Read only from what the provider reports — never from counting
     #: `server_tool_use` blocks in the response, because a search that errors
@@ -352,6 +358,8 @@ class CostBreakdown:
     #: into the input cost, so a reader can see which half of an OCR charge
     #: was pages and which was tokens.
     page_cost: Decimal = Decimal(0)
+    #: Per minute of audio, on the transcription surface.
+    audio_cost: Decimal = Decimal(0)
     #: Per server-side web search. A component of its own because it is the one
     #: charge on this list that is a *surcharge* on an otherwise ordinary
     #: request: a reader looking at a chat model's bill needs to see that part
@@ -367,6 +375,7 @@ class CostBreakdown:
             + self.cache_write_cost
             + self.image_cost
             + self.page_cost
+            + self.audio_cost
             + self.search_cost
         )
 
@@ -385,6 +394,7 @@ class CostBreakdown:
             cache_write_cost=self.cache_write_cost * rate,
             image_cost=self.image_cost * rate,
             page_cost=self.page_cost * rate,
+            audio_cost=self.audio_cost * rate,
             search_cost=self.search_cost * rate,
             currency=currency,
         )
@@ -506,6 +516,12 @@ def compute_cost(
     if counts.pages and price.per_page is not None:
         page_cost = Decimal(counts.pages) * as_decimal(price.per_page)
 
+    # Per minute of audio. Seconds are metered (a 90 s clip is 1.5 minutes, not
+    # two), and the rate is per minute because that is how providers quote it.
+    audio_cost = Decimal(0)
+    if counts.audio_seconds and price.per_minute is not None:
+        audio_cost = counts.audio_seconds * as_decimal(price.per_minute) / SECONDS_PER_MINUTE
+
     # Per search, and the only one of the three that lands on a request the
     # caller thinks of as an ordinary completion. A model without the rate
     # charges nothing for searches the provider *did* invoice — which is the
@@ -522,6 +538,7 @@ def compute_cost(
         cache_write_cost=write_cost,
         image_cost=image_cost,
         page_cost=page_cost,
+        audio_cost=audio_cost,
         search_cost=search_cost,
         currency=price.currency.upper(),
     )

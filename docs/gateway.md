@@ -14,6 +14,7 @@ per-group model availability and a pluggable redaction layer.
 | `POST /v1/decisions`, `POST /v1/systemone` | key or bearer | [Decision models](decision-models.md): typed questions about a text, answered with calibrated probabilities. Metered per token, redacted, the request and the answer passed through in the format they arrived in |
 | `POST /v1/images/generations` | key or bearer | Image generation, billed per picture or per token depending on the model |
 | `POST /v1/ocr` | key or bearer | Document extraction, metered per page. Two backends: an upstream OCR model, or this deployment's own extractor |
+| `POST /v1/audio/transcriptions`, `POST /v1/audio/translations` | key or bearer | [Speech to text](#speech-to-text-v1audiotranscriptions), OpenAI's multipart shape, metered per second of audio and priced per minute. The audio is not screened by redaction |
 | `POST /v1/search` | key or bearer | Web search against a configured backend (Linkup, Exa, Jina, DuckDuckGo), metered per call and billed per request at the backend's price ([Web search: a price per request](accounting-and-quotas.md#web-search-a-price-per-request)). The backend is the billing group's search policy, or the one the body names in an optional `backend` (a search model the caller is granted; an ungranted name is a 404, never a fallback to the policy). `POST /v1/search/{backend}` is the verbatim passthrough |
 | `GET /v1/models` | key, bearer or none | Models this caller may use — billing-group grants (or the group named by `x-bill-to`), personal grants, and public models. Unauthenticated: the full catalogue, brochure fields only |
 | `GET /v1/pystino/usage` | key or bearer | This caller's own spend, for a client that wants to show it without a console session |
@@ -31,8 +32,8 @@ per-group model availability and a pluggable redaction layer.
 
 Every metered `/v1` route shares one metering path — `routers/_metered.py` — so
 resolve → reserve → record → settle cannot drift between surfaces.
-Eight routers import it today: chat, responses, messages, embeddings, images,
-ocr, search and decisions.
+Nine routers import it today: chat, responses, messages, embeddings, images,
+ocr, transcription, search and decisions.
 `_metered.begin` takes `fx` and `session_factory` rather than a `Request`, so
 code with no request can bill through the same path: a second copy of the money
 code would make that spend invisible to every report. Knowledge-base ingestion
@@ -173,7 +174,7 @@ same amounts and money-as-string shape the model page's price form posts
 OCR model, and an optional `currency` that defaults to the gateway's billing
 currency and is refused in any other, never converted). The price must carry
 the rates the kind is metered on — a chat model an input and an output rate, an
-embedding model an input rate, a decision model an input and an output rate (zero is accepted, absent is not), an OCR model a page rate; a search tier takes no
+embedding model an input rate, a decision model an input and an output rate (zero is accepted, absent is not), an OCR model a page rate, a transcription model a rate per minute of audio (`per_minute`); a search tier takes no
 model price at all: a search backend is priced per request on the Web search screen instead. Each kind's missing rate is
 refused per item, so one bad price does not lose the rest of the batch.
 
@@ -190,6 +191,112 @@ manual price is set aside for that reason, the import result says so in its
 where it came from: `catalogue`, `community`, or `manual` for one a person
 typed (ADR 0053), which is what makes a wrong figure traceable to the choice
 that took it.
+
+## Speech to text: `/v1/audio/transcriptions`
+
+A model of kind **transcription** is served by `POST /v1/audio/transcriptions`
+(and `/v1/audio/translations`, speech to English text, which is the same
+handler without `language`). The request is OpenAI's multipart form, so any
+client that speaks it works unchanged:
+
+| Field | |
+|---|---|
+| `file` | The audio. Required. Held in memory for the request and forwarded as it arrived |
+| `model` | A transcription model the caller is granted. A model of another kind is refused with a 400 naming the route that serves it, as on every other surface |
+| `language`, `prompt`, `temperature`, `timestamp_granularities[]` | Forwarded to the provider (`language` is not sent on translations) |
+| `response_format` | `json` (default), `text`, `verbose_json`, `srt` or `vtt`. Forwarded as asked and returned as the provider answered it; `text`, `srt` and `vtt` come back as text with the provider's content type |
+
+It is never streamed. A file over `GATEWAY_TRANSCRIPTION__MAX_UPLOAD_BYTES`
+(default 25 MB, OpenAI's own limit) is refused with a 413 before it reaches the
+provider, from the declared length where the client sent one and from the bytes
+otherwise. `GATEWAY_TRANSCRIPTION__TIMEOUT_SECONDS` (default 300) bounds how
+long the provider may take; the shared upstream client has no read timeout, as
+streams idle.
+
+**Pricing is per minute, metered per second.** The price row carries
+`per_minute` (the console's **Per minute of audio** field); the ledger records
+`audio_seconds` and the cost is `seconds / 60 × per_minute`, so a 90-second clip
+is a minute and a half, not two minutes. Where the seconds come from, in order,
+and what the row says about it (`usage_records.audio_seconds_source`):
+
+1. **`upstream`**: the provider's own duration, from `verbose_json`'s `duration`
+   or `usage.seconds` on a `json` reply. It is what the provider invoices.
+2. **`measured`**: read from the file's header (WAV, and MP3, FLAC, Ogg and Opus,
+   M4A and a few others up to 2 MB) by `tinytag`, MIT and pure Python, plus the
+   standard library's `wave`. Used when the reply carries no duration (`text`,
+   `srt`, `vtt`). The header is the caller's, so it is checked against the
+   file's size: a header that claims fewer seconds than the size allows at the
+   densest plausible rate (the WAV's own rate, otherwise 1.5 Mbit/s) is replaced
+   by that floor and labelled `estimated`. The MP3 reader is slow on crafted
+   input, so it runs in a thread and only on files up to 2 MB.
+3. **`estimated`**: the file's size at 32 kbit/s, for a format neither reader
+   knows (or a longer one than the reader is run on).
+
+Only `upstream` is exact: the row's usage source is `upstream_exact` for it and
+`estimated` for the other two, so reports count them with the other estimates.
+
+The quota reservation is made before the call, from the file's measured length
+whenever it can be read; for a file that cannot be read it is a pessimistic
+bound from the size (8 kbit/s). Settlement replaces it with the figure above, so
+a provider that reports more than the header said is charged what it reported.
+`x-bill-to`, model access groups and quota rules apply as on any `/v1` route.
+
+A model whose price has a per-token rate and no `per_minute` (gpt-4o-transcribe
+reports tokens, not a duration) is billed on the tokens the provider reports. A
+model with a price row that has neither is refused with a 400
+(`no_per_minute_price`) rather than served free; a model with no price row at
+all is unmetered by cost, as for every other kind. The upload is counted as it
+arrives, so a chunked request with no declared length is cut off with a 413 at
+the cap and never spools more than the cap plus the form's framing to disk; the
+provider call is bounded in total time by the timeout, not per chunk.
+
+A catalogue entry is imported as a transcription model when its tags say so
+(`Transcription`, `STT`, `ASR`, `speech-to-text`), or when it takes **only**
+audio in and gives text out: a chat model that also hears audio takes text as
+well, and stays a chat model. A rate is read only from a key that names its
+unit (`per_minute`, `transcription_cost_per_minute`, `audio_cost_per_minute`),
+plus Cortecs's `pricing.audio_cost`, which is per **second** and is multiplied by
+60 for a model imported as transcription (on a chat model that hears audio it is
+the price of audio input and is left alone). A model whose rate is quoted any
+other way is imported unpriced and takes a hand-typed per-minute rate like any
+unpriced model, rather than a guessed one. The reply's duration is read from
+`duration`, `usage.seconds` or Cortecs's `usage.audio_duration_seconds`;
+`segments` and the rest of the reply pass through untouched. Only the OpenAI
+form fields are forwarded to the provider: Cortecs routing fields
+(`preference`, `allowed_providers`, `eu_native`) are not, as the gateway has no
+pass-through for them on this route.
+
+Cortecs answers an untagged `/models` request with the `Instruct` slice only, so
+to see its transcription models choose the **Transcription** type in Discover.
+
+**What Cortecs does with it** (checked live, 2026-10-31, through this route, with
+`whisper-large-v3-turbo` and `voxtral-mini-transcribe-3.0`; the gateway passes
+the provider's answer through as it is, so these are the provider's limits):
+
+- `json`, `verbose_json` and `text` all return a JSON object, `{"text": ...,
+  "usage": {"type": "duration", "seconds": n, ...}}`: `text` is not plain text,
+  and `verbose_json` carries no segments or `duration` field. The billed duration
+  is the `usage.seconds` figure.
+- `srt` and `vtt` are refused by the provider with a 400 ("not currently
+  supported"); the gateway returns that refusal and records no cost.
+- `/v1/audio/translations` answers 404 (`{"error": "Not Found"}`): Cortecs does
+  not serve it. The route exists for providers that do.
+- The reported seconds are the provider's own and are not always the file's
+  length: whisper reports whole seconds rounded up (a 11.2 s clip is 12 s), and
+  the same 11.1 s MP3 was reported as 12 s on one call and 6 s on another, which
+  looks like different backends measuring differently. The ledger records what
+  the provider reported (`audio_seconds_source` = `upstream`), because that is
+  what it invoices; compare with the file's own length when reconciling.
+- Per-minute prices as discovered under the Transcription type, in EUR:
+  `whisper-large-v3-turbo` 0.00077, `whisper-large-v3` 0.00167,
+  `voxtral-mini-transcribe-2602` 0.0033, `voxtral-mini-transcribe-3.0` 0.00353,
+  `voxtral-small-transcribe-3.0` 0.00404, `faster-whisper-large-v3` 0.00532.
+  The provider's own `usage.cost` (micro-euros) agreed with the gateway's figure
+  to the rounding on every call.
+
+**Redaction does not apply to the audio.** See
+[Audio is not screened](redaction.md#audio-is-not-screened) for what that means
+and the one switch an operator has, `GATEWAY_TRANSCRIPTION__ALLOWED_UNDER_REDACTION`.
 
 ## Document extraction: which formats are read
 

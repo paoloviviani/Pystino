@@ -53,7 +53,8 @@ groups, what an IdP group means here, and what new groups start with
 The **Models** screen's **Discover** button reads a provider's catalogue and
 offers its models for import. A model the provider lists without a price is
 listed too, marked *No price yet*: tick it and a price field opens on the row —
-per million tokens, or per page for an OCR model — and typing one there is what
+per million tokens, per page for an OCR model, or per minute of audio for a
+transcription model — and typing one there is what
 makes the row importable; the import records it in the price history as a price
 entered by hand. A chat row also takes optional cache read and cache write rates;
 left empty, cached tokens are billed at the input rate. If the provider (or the community file) turns out to publish a

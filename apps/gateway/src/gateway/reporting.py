@@ -194,6 +194,9 @@ def _base_query(filters: ReportFilter, timezone: str, dialect: str) -> Select[An
         func.coalesce(func.sum(UsageRecord.total_tokens), 0).label("total_tokens"),
         func.coalesce(func.sum(UsageRecord.image_count), 0).label("images"),
         func.coalesce(func.sum(UsageRecord.search_count), 0).label("searches"),
+        # Seconds of audio transcribed. Summed as recorded, whatever its
+        # source: the share that was only estimated is in `estimated`.
+        func.coalesce(func.sum(UsageRecord.audio_seconds), 0).label("audio_seconds"),
         # Ours, summed separately and never added to theirs — see
         # `UsageReportRow.own_searches` for why folding them would make the
         # figure unreconcilable against either invoice.
@@ -344,6 +347,7 @@ def _row(
         total,
         images,
         searches,
+        audio_seconds,
         own_searches,
         unpriced_own_searches,
         cost,
@@ -368,6 +372,7 @@ def _row(
         total_tokens=int(total or 0),
         images=int(images or 0),
         searches=int(searches or 0),
+        audio_seconds=Decimal(str(audio_seconds or 0)),
         own_searches=int(own_searches or 0),
         unpriced_own_searches=int(unpriced_own_searches or 0),
         cost=Decimal(str(cost or 0)),
@@ -394,6 +399,7 @@ def _totals(rows: Sequence[UsageReportRow]) -> UsageReportRow:
         total_tokens=sum(row.total_tokens for row in rows),
         images=sum(row.images for row in rows),
         searches=sum(row.searches for row in rows),
+        audio_seconds=sum((row.audio_seconds for row in rows), Decimal(0)),
         own_searches=sum(row.own_searches for row in rows),
         unpriced_own_searches=sum(row.unpriced_own_searches for row in rows),
         cost=sum((row.cost for row in rows), Decimal(0)),
@@ -522,6 +528,13 @@ def _disclosures(
         notes.append(
             f"{totals.images} image(s) were generated: image models are commonly priced "
             "per image, so they add cost without adding tokens."
+        )
+    if totals.audio_seconds:
+        # An audio row is real money against zero tokens, like an image row, and
+        # the figure may be a size-based estimate (counted in `estimated`).
+        notes.append(
+            f"{totals.audio_seconds:f} second(s) of audio were transcribed: transcription "
+            "models are priced per minute of audio, so they add cost without adding tokens."
         )
     if totals.searches:
         # Same reason as the image sentence, one step less obvious: this cost
@@ -739,6 +752,7 @@ CSV_HEADER = [
     "unavailable_requests",
     "via_alias_requests",
     "unpriced_own_searches",
+    "audio_seconds",
 ]
 
 
@@ -784,6 +798,7 @@ def report_to_csv(report: UsageReport) -> str:
                 row.unavailable_requests,
                 row.via_alias_requests,
                 row.unpriced_own_searches,
+                f"{row.audio_seconds:f}",
             ]
         )
     return buffer.getvalue()
