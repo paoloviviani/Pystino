@@ -269,6 +269,31 @@ pass-through for them on this route.
 Cortecs answers an untagged `/models` request with the `Instruct` slice only, so
 to see its transcription models choose the **Transcription** type in Discover.
 
+**What Cortecs does with it** (checked live, 2026-10-31, through this route, with
+`whisper-large-v3-turbo` and `voxtral-mini-transcribe-3.0`; the gateway passes
+the provider's answer through as it is, so these are the provider's limits):
+
+- `json`, `verbose_json` and `text` all return a JSON object, `{"text": ...,
+  "usage": {"type": "duration", "seconds": n, ...}}`: `text` is not plain text,
+  and `verbose_json` carries no segments or `duration` field. The billed duration
+  is the `usage.seconds` figure.
+- `srt` and `vtt` are refused by the provider with a 400 ("not currently
+  supported"); the gateway returns that refusal and records no cost.
+- `/v1/audio/translations` answers 404 (`{"error": "Not Found"}`): Cortecs does
+  not serve it. The route exists for providers that do.
+- The reported seconds are the provider's own and are not always the file's
+  length: whisper reports whole seconds rounded up (a 11.2 s clip is 12 s), and
+  the same 11.1 s MP3 was reported as 12 s on one call and 6 s on another, which
+  looks like different backends measuring differently. The ledger records what
+  the provider reported (`audio_seconds_source` = `upstream`), because that is
+  what it invoices; compare with the file's own length when reconciling.
+- Per-minute prices as discovered under the Transcription type, in EUR:
+  `whisper-large-v3-turbo` 0.00077, `whisper-large-v3` 0.00167,
+  `voxtral-mini-transcribe-2602` 0.0033, `voxtral-mini-transcribe-3.0` 0.00353,
+  `voxtral-small-transcribe-3.0` 0.00404, `faster-whisper-large-v3` 0.00532.
+  The provider's own `usage.cost` (micro-euros) agreed with the gateway's figure
+  to the rounding on every call.
+
 **Redaction does not apply to the audio.** See
 [Audio is not screened](redaction.md#audio-is-not-screened) for what that means
 and the one switch an operator has, `GATEWAY_TRANSCRIPTION__ALLOWED_UNDER_REDACTION`.
