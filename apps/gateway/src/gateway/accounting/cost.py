@@ -430,6 +430,11 @@ def select_price(prices: list[ModelPrice], *, at: datetime | None = None) -> Mod
 _SIZE = re.compile(r"^\s*(\d{1,5})\s*[x\u00d7*]\s*(\d{1,5})\s*$", re.IGNORECASE)
 
 
+def size_key(size: str) -> str:
+    """``1792 x 1024``, ``1792X1024`` and ``1792\u00d71024`` as ``1792x1024``."""
+    return re.sub(r"\s+", "", size).lower().replace("\u00d7", "x").replace("*", "x")
+
+
 def megapixels(size: str | None) -> Decimal | None:
     """``WxH`` as megapixels (``1536x1024`` is 1.572864), ``None`` if not a size."""
     match = _SIZE.match(size) if size else None
@@ -444,7 +449,10 @@ def image_rate(price: ModelPrice, size: str | None, mpx: Decimal | None = None) 
     A size with its own rate (``per_image_by_size``) takes it. A known size
     without one takes the flat ``per_image`` plus, when the model has a
     ``per_extra_megapixel`` rate, that rate for each megapixel above the first
-    (``per_image + max(0, W*H/1e6 - 1) * per_extra_megapixel``). An **unknown**
+    (``per_image + max(0, W*H/1e6 - 1) * per_extra_megapixel``), the megapixels
+    being the provider's measured ones when it reports them (``mpx``), size or
+    no size. With neither, the flat rate applies, so an admission reservation for
+    a request that names no size is the flat rate. An **unknown**
     size, which is what
     admission sees when the request names none and what settle sees when the
     provider reports none, takes the highest rate the model has: a reservation
@@ -452,19 +460,21 @@ def image_rate(price: ModelPrice, size: str | None, mpx: Decimal | None = None) 
     that did would charge less than the counterparty does.
     """
     by_size = {
-        str(key).strip().lower(): as_decimal(value)
-        for key, value in (price.per_image_by_size or {}).items()
+        size_key(key): as_decimal(value) for key, value in (price.per_image_by_size or {}).items()
     }
     flat = as_decimal(price.per_image) if price.per_image is not None else None
-    if size is not None:
-        key = size.strip().lower()
-        if key in by_size:
-            return by_size[key]
-        if flat is not None:
-            extra = price.per_extra_megapixel
-            mp = (mpx if mpx is not None else megapixels(key)) if extra is not None else None
-            if extra is not None and mp is not None and mp > 1:
+    key = size_key(size) if size is not None else None
+    if key is not None and key in by_size:
+        return by_size[key]
+    if flat is not None:
+        extra = price.per_extra_megapixel
+        if extra is not None:
+            # The provider's measured size outranks the one asked for, and
+            # counts whether or not a size was named at all.
+            mp = mpx if mpx is not None else megapixels(key)
+            if mp is not None and mp > 1:
                 return flat + (mp - 1) * as_decimal(extra)
+        if key is not None:
             return flat
     candidates = list(by_size.values()) + ([flat] if flat is not None else [])
     return max(candidates) if candidates else None

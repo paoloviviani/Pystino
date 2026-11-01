@@ -2044,6 +2044,8 @@
     }
   ],
   "admin_models.badge.no_price": "No price",
+  "admin_models.badge.image_free": "Unpriced (free)",
+  "admin_models.price.per_image": "{rate} per image",
   "admin_models.column.access": "Access",
   "admin_models.access.nobody": "nobody",
   "admin_models.column.status": "Status",
@@ -2685,6 +2687,8 @@
   "admin_models.discover.manual_rate.per_page": "Per page",
   "admin_models.discover.manual_rate.per_minute": "Per minute of audio",
   "admin_models.discover.manual_rate.per_image": "Per image",
+  "admin_models.discover.manual_rate.image_hint": "Image models are priced per image or per token: give a per-image rate, an input rate, or both. Providers such as Cortecs charge per image; OpenAI's newer image models charge per token.",
+  "admin_models.discover.manual_rate.image_needs_one": "An image model needs a rate per image or an input rate per million tokens.",
   "admin_models.discover.manual_rate.per_extra_megapixel": "Per extra megapixel (optional)",
   "admin_models.discover.manual_rate.per_extra_megapixel_hint": "Added per megapixel above the first. Leave empty if larger images cost the same.",
   "admin_models.discover.manual_rate.cache_read": "Cache read per Mtok",

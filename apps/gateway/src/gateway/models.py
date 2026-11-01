@@ -1588,6 +1588,11 @@ class UsageRecord(Base):
     # the ledger cannot be repriced if that pricing is ever modelled properly.
     image_count: Mapped[int] = mapped_column(default=0, server_default=text("0"))
     image_size: Mapped[str | None] = mapped_column(String(32), default=None)
+    # Megapixels of one image as the provider measured them, when it said
+    # (Cortecs `usage.out_images_mpx`): the figure a `per_extra_megapixel`
+    # charge was computed from, so a row can explain its own cost. Null when the
+    # provider reported none and the size was used.
+    image_megapixels: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), default=None)
     # Seconds of audio transcribed, and where the figure came from
     # (`audio_seconds_source`: `upstream` when the provider reported a duration,
     # `measured` when we read it from the file header, `estimated` when only

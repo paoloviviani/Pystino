@@ -2044,6 +2044,8 @@
     }
   ],
   "admin_models.badge.no_price": "[Ńó þŕíćé]",
+  "admin_models.badge.image_free": "[Úńþŕíćéď (ƒŕéé)]",
+  "admin_models.price.per_image": "[{rate} þéŕ íḿáǧé]",
   "admin_models.column.access": "[Áććéśś]",
   "admin_models.access.nobody": "[ńóƀóďý]",
   "admin_models.column.status": "[Śťáťúś]",
@@ -2685,6 +2687,8 @@
   "admin_models.discover.manual_rate.per_page": "[Þéŕ þáǧé]",
   "admin_models.discover.manual_rate.per_minute": "[Þéŕ ḿíńúťé óƒ áúďíó]",
   "admin_models.discover.manual_rate.per_image": "[Þéŕ íḿáǧé]",
+  "admin_models.discover.manual_rate.image_hint": "[Íḿáǧé ḿóďéľś áŕé þŕíćéď þéŕ íḿáǧé óŕ þéŕ ťóķéń: ǧíǚé á þéŕ-íḿáǧé ŕáťé, áń íńþúť ŕáťé, óŕ ƀóťȟ. Þŕóǚíďéŕś śúćȟ áś Ćóŕťéćś ćȟáŕǧé þéŕ íḿáǧé; ÓþéńÁÍ'ś ńéŵéŕ íḿáǧé ḿóďéľś ćȟáŕǧé þéŕ ťóķéń.]",
+  "admin_models.discover.manual_rate.image_needs_one": "[Áń íḿáǧé ḿóďéľ ńééďś á ŕáťé þéŕ íḿáǧé óŕ áń íńþúť ŕáťé þéŕ ḿíľľíóń ťóķéńś.]",
   "admin_models.discover.manual_rate.per_extra_megapixel": "[Þéŕ éẋťŕá ḿéǧáþíẋéľ (óþťíóńáľ)]",
   "admin_models.discover.manual_rate.per_extra_megapixel_hint": "[Áďďéď þéŕ ḿéǧáþíẋéľ áƀóǚé ťȟé ƒíŕśť. Ĺéáǚé éḿþťý íƒ ľáŕǧéŕ íḿáǧéś ćóśť ťȟé śáḿé.]",
   "admin_models.discover.manual_rate.cache_read": "[Ćáćȟé ŕéáď þéŕ Ḿťóķ]",

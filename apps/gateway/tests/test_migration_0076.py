@@ -1,4 +1,4 @@
-"""Migration 0076: the per-extra-megapixel image rate. One nullable column."""
+"""Migration 0076: the per-extra-megapixel rate and the measured megapixels per usage row."""
 
 from __future__ import annotations
 
@@ -23,9 +23,11 @@ def test_up_and_down_on_sqlite(tmp_path: Path) -> None:
     up = _alembic(url, "upgrade", "0076")
     assert up.returncode == 0, up.stderr[-2000:]
     assert "per_extra_megapixel" in _columns(path, "model_prices")
+    assert "image_megapixels" in _columns(path, "usage_records")
 
     down = _alembic(url, "downgrade", "0075")
     assert down.returncode == 0, down.stderr[-2000:]
     assert "per_extra_megapixel" not in _columns(path, "model_prices")
+    assert "image_megapixels" not in _columns(path, "usage_records")
     assert "per_minute" in _columns(path, "model_prices")
     assert _alembic(url, "upgrade", "head").returncode == 0

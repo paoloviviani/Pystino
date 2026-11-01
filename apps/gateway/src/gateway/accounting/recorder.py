@@ -850,6 +850,7 @@ class RequestAccounting:
             "own_search_backend": self._own_search_backend,
             "own_search_tier": self._own_search_tier,
             "image_size": self._image_size,
+            "image_megapixels": counts.image_megapixels,
             "usage_source": source,
             "upstream_model": self._upstream_model,
             "upstream_provider": self._upstream_provider,

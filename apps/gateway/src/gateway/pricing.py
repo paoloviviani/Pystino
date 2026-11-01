@@ -870,6 +870,11 @@ async def import_prices(
                 per_minute=candidate.per_minute,
                 per_image=candidate.per_image,
                 per_extra_megapixel=candidate.per_extra_megapixel,
+                # Set by an operator, never published by a catalogue: a price
+                # change must not drop them (and so stop billing by size, or
+                # stop pricing the provider's searches).
+                per_image_by_size=current.per_image_by_size if current else None,
+                per_search=current.per_search if current else None,
                 currency=candidate.currency,
                 effective_from=utcnow(),
                 # Whatever provider this catalogue belongs to. It said

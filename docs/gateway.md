@@ -312,10 +312,16 @@ charged for each megapixel above the first, per image:
     per_image + max(0, megapixels - 1) x per_extra_megapixel      megapixels = W x H / 1,000,000
 
 so 1536x1024 (1.572864 MP) at 0.013 + 0.001 per extra MP is 0.013572864. A size
-listed in `per_image_by_size` always wins. With no usable size the flat
-`per_image` applies. The ledger records `image_count` and `image_size`; the usage
+listed in `per_image_by_size` always wins (`1792 x 1024`, `1792X1024` and
+`1792×1024` are all `1792x1024`). The megapixels are the provider's measured
+ones (`usage.out_images_mpx`) when it reports them, with or without a size in the
+request, and otherwise come from the size. With neither the flat `per_image`
+applies, so **the admission reservation for a request that names no size uses the
+flat rate**; the settled cost uses what came back. The usage row records the
+measured figure in `usage_records.image_megapixels` beside `image_size`, so a row
+can explain its own cost. The ledger records `image_count` and `image_size`; the usage
 reports show the money in the image cost. Migration 0076 adds the nullable
-`model_prices.per_extra_megapixel`.
+`model_prices.per_extra_megapixel` and `usage_records.image_megapixels`.
 
 **Cortecs mapping.** Choose the **Image-Gen** type in Discover. An entry with
 output modality `image` imports as kind image, with `pricing.output_cost_per_image`
@@ -324,9 +330,20 @@ as `per_image` and `pricing.output_cost_per_additional_megapixel` as
 Cortecs lists `input_token` and `output_token` as 0.0 on every image model, so an
 image model with **no** `output_cost_per_image` (`stable-diffusion-xl-base-1.0`)
 is treated as unpriced rather than free and takes a hand-typed price (Discover
-asks for a per-image rate, and an optional per-extra-megapixel rate). Rates seen
+asks for a per-image rate or token rates, and an optional per-extra-megapixel
+rate). Rates seen
 on 2026-11-01, EUR per image: `z-image-turbo` 0.009, `flux-1-schnell` 0.0288,
 `flux-2-klein-4b` 0.013 (+0.001 per extra MP), `qwen-image-2512` 0.075.
+
+**Upgrading: image models imported before 0.22.** Earlier releases read only the
+token rates, so a Cortecs image model with no `output_cost_per_image` (SDXL) was
+imported at 0 / 0 and generates pictures for free, and a re-import skips it
+because it is not in the importable set now. The console flags an image model
+whose price row charges nothing in any unit as **Unpriced (free)** in the model
+list. Set a price on its page (a new price row applies from now on); nothing is
+changed automatically, because a zero price on an image model can also be a
+deliberate choice. A price change through a catalogue re-import keeps the
+operator's `per_image_by_size` and `per_search` values.
 
 **What Cortecs answers** (checked live, 2026-11-01, through this route):
 

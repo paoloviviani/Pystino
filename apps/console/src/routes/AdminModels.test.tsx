@@ -1283,7 +1283,8 @@ describe("AdminModels", () => {
     it("asks an image row for a rate per image and an optional one per extra megapixel", async () => {
       const { user, calls } = await setup([unpriced("provider/sdxl", "image")]);
       await user.click(screen.getByRole("checkbox", { name: "Import sdxl" }));
-      expect(screen.queryByLabelText("Input per Mtok")).not.toBeInTheDocument();
+      // Import is held until a per-image or an input rate is given.
+      expect(screen.getByRole("button", { name: /^Import/ })).toBeDisabled();
       await user.type(screen.getByLabelText("Per image"), "0.02");
       await user.type(screen.getByLabelText("Per extra megapixel (optional)"), "0.001");
       await user.click(screen.getByRole("button", { name: /^Import/ }));
@@ -1291,6 +1292,19 @@ describe("AdminModels", () => {
       expect(calls.importBodies![0]!.models[0]?.manual_price).toEqual({
         per_image: "0.02",
         per_extra_megapixel: "0.001",
+      });
+    });
+
+    it("takes a token rate for an image model instead of a per-image one", async () => {
+      const { user, calls } = await setup([unpriced("provider/gpt-image", "image")]);
+      await user.click(screen.getByRole("checkbox", { name: "Import gpt-image" }));
+      await user.type(screen.getByLabelText("Input per Mtok"), "5");
+      await user.type(screen.getByLabelText("Output per Mtok"), "40");
+      await user.click(screen.getByRole("button", { name: /^Import/ }));
+      await waitFor(() => expect(calls.importBodies).toHaveLength(1));
+      expect(calls.importBodies![0]!.models[0]?.manual_price).toEqual({
+        input_per_mtok: "5",
+        output_per_mtok: "40",
       });
     });
 

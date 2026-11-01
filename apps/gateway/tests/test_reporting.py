@@ -34,7 +34,7 @@ from gateway.models import (
     UsageStatus,
     User,
 )
-from gateway.periods import PeriodKind, parse_period
+from gateway.periods import PeriodKind, parse_period, period_containing
 from gateway.quota import DatabaseCounterStore, QuotaAmounts, QuotaExceeded, QuotaSubject
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -86,15 +86,36 @@ async def record(
     return row
 
 
-def inside_this_month(hours_ago: int = 1) -> datetime:
-    """A moment inside the current month, whatever day it is run.
+def this_month_start(now: datetime | None = None) -> datetime:
+    """Start of the current report month, in UTC, by the report's own rule.
 
-    On the 1st, "an hour ago" can be last month; clamping keeps the test from
-    failing once a month for a reason that has nothing to do with the code.
+    The report resolves "this month" with ``period_containing`` in the billing
+    timezone (Europe/Rome), so the first and last hours of a UTC month belong to
+    the neighbouring month. Using the same function keeps the tests in step.
     """
-    now = datetime.now(UTC)
-    month = parse_period(now.strftime("%Y-%m"))
-    return max(now - timedelta(hours=hours_ago), month.start + timedelta(minutes=1))
+    return period_containing(PeriodKind.MONTH, now or datetime.now(UTC)).start.astimezone(UTC)
+
+
+def inside_this_month(hours_ago: int = 1, now: datetime | None = None) -> datetime:
+    """A moment inside the current report month, whatever day or hour it is run.
+
+    Right after the month turns, "an hour ago" can be last month; clamping keeps
+    the test from failing once a month for a reason that has nothing to do with
+    the code. ``now`` pins the clock for the test of that very clamp.
+    """
+    moment = now or datetime.now(UTC)
+    return max(moment - timedelta(hours=hours_ago), this_month_start(moment) + timedelta(minutes=1))
+
+
+def test_the_helper_follows_the_reports_month_at_a_month_end() -> None:
+    # 23:30 UTC on 31 October is 00:30 on 1 November in Rome: the report's month
+    # is already November, so a moment "inside" it may not be in October.
+    now = datetime(2026, 10, 31, 23, 30, tzinfo=UTC)
+    assert this_month_start(now) == datetime(2026, 10, 31, 23, 0, tzinfo=UTC)
+    assert inside_this_month(48, now=now) >= datetime(2026, 10, 31, 23, 0, tzinfo=UTC)
+    # And mid-month it is simply "hours ago".
+    mid = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
+    assert inside_this_month(2, now=mid) == mid - timedelta(hours=2)
 
 
 @pytest.fixture
@@ -1188,8 +1209,7 @@ class TestDailySplit:
         # timezone (on the 1st), outside the report. Whole days from the start,
         # at noon UTC, are inside the month and the same calendar day in both
         # zones, whatever day the suite runs.
-        month_start = parse_period(datetime.now(UTC).strftime("%Y-%m")).start
-        day1 = (month_start + timedelta(days=10)).replace(
+        day1 = (this_month_start() + timedelta(days=10)).replace(
             hour=12, minute=0, second=0, microsecond=0
         )
         day2 = day1 + timedelta(days=1)

@@ -8,6 +8,7 @@ zero, the real price in ``output_cost_per_image`` and, for one model,
 
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 import httpx
@@ -16,6 +17,7 @@ from conftest import FakeUpstream, Seeded
 from gateway.accounting.cost import TokenCounts, compute_cost, image_rate, megapixels
 from gateway.models import GroupModelAccess, ModelDef, ModelKind, ModelPrice
 from gateway.pricing import parse_catalogue
+from gateway.types import utcnow
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
@@ -127,6 +129,19 @@ class TestMegapixelMath:
         assert image_rate(_price(), None) == Decimal("0.013")
         assert image_rate(_price(), "auto") == Decimal("0.013")
 
+    def test_measured_megapixels_apply_with_no_size_at_all(self) -> None:
+        # 0.013 + (2.36 - 1) * 0.001: a caller that names no size, a provider
+        # that says how big the picture was.
+        assert image_rate(_price(), None, Decimal("2.36")) == Decimal("0.01436")
+        assert image_rate(_price(), None, Decimal("0.8")) == Decimal("0.013")
+
+    def test_size_spellings_are_one_size(self) -> None:
+        price = _price(per_image_by_size={"1792 x 1024": "0.08"})
+        assert image_rate(price, "1792x1024") == Decimal("0.08")
+        assert image_rate(price, "1792\u00d71024") == Decimal("0.08")
+        assert image_rate(price, "1792X1024") == Decimal("0.08")
+        assert megapixels("1536 \u00d7 1024") == Decimal("1.572864")
+
     def test_cost_multiplies_by_the_image_count(self) -> None:
         cost = compute_cost(TokenCounts(images=2, image_size="1536x1024"), _price())
         assert cost.image_cost == Decimal("0.027145728")
@@ -192,6 +207,33 @@ class TestRoute:
         record = await latest_record(session)
         assert record.image_size == "1536x1024"
         assert record.cost == expected
+        # The row says what the extra-megapixel charge was computed from.
+        assert record.image_megapixels == (Decimal(1) if reply_usage else None)
+
+    async def test_no_size_asked_and_measured_megapixels_still_bill_the_extra(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        fake_upstream: FakeUpstream,
+        session: AsyncSession,
+    ) -> None:
+        model = await self._flux(session, seeded)
+        fake_upstream.set_json(
+            {
+                "created": 1,
+                "data": [{"b64_json": "aaa"}],
+                "usage": {"out_images_mpx": 2.36},
+            }
+        )
+        response = await client.post(
+            "/v1/images/generations",
+            json={"model": model.name, "prompt": "a boat"},
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200, response.text
+        record = await latest_record(session)
+        assert record.cost == Decimal("0.01436")
+        assert record.image_megapixels == Decimal("2.36")
 
     async def test_a_url_result_is_passed_through_untouched(
         self,
@@ -214,6 +256,60 @@ class TestRoute:
         # The gateway forwarded the caller's format and fetched nothing.
         assert fake_upstream.last_body["response_format"] == "url"
         assert (await latest_record(session)).image_count == 1
+
+
+class TestReimport:
+    async def test_a_price_change_keeps_the_operators_size_rates_and_search_price(
+        self, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        from gateway.pricing import CataloguePrice, import_prices
+
+        model = ModelDef(
+            name="pic",
+            upstream_model="pic",
+            provider_id=seeded.provider.id,
+            kind=ModelKind.IMAGE,
+        )
+        session.add(model)
+        await session.flush()
+        session.add(
+            ModelPrice(
+                model_id=model.id,
+                input_per_mtok=Decimal(0),
+                output_per_mtok=Decimal(0),
+                per_image=Decimal("0.01"),
+                per_image_by_size={"1792x1024": "0.08"},
+                per_search=Decimal("0.5"),
+                currency="EUR",
+                effective_from=utcnow() - timedelta(days=1),
+            )
+        )
+        await session.commit()
+        await import_prices(
+            session,
+            [
+                CataloguePrice(
+                    "pic",
+                    Decimal(0),
+                    Decimal(0),
+                    "EUR",
+                    per_image=Decimal("0.02"),
+                    kind=ModelKind.IMAGE,
+                )
+            ],
+            billing_currency="EUR",
+            dry_run=False,
+        )
+        await session.commit()
+        rows = list(
+            (await session.execute(select(ModelPrice).where(ModelPrice.model_id == model.id)))
+            .scalars()
+            .all()
+        )
+        newest = max(rows, key=lambda r: r.effective_from)
+        assert newest.per_image == Decimal("0.02")
+        assert newest.per_image_by_size == {"1792x1024": "0.08"}
+        assert newest.per_search == Decimal("0.5")
 
 
 class TestImport:
