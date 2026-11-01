@@ -609,20 +609,25 @@ function Pricing({ model }: { model: AdminModel }) {
       // page, never both, and two mostly-empty columns on a narrow screen
       // pushed the source badge off the edge. The header names whichever this
       // model uses.
-      render: (price) =>
-        price.per_image_by_size && Object.keys(price.per_image_by_size).length > 0 ? (
-          <span>
-            <Rate amount={price.per_image} currency={price.currency} />
-            {/* i18n: literal (sizes and amounts, not text) */}
+      render: (price) => (
+        <span>
+          <Rate amount={price.per_image} currency={price.currency} />
+          {price.per_image_by_size && Object.keys(price.per_image_by_size).length > 0 && (
+            // i18n: literal (sizes and amounts, not text)
             <span className="block text-dense text-ink-muted">
               {Object.entries(price.per_image_by_size)
                 .map(([size, rate]) => `${size} ${rate}`)
                 .join(" · ")}
             </span>
-          </span>
-        ) : (
-          <Rate amount={price.per_image} currency={price.currency} />
-        ),
+          )}
+          {price.per_extra_megapixel && (
+            <span className="block text-dense text-ink-muted">
+              {m["model_detail.price.extra_megapixel"]()}{" "}
+              <Rate amount={price.per_extra_megapixel} currency={price.currency} />
+            </span>
+          )}
+        </span>
+      ),
       hideBelow: "md",
     },
     {
@@ -737,6 +742,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
   const [cacheWrite, setCacheWrite] = useState("");
   const [perImage, setPerImage] = useState("");
   const [perSize, setPerSize] = useState("");
+  const [perExtraMp, setPerExtraMp] = useState("");
   const [perPage, setPerPage] = useState("");
   const [perMinute, setPerMinute] = useState("");
   const [perSearch, setPerSearch] = useState("");
@@ -758,6 +764,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
         cache_write_per_mtok: cacheWrite === "" ? null : cacheWrite,
         per_image: perImage === "" ? null : perImage,
         per_image_by_size: sizes,
+        per_extra_megapixel: perExtraMp === "" ? null : perExtraMp,
         per_page: perPage === "" ? null : perPage,
         per_minute: perMinute === "" ? null : perMinute,
         per_search: perSearch === "" ? null : perSearch,
@@ -774,6 +781,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
           setCacheWrite("");
           setPerImage("");
           setPerSize("");
+          setPerExtraMp("");
           setPerPage("");
           setPerMinute("");
           setPerSearch("");
@@ -850,6 +858,17 @@ function AppendPrice({ model }: { model: AdminModel }) {
               onChange={(event) => setPerSize(event.target.value)}
               hint={m["model_detail.append.per_image_by_size_hint"]()}
               error={sizes === undefined ? m["model_detail.append.per_image_by_size_invalid"]() : undefined}
+            />
+          )}
+          {model.kind === "image" && (
+            <Input
+              label={m["model_detail.append.per_extra_megapixel"]()}
+              type="number"
+              min="0"
+              step="0.000001"
+              value={perExtraMp}
+              onChange={(event) => setPerExtraMp(event.target.value)}
+              hint={m["model_detail.append.per_extra_megapixel_hint"]()}
             />
           )}
           <Input

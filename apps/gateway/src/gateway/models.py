@@ -1361,6 +1361,11 @@ class ModelPrice(Base):
     # exact decimal. A size missing here takes ``per_image``; an unknown size
     # takes the highest rate (``accounting.cost.image_rate``).
     per_image_by_size: Mapped[dict[str, str] | None] = mapped_column(JSON, default=None)
+    # Per megapixel above the first, for the image models that scale with size
+    # (Cortecs ``output_cost_per_additional_megapixel``). One image of W x H costs
+    # ``per_image + max(0, W*H/1e6 - 1) * per_extra_megapixel``. A size listed in
+    # ``per_image_by_size`` takes its own rate and this does not apply.
+    per_extra_megapixel: Mapped[Decimal | None] = mapped_column(default=None)
     # Per page read, for OCR and document extraction, which is what every OCR
     # counterparty charges by. Same shape as `per_image` and for the same
     # reason: the unit is not a token, so the per-million divisor is wrong.
@@ -1583,6 +1588,11 @@ class UsageRecord(Base):
     # the ledger cannot be repriced if that pricing is ever modelled properly.
     image_count: Mapped[int] = mapped_column(default=0, server_default=text("0"))
     image_size: Mapped[str | None] = mapped_column(String(32), default=None)
+    # Megapixels of one image as the provider measured them, when it said
+    # (Cortecs `usage.out_images_mpx`): the figure a `per_extra_megapixel`
+    # charge was computed from, so a row can explain its own cost. Null when the
+    # provider reported none and the size was used.
+    image_megapixels: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), default=None)
     # Seconds of audio transcribed, and where the figure came from
     # (`audio_seconds_source`: `upstream` when the provider reported a duration,
     # `measured` when we read it from the file header, `estimated` when only

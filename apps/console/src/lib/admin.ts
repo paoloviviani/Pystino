@@ -843,6 +843,8 @@ export interface CreatePriceInput {
   per_image?: string | null;
   /** Per image at a given size: `{"1792x1024": "0.08"}`. */
   per_image_by_size?: Record<string, string> | null;
+  /** Per megapixel above the first, added to `per_image` for each image. */
+  per_extra_megapixel?: string | null;
   per_page?: string | null;
   /** Per minute of audio, for speech-to-text models. */
   per_minute?: string | null;

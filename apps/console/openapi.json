@@ -2169,6 +2169,28 @@
             ],
             "title": "Output Per Mtok"
           },
+          "per_extra_megapixel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Extra Megapixel"
+          },
+          "per_image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Image"
+          },
           "per_minute": {
             "anyOf": [
               {
@@ -2225,6 +2247,8 @@
           "output_per_mtok",
           "per_page",
           "per_minute",
+          "per_image",
+          "per_extra_megapixel",
           "currency",
           "context_window",
           "max_output_tokens",
@@ -3587,6 +3611,38 @@
               }
             ],
             "title": "Output Per Mtok"
+          },
+          "per_extra_megapixel": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Extra Megapixel"
+          },
+          "per_image": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Image"
           },
           "per_minute": {
             "anyOf": [
@@ -5982,6 +6038,22 @@
             ],
             "title": "Output Per Mtok"
           },
+          "per_extra_megapixel": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Extra Megapixel"
+          },
           "per_image": {
             "anyOf": [
               {
@@ -6122,6 +6194,17 @@
             "title": "Output Per Mtok",
             "type": "string"
           },
+          "per_extra_megapixel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Extra Megapixel"
+          },
           "per_image": {
             "anyOf": [
               {
@@ -6193,6 +6276,7 @@
           "cache_write_per_mtok",
           "per_image",
           "per_image_by_size",
+          "per_extra_megapixel",
           "per_page",
           "per_minute",
           "per_search",

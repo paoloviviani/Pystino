@@ -82,6 +82,7 @@ PRICE_FIELDS = (
     "cache_write_per_mtok",
     "per_image",
     "per_image_by_size",
+    "per_extra_megapixel",
     "per_page",
     "per_minute",
     "per_search",

@@ -1285,6 +1285,7 @@ class PriceResponse(ResponseModel):
     cache_write_per_mtok: Money | None
     per_image: Money | None
     per_image_by_size: dict[str, Money] | None = None
+    per_extra_megapixel: Money | None = None
     per_page: Money | None
     per_minute: Money | None
     per_search: Money | None
@@ -1308,6 +1309,10 @@ class PriceCreateRequest(BaseModel):
     # ``{"1024x1024": "0.04", "1792x1024": "0.08"}``. A size not listed takes
     # ``per_image``; an unknown size takes the highest rate.
     per_image_by_size: dict[str, Money] | None = None
+    # Per megapixel above the first, added to ``per_image`` for each image:
+    # ``per_image + max(0, W*H/1e6 - 1) * per_extra_megapixel``. A size listed in
+    # ``per_image_by_size`` keeps its own rate.
+    per_extra_megapixel: Money | None = Field(default=None, ge=0)
     # Per page read, for OCR models. Same shape, same reason: an OCR
     # counterparty charges by the page, and a page is not a million of
     # anything.
@@ -2878,6 +2883,9 @@ class DiscoveredModel(ResponseModel):
     #: are: an operator approving a price should see the one that will be charged.
     per_page: Money | None = None
     per_minute: Money | None = None
+    #: Per image, and per megapixel above the first, for an image model.
+    per_image: Money | None = None
+    per_extra_megapixel: Money | None = None
     currency: str | None
     context_window: int | None
     #: The model's reply limit as the catalogue states it; imports onto
@@ -2962,6 +2970,8 @@ class ManualImportPrice(BaseModel):
     # same meaning, as on the price row itself.
     per_page: Money | None = Field(default=None, ge=0)
     per_minute: Money | None = Field(default=None, ge=0)
+    per_image: Money | None = Field(default=None, ge=0)
+    per_extra_megapixel: Money | None = Field(default=None, ge=0)
     # Optional, as on the price form, which takes them for any kind: empty bills
     # the cached slice of a prompt at the input rate (accounting/cost.py).
     cache_read_per_mtok: Money | None = Field(default=None, ge=0)

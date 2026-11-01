@@ -205,7 +205,19 @@ export function AdminModels() {
       header: m["admin_models.column.price"](),
       numeric: true,
       render: (model) =>
-        model.current_price ? (
+        model.kind === "image" && model.current_price && imagePriceIsZero(model.current_price) ? (
+          // An image model imported before per-image prices were read carries a
+          // token price of 0/0 and generates pictures for nothing.
+          <Badge tone="warn">{m["admin_models.badge.image_free"]()}</Badge>
+        ) : model.kind === "image" && model.current_price?.per_image ? (
+          <div>
+            {m["admin_models.price.per_image"]({
+              rate: formatMoney(model.current_price.per_image, model.current_price.currency, {
+                exact,
+              }),
+            })}
+          </div>
+        ) : model.current_price ? (
           <>
             <div>
               {m["admin_models.price.in"]({
@@ -745,6 +757,8 @@ interface ManualPriceDraft {
   output: string;
   perPage: string;
   perMinute: string;
+  perImage: string;
+  perExtraMegapixel: string;
   cacheRead: string;
   cacheWrite: string;
   currency: string;
@@ -755,6 +769,8 @@ const EMPTY_DRAFT: ManualPriceDraft = {
   output: "",
   perPage: "",
   perMinute: "",
+  perImage: "",
+  perExtraMegapixel: "",
   cacheRead: "",
   cacheWrite: "",
   currency: "",
@@ -775,10 +791,17 @@ const takesCacheRates = (row: DiscoveredModel) => CACHE_KINDS.has(row.kind);
  * by the page, a transcription model by the minute of audio, and a search tier is metered per request — never priced per
  * token at all.
  */
-const RATE_FIELDS: Record<string, ("input" | "output" | "perPage" | "perMinute")[]> = {
+const RATE_FIELDS: Record<
+  string,
+  ("input" | "output" | "perPage" | "perMinute" | "perImage")[]
+> = {
   chat: ["input", "output"],
   embedding: ["input"],
-  image: ["input"],
+  // Per picture, as Cortecs and most image providers quote it; the optional
+  // per-extra-megapixel rate is asked beside it (`takesExtraMegapixel`).
+  // (OpenAI's newer image models are priced per token instead: the token
+  // rates are offered beside it, and the import takes either.)
+  image: [],
   ocr: ["perPage"],
   transcription: ["perMinute"],
   decision: ["input", "output"],
@@ -789,7 +812,33 @@ const RATE_LABELS: Record<string, () => string> = {
   output: m["admin_models.discover.manual_rate.output"],
   perPage: m["admin_models.discover.manual_rate.per_page"],
   perMinute: m["admin_models.discover.manual_rate.per_minute"],
+  perImage: m["admin_models.discover.manual_rate.per_image"],
 };
+
+const takesExtraMegapixel = (row: DiscoveredModel) => row.kind === "image";
+
+/** An image model is priced per picture or per token, and the import takes
+ * either: none of its rates is required alone, but one of the two must be given. */
+const isImage = (row: DiscoveredModel) => row.kind === "image";
+const IMAGE_RATES = ["perImage", "input", "output"] as const;
+
+/** An image model whose price row charges nothing in any unit: not a decision,
+ * a leftover (SDXL imported at 0/0 from Cortecs before per-image rates were
+ * read). Flagged so an operator sees it; a re-import skips it as unchanged. */
+function imagePriceIsZero(price: {
+  input_per_mtok: string;
+  output_per_mtok: string;
+  per_image: string | null;
+  per_image_by_size?: Record<string, string> | null;
+}): boolean {
+  const zero = (v: string | null | undefined) => v == null || Number(v) === 0;
+  return (
+    zero(price.input_per_mtok) &&
+    zero(price.output_per_mtok) &&
+    zero(price.per_image) &&
+    Object.values(price.per_image_by_size ?? {}).every(zero)
+  );
+}
 
 /** Money is a string end to end, so a draft is judged by shape and never by
  * parsing it into a float: digits and one decimal point, nothing else. */
@@ -827,14 +876,26 @@ function manualPricePayload(
   if (!draft) return undefined;
   const fields = RATE_FIELDS[row.kind] ?? ["input"];
   if (fields.some((field) => draft[field] === "")) return undefined;
+  if (isImage(row)) {
+    if (draft.perImage === "" && draft.input === "") return undefined;
+    if (IMAGE_RATES.some((field) => optionalRateError(draft[field]))) return undefined;
+  }
   if (currencyError(draft.currency) !== null) return undefined;
   if (takesCacheRates(row) && (optionalRateError(draft.cacheRead) || optionalRateError(draft.cacheWrite)))
     return undefined;
+  if (takesExtraMegapixel(row) && optionalRateError(draft.perExtraMegapixel)) return undefined;
   const price: ManualImportPrice = {};
   if (fields.includes("input")) price.input_per_mtok = draft.input;
   if (fields.includes("output")) price.output_per_mtok = draft.output;
   if (fields.includes("perPage")) price.per_page = draft.perPage;
   if (fields.includes("perMinute")) price.per_minute = draft.perMinute;
+  if (isImage(row)) {
+    if (draft.perImage !== "") price.per_image = draft.perImage;
+    if (draft.input !== "") price.input_per_mtok = draft.input;
+    if (draft.output !== "") price.output_per_mtok = draft.output;
+  }
+  if (takesExtraMegapixel(row) && draft.perExtraMegapixel !== "")
+    price.per_extra_megapixel = draft.perExtraMegapixel;
   if (takesCacheRates(row)) {
     if (draft.cacheRead !== "") price.cache_read_per_mtok = draft.cacheRead;
     if (draft.cacheWrite !== "") price.cache_write_per_mtok = draft.cacheWrite;
@@ -868,6 +929,29 @@ function manualPriceProblem(
       if (error) {
         return m["admin_models.discover.manual_rate.field_problem"]({ label, error });
       }
+    }
+  }
+  if (isImage(row)) {
+    if (draft.perImage === "" && draft.input === "") {
+      return m["admin_models.discover.manual_rate.image_needs_one"]();
+    }
+    for (const field of IMAGE_RATES) {
+      const error = optionalRateError(draft[field]);
+      if (error) {
+        return m["admin_models.discover.manual_rate.field_problem"]({
+          label: RATE_LABELS[field] ?? field,
+          error,
+        });
+      }
+    }
+  }
+  if (takesExtraMegapixel(row)) {
+    const error = optionalRateError(draft.perExtraMegapixel);
+    if (error) {
+      return m["admin_models.discover.manual_rate.field_problem"]({
+        label: m["admin_models.discover.manual_rate.per_extra_megapixel"],
+        error,
+      });
     }
   }
   const currency = currencyError(draft.currency);
@@ -908,6 +992,34 @@ function ManualPriceFields({
           hint={m["admin_models.discover.manual_rate.rate_hint"]()}
         />
       ))}
+      {isImage(row) &&
+        IMAGE_RATES.map((field) => (
+          <Input
+            key={field}
+            label={RATE_LABELS[field]?.() ?? field}
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            value={draft[field]}
+            onChange={(event) => onChange({ ...draft, [field]: event.target.value })}
+            error={optionalRateError(draft[field]) ?? undefined}
+            hint={
+              field === "perImage" ? m["admin_models.discover.manual_rate.image_hint"]() : undefined
+            }
+          />
+        ))}
+      {takesExtraMegapixel(row) && (
+        <Input
+          label={m["admin_models.discover.manual_rate.per_extra_megapixel"]()}
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          value={draft.perExtraMegapixel}
+          onChange={(event) => onChange({ ...draft, perExtraMegapixel: event.target.value })}
+          error={optionalRateError(draft.perExtraMegapixel) ?? undefined}
+          hint={m["admin_models.discover.manual_rate.per_extra_megapixel_hint"]()}
+        />
+      )}
       {takesCacheRates(row) && (
         <>
           <Input
