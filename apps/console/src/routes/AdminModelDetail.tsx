@@ -10,7 +10,6 @@ import {
   Spinner,
   SummaryStrip,
   Table,
-  
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { formatMoney, useExactMoney } from "@llmp/ui";
@@ -49,7 +48,6 @@ import {
 import type { AdminModel, ModelKind, Price } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 
-
 /**
  * One model, and everything that is true of it.
  *
@@ -82,7 +80,9 @@ export function AdminModelDetail() {
       <div className={PAGE}>
         <Notice tone="danger" title={m["model_detail.load_error.title"]()}>
           {/* i18n: server text — the API's own error message. */}
-          {model.error instanceof Error ? model.error.message : m["model_detail.unknown_error"]()}{" "}
+          {model.error instanceof Error
+            ? model.error.message
+            : m["model_detail.unknown_error"]()}{" "}
           <Link to="/admin/models">{m["model_detail.back_link"]()}</Link>
         </Notice>
       </div>
@@ -102,7 +102,8 @@ function ModelPage({ model }: { model: AdminModel }) {
   // every report is grouped by it — so it is shown, never edited here. What an
   // operator names freely is the display name, which is what a picker shows.
   const [displayName, setDisplayName] = useState(model.display_name ?? "");
-  const displayNameSaved = (displayName.trim() || null) === (model.display_name ?? null);
+  const displayNameSaved =
+    (displayName.trim() || null) === (model.display_name ?? null);
   // Always an array: the gateway sends `[]` on the listing as well as the
   // detail, so this cannot be undefined on a deployment whose gateway is behind
   // and a `.length` here would crash the page rather than hide a section.
@@ -113,9 +114,15 @@ function ModelPage({ model }: { model: AdminModel }) {
       { id: model.id, display_name: value },
       {
         onSuccess: () =>
-          toast?.add({ title: m["model_detail.toast.name_saved"](), type: "success" }),
+          toast?.add({
+            title: m["model_detail.toast.name_saved"](),
+            type: "success",
+          }),
         onError: () =>
-          toast?.add({ title: m["model_detail.toast.name_failed"](), type: "error" }),
+          toast?.add({
+            title: m["model_detail.toast.name_failed"](),
+            type: "error",
+          }),
       },
     );
   }
@@ -147,7 +154,10 @@ function ModelPage({ model }: { model: AdminModel }) {
                   { id: model.id, is_active: !model.is_active },
                   {
                     onSuccess: () =>
-                      toast?.add({ title: m["model_detail.toast.updated"](), type: "success" }),
+                      toast?.add({
+                        title: m["model_detail.toast.updated"](),
+                        type: "success",
+                      }),
                     onError: () =>
                       toast?.add({
                         title: m["model_detail.toast.update_failed"](),
@@ -171,7 +181,9 @@ function ModelPage({ model }: { model: AdminModel }) {
       {update.error ? (
         <Notice tone="danger" title={m["model_detail.toast.update_failed"]()}>
           {/* i18n: server text — the API's own error message. */}
-          {update.error instanceof Error ? update.error.message : m["model_detail.unknown_error"]()}
+          {update.error instanceof Error
+            ? update.error.message
+            : m["model_detail.unknown_error"]()}
         </Notice>
       ) : null}
 
@@ -190,7 +202,10 @@ function ModelPage({ model }: { model: AdminModel }) {
               onClick={() =>
                 del.mutate(model.id, {
                   onSuccess: () => {
-                    toast?.add({ title: m["model_detail.toast.deleted"](), type: "success" });
+                    toast?.add({
+                      title: m["model_detail.toast.deleted"](),
+                      type: "success",
+                    });
                     navigate("/admin/models");
                   },
                   onError: () =>
@@ -209,13 +224,17 @@ function ModelPage({ model }: { model: AdminModel }) {
         {del.error ? (
           <Notice tone="danger">
             {/* i18n: server text — the API's own error message. */}
-            {del.error instanceof Error ? del.error.message : m["model_detail.unknown_error"]()}
+            {del.error instanceof Error
+              ? del.error.message
+              : m["model_detail.unknown_error"]()}
           </Notice>
         ) : null}
         <p>
           <Message
             message={m["model_detail.delete.body"]}
-            markup={{ code: (children) => <code className={CODE}>{children}</code> }}
+            markup={{
+              code: (children) => <code className={CODE}>{children}</code>,
+            }}
           />
         </p>
         <p className={MUTED}>{m["model_detail.delete.spend_note"]()}</p>
@@ -257,7 +276,12 @@ function ModelPage({ model }: { model: AdminModel }) {
         </Notice>
       )}
       {!model.provider_is_active && (
-        <Notice tone="danger" title={m["model_detail.provider_inactive.title"]({ provider: model.provider_name })}>
+        <Notice
+          tone="danger"
+          title={m["model_detail.provider_inactive.title"]({
+            provider: model.provider_name,
+          })}
+        >
           {m["model_detail.provider_inactive.body"]()}
         </Notice>
       )}
@@ -279,13 +303,18 @@ function ModelPage({ model }: { model: AdminModel }) {
                 <Badge>{m["model_detail.badge.private"]()}</Badge>
               )}
               <Button
-                busy={update.isPending && update.variables?.is_public !== undefined}
+                busy={
+                  update.isPending && update.variables?.is_public !== undefined
+                }
                 onClick={() =>
                   update.mutate(
                     { id: model.id, is_public: !model.is_public },
                     {
                       onSuccess: () =>
-                        toast?.add({ title: m["model_detail.toast.updated"](), type: "success" }),
+                        toast?.add({
+                          title: m["model_detail.toast.updated"](),
+                          type: "success",
+                        }),
                       onError: () =>
                         toast?.add({
                           title: m["model_detail.toast.update_failed"](),
@@ -423,7 +452,9 @@ function Describe({ model }: { model: AdminModel }) {
         {update.error ? (
           <Notice tone="danger">
             {/* i18n: server text — the API's own error message. */}
-            {update.error instanceof Error ? update.error.message : m["model_detail.unknown_error"]()}
+            {update.error instanceof Error
+              ? update.error.message
+              : m["model_detail.unknown_error"]()}
           </Notice>
         ) : null}
         {update.isSuccess && !update.isPending && (
@@ -437,9 +468,13 @@ function Describe({ model }: { model: AdminModel }) {
           hint={m["model_detail.describe.kind_hint"]()}
         >
           <option value="chat">{m["model_detail.kind.chat"]()}</option>
-          <option value="embedding">{m["model_detail.kind.embedding"]()}</option>
+          <option value="embedding">
+            {m["model_detail.kind.embedding"]()}
+          </option>
           <option value="image">{m["model_detail.kind.image"]()}</option>
-          <option value="transcription">{m["model_detail.kind.transcription"]()}</option>
+          <option value="transcription">
+            {m["model_detail.kind.transcription"]()}
+          </option>
           <option value="decision">{m["model_detail.kind.decision"]()}</option>
         </Select>
 
@@ -453,7 +488,9 @@ function Describe({ model }: { model: AdminModel }) {
             // "Images in tool results" means nothing without image input, so
             // it is dropped with it rather than saved on a model that cannot use it.
             if (!next.includes("image")) {
-              setFeatures((current) => current.filter((item) => item !== "tool_images"));
+              setFeatures((current) =>
+                current.filter((item) => item !== "tool_images"),
+              );
             }
             setInputs(next);
           }}
@@ -514,11 +551,15 @@ function Describe({ model }: { model: AdminModel }) {
                   supported_features: features,
                   context_window: context === "" ? null : Number(context),
                   max_input_tokens: maxInput === "" ? null : Number(maxInput),
-                  max_output_tokens: maxOutput === "" ? null : Number(maxOutput),
+                  max_output_tokens:
+                    maxOutput === "" ? null : Number(maxOutput),
                 },
                 {
                   onSuccess: () =>
-                    toast?.add({ title: m["model_detail.describe.toast_saved"](), type: "success" }),
+                    toast?.add({
+                      title: m["model_detail.describe.toast_saved"](),
+                      type: "success",
+                    }),
                   onError: () =>
                     toast?.add({
                       title: m["model_detail.describe.toast_failed"](),
@@ -572,13 +613,17 @@ function Pricing({ model }: { model: AdminModel }) {
       key: "input",
       header: m["model_detail.price.column.input"](),
       numeric: true,
-      render: (price) => <Money amount={price.input_per_mtok} currency={price.currency} />,
+      render: (price) => (
+        <Money amount={price.input_per_mtok} currency={price.currency} />
+      ),
     },
     {
       key: "output",
       header: m["model_detail.price.column.output"](),
       numeric: true,
-      render: (price) => <Money amount={price.output_per_mtok} currency={price.currency} />,
+      render: (price) => (
+        <Money amount={price.output_per_mtok} currency={price.currency} />
+      ),
     },
     // Cache rates and the per-image rate are all optional, and a dash is not the
     // same claim as a zero: "not priced this way" and "free" are different
@@ -591,10 +636,16 @@ function Pricing({ model }: { model: AdminModel }) {
         price.cache_read_per_mtok || price.cache_write_per_mtok ? (
           <>
             <div>
-              <Rate amount={price.cache_read_per_mtok} currency={price.currency} />
+              <Rate
+                amount={price.cache_read_per_mtok}
+                currency={price.currency}
+              />
             </div>
             <div className={MUTED}>
-              <Rate amount={price.cache_write_per_mtok} currency={price.currency} />
+              <Rate
+                amount={price.cache_write_per_mtok}
+                currency={price.currency}
+              />
             </div>
           </>
         ) : (
@@ -612,18 +663,22 @@ function Pricing({ model }: { model: AdminModel }) {
       render: (price) => (
         <span>
           <Rate amount={price.per_image} currency={price.currency} />
-          {price.per_image_by_size && Object.keys(price.per_image_by_size).length > 0 && (
-            // i18n: literal (sizes and amounts, not text)
-            <span className="block text-dense text-ink-muted">
-              {Object.entries(price.per_image_by_size)
-                .map(([size, rate]) => `${size} ${rate}`)
-                .join(" · ")}
-            </span>
-          )}
+          {price.per_image_by_size &&
+            Object.keys(price.per_image_by_size).length > 0 && (
+              // i18n: literal (sizes and amounts, not text)
+              <span className="block text-dense text-ink-muted">
+                {Object.entries(price.per_image_by_size)
+                  .map(([size, rate]) => `${size} ${rate}`)
+                  .join(" · ")}
+              </span>
+            )}
           {price.per_extra_megapixel && (
             <span className="block text-dense text-ink-muted">
               {m["model_detail.price.extra_megapixel"]()}{" "}
-              <Rate amount={price.per_extra_megapixel} currency={price.currency} />
+              <Rate
+                amount={price.per_extra_megapixel}
+                currency={price.currency}
+              />
             </span>
           )}
         </span>
@@ -634,21 +689,27 @@ function Pricing({ model }: { model: AdminModel }) {
       key: "page",
       header: m["model_detail.price.column.page"](),
       numeric: true,
-      render: (price) => <Rate amount={price.per_page} currency={price.currency} />,
+      render: (price) => (
+        <Rate amount={price.per_page} currency={price.currency} />
+      ),
       hideBelow: "md",
     },
     {
       key: "minute",
       header: m["model_detail.price.column.minute"](),
       numeric: true,
-      render: (price) => <Rate amount={price.per_minute} currency={price.currency} />,
+      render: (price) => (
+        <Rate amount={price.per_minute} currency={price.currency} />
+      ),
       hideBelow: "md",
     },
     {
       key: "search",
       header: m["model_detail.price.column.search"](),
       numeric: true,
-      render: (price) => <Rate amount={price.per_search} currency={price.currency} />,
+      render: (price) => (
+        <Rate amount={price.per_search} currency={price.currency} />
+      ),
       hideBelow: "lg",
     },
     {
@@ -669,15 +730,22 @@ function Pricing({ model }: { model: AdminModel }) {
         {prices.isPending ? (
           <Spinner />
         ) : prices.error ? (
-          <Notice tone="danger" title={m["model_detail.price.load_error.title"]()}>
+          <Notice
+            tone="danger"
+            title={m["model_detail.price.load_error.title"]()}
+          >
             {/* i18n: server text — the API's own error message. */}
-            {prices.error instanceof Error ? prices.error.message : m["model_detail.unknown_error"]()}
+            {prices.error instanceof Error
+              ? prices.error.message
+              : m["model_detail.unknown_error"]()}
           </Notice>
         ) : (
           <>
             <div className="p-5">
               <SummaryStrip
-                headline={m["model_detail.price.count"]({ count: items.length })}
+                headline={m["model_detail.price.count"]({
+                  count: items.length,
+                })}
                 detail={
                   current
                     ? m["model_detail.price.current"]({
@@ -685,8 +753,16 @@ function Pricing({ model }: { model: AdminModel }) {
                           // Money is a string end to end; `formatMoney` reads it
                           // without parsing it, and the message carries both
                           // figures as the parameters they are.
-                          rin: formatMoney(current.input_per_mtok, current.currency, { exact }),
-                          rout: formatMoney(current.output_per_mtok, current.currency, { exact }),
+                          rin: formatMoney(
+                            current.input_per_mtok,
+                            current.currency,
+                            { exact },
+                          ),
+                          rout: formatMoney(
+                            current.output_per_mtok,
+                            current.currency,
+                            { exact },
+                          ),
                         }),
                       })
                     : m["model_detail.price.no_current"]()
@@ -709,8 +785,17 @@ function Pricing({ model }: { model: AdminModel }) {
   );
 }
 
-function Rate({ amount, currency }: { amount: string | null; currency: string }) {
-  if (!amount) return <span className={MUTED}>—</span>;
+function Rate({
+  amount,
+  currency,
+}: {
+  amount: string | null;
+  currency: string;
+}) {
+  // A dash only for a rate that is not set; a stated zero shows as €0.00.
+  if (amount === null || amount === undefined || amount === "") {
+    return <span className={MUTED}>—</span>;
+  }
   return <Money amount={amount} currency={currency} />;
 }
 
@@ -719,12 +804,16 @@ function Rate({ amount, currency }: { amount: string | null; currency: string })
  * Empty is `null` (no per-size rates); anything unreadable is `undefined`, which
  * the form shows as an error and refuses to send. Amounts stay strings.
  */
-export function parseSizeRates(text: string): Record<string, string> | null | undefined {
+export function parseSizeRates(
+  text: string,
+): Record<string, string> | null | undefined {
   const trimmed = text.trim();
   if (trimmed === "") return null;
   const rates: Record<string, string> = {};
   for (const part of trimmed.split(",")) {
-    const match = /^\s*([A-Za-z0-9_-]{1,32})\s*=\s*(\d+(?:\.\d+)?)\s*$/.exec(part);
+    const match = /^\s*([A-Za-z0-9_-]{1,32})\s*=\s*(\d+(?:\.\d+)?)\s*$/.exec(
+      part,
+    );
     const size = match?.[1];
     const rate = match?.[2];
     if (size === undefined || rate === undefined) return undefined;
@@ -774,7 +863,10 @@ function AppendPrice({ model }: { model: AdminModel }) {
       },
       {
         onSuccess: () => {
-          toast?.add({ title: m["model_detail.append.toast_done"](), type: "success" });
+          toast?.add({
+            title: m["model_detail.append.toast_done"](),
+            type: "success",
+          });
           setInput("");
           setOutput("");
           setCacheRead("");
@@ -788,7 +880,10 @@ function AppendPrice({ model }: { model: AdminModel }) {
           setEffective("");
         },
         onError: () =>
-          toast?.add({ title: m["model_detail.append.toast_failed"](), type: "error" }),
+          toast?.add({
+            title: m["model_detail.append.toast_failed"](),
+            type: "error",
+          }),
       },
     );
   };
@@ -799,7 +894,9 @@ function AppendPrice({ model }: { model: AdminModel }) {
         {create.error ? (
           <Notice tone="danger">
             {/* i18n: server text — the API's own error message. */}
-            {create.error instanceof Error ? create.error.message : m["model_detail.unknown_error"]()}
+            {create.error instanceof Error
+              ? create.error.message
+              : m["model_detail.unknown_error"]()}
           </Notice>
         ) : null}
         {create.isSuccess && !create.isPending && (
@@ -854,10 +951,16 @@ function AppendPrice({ model }: { model: AdminModel }) {
             <Input
               label={m["model_detail.append.per_image_by_size"]()}
               value={perSize}
-              placeholder={m["model_detail.append.per_image_by_size_placeholder"]()}
+              placeholder={m[
+                "model_detail.append.per_image_by_size_placeholder"
+              ]()}
               onChange={(event) => setPerSize(event.target.value)}
               hint={m["model_detail.append.per_image_by_size_hint"]()}
-              error={sizes === undefined ? m["model_detail.append.per_image_by_size_invalid"]() : undefined}
+              error={
+                sizes === undefined
+                  ? m["model_detail.append.per_image_by_size_invalid"]()
+                  : undefined
+              }
             />
           )}
           {model.kind === "image" && (
@@ -921,5 +1024,3 @@ function AppendPrice({ model }: { model: AdminModel }) {
     </Card>
   );
 }
-
-

@@ -545,12 +545,17 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
             and per_page is None
             and per_minute is None
         ):
-            # Cortecs quotes `input_token`/`output_token` as 0.0 on every image
-            # model, so a model with no `output_cost_per_image` (stable-diffusion
-            # -xl-base-1.0) would import as priced at zero and give every picture
-            # away. It is unpriced: left for a hand-typed rate (existing policy).
-            unparsable.append(model_id or "<unidentified model>")
-            continue
+            if input_rate is not None and output_rate is not None:
+                # Cortecs quotes `input_token`/`output_token` as 0.0 on every
+                # image model; one with no `output_cost_per_image` beside them
+                # (stable-diffusion-xl-base-1.0) is free there: its answers
+                # report `image_generation_cost: 0`. Import that as an explicit
+                # zero per image, so the console shows €0.00, not a missing rate.
+                per_image = Decimal(0)
+            else:
+                # No price stated at all: unpriced, left for a hand-typed rate.
+                unparsable.append(model_id or "<unidentified model>")
+                continue
         if per_minute is None and kind is ModelKind.TRANSCRIPTION:
             # Cortecs quotes `audio_cost` per **second** ("Audio cost per second
             # (if supported)", docs.cortecs.ai/api/models). Read only for a model

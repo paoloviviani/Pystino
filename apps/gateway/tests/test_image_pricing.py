@@ -62,10 +62,20 @@ class TestParse:
         assert by_id["z-image-turbo"].per_image == Decimal("0.009")
         assert by_id["z-image-turbo"].per_extra_megapixel is None
 
-    def test_an_image_model_with_no_price_is_unpriced_not_free(self) -> None:
+    def test_an_image_model_quoted_at_zero_tokens_is_free_per_image(self) -> None:
+        # Cortecs lists stable-diffusion-xl-base-1.0 at 0.0/0.0 tokens with no
+        # per-image rate, and bills it nothing: an explicit zero, not unpriced.
         prices, unparsable = parse_catalogue(CORTECS_IMAGES)
-        assert unparsable == ["stable-diffusion-xl-base-1.0"]
-        assert "stable-diffusion-xl-base-1.0" not in {p.model_id for p in prices}
+        assert unparsable == []
+        sdxl = {p.model_id: p for p in prices}["stable-diffusion-xl-base-1.0"]
+        assert sdxl.per_image == Decimal(0)
+
+    def test_an_image_model_with_no_price_at_all_is_unpriced(self) -> None:
+        entry = _entry("mystery-image")
+        entry.pop("pricing", None)
+        prices, unparsable = parse_catalogue({"object": "list", "data": [entry]})
+        assert unparsable == ["mystery-image"]
+        assert prices == []
 
     def test_a_chat_model_never_takes_an_image_rate(self) -> None:
         entry = {

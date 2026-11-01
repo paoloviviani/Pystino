@@ -124,7 +124,9 @@ function routes(
 }
 
 function renderScreen() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/admin/models/m1"]}>
@@ -152,7 +154,9 @@ function group(name: string) {
 /** The page has loaded the model when its name is the heading. */
 async function ready() {
   await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "fast-summariser" })).toBeInTheDocument(),
+    expect(
+      screen.getByRole("heading", { name: "fast-summariser" }),
+    ).toBeInTheDocument(),
   );
 }
 
@@ -160,12 +164,14 @@ async function save(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Save capabilities" }));
 }
 
-
 describe("AdminModelDetail", () => {
   it("toggling visibility sends is_public and flips the badge", async () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [], prices: [] };
-    vi.stubGlobal("fetch", routes(model({ is_public: false }), [price()], captured));
+    vi.stubGlobal(
+      "fetch",
+      routes(model({ is_public: false }), [price()], captured),
+    );
     renderScreen();
     await ready();
 
@@ -190,7 +196,10 @@ describe("AdminModelDetail", () => {
   it("sends an edited display name to the API", async () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [], prices: [] };
-    vi.stubGlobal("fetch", routes(model({ display_name: null }), [price()], captured));
+    vi.stubGlobal(
+      "fetch",
+      routes(model({ display_name: null }), [price()], captured),
+    );
     renderScreen();
     await ready();
 
@@ -207,11 +216,16 @@ describe("AdminModelDetail", () => {
   it("clears a display name back to the name callers send", async () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [], prices: [] };
-    vi.stubGlobal("fetch", routes(model({ display_name: "Fast summariser" }), [price()], captured));
+    vi.stubGlobal(
+      "fetch",
+      routes(model({ display_name: "Fast summariser" }), [price()], captured),
+    );
     renderScreen();
     await ready();
 
-    await user.click(screen.getByRole("button", { name: "Clear display name" }));
+    await user.click(
+      screen.getByRole("button", { name: "Clear display name" }),
+    );
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
     const body = captured.bodies[0] as Record<string, unknown>;
@@ -225,17 +239,26 @@ describe("AdminModelDetail", () => {
 
     // Both, because they answer different questions: the id is what a request
     // must carry, the display name is what a picker shows.
-    expect(screen.getByLabelText("Display name")).toHaveValue("Fast summariser");
-    expect(screen.getByText("fast-summariser", { selector: "code" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Display name")).toHaveValue(
+      "Fast summariser",
+    );
+    expect(
+      screen.getByText("fast-summariser", { selector: "code" }),
+    ).toBeInTheDocument();
   });
 
   it("sends an edited capability set to the API", async () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [], prices: [] };
-    vi.stubGlobal("fetch", routes(model({ supported_features: ["tools"] }), [price()], captured));
+    vi.stubGlobal(
+      "fetch",
+      routes(model({ supported_features: ["tools"] }), [price()], captured),
+    );
     renderScreen();
     await ready();
-    await user.click(group("Features").getByRole("checkbox", { name: /^reasoning/ }));
+    await user.click(
+      group("Features").getByRole("checkbox", { name: /^reasoning/ }),
+    );
     await save(user);
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
@@ -246,19 +269,35 @@ describe("AdminModelDetail", () => {
   it("shows what the model already claims as ticked", async () => {
     vi.stubGlobal(
       "fetch",
-      routes(model({ input_modalities: ["text", "image"], supported_features: ["tools"] })),
+      routes(
+        model({
+          input_modalities: ["text", "image"],
+          supported_features: ["tools"],
+        }),
+      ),
     );
     renderScreen();
     await ready();
 
-    expect(group("Accepts").getByRole("checkbox", { name: /^image/ })).toBeChecked();
-    expect(group("Accepts").getByRole("checkbox", { name: /^audio/ })).not.toBeChecked();
-    expect(group("Features").getByRole("checkbox", { name: /^tools/ })).toBeChecked();
-    expect(group("Features").getByRole("checkbox", { name: /^reasoning/ })).not.toBeChecked();
+    expect(
+      group("Accepts").getByRole("checkbox", { name: /^image/ }),
+    ).toBeChecked();
+    expect(
+      group("Accepts").getByRole("checkbox", { name: /^audio/ }),
+    ).not.toBeChecked();
+    expect(
+      group("Features").getByRole("checkbox", { name: /^tools/ }),
+    ).toBeChecked();
+    expect(
+      group("Features").getByRole("checkbox", { name: /^reasoning/ }),
+    ).not.toBeChecked();
   });
 
   describe("Images in tool results", () => {
-    const box = () => group("Features").getByRole("checkbox", { name: /^Images in tool results/ });
+    const box = () =>
+      group("Features").getByRole("checkbox", {
+        name: /^Images in tool results/,
+      });
 
     it("is offered, ticked, for a model that accepts images", async () => {
       vi.stubGlobal(
@@ -276,7 +315,11 @@ describe("AdminModelDetail", () => {
       expect(box()).toBeEnabled();
       expect(box()).toBeChecked();
       // A named option with its help line, not the raw value, and not in Other.
-      expect(screen.getByText(/Lets the chat show this model page images from tools/)).toBeVisible();
+      expect(
+        screen.getByText(
+          /Lets the chat show this model page images from tools/,
+        ),
+      ).toBeVisible();
       expect(screen.getByLabelText("Other features")).toHaveValue("");
     });
 
@@ -329,14 +372,16 @@ describe("AdminModelDetail", () => {
       );
       renderScreen();
       await ready();
-      await user.click(group("Accepts").getByRole("checkbox", { name: /^image/ }));
+      await user.click(
+        group("Accepts").getByRole("checkbox", { name: /^image/ }),
+      );
       expect(box()).toBeDisabled();
       await save(user);
 
       await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
-      expect((captured.bodies[0] as Record<string, unknown>).supported_features).toEqual([
-        "tools",
-      ]);
+      expect(
+        (captured.bodies[0] as Record<string, unknown>).supported_features,
+      ).toEqual(["tools"]);
     });
   });
 
@@ -345,17 +390,23 @@ describe("AdminModelDetail", () => {
     const captured: Captured = { bodies: [], prices: [] };
     vi.stubGlobal(
       "fetch",
-      routes(model({ supported_features: ["tools", "reasoning"] }), [price()], captured),
+      routes(
+        model({ supported_features: ["tools", "reasoning"] }),
+        [price()],
+        captured,
+      ),
     );
     renderScreen();
     await ready();
-    await user.click(group("Features").getByRole("checkbox", { name: /^tools/ }));
+    await user.click(
+      group("Features").getByRole("checkbox", { name: /^tools/ }),
+    );
     await save(user);
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
-    expect((captured.bodies[0] as Record<string, unknown>).supported_features).toEqual([
-      "reasoning",
-    ]);
+    expect(
+      (captured.bodies[0] as Record<string, unknown>).supported_features,
+    ).toEqual(["reasoning"]);
   });
 
   it("keeps a capability the provider invented that has no checkbox", async () => {
@@ -367,52 +418,70 @@ describe("AdminModelDetail", () => {
     const captured: Captured = { bodies: [], prices: [] };
     vi.stubGlobal(
       "fetch",
-      routes(model({ supported_features: ["tools", "web_search"] }), [price()], captured),
+      routes(
+        model({ supported_features: ["tools", "web_search"] }),
+        [price()],
+        captured,
+      ),
     );
     renderScreen();
     await ready();
     // Visible and editable, not merely retained behind the scenes.
-    expect(group("Features").getByLabelText("Other features")).toHaveValue("web_search");
+    expect(group("Features").getByLabelText("Other features")).toHaveValue(
+      "web_search",
+    );
 
-    await user.click(group("Features").getByRole("checkbox", { name: /^reasoning/ }));
+    await user.click(
+      group("Features").getByRole("checkbox", { name: /^reasoning/ }),
+    );
     await save(user);
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
-    expect((captured.bodies[0] as Record<string, unknown>).supported_features).toEqual([
-      "tools",
-      "reasoning",
-      "web_search",
-    ]);
+    expect(
+      (captured.bodies[0] as Record<string, unknown>).supported_features,
+    ).toEqual(["tools", "reasoning", "web_search"]);
   });
 
   it("adds an unrecognised capability typed by hand", async () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [], prices: [] };
-    vi.stubGlobal("fetch", routes(model({ supported_features: ["tools"] }), [price()], captured));
+    vi.stubGlobal(
+      "fetch",
+      routes(model({ supported_features: ["tools"] }), [price()], captured),
+    );
     renderScreen();
     await ready();
-    await user.type(group("Features").getByLabelText("Other features"), "web_search, citations");
+    await user.type(
+      group("Features").getByLabelText("Other features"),
+      "web_search, citations",
+    );
     await save(user);
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
-    expect((captured.bodies[0] as Record<string, unknown>).supported_features).toEqual([
-      "tools",
-      "web_search",
-      "citations",
-    ]);
+    expect(
+      (captured.bodies[0] as Record<string, unknown>).supported_features,
+    ).toEqual(["tools", "web_search", "citations"]);
   });
 
   it("does not list a value twice when it is both ticked and typed", async () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [], prices: [] };
-    vi.stubGlobal("fetch", routes(model({ supported_features: ["tools"] }), [price()], captured));
+    vi.stubGlobal(
+      "fetch",
+      routes(model({ supported_features: ["tools"] }), [price()], captured),
+    );
     renderScreen();
     await ready();
-    await user.type(group("Features").getByLabelText("Other features"), "tools");
+    await user.type(
+      group("Features").getByLabelText("Other features"),
+      "tools",
+    );
     await save(user);
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
-    expect((captured.bodies[0] as Record<string, unknown>).supported_features).toEqual(["tools"]);
+    expect(
+      (captured.bodies[0] as Record<string, unknown>).supported_features,
+    ).toEqual(["tools"]);
   });
 
   it("keeps the accepts and produces sets apart", async () => {
@@ -421,10 +490,15 @@ describe("AdminModelDetail", () => {
     // screen reader as much as to this test.
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [], prices: [] };
-    vi.stubGlobal("fetch", routes(model({ output_modalities: ["text"] }), [price()], captured));
+    vi.stubGlobal(
+      "fetch",
+      routes(model({ output_modalities: ["text"] }), [price()], captured),
+    );
     renderScreen();
     await ready();
-    await user.click(group("Accepts").getByRole("checkbox", { name: /^image/ }));
+    await user.click(
+      group("Accepts").getByRole("checkbox", { name: /^image/ }),
+    );
     await save(user);
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
@@ -445,7 +519,9 @@ describe("AdminModelDetail", () => {
     await save(user);
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
-    expect((captured.bodies[0] as Record<string, unknown>).kind).toBe("embedding");
+    expect((captured.bodies[0] as Record<string, unknown>).kind).toBe(
+      "embedding",
+    );
   });
 
   it("offers the transcription kind, and appends a rate per minute", async () => {
@@ -457,7 +533,9 @@ describe("AdminModelDetail", () => {
     await user.selectOptions(screen.getByLabelText("Kind"), "transcription");
     await save(user);
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
-    expect((captured.bodies[0] as Record<string, unknown>).kind).toBe("transcription");
+    expect((captured.bodies[0] as Record<string, unknown>).kind).toBe(
+      "transcription",
+    );
 
     await user.type(screen.getByLabelText("Input per Mtok"), "0");
     await user.type(screen.getByLabelText("Output per Mtok"), "0");
@@ -474,7 +552,11 @@ describe("AdminModelDetail", () => {
     vi.stubGlobal(
       "fetch",
       routes(model(), [
-        price({ id: "p2", input_per_mtok: "3.000000000000", effective_from: "2026-09-01T10:00:00Z" }),
+        price({
+          id: "p2",
+          input_per_mtok: "3.000000000000",
+          effective_from: "2026-09-01T10:00:00Z",
+        }),
         price(),
       ]),
     );
@@ -486,11 +568,35 @@ describe("AdminModelDetail", () => {
     expect(history.getByText("€1.00")).toBeInTheDocument();
   });
 
+  it("shows a stated zero per image as €0.00 and an unset rate as a dash", async () => {
+    // A free image model (Cortecs' stable-diffusion-xl-base-1.0) must read as
+    // free, not as a rate nobody set.
+    vi.stubGlobal(
+      "fetch",
+      routes(model({ kind: "image" }), [
+        price({
+          input_per_mtok: "1.000000000000",
+          output_per_mtok: "2.000000000000",
+          per_image: "0",
+        }),
+      ]),
+    );
+    renderScreen();
+    await ready();
+
+    const history = within(await screen.findByRole("table"));
+    expect(history.getByText("€0.00")).toBeInTheDocument();
+    expect(history.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
   it("marks a price that has not taken effect yet", async () => {
     // A scheduled price is not the current one, and a table that showed both
     // identically would have an operator reading next month's rate as today's.
     const future = new Date(Date.now() + 86_400_000).toISOString();
-    vi.stubGlobal("fetch", routes(model(), [price({ effective_from: future })]));
+    vi.stubGlobal(
+      "fetch",
+      routes(model(), [price({ effective_from: future })]),
+    );
     renderScreen();
     await ready();
 
@@ -505,7 +611,9 @@ describe("AdminModelDetail", () => {
     renderScreen();
     await ready();
 
-    expect(await screen.findByText("This model has no price")).toBeInTheDocument();
+    expect(
+      await screen.findByText("This model has no price"),
+    ).toBeInTheDocument();
   });
 
   it("appends a price, including the cache rates no screen used to offer", async () => {
@@ -553,7 +661,10 @@ describe("AdminModelDetail", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
-        if (url.includes("/models/m1") && (init?.method === "PUT" || init?.method === "DELETE")) {
+        if (
+          url.includes("/models/m1") &&
+          (init?.method === "PUT" || init?.method === "DELETE")
+        ) {
           calls.push(`${init?.method} ${url}`);
           return new Response(null, { status: 204 });
         }
@@ -566,7 +677,9 @@ describe("AdminModelDetail", () => {
     // `research` already has it, `teaching` does not — so one click is a
     // revocation and the other a grant, and they are different verbs.
     await user.click(await screen.findByRole("checkbox", { name: "teaching" }));
-    await waitFor(() => expect(calls).toEqual(["PUT /api/admin/groups/g2/models/m1"]));
+    await waitFor(() =>
+      expect(calls).toEqual(["PUT /api/admin/groups/g2/models/m1"]),
+    );
 
     await user.click(screen.getByRole("checkbox", { name: "research" }));
     await waitFor(() => expect(calls).toHaveLength(2));
@@ -612,7 +725,10 @@ describe("AdminModelDetail", () => {
   it("shows no aliases section when nothing points here", async () => {
     vi.stubGlobal(
       "fetch",
-      routes(model({ aliases_pointing_here: [] }), [], { bodies: [], prices: [] }),
+      routes(model({ aliases_pointing_here: [] }), [], {
+        bodies: [],
+        prices: [],
+      }),
     );
     renderScreen();
     await ready();
@@ -624,7 +740,9 @@ describe("AdminModelDetail", () => {
     vi.stubGlobal(
       "fetch",
       routes(
-        model({ aliases_pointing_here: [{ id: "a1", name: "fast", is_active: true }] }),
+        model({
+          aliases_pointing_here: [{ id: "a1", name: "fast", is_active: true }],
+        }),
         [],
         { bodies: [], prices: [] },
       ),
