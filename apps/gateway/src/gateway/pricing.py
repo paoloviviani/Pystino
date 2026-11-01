@@ -70,6 +70,15 @@ _PAGE_KEYS = ("ocr_cost",)
 #: because it is the one catalogue rate here whose unit differs from its name.
 _AUDIO_SECOND_KEYS = ("audio_cost",)
 SECONDS_PER_MINUTE = Decimal(60)
+#: Per-image rates (Cortecs `output_cost_per_image`) and the extra charged per
+#: megapixel above the first (`output_cost_per_additional_megapixel`). Both are
+#: per image, in the catalogue currency: no divisor.
+_IMAGE_KEYS = ("output_cost_per_image", "cost_per_image", "per_image", "image_cost")
+_EXTRA_MEGAPIXEL_KEYS = (
+    "output_cost_per_additional_megapixel",
+    "cost_per_additional_megapixel",
+    "per_extra_megapixel",
+)
 _MINUTE_KEYS = (
     "per_minute",
     "transcription_cost_per_minute",
@@ -128,6 +137,11 @@ class CataloguePrice:
     #: name says the unit (`_MINUTE_KEYS`): a rate in an unstated unit is worse
     #: than none, the rule `usage_info.credits` is refused under.
     per_minute: Decimal | None = None
+    #: Per generated image, for image models (Cortecs `output_cost_per_image`).
+    per_image: Decimal | None = None
+    #: Per megapixel above the first, per image (Cortecs
+    #: `output_cost_per_additional_megapixel`); see `accounting.cost.image_rate`.
+    per_extra_megapixel: Decimal | None = None
     context_window: int | None = None
     #: The most the model can generate in one reply, where the catalogue says.
     max_output_tokens: int | None = None
@@ -516,7 +530,27 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
         page_quote = _as_decimal(_first(source, _PAGE_KEYS))
         per_page = page_quote / PAGES_PER_QUOTE if page_quote is not None else None
         per_minute = _as_decimal(_first(source, _MINUTE_KEYS))
+        per_image = _as_decimal(_first(source, _IMAGE_KEYS))
+        per_extra_megapixel = _as_decimal(_first(source, _EXTRA_MEGAPIXEL_KEYS))
         kind = _kind_of(entry)
+        if kind is not ModelKind.IMAGE:
+            # Only an image model is charged by the picture; on any other kind
+            # these keys are not a rate the gateway has a unit to apply.
+            per_image = per_extra_megapixel = None
+        if (
+            kind is ModelKind.IMAGE
+            and per_image is None
+            and not input_rate
+            and not output_rate
+            and per_page is None
+            and per_minute is None
+        ):
+            # Cortecs quotes `input_token`/`output_token` as 0.0 on every image
+            # model, so a model with no `output_cost_per_image` (stable-diffusion
+            # -xl-base-1.0) would import as priced at zero and give every picture
+            # away. It is unpriced: left for a hand-typed rate (existing policy).
+            unparsable.append(model_id or "<unidentified model>")
+            continue
         if per_minute is None and kind is ModelKind.TRANSCRIPTION:
             # Cortecs quotes `audio_cost` per **second** ("Audio cost per second
             # (if supported)", docs.cortecs.ai/api/models). Read only for a model
@@ -535,7 +569,9 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
         if (
             not model_id
             or not currency
-            or not (priced or per_page is not None or per_minute is not None)
+            or not (
+                priced or per_page is not None or per_minute is not None or per_image is not None
+            )
         ):
             unparsable.append(model_id or "<unidentified model>")
             continue
@@ -557,6 +593,8 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
                 currency=str(currency).upper(),
                 per_page=per_page,
                 per_minute=per_minute,
+                per_image=per_image,
+                per_extra_megapixel=per_extra_megapixel,
                 cache_read_per_mtok=_as_decimal(_first(source, _CACHE_READ_KEYS)),
                 cache_write_per_mtok=_as_decimal(_first(source, _CACHE_WRITE_KEYS)),
                 context_window=context_window,
@@ -744,6 +782,8 @@ def _differs(existing: ModelPrice | None, candidate: CataloguePrice) -> bool:
         # deployment keeps billing yesterday's price.
         or existing.per_page != candidate.per_page
         or existing.per_minute != candidate.per_minute
+        or existing.per_image != candidate.per_image
+        or existing.per_extra_megapixel != candidate.per_extra_megapixel
         or existing.currency.upper() != candidate.currency
     )
 
@@ -828,6 +868,8 @@ async def import_prices(
                 # as free; found while adding `per_minute` beside it.
                 per_page=candidate.per_page,
                 per_minute=candidate.per_minute,
+                per_image=candidate.per_image,
+                per_extra_megapixel=candidate.per_extra_megapixel,
                 currency=candidate.currency,
                 effective_from=utcnow(),
                 # Whatever provider this catalogue belongs to. It said

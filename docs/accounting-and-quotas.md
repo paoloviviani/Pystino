@@ -171,6 +171,14 @@ quantity differently. Reading only one would bill those tokens at the input
 rate. The distinction from the rule above is the point — those differ in
 meaning, these differ only in spelling.
 
+## Images: a price per image, and per extra megapixel
+
+An image model is billed `per_image` for each picture, or its own rate for a size
+in `per_image_by_size`; a model that also has `per_extra_megapixel` adds that
+rate per megapixel above the first (`per_image + max(0, MP - 1) x rate`). The
+megapixels come from the provider's `usage.out_images_mpx` when it reports one,
+else from the size. See [Images](gateway.md#images-v1imagesgenerations).
+
 ## Audio: a price per minute
 
 A transcription model is priced per **minute** of audio (`per_minute` on the

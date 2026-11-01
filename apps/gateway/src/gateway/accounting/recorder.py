@@ -217,6 +217,7 @@ class RequestAccounting:
         # Set by `observe_redaction` when the *response* was the redacted half.
         self._redaction_observed = False
         self._image_size: str | None = None
+        self._image_megapixels: Decimal | None = None
         #: Seconds of audio and where the figure came from; set by the
         #: transcription route, which meters time rather than tokens.
         self._audio_seconds = Decimal(0)
@@ -389,14 +390,21 @@ class RequestAccounting:
         self._ctx.redaction_rule_id = rule_id
         self._redaction_observed = True
 
-    def observe_images(self, count: int, size: str | None) -> None:
+    def observe_images(
+        self, count: int, size: str | None, megapixels: Decimal | None = None
+    ) -> None:
         """How many pictures came back, and at what size.
+
+        ``megapixels`` is the size of one picture as the provider *measured* it,
+        where it says (Cortecs ``usage.out_images_mpx``). It outranks the size,
+        which Cortecs echoes from the request while delivering a smaller image.
 
         Separate from usage because the models that charge per image are
         exactly the ones that report no usage at all.
         """
         self._images = max(0, count)
         self._image_size = size
+        self._image_megapixels = megapixels
 
     def observe_audio(self, seconds: Decimal | float, source: str) -> None:
         """How many seconds of audio were transcribed, and who said so.
@@ -606,6 +614,7 @@ class RequestAccounting:
             counts,
             images=self._images or counts.images,
             image_size=self._image_size or counts.image_size,
+            image_megapixels=self._image_megapixels or counts.image_megapixels,
             audio_seconds=self._audio_seconds or counts.audio_seconds,
         )
 

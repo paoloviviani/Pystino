@@ -39,6 +39,7 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
       output_per_mtok: "2.000000000000",
       per_page: null,
       per_minute: null,
+      per_extra_megapixel: null,
       per_search: null,
       cache_read_per_mtok: null,
       cache_write_per_mtok: null,
@@ -69,6 +70,8 @@ const DISCOVERY: CatalogueDiscovery = {
       output_per_mtok: "1.500000000000",
       per_page: null,
       per_minute: null,
+      per_image: null,
+      per_extra_megapixel: null,
       currency: "EUR",
       context_window: 32000,
       kind: "chat",
@@ -87,6 +90,8 @@ const DISCOVERY: CatalogueDiscovery = {
       output_per_mtok: "1.900000000000",
       per_page: null,
       per_minute: null,
+      per_image: null,
+      per_extra_megapixel: null,
       currency: "USD",
       context_window: null,
       kind: "chat",
@@ -125,6 +130,8 @@ const DISCOVERY_FILLED: CatalogueDiscovery = {
       output_per_mtok: "0.750000000000",
       per_page: null,
       per_minute: null,
+      per_image: null,
+      per_extra_megapixel: null,
       currency: "USD",
       context_window: 8000,
       kind: "chat",
@@ -143,6 +150,8 @@ const DISCOVERY_FILLED: CatalogueDiscovery = {
       output_per_mtok: null,
       per_page: null,
       per_minute: null,
+      per_image: null,
+      per_extra_megapixel: null,
       currency: null,
       context_window: null,
       kind: "chat",
@@ -1021,6 +1030,8 @@ describe("AdminModels", () => {
       output_per_mtok: null,
       per_page: null,
       per_minute: null,
+      per_image: null,
+      per_extra_megapixel: null,
       currency: null,
       context_window: null,
       kind,
@@ -1085,6 +1096,8 @@ describe("AdminModels", () => {
       output_per_mtok: null,
       per_page: null,
       per_minute: null,
+      per_image: null,
+      per_extra_megapixel: null,
       currency: null,
       context_window: null,
       kind: "chat",
@@ -1151,6 +1164,8 @@ describe("AdminModels", () => {
       output_per_mtok: null,
       per_page: null,
       per_minute: null,
+      per_image: null,
+      per_extra_megapixel: null,
       currency: null,
       context_window: null,
       kind,
@@ -1262,6 +1277,20 @@ describe("AdminModels", () => {
       await waitFor(() => expect(calls.importBodies).toHaveLength(1));
       expect(calls.importBodies![0]!.models[0]?.manual_price).toEqual({
         per_minute: "0.006",
+      });
+    });
+
+    it("asks an image row for a rate per image and an optional one per extra megapixel", async () => {
+      const { user, calls } = await setup([unpriced("provider/sdxl", "image")]);
+      await user.click(screen.getByRole("checkbox", { name: "Import sdxl" }));
+      expect(screen.queryByLabelText("Input per Mtok")).not.toBeInTheDocument();
+      await user.type(screen.getByLabelText("Per image"), "0.02");
+      await user.type(screen.getByLabelText("Per extra megapixel (optional)"), "0.001");
+      await user.click(screen.getByRole("button", { name: /^Import/ }));
+      await waitFor(() => expect(calls.importBodies).toHaveLength(1));
+      expect(calls.importBodies![0]!.models[0]?.manual_price).toEqual({
+        per_image: "0.02",
+        per_extra_megapixel: "0.001",
       });
     });
 

@@ -171,10 +171,10 @@ which is a quiet way to give away money. What the import does accept is a price
 the operator supplies with the request — `manual_price` on the model item, the
 same amounts and money-as-string shape the model page's price form posts
 (`input_per_mtok` and `output_per_mtok` per million tokens, `per_page` for an
-OCR model, and an optional `currency` that defaults to the gateway's billing
+OCR model, `per_image` and `per_extra_megapixel` for an image model, and an optional `currency` that defaults to the gateway's billing
 currency and is refused in any other, never converted). The price must carry
 the rates the kind is metered on — a chat model an input and an output rate, an
-embedding model an input rate, a decision model an input and an output rate (zero is accepted, absent is not), an OCR model a page rate, a transcription model a rate per minute of audio (`per_minute`); a search tier takes no
+embedding model an input rate, a decision model an input and an output rate (zero is accepted, absent is not), an OCR model a page rate, a transcription model a rate per minute of audio (`per_minute`), an image model a `per_image` or an input rate; a search tier takes no
 model price at all: a search backend is priced per request on the Web search screen instead. Each kind's missing rate is
 refused per item, so one bad price does not lose the rest of the batch.
 
@@ -297,6 +297,64 @@ the provider's answer through as it is, so these are the provider's limits):
 **Redaction does not apply to the audio.** See
 [Audio is not screened](redaction.md#audio-is-not-screened) for what that means
 and the one switch an operator has, `GATEWAY_TRANSCRIPTION__ALLOWED_UNDER_REDACTION`.
+
+## Images: `/v1/images/generations`
+
+A model of kind **image** is served by `POST /v1/images/generations` (OpenAI's
+JSON shape; `n` is 1 to 10, `size` is `WxH`). The prompt is redacted and
+`revised_prompt` is restored; the pictures are not touched. It is priced per
+image, or per token for providers that report usage (OpenAI's newer models).
+
+**Price fields.** `per_image` is the rate for one picture. `per_image_by_size`
+(`{"1792x1024": "0.08"}`) gives a size its own rate. `per_extra_megapixel` is
+charged for each megapixel above the first, per image:
+
+    per_image + max(0, megapixels - 1) x per_extra_megapixel      megapixels = W x H / 1,000,000
+
+so 1536x1024 (1.572864 MP) at 0.013 + 0.001 per extra MP is 0.013572864. A size
+listed in `per_image_by_size` always wins. With no usable size the flat
+`per_image` applies. The ledger records `image_count` and `image_size`; the usage
+reports show the money in the image cost. Migration 0076 adds the nullable
+`model_prices.per_extra_megapixel`.
+
+**Cortecs mapping.** Choose the **Image-Gen** type in Discover. An entry with
+output modality `image` imports as kind image, with `pricing.output_cost_per_image`
+as `per_image` and `pricing.output_cost_per_additional_megapixel` as
+`per_extra_megapixel` (both per image, in the catalogue currency, no divisor).
+Cortecs lists `input_token` and `output_token` as 0.0 on every image model, so an
+image model with **no** `output_cost_per_image` (`stable-diffusion-xl-base-1.0`)
+is treated as unpriced rather than free and takes a hand-typed price (Discover
+asks for a per-image rate, and an optional per-extra-megapixel rate). Rates seen
+on 2026-11-01, EUR per image: `z-image-turbo` 0.009, `flux-1-schnell` 0.0288,
+`flux-2-klein-4b` 0.013 (+0.001 per extra MP), `qwen-image-2512` 0.075.
+
+**What Cortecs answers** (checked live, 2026-11-01, through this route):
+
+- The reply is `{"created", "size", "data": [{"b64_json", "url", "revised_prompt"}],
+  "usage": {..., "out_images_mpx", "cost_details": {"image_generation_cost"}}}`.
+  Every entry carries both `b64_json` and `url`, one of them null. With no
+  `response_format` Cortecs answers **`b64_json`** (JPEG), so a caller that wants
+  bytes needs nothing extra; `usage.cost` is absent and `image_generation_cost`
+  is in micro-euros (z-image-turbo 9000 = 0.009 EUR).
+- **The delivered image can be smaller than the size asked for, and `size` in the
+  reply echoes the request.** flux-2-klein-4b answered 1536x1024, 2048x2048 and
+  1344x768 requests with 1024x1024, 1024x1024 and 1024x768 JPEGs, reported
+  `size` as requested, and reported `usage.out_images_mpx: 1` (per image: it
+  stayed 1 for `n` = 2). The gateway therefore bills extra megapixels from
+  `usage.out_images_mpx` when the provider reports it, and from the size
+  otherwise, so a 2048x2048 request is billed 0.013 (as Cortecs billed it), not
+  0.0162. `image_size` on the ledger row is the size reported, which is not
+  always the size delivered.
+- Latency: about 1.5 to 2 s for flux-2-klein-4b, about 5 s for z-image-turbo.
+
+**`url` versus `b64_json`.** The route does not fetch or rewrite anything: the
+provider's `data` array is returned as it came, and the caller's
+`response_format` is forwarded as sent. A provider that answers with a `url`
+(OpenAI's dall-e family by default; the link usually expires) therefore gives the
+caller a `url`, and a caller that needs bytes must either send
+`response_format: "b64_json"` or download the link itself. The gateway does not
+default `response_format`, because some providers (OpenAI's gpt-image models)
+reject the field. Cortecs needs no default, as above.
 
 ## Document extraction: which formats are read
 

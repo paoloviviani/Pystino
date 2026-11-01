@@ -27,6 +27,7 @@ function price(overrides: Partial<Price> = {}): Price {
     output_per_mtok: "2.000000000000",
     per_page: null,
     per_minute: null,
+    per_extra_megapixel: null,
     per_search: null,
     cache_read_per_mtok: null,
     cache_write_per_mtok: null,

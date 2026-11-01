@@ -297,6 +297,8 @@ export type ManualImportPrice = Narrow<
     output_per_mtok?: string;
     per_page?: string;
     per_minute?: string;
+    per_image?: string;
+    per_extra_megapixel?: string;
     cache_read_per_mtok?: string;
     cache_write_per_mtok?: string;
     currency?: string;

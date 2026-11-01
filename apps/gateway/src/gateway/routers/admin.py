@@ -453,6 +453,7 @@ def _price_response(price: ModelPrice | None) -> PriceResponse | None:
             if price.per_image_by_size
             else None
         ),
+        per_extra_megapixel=price.per_extra_megapixel,
         per_page=price.per_page,
         per_minute=price.per_minute,
         per_search=price.per_search,
@@ -1524,6 +1525,7 @@ def _fill_from_hints(
                 cache_write_per_mtok=hint.cache_write_per_mtok,
                 per_page=hint.per_page,
                 per_minute=hint.per_minute,
+                per_image=hint.per_image,
             )
         )
     return out
@@ -1679,6 +1681,8 @@ async def discover_models(
                 output_per_mtok=price.output_per_mtok,
                 per_page=price.per_page,
                 per_minute=price.per_minute,
+                per_image=price.per_image,
+                per_extra_megapixel=price.per_extra_megapixel,
                 currency=price.currency,
                 context_window=price.context_window or limits.get(upstream_id, (None, None))[0],
                 max_output_tokens=(
@@ -1918,6 +1922,8 @@ async def _price_currency(currency: str | None, settings: Settings, fx: FXServic
 _KIND_RATES: dict[ModelKind, tuple[str, ...]] = {
     ModelKind.CHAT: ("input_per_mtok", "output_per_mtok"),
     ModelKind.EMBEDDING: ("input_per_mtok",),
+    # An image model is priced per picture (Cortecs) or per token (OpenAI's
+    # newer ones); the check below accepts either, see `per_image`.
     ModelKind.IMAGE: ("input_per_mtok",),
     ModelKind.OCR: ("per_page",),
     ModelKind.TRANSCRIPTION: ("per_minute",),
@@ -1962,6 +1968,8 @@ async def _manual_catalogue_price(
         for name in _KIND_RATES.get(kind, ("input_per_mtok", "output_per_mtok"))
         if getattr(manual, name) is None
     ]
+    if kind is ModelKind.IMAGE and manual.per_image is not None:
+        missing = []
     if missing:
         phrases = " and ".join(_RATE_PHRASES[name] for name in missing)
         return None, (
@@ -1980,6 +1988,8 @@ async def _manual_catalogue_price(
             cache_write_per_mtok=manual.cache_write_per_mtok,
             per_page=manual.per_page,
             per_minute=manual.per_minute,
+            per_image=manual.per_image,
+            per_extra_megapixel=manual.per_extra_megapixel,
             kind=kind,
         ),
         None,
@@ -2238,6 +2248,8 @@ async def import_models(
             # An OCR model's whole price is here; the token rates are zero.
             per_page=price.per_page,
             per_minute=price.per_minute,
+            per_image=price.per_image,
+            per_extra_megapixel=price.per_extra_megapixel,
             currency=price.currency,
             effective_from=utcnow(),
             source=source,
@@ -2374,6 +2386,7 @@ async def create_price(
             if payload.per_image_by_size
             else None
         ),
+        per_extra_megapixel=payload.per_extra_megapixel,
         per_page=payload.per_page,
         per_minute=payload.per_minute,
         per_search=payload.per_search,

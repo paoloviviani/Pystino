@@ -745,6 +745,8 @@ interface ManualPriceDraft {
   output: string;
   perPage: string;
   perMinute: string;
+  perImage: string;
+  perExtraMegapixel: string;
   cacheRead: string;
   cacheWrite: string;
   currency: string;
@@ -755,6 +757,8 @@ const EMPTY_DRAFT: ManualPriceDraft = {
   output: "",
   perPage: "",
   perMinute: "",
+  perImage: "",
+  perExtraMegapixel: "",
   cacheRead: "",
   cacheWrite: "",
   currency: "",
@@ -775,10 +779,15 @@ const takesCacheRates = (row: DiscoveredModel) => CACHE_KINDS.has(row.kind);
  * by the page, a transcription model by the minute of audio, and a search tier is metered per request — never priced per
  * token at all.
  */
-const RATE_FIELDS: Record<string, ("input" | "output" | "perPage" | "perMinute")[]> = {
+const RATE_FIELDS: Record<
+  string,
+  ("input" | "output" | "perPage" | "perMinute" | "perImage")[]
+> = {
   chat: ["input", "output"],
   embedding: ["input"],
-  image: ["input"],
+  // Per picture, as Cortecs and most image providers quote it; the optional
+  // per-extra-megapixel rate is asked beside it (`takesExtraMegapixel`).
+  image: ["perImage"],
   ocr: ["perPage"],
   transcription: ["perMinute"],
   decision: ["input", "output"],
@@ -789,7 +798,10 @@ const RATE_LABELS: Record<string, () => string> = {
   output: m["admin_models.discover.manual_rate.output"],
   perPage: m["admin_models.discover.manual_rate.per_page"],
   perMinute: m["admin_models.discover.manual_rate.per_minute"],
+  perImage: m["admin_models.discover.manual_rate.per_image"],
 };
+
+const takesExtraMegapixel = (row: DiscoveredModel) => row.kind === "image";
 
 /** Money is a string end to end, so a draft is judged by shape and never by
  * parsing it into a float: digits and one decimal point, nothing else. */
@@ -830,11 +842,15 @@ function manualPricePayload(
   if (currencyError(draft.currency) !== null) return undefined;
   if (takesCacheRates(row) && (optionalRateError(draft.cacheRead) || optionalRateError(draft.cacheWrite)))
     return undefined;
+  if (takesExtraMegapixel(row) && optionalRateError(draft.perExtraMegapixel)) return undefined;
   const price: ManualImportPrice = {};
   if (fields.includes("input")) price.input_per_mtok = draft.input;
   if (fields.includes("output")) price.output_per_mtok = draft.output;
   if (fields.includes("perPage")) price.per_page = draft.perPage;
   if (fields.includes("perMinute")) price.per_minute = draft.perMinute;
+  if (fields.includes("perImage")) price.per_image = draft.perImage;
+  if (takesExtraMegapixel(row) && draft.perExtraMegapixel !== "")
+    price.per_extra_megapixel = draft.perExtraMegapixel;
   if (takesCacheRates(row)) {
     if (draft.cacheRead !== "") price.cache_read_per_mtok = draft.cacheRead;
     if (draft.cacheWrite !== "") price.cache_write_per_mtok = draft.cacheWrite;
@@ -868,6 +884,15 @@ function manualPriceProblem(
       if (error) {
         return m["admin_models.discover.manual_rate.field_problem"]({ label, error });
       }
+    }
+  }
+  if (takesExtraMegapixel(row)) {
+    const error = optionalRateError(draft.perExtraMegapixel);
+    if (error) {
+      return m["admin_models.discover.manual_rate.field_problem"]({
+        label: m["admin_models.discover.manual_rate.per_extra_megapixel"],
+        error,
+      });
     }
   }
   const currency = currencyError(draft.currency);
@@ -908,6 +933,18 @@ function ManualPriceFields({
           hint={m["admin_models.discover.manual_rate.rate_hint"]()}
         />
       ))}
+      {takesExtraMegapixel(row) && (
+        <Input
+          label={m["admin_models.discover.manual_rate.per_extra_megapixel"]()}
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          value={draft.perExtraMegapixel}
+          onChange={(event) => onChange({ ...draft, perExtraMegapixel: event.target.value })}
+          error={optionalRateError(draft.perExtraMegapixel) ?? undefined}
+          hint={m["admin_models.discover.manual_rate.per_extra_megapixel_hint"]()}
+        />
+      )}
       {takesCacheRates(row) && (
         <>
           <Input

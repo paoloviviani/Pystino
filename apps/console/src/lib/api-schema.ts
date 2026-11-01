@@ -3853,6 +3853,10 @@ export interface components {
             output_modalities: string[];
             /** Output Per Mtok */
             output_per_mtok: string | null;
+            /** Per Extra Megapixel */
+            per_extra_megapixel: string | null;
+            /** Per Image */
+            per_image: string | null;
             /** Per Minute */
             per_minute: string | null;
             /** Per Page */
@@ -4467,6 +4471,10 @@ export interface components {
             input_per_mtok?: number | string | null;
             /** Output Per Mtok */
             output_per_mtok?: number | string | null;
+            /** Per Extra Megapixel */
+            per_extra_megapixel?: number | string | null;
+            /** Per Image */
+            per_image?: number | string | null;
             /** Per Minute */
             per_minute?: number | string | null;
             /** Per Page */
@@ -5357,6 +5365,8 @@ export interface components {
             input_per_mtok: number | string;
             /** Output Per Mtok */
             output_per_mtok: number | string;
+            /** Per Extra Megapixel */
+            per_extra_megapixel?: number | string | null;
             /** Per Image */
             per_image?: number | string | null;
             /** Per Image By Size */
@@ -5392,6 +5402,8 @@ export interface components {
             input_per_mtok: string;
             /** Output Per Mtok */
             output_per_mtok: string;
+            /** Per Extra Megapixel */
+            per_extra_megapixel: string | null;
             /** Per Image */
             per_image: string | null;
             /** Per Image By Size */

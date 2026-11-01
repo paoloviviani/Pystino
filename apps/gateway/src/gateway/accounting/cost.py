@@ -30,6 +30,7 @@ remainder and the cache reads.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
@@ -67,6 +68,9 @@ class TokenCounts:
     #: per-size rate; ``None`` means unknown, which prices at the highest rate
     #: the model has (see :func:`image_rate`).
     image_size: str | None = None
+    #: Megapixels of one of those images where the provider measured it, which
+    #: outranks the size for a ``per_extra_megapixel`` charge.
+    image_megapixels: Decimal | None = None
     #: Pages read. Only ever non-zero on the OCR route. Taken from the
     #: counterparty's `usage_info.pages_processed` where it reports one, and from
     #: the document itself when extraction happened locally — never inferred
@@ -423,11 +427,25 @@ def select_price(prices: list[ModelPrice], *, at: datetime | None = None) -> Mod
     return max(applicable, key=lambda price: price.effective_from)
 
 
-def image_rate(price: ModelPrice, size: str | None) -> Decimal | None:
+_SIZE = re.compile(r"^\s*(\d{1,5})\s*[x\u00d7*]\s*(\d{1,5})\s*$", re.IGNORECASE)
+
+
+def megapixels(size: str | None) -> Decimal | None:
+    """``WxH`` as megapixels (``1536x1024`` is 1.572864), ``None`` if not a size."""
+    match = _SIZE.match(size) if size else None
+    if match is None:
+        return None
+    return Decimal(int(match.group(1)) * int(match.group(2))) / Decimal(1_000_000)
+
+
+def image_rate(price: ModelPrice, size: str | None, mpx: Decimal | None = None) -> Decimal | None:
     """The rate for one image at ``size``, or ``None`` when the model has none.
 
     A size with its own rate (``per_image_by_size``) takes it. A known size
-    without one takes the flat ``per_image``. An **unknown** size, which is what
+    without one takes the flat ``per_image`` plus, when the model has a
+    ``per_extra_megapixel`` rate, that rate for each megapixel above the first
+    (``per_image + max(0, W*H/1e6 - 1) * per_extra_megapixel``). An **unknown**
+    size, which is what
     admission sees when the request names none and what settle sees when the
     provider reports none, takes the highest rate the model has: a reservation
     that assumed the cheapest picture would let a quota be overspent, and a bill
@@ -443,6 +461,10 @@ def image_rate(price: ModelPrice, size: str | None) -> Decimal | None:
         if key in by_size:
             return by_size[key]
         if flat is not None:
+            extra = price.per_extra_megapixel
+            mp = (mpx if mpx is not None else megapixels(key)) if extra is not None else None
+            if extra is not None and mp is not None and mp > 1:
+                return flat + (mp - 1) * as_decimal(extra)
             return flat
     candidates = list(by_size.values()) + ([flat] if flat is not None else [])
     return max(candidates) if candidates else None
@@ -504,7 +526,7 @@ def compute_cost(
     # them: a token-priced image model reports usage and charges nothing here,
     # and a per-image model reports no usage and charges nothing per token.
     image_cost = Decimal(0)
-    rate = image_rate(price, counts.image_size) if counts.images else None
+    rate = image_rate(price, counts.image_size, counts.image_megapixels) if counts.images else None
     if rate is not None:
         image_cost = Decimal(counts.images) * rate
 

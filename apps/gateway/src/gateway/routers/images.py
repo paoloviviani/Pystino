@@ -26,6 +26,7 @@ placeholder where their own word had been.
 from __future__ import annotations
 
 import logging
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -147,7 +148,9 @@ async def create_image(
         # Counted from what came back, not from what was asked for: a provider that
         # returns three images for a request for four must be billed for three.
         produced = sum(1 for entry in out.get("data") or [] if isinstance(entry, dict))
-        metered.accounting.observe_images(produced, _reported_size(out) or body.size)
+        metered.accounting.observe_images(
+            produced, _reported_size(out) or body.size, _reported_megapixels(out)
+        )
 
         for entry in out.get("data") or []:
             if isinstance(entry, dict) and isinstance(entry.get("revised_prompt"), str):
@@ -172,3 +175,23 @@ def _reported_size(payload: dict[str, object]) -> str | None:
     """
     size = payload.get("size")
     return size if isinstance(size, str) and size else None
+
+
+def _reported_megapixels(payload: dict[str, object]) -> Decimal | None:
+    """One image's megapixels as the provider measured it, when it says.
+
+    Cortecs reports ``usage.out_images_mpx`` and bills extra megapixels from
+    it. It is preferred to ``size`` because Cortecs echoes the *requested* size
+    in the response whatever it delivered (a 2048x2048 request came back as a
+    1024x1024 JPEG, reported as 2048x2048), so a bill computed from the size
+    would charge for pixels nobody produced.
+    """
+    usage = payload.get("usage")
+    value = usage.get("out_images_mpx") if isinstance(usage, dict) else None
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        return None
+    try:
+        mpx = Decimal(str(value))
+    except InvalidOperation:
+        return None
+    return mpx if mpx.is_finite() and mpx > 0 else None

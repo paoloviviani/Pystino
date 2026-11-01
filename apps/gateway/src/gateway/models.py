@@ -1361,6 +1361,11 @@ class ModelPrice(Base):
     # exact decimal. A size missing here takes ``per_image``; an unknown size
     # takes the highest rate (``accounting.cost.image_rate``).
     per_image_by_size: Mapped[dict[str, str] | None] = mapped_column(JSON, default=None)
+    # Per megapixel above the first, for the image models that scale with size
+    # (Cortecs ``output_cost_per_additional_megapixel``). One image of W x H costs
+    # ``per_image + max(0, W*H/1e6 - 1) * per_extra_megapixel``. A size listed in
+    # ``per_image_by_size`` takes its own rate and this does not apply.
+    per_extra_megapixel: Mapped[Decimal | None] = mapped_column(default=None)
     # Per page read, for OCR and document extraction, which is what every OCR
     # counterparty charges by. Same shape as `per_image` and for the same
     # reason: the unit is not a token, so the per-million divisor is wrong.
