@@ -1182,7 +1182,16 @@ class TestDailySplit:
         # hours ago" put the record on the wrong side of local midnight whenever
         # the suite ran in the last hour or two of the UTC day.) The boundary
         # itself is pinned by TestDayBoundary.
-        day1 = inside_this_month(48).replace(hour=12, minute=0, second=0, microsecond=0)
+        # A fixed mid-month day, counted from the month's start rather than
+        # from "now": clamping "48 hours ago" to the month start and then moving
+        # to noon UTC could land *before* the start of the month in the billing
+        # timezone (on the 1st), outside the report. Whole days from the start,
+        # at noon UTC, are inside the month and the same calendar day in both
+        # zones, whatever day the suite runs.
+        month_start = parse_period(datetime.now(UTC).strftime("%Y-%m")).start
+        day1 = (month_start + timedelta(days=10)).replace(
+            hour=12, minute=0, second=0, microsecond=0
+        )
         day2 = day1 + timedelta(days=1)
         await record(session, model_id=seeded.model.id, cost="1", at=day1)
         await record(session, model="other-model", model_id=other.id, cost="2", at=day1)
