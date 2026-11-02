@@ -104,6 +104,7 @@ const PLUGINS: ProviderPlugin[] = [
     label: "Linkup (web search)",
     description: "Linkup",
     kind: "search",
+    protocol: "openai",
     billing_modes: ["own_prices"],
     default_base_url: "https://api.linkup.so/v1",
     base_url_options: [],
@@ -116,6 +117,7 @@ const PLUGINS: ProviderPlugin[] = [
     label: "Exa (web search)",
     description: "Exa",
     kind: "search",
+    protocol: "openai",
     billing_modes: ["own_prices"],
     default_base_url: "https://api.exa.ai",
     base_url_options: [],
@@ -128,6 +130,7 @@ const PLUGINS: ProviderPlugin[] = [
     label: "Jina (web search)",
     description: "Jina",
     kind: "search",
+    protocol: "openai",
     billing_modes: ["own_prices"],
     default_base_url: "https://s.jina.ai",
     base_url_options: [
@@ -146,6 +149,7 @@ const PLUGINS: ProviderPlugin[] = [
       "whose structure can change without notice, and automated or datacenter use can be " +
       "answered with a bot challenge instead of results.",
     kind: "search",
+    protocol: "openai",
     billing_modes: ["own_prices"],
     default_base_url: "https://html.duckduckgo.com",
     base_url_options: [],

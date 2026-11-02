@@ -6449,6 +6449,15 @@
             "title": "Name",
             "type": "string"
           },
+          "protocol": {
+            "default": "openai",
+            "enum": [
+              "openai",
+              "anthropic"
+            ],
+            "title": "Protocol",
+            "type": "string"
+          },
           "requires_api_key": {
             "default": true,
             "title": "Requires Api Key",
@@ -6465,6 +6474,7 @@
           "label",
           "description",
           "kind",
+          "protocol",
           "billing_modes",
           "default_base_url",
           "base_url_options",

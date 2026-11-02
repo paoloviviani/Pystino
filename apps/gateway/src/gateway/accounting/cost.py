@@ -40,6 +40,14 @@ from gateway.models import ModelPrice
 from gateway.types import as_decimal, utcnow
 
 MILLION = Decimal(1_000_000)
+
+#: One-hour cache writes against five-minute ones. Anthropic publishes the two
+#: as 2x and 1.25x the input price, so the ratio is 1.6 on every row of its
+#: price table (Opus 5.5: $5 and $8; Haiku 4.5: $1.25 and $2; Fable 5.1: $12.50
+#: and $20; read 2026-11-02 at platform.claude.com/docs/en/about-claude/pricing).
+#: Applied to the model's ``cache_write_per_mtok``, which is the five-minute
+#: rate, because a price row holds one write rate.
+CACHE_WRITE_1H_FACTOR = Decimal("1.6")
 SECONDS_PER_MINUTE = Decimal(60)
 
 
@@ -61,6 +69,11 @@ class TokenCounts:
     #: Prompt tokens written to a provider-side cache, billed above the input
     #: rate. A disjoint slice of ``prompt``, like ``cached_prompt``.
     cache_write: int = 0
+    #: The part of ``cache_write`` written to the one-hour cache, which
+    #: Anthropic bills at :data:`CACHE_WRITE_1H_FACTOR` times the five-minute
+    #: write rate. A subset of ``cache_write``, never added to it. Only
+    #: Anthropic reports it (``usage.cache_creation.ephemeral_1h_input_tokens``).
+    cache_write_1h: int = 0
     #: Images produced. Only ever non-zero on the image route, where many models
     #: are priced per image rather than per token (ADR 0030).
     images: int = 0
@@ -116,6 +129,12 @@ class TokenCounts:
         completion = _as_int(usage.get("completion_tokens"))
 
         cached, cache_write = _cache_slices(usage, usage.get("prompt_tokens_details"), prompt)
+        details = usage.get("prompt_tokens_details")
+        cache_write_1h = (
+            min(_as_int(details.get("cache_write_1h_tokens")), cache_write)
+            if isinstance(details, dict)
+            else 0
+        )
 
         completion_details = usage.get("completion_tokens_details") or {}
         reasoning = (
@@ -129,6 +148,7 @@ class TokenCounts:
             completion=completion,
             cached_prompt=cached,
             cache_write=cache_write,
+            cache_write_1h=cache_write_1h,
             reasoning=reasoning,
             searches=_search_requests(usage),
         )
@@ -182,12 +202,19 @@ class TokenCounts:
         uncached = _as_int(usage.get("input_tokens"))
         cache_write = _as_int(usage.get("cache_creation_input_tokens"))
         cache_read = _as_int(usage.get("cache_read_input_tokens"))
+        split = usage.get("cache_creation")
+        cache_write_1h = (
+            min(_as_int(split.get("ephemeral_1h_input_tokens")), cache_write)
+            if isinstance(split, dict)
+            else 0
+        )
 
         return cls(
             prompt=uncached + cache_write + cache_read,
             completion=_as_int(usage.get("output_tokens")),
             cached_prompt=cache_read,
             cache_write=cache_write,
+            cache_write_1h=cache_write_1h,
             # Documented on this surface, and verified against the live schema
             # on 2026-09-08: `usage.server_tool_use.web_search_requests`.
             searches=_search_requests(usage),
@@ -523,9 +550,12 @@ def compute_cost(
 
     if counts.cache_write:
         if price.cache_write_per_mtok is not None:
+            write_rate = as_decimal(price.cache_write_per_mtok)
+            long_lived = min(counts.cache_write_1h, counts.cache_write)
             write_cost = (
-                Decimal(counts.cache_write) * as_decimal(price.cache_write_per_mtok) / MILLION
-            )
+                Decimal(counts.cache_write - long_lived) * write_rate
+                + Decimal(long_lived) * write_rate * CACHE_WRITE_1H_FACTOR
+            ) / MILLION
         else:
             billable += counts.cache_write
 

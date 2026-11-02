@@ -66,7 +66,18 @@ from gateway.routing import affinity_key
 from gateway.schemas import ChatCompletionRequest
 from gateway.sse import SSEEvent, chain, iter_sse_events
 from gateway.sse.pipeline import StreamStage, tap
+from gateway.translate.anthropic_chat import reject_unsupported
+from gateway.translate.anthropic_upstream import (
+    MessagesBackedChatUpstream,
+    serves_chat_via_messages,
+)
+from gateway.translate.thinking_store import principal_key, store_for
 from gateway.upstream import OpenAICompatibleUpstream, UpstreamError
+
+#: What the two response builders call: the provider's own client, or, for a
+#: provider that serves chat completions through another API, the wrapper that
+#: speaks OpenAI to this route and that API to the provider.
+ChatUpstream = OpenAICompatibleUpstream | MessagesBackedChatUpstream
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +213,21 @@ async def chat_completions(
         # serves the request; `resolved.requested_name` is the only thing that
         # remembers what the caller typed.
         model = resolved.model
-        upstream = await _metered.resolve_upstream(providers, resolved)
+        provider_upstream = await _metered.resolve_upstream(providers, resolved)
+        upstream: ChatUpstream = provider_upstream
+        if serves_chat_via_messages(provider_upstream):
+            # Anthropic: native /v1/messages, translated at the upstream boundary
+            # (gateway.translate). Refusals that need no translation come first,
+            # before redaction and the reservation, so they leave no ledger row.
+            reject_unsupported(body.model_dump(exclude_unset=True))
+            upstream = MessagesBackedChatUpstream(
+                provider_upstream,
+                settings=settings.anthropic,
+                store=store_for(request.app.state),
+                owner=principal_key(principal.user.id),
+                client_model=resolved.requested_name,
+                max_output_tokens=model.max_output_tokens,
+            )
 
         # -- redaction (step 2) -------------------------------------------------
         outcome = await _metered.redact_or_block(
@@ -297,7 +322,7 @@ async def _buffered_response(
     client_facing_name: str,
     outcome: RedactionOutcome,
     redactor: Redactor,
-    upstream: OpenAICompatibleUpstream,
+    upstream: ChatUpstream,
     metered: _metered.Metered,
     request_id: str,
 ) -> JSONResponse:
@@ -380,7 +405,7 @@ async def _stream_response(
     body: ChatCompletionRequest,
     outcome: RedactionOutcome,
     redactor: Redactor,
-    upstream: OpenAICompatibleUpstream,
+    upstream: ChatUpstream,
     metered: _metered.Metered,
     request_id: str,
 ) -> JSONResponse | StreamingResponse:
