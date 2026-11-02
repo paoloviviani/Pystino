@@ -44,7 +44,6 @@ import { useOptionalToast } from "../lib/toast";
 import { formatNumber } from "../lib/format";
 import { m } from "../paraglide/messages.js";
 
-
 export function AdminProviders() {
   const providers = useProviders();
   const plugins = useProviderPlugins();
@@ -55,13 +54,17 @@ export function AdminProviders() {
 
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<AdminProvider | null>(null);
-  const [results, setResults] = useState<Record<string, ProviderTestResult>>({});
+  const [results, setResults] = useState<Record<string, ProviderTestResult>>(
+    {},
+  );
 
   // Search backends are a different concept and have their own screen
   // (ADR 0071): they answer /v1/search, are metered as counts, and were
   // presented here in the vocabulary of inference providers — which is how
   // the confusion started.
-  const items = (providers.data?.items ?? []).filter((p) => p.kind !== "search");
+  const items = (providers.data?.items ?? []).filter(
+    (p) => p.kind !== "search",
+  );
 
   const runTest = (provider: AdminProvider) => {
     test.mutate(provider.id, {
@@ -77,7 +80,10 @@ export function AdminProviders() {
         });
       },
       onError: () =>
-        toast?.add({ title: m["admin_providers.toast.test_failed"](), type: "error" }),
+        toast?.add({
+          title: m["admin_providers.toast.test_failed"](),
+          type: "error",
+        }),
     });
   };
 
@@ -88,7 +94,10 @@ export function AdminProviders() {
       render: (provider) => (
         <>
           <div>{provider.name}</div>
-          <div className={`${MUTED} ${CODE} ${CLAMP}`} title={provider.base_url}>
+          <div
+            className={`${MUTED} ${CODE} ${CLAMP}`}
+            title={provider.base_url}
+          >
             {provider.base_url}
           </div>
           {/* The row keeps the endpoint it was created with; the catalogue may
@@ -96,17 +105,27 @@ export function AdminProviders() {
               it silently. */}
           {endpointDiffers(provider) && (
             <div className={CHIPS}>
-              <Badge tone="warn">{m["admin_providers.badge.endpoint_differs"]()}</Badge>
+              <Badge tone="warn">
+                {m["admin_providers.badge.endpoint_differs"]()}
+              </Badge>
               <Button
                 variant="secondary"
                 title={provider.catalogue?.base_url ?? ""}
-                disabled={update.isPending && update.variables?.id === provider.id}
+                disabled={
+                  update.isPending && update.variables?.id === provider.id
+                }
                 onClick={() =>
                   update.mutate(
-                    { id: provider.id, base_url: provider.catalogue?.base_url ?? "" },
+                    {
+                      id: provider.id,
+                      base_url: provider.catalogue?.base_url ?? "",
+                    },
                     {
                       onSuccess: () =>
-                        toast?.add({ title: m["admin_providers.toast.updated"](), type: "success" }),
+                        toast?.add({
+                          title: m["admin_providers.toast.updated"](),
+                          type: "success",
+                        }),
                       onError: () =>
                         toast?.add({
                           title: m["admin_providers.toast.update_failed"](),
@@ -136,19 +155,26 @@ export function AdminProviders() {
         <>
           {/* The label, not the internal name: the operator chose "Cortecs
               (router)" and should see that back. */}
-          <div className={NOWRAP}>{pluginLabel(plugins.data, provider.plugin)}</div>
+          <div className={NOWRAP}>
+            {pluginLabel(plugins.data, provider.plugin)}
+          </div>
           <div className={CHIPS}>
             {provider.kind === "router" && (
               <Badge tone="accent">{m["admin_providers.badge.router"]()}</Badge>
             )}
             {provider.billing_mode === "provider_reported" && (
-              <Badge tone="warn">{m["admin_providers.badge.bills_from_provider"]()}</Badge>
+              <Badge tone="warn">
+                {m["admin_providers.badge.bills_from_provider"]()}
+              </Badge>
             )}
             {/* A named plugin that disagrees with the stored kind is a
                 configuration to point at, not a silent inconsistency. */}
-            {provider.plugin_kind !== null && provider.plugin_kind !== provider.kind && (
-              <Badge tone="danger">{m["admin_providers.badge.kind_mismatch"]()}</Badge>
-            )}
+            {provider.plugin_kind !== null &&
+              provider.plugin_kind !== provider.kind && (
+                <Badge tone="danger">
+                  {m["admin_providers.badge.kind_mismatch"]()}
+                </Badge>
+              )}
             {/* What the catalogue says about where it runs and what it keeps.
                 Unknown stays unmarked: absence is not a "no". */}
             {provider.catalogue?.region && (
@@ -159,15 +185,21 @@ export function AdminProviders() {
               </Badge>
             )}
             {provider.catalogue?.retention.zero_data_retention === true && (
-              <Badge tone="ok">{m["admin_providers.badge.zero_retention"]()}</Badge>
+              <Badge tone="ok">
+                {m["admin_providers.badge.zero_retention"]()}
+              </Badge>
             )}
             {provider.catalogue_missing && (
-              <Badge tone="warn">{m["admin_providers.badge.catalogue_missing"]()}</Badge>
+              <Badge tone="warn">
+                {m["admin_providers.badge.catalogue_missing"]()}
+              </Badge>
             )}
             {/* Unpriced models reserve nothing, so no cost ceiling trips. */}
             {provider.unpriced_model_count > 0 && (
               <Badge tone="warn">
-                {m["admin_providers.badge.unpriced"]({ count: provider.unpriced_model_count })}
+                {m["admin_providers.badge.unpriced"]({
+                  count: provider.unpriced_model_count,
+                })}
               </Badge>
             )}
           </div>
@@ -182,7 +214,10 @@ export function AdminProviders() {
         provider.has_api_key ? (
           // Only ever a hint: the key itself is write-only and never leaves the
           // gateway (ADR 0027).
-          <span className={`${CODE} ${FINGERPRINT}`} title={provider.api_key_hint ?? undefined}>
+          <span
+            className={`${CODE} ${FINGERPRINT}`}
+            title={provider.api_key_hint ?? undefined}
+          >
             {shortHint(provider.api_key_hint)}
           </span>
         ) : (
@@ -237,7 +272,10 @@ export function AdminProviders() {
                     { id: provider.id, is_active: !provider.is_active },
                     {
                       onSuccess: () =>
-                        toast?.add({ title: m["admin_providers.toast.updated"](), type: "success" }),
+                        toast?.add({
+                          title: m["admin_providers.toast.updated"](),
+                          type: "success",
+                        }),
                       onError: () =>
                         toast?.add({
                           title: m["admin_providers.toast.update_failed"](),
@@ -245,7 +283,8 @@ export function AdminProviders() {
                         }),
                     },
                   ),
-                disabled: update.isPending && update.variables?.id === provider.id,
+                disabled:
+                  update.isPending && update.variables?.id === provider.id,
               },
               {
                 key: "delete",
@@ -253,7 +292,10 @@ export function AdminProviders() {
                 onSelect: () =>
                   remove.mutate(provider.id, {
                     onSuccess: () =>
-                      toast?.add({ title: m["admin_providers.toast.deleted"](), type: "success" }),
+                      toast?.add({
+                        title: m["admin_providers.toast.deleted"](),
+                        type: "success",
+                      }),
                     onError: () =>
                       toast?.add({
                         title: m["admin_providers.toast.delete_failed"](),
@@ -262,7 +304,8 @@ export function AdminProviders() {
                   }),
                 destructive: true,
                 disabled:
-                  provider.kind === "internal" || (remove.isPending && remove.variables === provider.id),
+                  provider.kind === "internal" ||
+                  (remove.isPending && remove.variables === provider.id),
               },
             ]}
           />
@@ -288,7 +331,9 @@ export function AdminProviders() {
       {remove.error ? (
         <Notice tone="danger" title={m["admin_providers.delete_error.title"]()}>
           {/* i18n: server text — the API's own error message. */}
-          {remove.error instanceof Error ? remove.error.message : m["admin_providers.unknown_error"]()}
+          {remove.error instanceof Error
+            ? remove.error.message
+            : m["admin_providers.unknown_error"]()}
         </Notice>
       ) : null}
 
@@ -300,7 +345,8 @@ export function AdminProviders() {
             tone="warn"
             title={m["admin_providers.unreachable_title"]({
               // i18n: server text — the provider's own name.
-              provider: provider?.name ?? m["admin_providers.provider_fallback"](),
+              provider:
+                provider?.name ?? m["admin_providers.provider_fallback"](),
             })}
           >
             {/* i18n: server text — the test result's own detail. */}
@@ -370,17 +416,23 @@ function endpointDiffers(provider: AdminProvider): boolean {
 function regionLabel(region: string | null): string {
   if (region === null) return m["admin_providers.catalogue.unknown"]();
   if (region === "various") return m["admin_providers.catalogue.various"]();
-  if (region === "not-published") return m["admin_providers.catalogue.not_published"]();
+  if (region === "not-published")
+    return m["admin_providers.catalogue.not_published"]();
   if (region === "global") return m["admin_providers.catalogue.global"]();
   return region;
 }
 
 function TestBadge({ result }: { result: ProviderTestResult | undefined }) {
   if (!result) return null;
-  if (!result.ok) return <Badge tone="danger">{m["admin_providers.test.failed"]()}</Badge>;
-  const parts = [m["admin_providers.test.models"]({ count: result.model_count ?? 0 })];
+  if (!result.ok)
+    return <Badge tone="danger">{m["admin_providers.test.failed"]()}</Badge>;
+  const parts = [
+    m["admin_providers.test.models"]({ count: result.model_count ?? 0 }),
+  ];
   if (result.latency_ms) {
-    parts.push(m["admin_providers.test.latency"]({ latency: result.latency_ms }));
+    parts.push(
+      m["admin_providers.test.latency"]({ latency: result.latency_ms }),
+    );
   }
   return <Badge tone="ok">{parts.join(" · ")}</Badge>;
 }
@@ -393,7 +445,10 @@ function TestBadge({ result }: { result: ProviderTestResult | undefined }) {
 function providerState(items: AdminProvider[]): string {
   if (items.length === 0) return m["admin_providers.state.empty"]();
   const off = items.filter((provider) => !provider.is_active).length;
-  const unpriced = items.reduce((sum, provider) => sum + provider.unpriced_model_count, 0);
+  const unpriced = items.reduce(
+    (sum, provider) => sum + provider.unpriced_model_count,
+    0,
+  );
   // Figures separated by a middot: a list, not a sentence, so the separator
   // stays here rather than inside any one message.
   const parts: string[] = [
@@ -401,12 +456,16 @@ function providerState(items: AdminProvider[]): string {
       ? m["admin_providers.state.all_active"]()
       : m["admin_providers.state.deactivated"]({ count: off }),
   ];
-  if (unpriced > 0) parts.push(m["admin_providers.state.unpriced"]({ count: unpriced }));
+  if (unpriced > 0)
+    parts.push(m["admin_providers.state.unpriced"]({ count: unpriced }));
   return parts.join(" · ");
 }
 
 /** A provider type's human label, falling back to its name if it is not installed. */
-function pluginLabel(plugins: ProviderPlugin[] | undefined, name: string | null): string {
+function pluginLabel(
+  plugins: ProviderPlugin[] | undefined,
+  name: string | null,
+): string {
   const match = (plugins ?? []).find((entry) =>
     name === null ? entry.is_default : entry.name === name,
   );
@@ -415,14 +474,19 @@ function pluginLabel(plugins: ProviderPlugin[] | undefined, name: string | null)
 }
 
 /**
- * The API protocol a provider plugin speaks. Only two exist: Anthropic's and
- * the OpenAI-compatible one; every other plugin (cortecs, mistral, ...) is a set
- * of vendor quirks on top of the OpenAI protocol.
- * TODO: switch to the gateway's `protocol` field on the plugin listing once it
- * exists; until then this maps by name.
+ * The API protocol a provider plugin speaks, as the gateway's plugin listing
+ * says. Only two exist: Anthropic's and the OpenAI-compatible one; every other
+ * plugin (cortecs, mistral, ...) is a set of vendor quirks on top of the OpenAI
+ * protocol. An unknown name reads as OpenAI-compatible.
  */
-function protocolOf(pluginName: string | null | undefined): "anthropic" | "openai" {
-  return pluginName === "anthropic" ? "anthropic" : "openai";
+function protocolOf(
+  plugins: ProviderPlugin[] | undefined,
+  pluginName: string | null | undefined,
+): "anthropic" | "openai" {
+  const match = (plugins ?? []).find(
+    (entry) => entry.name === pluginName || (!pluginName && entry.is_default),
+  );
+  return match?.protocol ?? "openai";
 }
 
 /** The default type's name, whose value in the selector is the empty string. */
@@ -495,7 +559,9 @@ export function ProviderDialog({
       }
     : allPlugins;
   const [plugin, setPlugin] = useState<string>("");
-  const [billingMode, setBillingMode] = useState<"own_prices" | "provider_reported">("own_prices");
+  const [billingMode, setBillingMode] = useState<
+    "own_prices" | "provider_reported"
+  >("own_prices");
   const [prefix, setPrefix] = useState("");
   // The catalogue entry this row is an instance of ("" for none). Linking copies
   // nothing into the row: on create it pre-fills the fields below, which stay
@@ -525,7 +591,9 @@ export function ProviderDialog({
   // Only the modes this type can support, so the form cannot offer a
   // configuration the API would refuse.
   const modes = chosen?.billing_modes ?? ["own_prices"];
-  const effectiveMode = modes.includes(billingMode) ? billingMode : "own_prices";
+  const effectiveMode = modes.includes(billingMode)
+    ? billingMode
+    : "own_prices";
 
   // Entries this screen owns: those whose plugin the screen's filter accepts, so
   // the search screen's dialog is not offered inference providers.
@@ -539,27 +607,37 @@ export function ProviderDialog({
   // OpenAI one and belongs to its catalogue entry. A row whose plugin is not an
   // LLM provider (the extractor) keeps the plain Type select it had.
   const llmForm = chosen === undefined || isLlmProviderPlugin(chosen);
-  const hasAnthropic = (plugins.data ?? []).some((entry) => entry.name === "anthropic");
-  const entryById = (id: string) => offered.find((candidate) => candidate.id === id);
+  const hasAnthropic = (plugins.data ?? []).some(
+    (entry) => entry.name === "anthropic",
+  );
+  const entryById = (id: string) =>
+    offered.find((candidate) => candidate.id === id);
   // A legacy row has a vendor plugin set by hand and no entry: show the one
   // entry that speaks for that plugin, if there is exactly one, without writing
   // catalogue_id; otherwise a disabled option that keeps the stored plugin.
   const pluginEntries = offered.filter((entry) => entry.plugin === plugin);
-  const isVendorPlugin = plugin !== "" && plugin !== "anthropic" && !chosen?.is_default;
+  const isVendorPlugin =
+    plugin !== "" && plugin !== "anthropic" && !chosen?.is_default;
   let selection: string;
-  if (catalogueId !== "" && entryById(catalogueId)) selection = `c:${catalogueId}`;
+  if (catalogueId !== "" && entryById(catalogueId))
+    selection = `c:${catalogueId}`;
   else if (plugin === "anthropic") selection = "g:anthropic";
   else if (!isVendorPlugin) selection = "g:openai";
-  else if (pluginEntries.length === 1 && pluginEntries[0]) selection = `c:${pluginEntries[0].id}`;
+  else if (pluginEntries.length === 1 && pluginEntries[0])
+    selection = `c:${pluginEntries[0].id}`;
   else selection = "legacy";
-  const selectedEntry = selection.startsWith("c:") ? entryById(selection.slice(2)) : undefined;
+  const selectedEntry = selection.startsWith("c:")
+    ? entryById(selection.slice(2))
+    : undefined;
   const protocolLabel = (name: string | null | undefined) =>
-    protocolOf(name) === "anthropic"
+    protocolOf(allPlugins.data, name) === "anthropic"
       ? m["admin_providers.type.anthropic"]()
       : m["admin_providers.type.openai"]();
   const providerHint = (() => {
     if (selectedEntry) {
-      const type = (allPlugins.data ?? []).find((p) => p.name === selectedEntry.plugin);
+      const type = (allPlugins.data ?? []).find(
+        (p) => p.name === selectedEntry.plugin,
+      );
       const vendor = type && !type.is_default && type.name !== "anthropic";
       // i18n: server text — the plugin's own label.
       return vendor
@@ -585,12 +663,15 @@ export function ProviderDialog({
   // there by this same rule and follows the type.
   const followTypeEndpoint = (next: string) => {
     const byName = (name: string) =>
-      (plugins.data ?? []).find((entry) => entry.name === name || (name === "" && entry.is_default));
+      (plugins.data ?? []).find(
+        (entry) => entry.name === name || (name === "" && entry.is_default),
+      );
     const previous = byName(plugin || defaultPluginName(plugins.data));
     const upcoming = byName(next || defaultPluginName(plugins.data));
     if (
       upcoming?.default_base_url &&
-      (baseUrl.trim() === "" || baseUrl.trim() === (previous?.default_base_url ?? ""))
+      (baseUrl.trim() === "" ||
+        baseUrl.trim() === (previous?.default_base_url ?? ""))
     ) {
       setBaseUrl(upcoming.default_base_url);
     }
@@ -634,7 +715,9 @@ export function ProviderDialog({
           billing_mode: effectiveMode,
           prefix,
           // Only when it changed, so saving something else never rewrites the link.
-          ...(catalogueId !== (provider.catalogue_id ?? "") ? { catalogue_id: catalogueId } : {}),
+          ...(catalogueId !== (provider.catalogue_id ?? "")
+            ? { catalogue_id: catalogueId }
+            : {}),
           // Three ways, deliberately: a typed key replaces, the explicit clear
           // removes, and neither leaves the stored credential untouched.
           ...(apiKey ? { api_key: apiKey } : clearKey ? { api_key: "" } : {}),
@@ -645,7 +728,10 @@ export function ProviderDialog({
             onClose();
           },
           onError: () =>
-            toast?.add({ title: m["admin_providers.toast.update_failed"](), type: "error" }),
+            toast?.add({
+              title: m["admin_providers.toast.update_failed"](),
+              type: "error",
+            }),
         },
       );
     } else {
@@ -663,11 +749,17 @@ export function ProviderDialog({
         },
         {
           onSuccess: () => {
-            toast?.add({ title: m["admin_providers.toast.created"](), type: "success" });
+            toast?.add({
+              title: m["admin_providers.toast.created"](),
+              type: "success",
+            });
             onClose();
           },
           onError: () =>
-            toast?.add({ title: m["admin_providers.toast.create_failed"](), type: "error" }),
+            toast?.add({
+              title: m["admin_providers.toast.create_failed"](),
+              type: "error",
+            }),
         },
       );
     }
@@ -678,22 +770,30 @@ export function ProviderDialog({
       open={open}
       title={
         editing
-          ? m["admin_providers.dialog.edit_title"]({ provider: provider?.name ?? "" })
+          ? m["admin_providers.dialog.edit_title"]({
+              provider: provider?.name ?? "",
+            })
           : m["admin_providers.dialog.new_title"]()
       }
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>{m["admin_providers.dialog.cancel"]()}</Button>
+          <Button onClick={onClose}>
+            {m["admin_providers.dialog.cancel"]()}
+          </Button>
           <Button
             variant="primary"
             busy={pending}
             // An empty endpoint is fine when the type supplies one — the API
             // applies the plugin's default — and refused otherwise.
-            disabled={!name.trim() || (!baseUrl.trim() && !chosen?.default_base_url)}
+            disabled={
+              !name.trim() || (!baseUrl.trim() && !chosen?.default_base_url)
+            }
             onClick={submit}
           >
-            {editing ? m["admin_providers.dialog.save"]() : m["admin_providers.dialog.add"]()}
+            {editing
+              ? m["admin_providers.dialog.save"]()
+              : m["admin_providers.dialog.add"]()}
           </Button>
         </>
       }
@@ -701,7 +801,9 @@ export function ProviderDialog({
       {error ? (
         <Notice tone="danger">
           {/* i18n: server text — the API's own error message. */}
-          {error instanceof Error ? error.message : m["admin_providers.unknown_error"]()}
+          {error instanceof Error
+            ? error.message
+            : m["admin_providers.unknown_error"]()}
         </Notice>
       ) : null}
 
@@ -740,13 +842,19 @@ export function ProviderDialog({
               {entry.name}
             </option>
           ))}
-          <option value="g:openai">{m["admin_providers.type.generic_openai"]()}</option>
+          <option value="g:openai">
+            {m["admin_providers.type.generic_openai"]()}
+          </option>
           {hasAnthropic && (
-            <option value="g:anthropic">{m["admin_providers.type.generic_anthropic"]()}</option>
+            <option value="g:anthropic">
+              {m["admin_providers.type.generic_anthropic"]()}
+            </option>
           )}
           {selection === "legacy" && (
             <option value="legacy" disabled>
-              {m["admin_providers.type.legacy"]({ plugin: pluginLabel(plugins.data, plugin) })}
+              {m["admin_providers.type.legacy"]({
+                plugin: pluginLabel(plugins.data, plugin),
+              })}
             </option>
           )}
         </Select>
@@ -766,7 +874,9 @@ export function ProviderDialog({
           {(plugins.data ?? []).map((entry) => (
             <option key={entry.name} value={entry.is_default ? "" : entry.name}>
               {entry.label}
-              {entry.kind === "router" ? m["admin_providers.field.type_router_suffix"]() : ""}
+              {entry.kind === "router"
+                ? m["admin_providers.field.type_router_suffix"]()
+                : ""}
             </option>
           ))}
         </Select>
@@ -779,11 +889,15 @@ export function ProviderDialog({
           label={m["admin_providers.field.billing"]()}
           value={effectiveMode}
           onChange={(event) =>
-            setBillingMode(event.target.value as "own_prices" | "provider_reported")
+            setBillingMode(
+              event.target.value as "own_prices" | "provider_reported",
+            )
           }
           hint={m["admin_providers.field.billing_hint"]()}
         >
-          <option value="own_prices">{m["admin_providers.field.billing_own_prices"]()}</option>
+          <option value="own_prices">
+            {m["admin_providers.field.billing_own_prices"]()}
+          </option>
           <option value="provider_reported">
             {m["admin_providers.field.billing_provider_reported"]()}
           </option>
@@ -793,7 +907,9 @@ export function ProviderDialog({
       {/* Admission happens before the request and the provider's figure arrives
           after it, which is why prices are still needed in this mode. */}
       {effectiveMode === "provider_reported" && (
-        <Notice tone="warn">{m["admin_providers.field.billing_warning"]()}</Notice>
+        <Notice tone="warn">
+          {m["admin_providers.field.billing_warning"]()}
+        </Notice>
       )}
 
       <Input
@@ -843,7 +959,6 @@ export function ProviderDialog({
           <span>{m["admin_providers.field.remove_key"]()}</span>
         </label>
       )}
-
     </Dialog>
   );
 }
