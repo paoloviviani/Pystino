@@ -1,3 +1,20 @@
+import type { ComponentType, SVGProps } from "react";
+
+import {
+  BoxIcon,
+  ChartColumnIcon,
+  EyeOffIcon,
+  GaugeIcon,
+  GlobeIcon,
+  LayoutDashboardIcon,
+  ListIcon,
+  ServerIcon,
+  SettingsIcon,
+  ShieldIcon,
+  ShuffleIcon,
+  UserIcon,
+  UsersRoundIcon,
+} from "../components/icons";
 import { m } from "../paraglide/messages.js";
 
 /** A message function rather than a string: a string here is resolved once,
@@ -138,3 +155,31 @@ export const ADMIN_GROUPS: AdminGroup[] = [
     ],
   },
 ];
+
+/**
+ * Which icon stands for an administration screen, keyed by route. The sidebar
+ * (components/Shell.tsx) and the landing page's cards (routes/Admin.tsx) both
+ * read it through `adminIcon`, so a page cannot wear one icon in the sidebar
+ * and another on its card.
+ */
+const ADMIN_ICONS: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = {
+  "/admin": LayoutDashboardIcon,
+  "/admin/reports": ChartColumnIcon,
+  "/admin/requests": ListIcon,
+  "/admin/quotas": GaugeIcon,
+  "/admin/quota-usage": ListIcon,
+  "/admin/providers": ServerIcon,
+  "/admin/models": BoxIcon,
+  "/admin/routing": ShuffleIcon,
+  "/admin/search": GlobeIcon,
+  "/admin/redaction": EyeOffIcon,
+  "/admin/users": UserIcon,
+  "/admin/groups": UsersRoundIcon,
+  "/admin/audit": ShieldIcon,
+  "/admin/settings": SettingsIcon,
+};
+
+/** The icon for an administration route; a settings cog for one not listed. */
+export function adminIcon(to: string): ComponentType<SVGProps<SVGSVGElement>> {
+  return ADMIN_ICONS[to] ?? SettingsIcon;
+}

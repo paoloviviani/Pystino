@@ -309,12 +309,15 @@ must not raise a ceiling someone else set.
   user, every active rule that applies to them: their own `scope=user` rules,
   the global each-user rules, their groups' per-member rules, and the shared
   group or global totals they count towards (marked shared, with the shared
-  figure and no per-user reset). Each carries the figure for that user, read
+  figure). Each carries the figure for that user, read
   through the engine so resets apply, the window, when it next resets (a
   calendar period's end; for a rolling window, the estimated moment its oldest
   counted use leaves it) and the latest reset with who made it. An each-user
   rule that a user's override replaces is listed as *replaced*, not as a
-  second budget. Non-administrators get `403`.
+  second budget. Non-administrators get `403`. The console's **Quota usage**
+  is the one place quotas are reset: a per-user rule with `user_id`, a user's
+  own rule and a shared total whole (the dialog names everyone a shared reset
+  counts), and a *replaced* rule offers no reset, matching the API's `422`.
 
 ### Group rules: the total, or each member
 

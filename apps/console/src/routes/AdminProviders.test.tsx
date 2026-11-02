@@ -62,6 +62,7 @@ const PLUGINS = [
     default_base_url: null,
     base_url_options: [],
     is_default: true,
+    protocol: "openai",
   },
   {
     name: "openai",
@@ -72,6 +73,7 @@ const PLUGINS = [
     default_base_url: "https://api.openai.com/v1",
     base_url_options: [],
     is_default: false,
+    protocol: "openai",
   },
   {
     name: "cortecs",
@@ -82,6 +84,18 @@ const PLUGINS = [
     default_base_url: "https://api.cortecs.ai/v1",
     base_url_options: [],
     is_default: false,
+    protocol: "openai",
+  },
+  {
+    name: "anthropic",
+    label: "Anthropic (direct)",
+    description: "Anthropic's own API.",
+    kind: "provider",
+    billing_modes: ["own_prices"],
+    default_base_url: "https://api.anthropic.com/v1",
+    base_url_options: [],
+    is_default: false,
+    protocol: "anthropic",
   },
   {
     name: "exa",
@@ -92,6 +106,7 @@ const PLUGINS = [
     default_base_url: "https://api.exa.ai",
     base_url_options: [],
     is_default: false,
+    protocol: "openai",
   },
   {
     name: "jina",
@@ -102,6 +117,7 @@ const PLUGINS = [
     default_base_url: "https://s.jina.ai",
     base_url_options: [],
     is_default: false,
+    protocol: "openai",
   },
   {
     name: "linkup",
@@ -112,6 +128,7 @@ const PLUGINS = [
     default_base_url: "https://api.linkup.so/v1",
     base_url_options: [],
     is_default: false,
+    protocol: "openai",
   },
   {
     name: "extractor",
@@ -122,6 +139,7 @@ const PLUGINS = [
     default_base_url: null,
     base_url_options: [],
     is_default: false,
+    protocol: "openai",
   },
 ];
 
@@ -176,7 +194,8 @@ function routes(
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
-    if (init?.body) captured.bodies.push({ url, body: JSON.parse(String(init.body)) });
+    if (init?.body)
+      captured.bodies.push({ url, body: JSON.parse(String(init.body)) });
 
     if (url.includes("/provider-plugins")) {
       return new Response(JSON.stringify(PLUGINS), {
@@ -195,7 +214,14 @@ function routes(
 
     let payload: unknown = [];
     if (url.endsWith("/test") && method === "POST") {
-      payload = test ?? { ok: true, status_code: 200, detail: "reachable", model_count: 4, sample: [], latency_ms: 42 };
+      payload = test ?? {
+        ok: true,
+        status_code: 200,
+        detail: "reachable",
+        model_count: 4,
+        sample: [],
+        latency_ms: 42,
+      };
     } else if (url.includes("/api/admin/providers")) {
       payload = method === "GET" ? providers : providers[0];
     }
@@ -204,7 +230,9 @@ function routes(
 }
 
 function renderScreen(element: ReactElement) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>{element}</MemoryRouter>
@@ -213,6 +241,15 @@ function renderScreen(element: ReactElement) {
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+const CORTECS = () =>
+  entry({
+    id: "cortecs",
+    name: "Cortecs",
+    plugin: "cortecs",
+    base_url: "https://api.cortecs.ai/v1",
+    prefix: "",
+  });
 
 describe("AdminProviders", () => {
   it("lists a provider with its endpoint", async () => {
@@ -236,7 +273,10 @@ describe("AdminProviders", () => {
   it("says when a provider has no credential", async () => {
     // A local vLLM or Ollama usually needs none, and "none" is different from
     // "we lost it".
-    vi.stubGlobal("fetch", routes([provider({ has_api_key: false, api_key_hint: "" })]));
+    vi.stubGlobal(
+      "fetch",
+      routes([provider({ has_api_key: false, api_key_hint: "" })]),
+    );
     renderScreen(<AdminProviders />);
 
     await waitFor(() => expect(screen.getByText("none")).toBeInTheDocument());
@@ -258,21 +298,27 @@ describe("AdminProviders", () => {
     await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
     await chooseRowAction(user, "Test");
 
-    await waitFor(() => expect(screen.getByText(/4 models/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/4 models/)).toBeInTheDocument(),
+    );
   });
 
   it("shows why a test failed rather than a generic error", async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
       "fetch",
-      routes([provider()], { bodies: [] }, {
-        ok: false,
-        status_code: 401,
-        detail: "the provider answered 401 — check the API key",
-        model_count: null,
-        sample: [],
-        latency_ms: 88,
-      }),
+      routes(
+        [provider()],
+        { bodies: [] },
+        {
+          ok: false,
+          status_code: 401,
+          detail: "the provider answered 401 — check the API key",
+          model_count: null,
+          sample: [],
+          latency_ms: 88,
+        },
+      ),
     );
     renderScreen(<AdminProviders />);
 
@@ -323,7 +369,9 @@ describe("AdminProviders", () => {
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
-    expect((captured.bodies[0]?.body as Record<string, unknown>).api_key).toBe("");
+    expect((captured.bodies[0]?.body as Record<string, unknown>).api_key).toBe(
+      "",
+    );
   });
 
   it("sends a typed key as the replacement", async () => {
@@ -340,7 +388,9 @@ describe("AdminProviders", () => {
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
-    expect((captured.bodies[0]?.body as Record<string, unknown>).api_key).toBe("sk-new-999999");
+    expect((captured.bodies[0]?.body as Record<string, unknown>).api_key).toBe(
+      "sk-new-999999",
+    );
   });
 
   it("says plainly when nothing is configured", async () => {
@@ -349,7 +399,9 @@ describe("AdminProviders", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("No providers configured. Nothing can be served until one exists."),
+        screen.getByText(
+          "No providers configured. Nothing can be served until one exists.",
+        ),
       ).toBeInTheDocument(),
     );
   });
@@ -364,46 +416,42 @@ describe("AdminProviders", () => {
     expect(within(dialog).getByRole("button", { name: "Add" })).toBeDisabled();
 
     await user.type(within(dialog).getByLabelText("Name"), "ollama");
-    await user.type(within(dialog).getByLabelText("Base URL"), "http://ollama:11434/v1");
+    await user.type(
+      within(dialog).getByLabelText("Base URL"),
+      "http://ollama:11434/v1",
+    );
     expect(within(dialog).getByRole("button", { name: "Add" })).toBeEnabled();
   });
 });
 
 describe("AdminProviders: choosing a type", () => {
-  it("offers the installed types rather than a hardcoded list", async () => {
-    // Read from the API so installing a plugin makes it selectable without a
-    // console release, which is the point of the entry point existing.
+  it("offers catalogue entries, then one generic option per protocol", async () => {
+    // Type is the protocol: vendor plugins (OpenAI, Cortecs) are not types and
+    // search/plumbing plugins are not offered at all. Anthropic's generic option
+    // appears only when its plugin is installed.
     const user = userEvent.setup({ delay: null });
-    vi.stubGlobal("fetch", routes([provider()]));
+    vi.stubGlobal(
+      "fetch",
+      routes([provider()], undefined, undefined, [CORTECS()]),
+    );
     renderScreen(<AdminProviders />);
 
-    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Add provider" }),
+    );
     const dialog = within(await screen.findByRole("dialog"));
-    const type = dialog.getByLabelText("Type");
-    expect(within(type).getByRole("option", { name: /OpenAI-compatible/ })).toBeInTheDocument();
-    expect(within(type).getByRole("option", { name: /Cortecs/ })).toBeInTheDocument();
-  });
-
-  it("offers only LLM-provider kinds when creating — no search, no plumbing", async () => {
-    // Search backends are created on the Search screen (ADR 0071) and the
-    // extractor is the deployment's own plumbing: neither belongs in an
-    // inference-provider picker.
-    const user = userEvent.setup({ delay: null });
-    vi.stubGlobal("fetch", routes([provider()]));
-    renderScreen(<AdminProviders />);
-
-    await user.click(await screen.findByRole("button", { name: "Add provider" }));
-    const dialog = within(await screen.findByRole("dialog"));
-    const type = dialog.getByLabelText("Type");
-    const options = within(type).getAllByRole("option");
-    const names = options.map((option) => option.textContent ?? "");
-    expect(names.some((text) => /OpenAI-compatible/.test(text))).toBe(true);
-    expect(names.some((text) => /OpenAI/.test(text))).toBe(true);
-    expect(names.some((text) => /Cortecs/.test(text))).toBe(true);
-    expect(names.some((text) => /Exa/.test(text))).toBe(false);
-    expect(names.some((text) => /Jina/.test(text))).toBe(false);
-    expect(names.some((text) => /Linkup/.test(text))).toBe(false);
-    expect(names.some((text) => /Extractor/.test(text))).toBe(false);
+    expect(dialog.queryByLabelText("Type")).not.toBeInTheDocument();
+    expect(dialog.queryByLabelText("Catalogue entry")).not.toBeInTheDocument();
+    const select = dialog.getByLabelText("Provider");
+    const names = within(select)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(names).toEqual([
+      "Cortecs",
+      "OpenAI-compatible (generic)",
+      "Anthropic (generic)",
+    ]);
+    expect(select).toHaveValue("g:openai");
   });
 
   it("keeps the row's own type selectable when editing past the filter", async () => {
@@ -412,11 +460,21 @@ describe("AdminProviders: choosing a type", () => {
     const user = userEvent.setup({ delay: null });
     vi.stubGlobal(
       "fetch",
-      routes([provider({ id: "px", name: "extract", plugin: "extractor", kind: "internal", plugin_kind: "internal" })]),
+      routes([
+        provider({
+          id: "px",
+          name: "extract",
+          plugin: "extractor",
+          kind: "internal",
+          plugin_kind: "internal",
+        }),
+      ]),
     );
     renderScreen(<AdminProviders />);
 
-    await waitFor(() => expect(screen.getByText("extract")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("extract")).toBeInTheDocument(),
+    );
     await user.click(screen.getByRole("button", { name: "Edit" }));
     const dialog = within(await screen.findByRole("dialog"));
     const type = dialog.getByLabelText("Type") as HTMLSelectElement;
@@ -430,7 +488,9 @@ describe("AdminProviders: choosing a type", () => {
     vi.stubGlobal("fetch", routes([provider()]));
     renderScreen(<AdminProviders />);
 
-    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Add provider" }),
+    );
     const dialog = within(await screen.findByRole("dialog"));
     expect(dialog.getByText(/Tokens are counted here/)).toBeInTheDocument();
   });
@@ -439,14 +499,19 @@ describe("AdminProviders: choosing a type", () => {
     // The generic type reads no authoritative figure, so offering the choice
     // would be offering a configuration the API refuses.
     const user = userEvent.setup({ delay: null });
-    vi.stubGlobal("fetch", routes([provider()]));
+    vi.stubGlobal(
+      "fetch",
+      routes([provider()], undefined, undefined, [CORTECS()]),
+    );
     renderScreen(<AdminProviders />);
 
-    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Add provider" }),
+    );
     const dialog = within(await screen.findByRole("dialog"));
     expect(dialog.queryByLabelText("Billing")).not.toBeInTheDocument();
 
-    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
+    await user.selectOptions(dialog.getByLabelText("Provider"), "c:cortecs");
     expect(dialog.getByLabelText("Billing")).toBeInTheDocument();
   });
 
@@ -454,30 +519,41 @@ describe("AdminProviders: choosing a type", () => {
     // Admission happens before the request; the provider's figure arrives
     // after. An unpriced model reserves nothing and no ceiling ever trips.
     const user = userEvent.setup({ delay: null });
-    vi.stubGlobal("fetch", routes([provider()]));
+    vi.stubGlobal(
+      "fetch",
+      routes([provider()], undefined, undefined, [CORTECS()]),
+    );
     renderScreen(<AdminProviders />);
 
-    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Add provider" }),
+    );
     const dialog = within(await screen.findByRole("dialog"));
-    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
-    await user.selectOptions(dialog.getByLabelText("Billing"), "provider_reported");
+    await user.selectOptions(dialog.getByLabelText("Provider"), "c:cortecs");
+    await user.selectOptions(
+      dialog.getByLabelText("Billing"),
+      "provider_reported",
+    );
 
     expect(dialog.getByText(/Prices are still needed/)).toBeInTheDocument();
   });
 
-  it("sends the kind implied by the type, not one the operator typed", async () => {
+  it("sends the kind implied by the entry's plugin, not one the operator typed", async () => {
     // Whether the serving endpoint is chosen per request is a property of the
     // counterparty, not an opinion an operator should have to hold.
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [] };
-    vi.stubGlobal("fetch", routes([provider()], captured));
+    vi.stubGlobal(
+      "fetch",
+      routes([provider()], captured, undefined, [CORTECS()]),
+    );
     renderScreen(<AdminProviders />);
 
-    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Add provider" }),
+    );
     const dialog = within(await screen.findByRole("dialog"));
-    await user.type(dialog.getByLabelText("Name"), "cx");
-    await user.type(dialog.getByLabelText("Base URL"), "https://api.cortecs.ai/v1");
-    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
+    await user.selectOptions(dialog.getByLabelText("Provider"), "c:cortecs");
     await user.click(dialog.getByRole("button", { name: "Add" }));
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
@@ -486,19 +562,21 @@ describe("AdminProviders: choosing a type", () => {
     expect(body.kind).toBe("router");
   });
 
-  it("fills the endpoint in from the type, so Cortecs is a name and a key", async () => {
+  it("fills the endpoint in from the type, so Anthropic is a name and a key", async () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [] };
     vi.stubGlobal("fetch", routes([provider()], captured));
     renderScreen(<AdminProviders />);
 
-    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Add provider" }),
+    );
     const dialog = within(await screen.findByRole("dialog"));
-    await user.type(dialog.getByLabelText("Name"), "cortecs");
-    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
+    await user.type(dialog.getByLabelText("Name"), "claude");
+    await user.selectOptions(dialog.getByLabelText("Provider"), "g:anthropic");
 
     const url = dialog.getByLabelText("Base URL") as HTMLInputElement;
-    expect(url.value).toBe("https://api.cortecs.ai/v1");
+    expect(url.value).toBe("https://api.anthropic.com/v1");
 
     // The dialog can be submitted without typing the endpoint at all: the
     // field was filled by the type, and the API would apply the same default
@@ -506,7 +584,8 @@ describe("AdminProviders: choosing a type", () => {
     await user.click(dialog.getByRole("button", { name: "Add" }));
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
     const body = captured.bodies.at(-1)!.body as Record<string, unknown>;
-    expect(body.base_url).toBe("https://api.cortecs.ai/v1");
+    expect(body.base_url).toBe("https://api.anthropic.com/v1");
+    expect(body.plugin).toBe("anthropic");
   });
 
   it("does not clobber an endpoint the operator typed themselves", async () => {
@@ -516,13 +595,18 @@ describe("AdminProviders: choosing a type", () => {
     vi.stubGlobal("fetch", routes([provider()]));
     renderScreen(<AdminProviders />);
 
-    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Add provider" }),
+    );
     const dialog = within(await screen.findByRole("dialog"));
-    await user.type(dialog.getByLabelText("Base URL"), "https://cortecs.internal.test/v1");
-    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
+    await user.type(
+      dialog.getByLabelText("Base URL"),
+      "https://claude.internal.test/v1",
+    );
+    await user.selectOptions(dialog.getByLabelText("Provider"), "g:anthropic");
 
     expect((dialog.getByLabelText("Base URL") as HTMLInputElement).value).toBe(
-      "https://cortecs.internal.test/v1",
+      "https://claude.internal.test/v1",
     );
   });
 
@@ -546,7 +630,9 @@ describe("AdminProviders: choosing a type", () => {
     // what makes this deterministic: until the type list arrives the cell falls
     // back to the raw name, so asserting "cortecs" was asserting a state that
     // exists only before the query settles.
-    await waitFor(() => expect(table.getByText("Cortecs (router)")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(table.getByText("Cortecs (router)")).toBeInTheDocument(),
+    );
     expect(table.getByText("router")).toBeInTheDocument();
     expect(table.getByText("bills from provider")).toBeInTheDocument();
     expect(table.getByText("2 unpriced")).toBeInTheDocument();
@@ -557,12 +643,20 @@ describe("AdminProviders: choosing a type", () => {
     // configuration to point at rather than a silent inconsistency.
     vi.stubGlobal(
       "fetch",
-      routes([provider({ plugin: "cortecs", kind: "provider", plugin_kind: "router" })]),
+      routes([
+        provider({
+          plugin: "cortecs",
+          kind: "provider",
+          plugin_kind: "router",
+        }),
+      ]),
     );
     renderScreen(<AdminProviders />);
 
     const table = within(await screen.findByRole("table"));
-    await waitFor(() => expect(table.getByText("kind mismatch")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(table.getByText("kind mismatch")).toBeInTheDocument(),
+    );
   });
 });
 
@@ -574,15 +668,26 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
     vi.stubGlobal(
       "fetch",
       routes([
-        provider({ name: "extractor", plugin: "extractor", kind: "internal", plugin_kind: "internal" }),
+        provider({
+          name: "extractor",
+          plugin: "extractor",
+          kind: "internal",
+          plugin_kind: "internal",
+        }),
       ]),
     );
     renderScreen(<AdminProviders />);
 
     const table = within(await screen.findByRole("table"));
-    await waitFor(() => expect(table.getByText("extractor")).toBeInTheDocument());
-    await userEvent.setup().click(table.getByRole("button", { name: /^Actions for / }));
-    expect(await screen.findByRole("menuitem", { name: "Delete" })).toHaveAttribute("aria-disabled", "true");
+    await waitFor(() =>
+      expect(table.getByText("extractor")).toBeInTheDocument(),
+    );
+    await userEvent
+      .setup()
+      .click(table.getByRole("button", { name: /^Actions for / }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Delete" }),
+    ).toHaveAttribute("aria-disabled", "true");
   });
 
   it("leaves Delete enabled for an ordinary provider", async () => {
@@ -591,27 +696,44 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
 
     const table = within(await screen.findByRole("table"));
     await waitFor(() => expect(table.getByText("acme")).toBeInTheDocument());
-    await userEvent.setup().click(table.getByRole("button", { name: /^Actions for / }));
-    expect(await screen.findByRole("menuitem", { name: "Delete" })).not.toHaveAttribute("aria-disabled", "true");
+    await userEvent
+      .setup()
+      .click(table.getByRole("button", { name: /^Actions for / }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Delete" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it("still offers Deactivate for the internal provider", async () => {
     vi.stubGlobal(
       "fetch",
       routes([
-        provider({ name: "extractor", plugin: "extractor", kind: "internal", plugin_kind: "internal" }),
+        provider({
+          name: "extractor",
+          plugin: "extractor",
+          kind: "internal",
+          plugin_kind: "internal",
+        }),
       ]),
     );
     renderScreen(<AdminProviders />);
 
     const table = within(await screen.findByRole("table"));
-    await waitFor(() => expect(table.getByText("extractor")).toBeInTheDocument());
-    await userEvent.setup().click(table.getByRole("button", { name: /^Actions for / }));
-    expect(await screen.findByRole("menuitem", { name: "Deactivate" })).not.toHaveAttribute("aria-disabled", "true");
+    await waitFor(() =>
+      expect(table.getByText("extractor")).toBeInTheDocument(),
+    );
+    await userEvent
+      .setup()
+      .click(table.getByRole("button", { name: /^Actions for / }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Deactivate" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it("flags a provider whose endpoint differs from its catalogue entry and updates it on click", async () => {
-    const captured: { bodies: { url: string; body: unknown }[] } = { bodies: [] };
+    const captured: { bodies: { url: string; body: unknown }[] } = {
+      bodies: [],
+    };
     vi.stubGlobal(
       "fetch",
       routes(
@@ -627,10 +749,16 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
     );
     renderScreen(<AdminProviders />);
 
-    expect(await screen.findByText("catalogue endpoint differs")).toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole("button", { name: "Use catalogue endpoint" }));
+    expect(
+      await screen.findByText("catalogue endpoint differs"),
+    ).toBeInTheDocument();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Use catalogue endpoint" }));
     await waitFor(() => expect(captured.bodies.length).toBe(1));
-    expect(captured.bodies[0]?.body).toEqual({ base_url: "https://api.mistral.test/v1" });
+    expect(captured.bodies[0]?.body).toEqual({
+      base_url: "https://api.mistral.test/v1",
+    });
   });
 
   it("does not flag a provider on the catalogue's endpoint, nor an unlinked one", async () => {
@@ -643,14 +771,20 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
             base_url: "https://api.mistral.test/v1",
             catalogue: entry({ base_url: "https://api.mistral.test/v1/" }),
           }),
-          provider({ id: "p2", name: "by hand", base_url: "https://x.test/v1" }),
+          provider({
+            id: "p2",
+            name: "by hand",
+            base_url: "https://x.test/v1",
+          }),
         ],
         { bodies: [] },
       ),
     );
     renderScreen(<AdminProviders />);
     await screen.findByText("by hand");
-    expect(screen.queryByText("catalogue endpoint differs")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("catalogue endpoint differs"),
+    ).not.toBeInTheDocument();
   });
 
   it("badges a provider with its region and zero retention, and flags a lost entry", async () => {
@@ -659,7 +793,12 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
       routes(
         [
           provider({ catalogue_id: "mistral", catalogue: entry() }),
-          provider({ id: "pr2", name: "gone", catalogue_id: "old", catalogue_missing: true }),
+          provider({
+            id: "pr2",
+            name: "gone",
+            catalogue_id: "old",
+            catalogue_missing: true,
+          }),
         ],
         { bodies: [] },
         undefined,
@@ -668,8 +807,12 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
     );
     renderScreen(<AdminProviders />);
 
-    await waitFor(() => expect(screen.getByText("region eu")).toBeInTheDocument());
-    expect(screen.getAllByText("zero data retention").length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(screen.getByText("region eu")).toBeInTheDocument(),
+    );
+    expect(screen.getAllByText("zero data retention").length).toBeGreaterThan(
+      0,
+    );
     expect(screen.getByText("catalogue entry missing")).toBeInTheDocument();
   });
 
@@ -679,12 +822,21 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
     vi.stubGlobal("fetch", routes([], captured, undefined, [entry()]));
     renderScreen(<AdminProviders />);
 
-    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Add provider" }),
+    );
     const dialog = await screen.findByRole("dialog");
-    await user.selectOptions(await within(dialog).findByLabelText("Catalogue entry"), "mistral");
+    await user.selectOptions(
+      await within(dialog).findByLabelText("Provider"),
+      "c:mistral",
+    );
 
-    expect(within(dialog).getByLabelText("Base URL")).toHaveValue("https://api.mistral.test/v1");
-    expect(within(dialog).getByLabelText("Model name prefix")).toHaveValue("mi-");
+    expect(within(dialog).getByLabelText("Base URL")).toHaveValue(
+      "https://api.mistral.test/v1",
+    );
+    expect(within(dialog).getByLabelText("Model name prefix")).toHaveValue(
+      "mi-",
+    );
     expect(within(dialog).getByLabelText("Name")).toHaveValue("mistral");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
 
@@ -699,9 +851,12 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
     const captured: Captured = { bodies: [] };
     vi.stubGlobal(
       "fetch",
-      routes([provider({ catalogue_id: "mistral", catalogue: entry() })], captured, undefined, [
-        entry(),
-      ]),
+      routes(
+        [provider({ catalogue_id: "mistral", catalogue: entry() })],
+        captured,
+        undefined,
+        [entry()],
+      ),
     );
     renderScreen(<AdminProviders />);
 
@@ -713,5 +868,176 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
     expect("catalogue_id" in (captured.bodies[0]?.body as object)).toBe(false);
+  });
+
+  it("choosing an entry sends its link and plugin; a generic option sends the plugin and no link", async () => {
+    const user = userEvent.setup();
+    const captured: Captured = { bodies: [] };
+    vi.stubGlobal("fetch", routes([], captured, undefined, [CORTECS()]));
+    renderScreen(<AdminProviders />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add provider" }),
+    );
+    const dialog = within(await screen.findByRole("dialog"));
+    const select = await dialog.findByLabelText("Provider");
+    await user.selectOptions(select, "c:cortecs");
+    expect(
+      dialog.getByText(
+        "OpenAI-compatible, with Cortecs (router) customisations",
+      ),
+    ).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(captured.bodies.length).toBe(1));
+    let body = captured.bodies[0]?.body as Record<string, unknown>;
+    expect(body.plugin).toBe("cortecs");
+    expect(body.catalogue_id).toBe("cortecs");
+
+    // Back to a generic option: the link goes. The URL was the previous
+    // plugin's own default, so it follows the new type (an operator's own URL
+    // is covered by "does not clobber an endpoint the operator typed").
+    await user.selectOptions(select, "g:anthropic");
+    expect(dialog.getByLabelText("Base URL")).toHaveValue(
+      "https://api.anthropic.com/v1",
+    );
+    await user.click(dialog.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(captured.bodies.length).toBe(2));
+    body = captured.bodies[1]?.body as Record<string, unknown>;
+    expect(body.plugin).toBe("anthropic");
+    expect("catalogue_id" in body).toBe(false);
+
+    await user.selectOptions(select, "g:openai");
+    await user.click(dialog.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(captured.bodies.length).toBe(3));
+    body = captured.bodies[2]?.body as Record<string, unknown>;
+    expect(body.plugin).toBeNull();
+    expect("catalogue_id" in body).toBe(false);
+  });
+
+  it("shows the Anthropic protocol for an Anthropic entry", async () => {
+    const user = userEvent.setup();
+    const anthropic = entry({
+      id: "anthropic",
+      name: "Anthropic",
+      plugin: "anthropic",
+      base_url: "https://api.anthropic.com/v1",
+      prefix: "",
+    });
+    vi.stubGlobal("fetch", routes([], undefined, undefined, [anthropic]));
+    renderScreen(<AdminProviders />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add provider" }),
+    );
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.selectOptions(
+      await dialog.findByLabelText("Provider"),
+      "c:anthropic",
+    );
+    expect(
+      dialog.getByText("Anthropic", { selector: "p, span, div" }),
+    ).toBeInTheDocument();
+    expect(dialog.queryByText(/customisations/)).not.toBeInTheDocument();
+  });
+
+  it("preselects the row's entry on edit, and does not rewrite the link", async () => {
+    const user = userEvent.setup();
+    const captured: Captured = { bodies: [] };
+    // Old row: its plugin (cortecs) disagrees with the entry's (openai).
+    vi.stubGlobal(
+      "fetch",
+      routes(
+        [
+          provider({
+            plugin: "cortecs",
+            kind: "router",
+            catalogue_id: "mistral",
+            catalogue: entry(),
+          }),
+        ],
+        captured,
+        undefined,
+        [entry(), CORTECS()],
+      ),
+    );
+    renderScreen(<AdminProviders />);
+
+    await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByLabelText("Provider")).toHaveValue("c:mistral");
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    const body = captured.bodies[0]?.body as Record<string, unknown>;
+    expect(body.plugin).toBe("cortecs"); // the stored plugin is not silently changed
+    expect("catalogue_id" in body).toBe(false);
+  });
+
+  it("preselects the matching generic option for rows without an entry", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      routes([provider({ plugin: "anthropic" })], undefined, undefined, [
+        entry(),
+      ]),
+    );
+    renderScreen(<AdminProviders />);
+
+    await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByLabelText("Provider")).toHaveValue("g:anthropic");
+  });
+
+  it("preselects the one entry matching a legacy vendor plugin, without writing the link", async () => {
+    const user = userEvent.setup();
+    const captured: Captured = { bodies: [] };
+    vi.stubGlobal(
+      "fetch",
+      routes(
+        [provider({ plugin: "cortecs", kind: "router" })],
+        captured,
+        undefined,
+        [CORTECS()],
+      ),
+    );
+    renderScreen(<AdminProviders />);
+
+    await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByLabelText("Provider")).toHaveValue("c:cortecs");
+    // Billing still follows the plugin.
+    expect(dialog.getByLabelText("Billing")).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    const body = captured.bodies[0]?.body as Record<string, unknown>;
+    expect(body.plugin).toBe("cortecs");
+    expect("catalogue_id" in body).toBe(false);
+  });
+
+  it("shows a disabled legacy option for a vendor plugin with no single matching entry", async () => {
+    const user = userEvent.setup();
+    const captured: Captured = { bodies: [] };
+    vi.stubGlobal(
+      "fetch",
+      routes([provider({ plugin: "cortecs", kind: "router" })], captured),
+    );
+    renderScreen(<AdminProviders />);
+
+    await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    const select = dialog.getByLabelText("Provider");
+    expect(select).toHaveValue("legacy");
+    const option = within(select).getByRole("option", {
+      name: "Cortecs (router) (legacy, OpenAI-compatible)",
+    });
+    expect(option).toBeDisabled();
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    expect((captured.bodies[0]?.body as Record<string, unknown>).plugin).toBe(
+      "cortecs",
+    );
   });
 });

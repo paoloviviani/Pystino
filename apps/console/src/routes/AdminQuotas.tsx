@@ -16,6 +16,7 @@ import {
 import type { Column } from "@llmp/ui";
 import { formatMoney, useExactMoney } from "@llmp/ui";
 import { useState } from "react";
+import { Link } from "react-router";
 import {
   useCreateLimit,
   useDeleteLimit,
@@ -23,7 +24,6 @@ import {
   useLimits,
   useQuotaHealth,
   useReconcileQuota,
-  useResetLimit,
   useResets,
   useUsers,
 } from "../lib/admin";
@@ -47,7 +47,6 @@ export function AdminQuotas() {
   const toast = useOptionalToast();
 
   const [creating, setCreating] = useState(false);
-  const [resetting, setResetting] = useState<LimitRule | null>(null);
   const [history, setHistory] = useState<LimitRule | null>(null);
 
   const nameFor = (rule: LimitRule): string => {
@@ -151,7 +150,6 @@ export function AdminQuotas() {
                 label: m["admin_quotas.action.history"](),
                 onSelect: () => setHistory(rule),
               },
-              { key: "reset", label: m["admin_quotas.action.reset"](), onSelect: () => setResetting(rule) },
               {
                 key: "delete",
                 label: m["admin_quotas.action.delete"](),
@@ -176,7 +174,16 @@ export function AdminQuotas() {
     <div className={PAGE}>
       <PageHeader
         title={m["admin_quotas.title"]()}
-        subtitle={m["admin_quotas.subtitle"]()}
+        subtitle={
+          <>
+            {m["admin_quotas.subtitle"]()}
+            {" · "}
+            {/* Resetting lives in one place: Quota usage, per user and per shared quota. */}
+            <Link className="underline" to="/admin/quota-usage">
+              {m["admin_quotas.usage_link"]()}
+            </Link>
+          </>
+        }
         actions={
           <Button variant="primary" onClick={() => setCreating(true)}>
             {m["admin_quotas.new_rule"]()}
@@ -228,7 +235,6 @@ export function AdminQuotas() {
       <QuotaHealthPanel />
 
       <CreateRuleDialog open={creating} onClose={() => setCreating(false)} />
-      <ResetDialog rule={resetting} onClose={() => setResetting(null)} />
       <HistoryDialog rule={history} onClose={() => setHistory(null)} />
     </div>
   );
@@ -660,70 +666,6 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
           {m["admin_quotas.create.volume_body"]()}
         </Notice>
       )}
-    </Dialog>
-  );
-}
-
-/** Resetting takes an optional reason, and says plainly what a reset does not do. */
-function ResetDialog({ rule, onClose }: { rule: LimitRule | null; onClose: () => void }) {
-  const reset = useResetLimit();
-  const toast = useOptionalToast();
-  const [reason, setReason] = useState("");
-
-  const submit = () => {
-    if (!rule) return;
-    reset.mutate(
-      { id: rule.id, reason },
-      {
-        onSuccess: () => {
-          toast?.add({ title: m["admin_quotas.reset.toast.done"](), type: "success" });
-          setReason("");
-          onClose();
-        },
-        onError: () =>
-          toast?.add({ title: m["admin_quotas.reset.toast.failed"](), type: "error" }),
-      },
-    );
-  };
-
-  return (
-    <Dialog
-      open={rule !== null}
-      title={m["admin_quotas.reset.title"]({
-        name: rule?.name || m["admin_quotas.reset.title_fallback"](),
-      })}
-      onClose={onClose}
-      footer={
-        <>
-          <Button onClick={onClose}>{m["admin_quotas.reset.cancel"]()}</Button>
-          <Button
-            variant="primary"
-            busy={reset.isPending}
-            onClick={submit}
-          >
-            {m["admin_quotas.reset.submit"]()}
-          </Button>
-        </>
-      }
-    >
-      <Notice tone="info" title={m["admin_quotas.reset.notice_title"]()}>
-        {m["admin_quotas.reset.notice_body"]()}
-      </Notice>
-
-      {reset.error ? (
-        <Notice tone="danger">
-          {/* i18n: server text — the API's own error message. */}
-          {reset.error instanceof Error ? reset.error.message : m["admin_quotas.unknown_error"]()}
-        </Notice>
-      ) : null}
-
-      <Input
-        label={m["admin_quotas.reset.reason"]()}
-        value={reason}
-        onChange={(e) => setReason(e.target.value)}
-        placeholder={m["admin_quotas.reset.reason_placeholder"]()}
-        hint={m["admin_quotas.reset.reason_hint"]()}
-      />
     </Dialog>
   );
 }
