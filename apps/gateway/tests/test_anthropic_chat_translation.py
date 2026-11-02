@@ -378,7 +378,13 @@ class TestParameters:
         assert build({"messages": [user()], "max_tokens": 10})["max_tokens"] == 10
         both = build({"messages": [user()], "max_tokens": 10, "max_completion_tokens": 20})
         assert both["max_tokens"] == 20
-        assert build({"messages": [user()]}, max_output=64000)["max_tokens"] == 64000
+        # A model's whole output limit is not a default: capped, unless asked for.
+        assert build({"messages": [user()]}, max_output=64000)["max_tokens"] == 32000
+        assert build({"messages": [user()]}, max_output=4000)["max_tokens"] == 4000
+        assert (
+            build({"messages": [user()], "max_tokens": 64000}, max_output=64000)["max_tokens"]
+            == 64000
+        )
         assert build({"messages": [user()]})["max_tokens"] == 8192
         assert build({"messages": [user()]}, default_max_tokens=1000)["max_tokens"] == 1000
 

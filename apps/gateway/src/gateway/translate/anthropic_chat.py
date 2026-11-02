@@ -181,6 +181,11 @@ class ModelTraits:
 # ---------------------------------------------------------------------------
 
 
+#: The most a defaulted max_tokens may be (see build_request): room for a long reply and
+#: its thinking, without reserving a model's whole output limit on every turn.
+DEFAULT_MAX_TOKENS_CAP = 32_000
+
+
 def reject_unsupported(body: Mapping[str, Any]) -> None:
     """The refusals that need no translation, raised before anything is spent.
 
@@ -689,10 +694,14 @@ def build_request(
     system, converted = convert_messages(messages, records)
 
     explicit = payload.get("max_completion_tokens") or payload.get("max_tokens")
+    # Anthropic requires max_tokens; an OpenAI caller usually sends none. The model's
+    # own output limit can be 128k, which a chat turn never needs and which sizes no
+    # sensible quota reservation, so a default is capped at DEFAULT_MAX_TOKENS_CAP.
+    # An explicit value from the caller is sent as given.
     max_tokens = (
         int(explicit)
         if isinstance(explicit, int) and explicit > 0
-        else (max_output_tokens or settings.default_max_tokens)
+        else min(max_output_tokens or settings.default_max_tokens, DEFAULT_MAX_TOKENS_CAP)
     )
 
     body: dict[str, Any] = {"model": model, "max_tokens": max_tokens, "messages": converted}
