@@ -122,6 +122,13 @@ class OpenAICompatibleUpstream:
         self._plugin = plugin
 
     @property
+    def plugin(self) -> ProviderPlugin | None:
+        """The counterparty plugin, for the one question a route asks of it
+        before calling: whether chat completions are served by another API
+        (``protocol == "anthropic"``)."""
+        return self._plugin
+
+    @property
     def base_url(self) -> str:
         """The address this client sends to. Read by a probe that needs to
         name it in a failure message, or reach a route ``post_json`` does not

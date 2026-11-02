@@ -32,13 +32,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+import httpx
+
 from gateway.accounting.cost import TokenCounts
 from gateway.models import ApiSurface
 from gateway.plugins.base import ProbeResult, ProviderKind, ReportedCost, ServedBy
 
 if TYPE_CHECKING:
-    import httpx
-
     from gateway.upstream import OpenAICompatibleUpstream
 
 #: The version header Anthropic's API requires on every request. Pinned here
@@ -49,6 +49,40 @@ if TYPE_CHECKING:
 #: documentation in this change: it is the long-standing stable value, and it is
 #: what the header was set to by hand before this plugin existed.
 API_VERSION = "2023-06-01"
+
+
+def _supported(capabilities: Any, *path: str) -> bool:
+    node: Any = capabilities
+    for key in path:
+        node = node.get(key) if isinstance(node, dict) else None
+    return isinstance(node, dict) and node.get("supported") is True
+
+
+def _catalogue_entry(model: dict[str, Any]) -> dict[str, Any]:
+    """One ``GET /v1/models`` entry as ``parse_catalogue`` reads it."""
+    capabilities = model.get("capabilities")
+    inputs = ["text"]
+    if _supported(capabilities, "image_input"):
+        inputs.append("image")
+    if _supported(capabilities, "pdf_input"):
+        inputs.append("file")
+    features = ["tools"]
+    if _supported(capabilities, "thinking"):
+        features.append("reasoning")
+    if _supported(capabilities, "structured_outputs"):
+        features.append("json_mode")
+    entry: dict[str, Any] = {
+        "id": model["id"],
+        "name": model.get("display_name") or model["id"],
+        "input_modalities": inputs,
+        "output_modalities": ["text"],
+        "supported_features": features,
+    }
+    if isinstance(model.get("max_input_tokens"), int):
+        entry["context_length"] = model["max_input_tokens"]
+    if isinstance(model.get("max_tokens"), int):
+        entry["max_output_tokens"] = model["max_tokens"]
+    return entry
 
 
 class AnthropicPlugin:
@@ -71,6 +105,17 @@ class AnthropicPlugin:
     # It reports tokens, not a charge. Nothing to assert, so pass-through
     # billing is not selectable for it.
     reports_authoritative_cost = False
+    #: The API protocol this provider speaks, and the whole of what a provider's
+    #: *type* is: OpenAI-compatible or Anthropic. Chat completions to an
+    #: ``anthropic`` provider are served by its native ``/v1/messages`` and
+    #: translated (``gateway.translate``).
+    protocol = "anthropic"
+    #: Anthropic publishes no price API, so discovery fills every model it
+    #: lists from the catalogue entry's dated price hints
+    #: (``catalogue_data/providers.d/anthropic.yaml``) without the operator
+    #: having to tick "fill missing prices". A listed model with no hint is
+    #: offered unpriced, which the import refuses: never free.
+    price_hints_always = True
 
     # -- shaping a request --------------------------------------------------
 
@@ -125,6 +170,47 @@ class AnthropicPlugin:
     def catalogue_tag_all(self) -> str | None:
         """No tag filter here, so no "everything" spelling is measured."""
         return None
+
+    async def fetch_catalogue(
+        self, http: httpx.AsyncClient, url: str, api_key: str | None
+    ) -> dict[str, Any]:
+        """``GET /v1/models``, every page, as a catalogue payload.
+
+        Read with ``getattr`` by the discovery route, so another plugin is
+        unaffected. Anthropic's list is paginated (``has_more`` / ``last_id``,
+        20 a page unless ``limit`` is given) and answers to ``x-api-key``, which
+        the generic fetch (bearer) does not send. The entries are reshaped into
+        what ``parse_catalogue`` reads: the display name, the context window
+        (``max_input_tokens``), the output limit (``max_tokens``), what the
+        model accepts (images, PDFs) and what it can do (reasoning when
+        ``capabilities.thinking.supported``, ``json_mode`` for structured
+        outputs, tools for all). Retired models are not returned by the API.
+        """
+        from gateway.pricing import CatalogueUnavailable
+
+        headers = {"accept": "application/json"}
+        if api_key:
+            headers.update(self.auth_headers(api_key))
+        else:
+            headers["anthropic-version"] = API_VERSION
+        entries: list[dict[str, Any]] = []
+        after: str | None = None
+        try:
+            for _ in range(50):
+                params = {"limit": "1000", **({"after_id": after} if after else {})}
+                response = await http.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                body = response.json()
+                page = body.get("data") if isinstance(body, dict) else None
+                if not isinstance(page, list):
+                    raise ValueError("no 'data' list in the response")
+                entries.extend(item for item in page if isinstance(item, dict))
+                after = body.get("last_id")
+                if not body.get("has_more") or not after:
+                    break
+        except (httpx.HTTPError, ValueError) as exc:
+            raise CatalogueUnavailable(f"could not fetch {url}: {exc}") from exc
+        return {"data": [_catalogue_entry(item) for item in entries if item.get("id")]}
 
     async def probe(
         self, upstream: OpenAICompatibleUpstream, client: httpx.AsyncClient

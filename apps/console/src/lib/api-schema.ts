@@ -5486,6 +5486,12 @@ export interface components {
             /** Name */
             name: string;
             /**
+             * Protocol
+             * @default openai
+             * @enum {string}
+             */
+            protocol: "openai" | "anthropic";
+            /**
              * Requires Api Key
              * @default true
              */

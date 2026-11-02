@@ -1123,6 +1123,35 @@ class QuotaSettings(BaseModel):
     fail_open: bool = False
 
 
+class AnthropicSettings(BaseModel):
+    """How chat completions are served by an Anthropic provider.
+
+    A model behind the ``anthropic`` plugin is called on Anthropic's native
+    ``/v1/messages`` and the exchange is translated both ways
+    (``gateway.translate``), because Anthropic's own OpenAI-compatible endpoint
+    has no prompt caching, no thinking signatures and no PDFs.
+    """
+
+    #: ``auto`` puts up to four cache breakpoints on the request (the last tool,
+    #: the last system block and the last two user-role turns); ``off`` adds none
+    #: and forwards only ``cache_control`` the client wrote itself. Cache writes
+    #: are billed above the input rate (1.25x for the 5-minute TTL, 2x for 1
+    #: hour) and reads far below it (0.1x on most models), so ``auto`` pays off
+    #: from the second request inside the TTL and costs a little extra on a
+    #: prompt that is never repeated.
+    prompt_cache: Literal["auto", "off"] = "auto"
+    #: Lifetime of the automatic breakpoints. ``1h`` suits long agent loops and
+    #: bills the write at 2x; the ledger has one cache-write price per model, so
+    #: price it for the TTL in use.
+    prompt_cache_ttl: Literal["5m", "1h"] = "5m"
+    #: ``max_tokens`` is mandatory on Anthropic. When the caller sent none and
+    #: the model row has no ``max_output_tokens``, this is used.
+    default_max_tokens: int = 8192
+    #: How long the thinking blocks of a tool-calling reply are kept so that the
+    #: next request of the loop can send them back (Anthropic requires it).
+    thinking_ttl_seconds: int = 3600
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="GATEWAY_",
@@ -1231,6 +1260,7 @@ class Settings(BaseSettings):
     transcription: TranscriptionSettings = Field(default_factory=TranscriptionSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
     accounting: AccountingSettings = Field(default_factory=AccountingSettings)
+    anthropic: AnthropicSettings = Field(default_factory=AnthropicSettings)
 
     @model_validator(mode="after")
     def _check_accounting(self) -> Settings:
