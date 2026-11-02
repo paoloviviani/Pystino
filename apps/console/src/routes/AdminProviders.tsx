@@ -414,6 +414,17 @@ function pluginLabel(plugins: ProviderPlugin[] | undefined, name: string | null)
   return match?.label ?? name ?? m["admin_providers.plugin.default_label"]();
 }
 
+/**
+ * The API protocol a provider plugin speaks. Only two exist: Anthropic's and
+ * the OpenAI-compatible one; every other plugin (cortecs, mistral, ...) is a set
+ * of vendor quirks on top of the OpenAI protocol.
+ * TODO: switch to the gateway's `protocol` field on the plugin listing once it
+ * exists; until then this maps by name.
+ */
+function protocolOf(pluginName: string | null | undefined): "anthropic" | "openai" {
+  return pluginName === "anthropic" ? "anthropic" : "openai";
+}
+
 /** The default type's name, whose value in the selector is the empty string. */
 function defaultPluginName(plugins: ProviderPlugin[] | undefined): string {
   return plugins?.find((entry) => entry.is_default)?.name ?? "generic";
@@ -522,6 +533,88 @@ export function ProviderDialog({
     const type = (allPlugins.data ?? []).find((p) => p.name === entry.plugin);
     return type !== undefined && (pluginFilter ? pluginFilter(type) : true);
   });
+  // One selector, "Provider": a catalogue entry (which fixes its plugin, and so
+  // its protocol), or one of two generic options, one per API protocol. Only
+  // two protocols exist; every other plugin is a vendor's quirks on top of the
+  // OpenAI one and belongs to its catalogue entry. A row whose plugin is not an
+  // LLM provider (the extractor) keeps the plain Type select it had.
+  const llmForm = chosen === undefined || isLlmProviderPlugin(chosen);
+  const hasAnthropic = (plugins.data ?? []).some((entry) => entry.name === "anthropic");
+  const entryById = (id: string) => offered.find((candidate) => candidate.id === id);
+  // A legacy row has a vendor plugin set by hand and no entry: show the one
+  // entry that speaks for that plugin, if there is exactly one, without writing
+  // catalogue_id; otherwise a disabled option that keeps the stored plugin.
+  const pluginEntries = offered.filter((entry) => entry.plugin === plugin);
+  const isVendorPlugin = plugin !== "" && plugin !== "anthropic" && !chosen?.is_default;
+  let selection: string;
+  if (catalogueId !== "" && entryById(catalogueId)) selection = `c:${catalogueId}`;
+  else if (plugin === "anthropic") selection = "g:anthropic";
+  else if (!isVendorPlugin) selection = "g:openai";
+  else if (pluginEntries.length === 1 && pluginEntries[0]) selection = `c:${pluginEntries[0].id}`;
+  else selection = "legacy";
+  const selectedEntry = selection.startsWith("c:") ? entryById(selection.slice(2)) : undefined;
+  const protocolLabel = (name: string | null | undefined) =>
+    protocolOf(name) === "anthropic"
+      ? m["admin_providers.type.anthropic"]()
+      : m["admin_providers.type.openai"]();
+  const providerHint = (() => {
+    if (selectedEntry) {
+      const type = (allPlugins.data ?? []).find((p) => p.name === selectedEntry.plugin);
+      const vendor = type && !type.is_default && type.name !== "anthropic";
+      // i18n: server text — the plugin's own label.
+      return vendor
+        ? m["admin_providers.type.customisations"]({
+            protocol: protocolLabel(selectedEntry.plugin),
+            plugin: type.label,
+          })
+        : protocolLabel(selectedEntry.plugin);
+    }
+    if (selection === "legacy") {
+      return m["admin_providers.field.provider_hint_legacy"]({
+        plugin: pluginLabel(plugins.data, plugin),
+      });
+    }
+    // i18n: server text — the plugin's own description.
+    return chosen ? chosen.description : m["admin_providers.field.type_hint"]();
+  })();
+
+  // Choosing a type is choosing its endpoint, when the type has one worth
+  // knowing: pre-fill it, so creating a Cortecs provider is typing a name and a
+  // key. A URL that is not some plugin's default is the operator's own — a
+  // private gateway, a proxy — and is never clobbered; one that is was put
+  // there by this same rule and follows the type.
+  const followTypeEndpoint = (next: string) => {
+    const byName = (name: string) =>
+      (plugins.data ?? []).find((entry) => entry.name === name || (name === "" && entry.is_default));
+    const previous = byName(plugin || defaultPluginName(plugins.data));
+    const upcoming = byName(next || defaultPluginName(plugins.data));
+    if (
+      upcoming?.default_base_url &&
+      (baseUrl.trim() === "" || baseUrl.trim() === (previous?.default_base_url ?? ""))
+    ) {
+      setBaseUrl(upcoming.default_base_url);
+    }
+  };
+  const chooseProvider = (value: string) => {
+    if (value.startsWith("c:")) {
+      const entry = entryById(value.slice(2));
+      if (!entry) return;
+      setCatalogueId(entry.id);
+      const known = (plugins.data ?? []).find((p) => p.name === entry.plugin);
+      setPlugin(known?.is_default ? "" : entry.plugin);
+      // Pre-fill on create only; an existing row's fields are its own.
+      if (!editing) {
+        if (entry.base_url) setBaseUrl(entry.base_url);
+        setPrefix(entry.prefix);
+        if (!name.trim()) setName(entry.id);
+      }
+    } else if (value === "g:openai" || value === "g:anthropic") {
+      const next = value === "g:anthropic" ? "anthropic" : "";
+      setCatalogueId("");
+      followTypeEndpoint(next);
+      setPlugin(next);
+    }
+  };
   const pending = create.isPending || update.isPending;
   const error = create.error ?? update.error;
 
@@ -634,74 +727,50 @@ export function ProviderDialog({
         })}
       />
 
-      {offered.length > 0 && (
+      {llmForm ? (
         <Select
-          label={m["admin_providers.field.catalogue"]()}
-          value={catalogueId}
-          onChange={(event) => {
-            const id = event.target.value;
-            setCatalogueId(id);
-            const entry = offered.find((candidate) => candidate.id === id);
-            // Pre-fill on create only; an existing row's fields are its own.
-            if (!editing && entry) {
-              const known = (plugins.data ?? []).find((p) => p.name === entry.plugin);
-              setPlugin(known?.is_default ? "" : entry.plugin);
-              if (entry.base_url) setBaseUrl(entry.base_url);
-              setPrefix(entry.prefix);
-              if (!name.trim()) setName(entry.id);
-            }
-          }}
-          hint={
-            editing
-              ? m["admin_providers.field.catalogue_hint_edit"]()
-              : m["admin_providers.field.catalogue_hint_new"]()
-          }
+          label={m["admin_providers.field.provider"]()}
+          value={selection}
+          onChange={(event) => chooseProvider(event.target.value)}
+          hint={providerHint}
         >
-          <option value="">{m["admin_providers.field.catalogue_none"]()}</option>
           {offered.map((entry) => (
             // i18n: server text — the catalogue entry's own name.
-            <option key={entry.id} value={entry.id}>
+            <option key={entry.id} value={`c:${entry.id}`}>
               {entry.name}
+            </option>
+          ))}
+          <option value="g:openai">{m["admin_providers.type.generic_openai"]()}</option>
+          {hasAnthropic && (
+            <option value="g:anthropic">{m["admin_providers.type.generic_anthropic"]()}</option>
+          )}
+          {selection === "legacy" && (
+            <option value="legacy" disabled>
+              {m["admin_providers.type.legacy"]({ plugin: pluginLabel(plugins.data, plugin) })}
+            </option>
+          )}
+        </Select>
+      ) : (
+        <Select
+          label={m["admin_providers.field.type"]()}
+          value={plugin}
+          onChange={(event) => {
+            followTypeEndpoint(event.target.value);
+            setPlugin(event.target.value);
+          }}
+          hint={
+            // i18n: server text — the plugin's own description.
+            chosen ? chosen.description : m["admin_providers.field.type_hint"]()
+          }
+        >
+          {(plugins.data ?? []).map((entry) => (
+            <option key={entry.name} value={entry.is_default ? "" : entry.name}>
+              {entry.label}
+              {entry.kind === "router" ? m["admin_providers.field.type_router_suffix"]() : ""}
             </option>
           ))}
         </Select>
       )}
-
-      <Select
-        label={m["admin_providers.field.type"]()}
-        value={plugin}
-        onChange={(event) => {
-          const next = event.target.value;
-          // Choosing a type is choosing its endpoint, when the type has one
-          // worth knowing: pre-fill it, so creating a Cortecs provider is
-          // typing a name and a key. A URL that is not some plugin's default
-          // is the operator's own — a private gateway, a proxy — and is never
-          // clobbered; one that is was put there by this same rule and follows
-          // the type.
-          const byName = (name: string) =>
-            (plugins.data ?? []).find((entry) => entry.name === name || (name === "" && entry.is_default));
-          const previous = byName(plugin || defaultPluginName(plugins.data));
-          const upcoming = byName(next || defaultPluginName(plugins.data));
-          if (
-            upcoming?.default_base_url &&
-            (baseUrl.trim() === "" || baseUrl.trim() === (previous?.default_base_url ?? ""))
-          ) {
-            setBaseUrl(upcoming.default_base_url);
-          }
-          setPlugin(next);
-        }}
-        hint={
-          // i18n: server text — the plugin's own description.
-          chosen ? chosen.description : m["admin_providers.field.type_hint"]()
-        }
-      >
-        {(plugins.data ?? []).map((entry) => (
-          <option key={entry.name} value={entry.is_default ? "" : entry.name}>
-            {entry.label}
-            {entry.kind === "router" ? m["admin_providers.field.type_router_suffix"]() : ""}
-          </option>
-        ))}
-      </Select>
 
       {/* Only offered where the type can support more than one, and only a type
           that asserts its reported figure is the real charge can. */}

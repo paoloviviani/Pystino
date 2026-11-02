@@ -4,12 +4,12 @@ import { formatMoney, useExactMoney } from "@llmp/ui";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { PageHeader } from "../components/PageHeader";
-import { useQuotaUsage, useResetLimit, useUserQuotaUsage } from "../lib/admin";
+import { useGroups, useLimits, useQuotaUsage, useResetLimit, useUserQuotaUsage } from "../lib/admin";
 import { formatDateTime, formatNumber } from "../lib/format";
 import { MUTED, PAGE } from "../lib/layout";
 import { usePaginated } from "../lib/paging";
 import { useOptionalToast } from "../lib/toast";
-import type { UserQuotaEntry, UserQuotaSummary } from "../lib/types";
+import type { LimitRule, UserQuotaEntry, UserQuotaSummary } from "../lib/types";
 import { m } from "../paraglide/messages.js";
 
 /**
@@ -119,6 +119,7 @@ function UserList() {
           placeholder={m["quota_usage.search_placeholder"]()}
         />
       </Card>
+      <SharedQuotas />
       <Card flush>
         {usage.isPending ? (
           <Spinner label={m["quota_usage.loading"]()} />
@@ -170,7 +171,7 @@ function kindLabel(entry: UserQuotaEntry): string {
 
 function UserDetail({ userId }: { userId: string }) {
   const usage = useUserQuotaUsage(userId);
-  const [resetting, setResetting] = useState<UserQuotaEntry | null>(null);
+  const [resetting, setResetting] = useState<ResetTarget | null>(null);
   const name = usage.data ? who(usage.data) : m["quota_usage.detail.user_fallback"]();
 
   const columns: Column<UserQuotaEntry>[] = [
@@ -246,12 +247,43 @@ function UserDetail({ userId }: { userId: string }) {
         ),
     },
     {
+      // Every row that can be reset is reset from here. A refused row (the user
+      // is held to their own rule instead) has no button: its usage cell says why.
       key: "actions",
       header: "",
-      render: (entry) =>
-        entry.can_reset_for_user ? (
-          <Button onClick={() => setResetting(entry)}>{m["quota_usage.action.reset"]()}</Button>
-        ) : null,
+      render: (entry) => {
+        if (entry.replaced_by_rule_id) return null;
+        const target = (mode: ResetTarget["mode"]): ResetTarget => ({
+          ruleId: entry.rule_id,
+          ruleName: entry.rule_name,
+          mode,
+          userId,
+          userName: name,
+          sharedWith: entry.scope === "group" ? entry.scope_label : null,
+        });
+        if (entry.kind === "own") {
+          return (
+            <Button onClick={() => setResetting(target("own"))}>
+              {m["quota_usage.action.reset_own"]()}
+            </Button>
+          );
+        }
+        if (entry.can_reset_for_user) {
+          return (
+            <Button onClick={() => setResetting(target("user"))}>
+              {m["quota_usage.action.reset"]()}
+            </Button>
+          );
+        }
+        return (
+          <>
+            <Button onClick={() => setResetting(target("shared"))}>
+              {m["quota_usage.action.reset_shared"]()}
+            </Button>
+            <div className={MUTED}>{sharedWho(entry.scope_label)}</div>
+          </>
+        );
+      },
     },
   ];
 
@@ -287,39 +319,56 @@ function UserDetail({ userId }: { userId: string }) {
           />
         )}
       </Card>
-      <ResetForUserDialog
-        entry={resetting}
-        userId={userId}
-        userName={name}
-        onClose={() => setResetting(null)}
-      />
+      <ResetDialog target={resetting} onClose={() => setResetting(null)} />
     </div>
   );
 }
 
-/** Resetting one user's consumption: confirmed, with an optional reason. */
-function ResetForUserDialog({
-  entry,
-  userId,
-  userName,
-  onClose,
-}: {
-  entry: UserQuotaEntry | null;
-  userId: string;
-  userName: string;
-  onClose: () => void;
-}) {
+/** What a reset is applied to; the one dialog below serves every kind of row. */
+interface ResetTarget {
+  ruleId: string;
+  ruleName: string;
+  /** "user": one user's count of a per-user rule (sends user_id). "own": a
+   *  rule scoped to that user, reset whole. "shared": a total, reset for
+   *  everyone it counts. */
+  mode: "user" | "own" | "shared";
+  userId?: string;
+  userName?: string;
+  /** The group a shared quota counts, or null for the whole deployment. */
+  sharedWith?: string | null;
+}
+
+/** Everyone a shared quota counts, named. */
+function sharedWho(group: string | null | undefined): string {
+  return group
+    ? m["quota_usage.reset.scope_group"]({ group })
+    : m["quota_usage.reset.scope_all"]();
+}
+
+/**
+ * The single place a quota is reset: confirmed, with an optional reason, and
+ * plain about whose counter moves. The Quotas page links here and no longer
+ * resets anything itself.
+ */
+function ResetDialog({ target, onClose }: { target: ResetTarget | null; onClose: () => void }) {
   const reset = useResetLimit();
   const toast = useOptionalToast();
   const [reason, setReason] = useState("");
+  const mode = target?.mode ?? "user";
 
   const submit = () => {
-    if (!entry) return;
+    if (!target) return;
     reset.mutate(
-      { id: entry.rule_id, reason, userId },
+      { id: target.ruleId, reason, userId: mode === "user" ? target.userId : undefined },
       {
         onSuccess: () => {
-          toast?.add({ title: m["quota_usage.reset.toast.done"](), type: "success" });
+          toast?.add({
+            title:
+              mode === "user"
+                ? m["quota_usage.reset.toast.done"]()
+                : m["quota_usage.reset.toast.done_rule"](),
+            type: "success",
+          });
           setReason("");
           onClose();
         },
@@ -328,22 +377,47 @@ function ResetForUserDialog({
     );
   };
 
+  const title =
+    mode === "user"
+      ? m["quota_usage.reset.title"]({ rule: target?.ruleName ?? "", user: target?.userName ?? "" })
+      : mode === "own"
+        ? m["quota_usage.reset.title_own"]({ rule: target?.ruleName ?? "" })
+        : m["quota_usage.reset.title_shared"]({ rule: target?.ruleName ?? "" });
+  const noticeTitle =
+    mode === "user"
+      ? m["quota_usage.reset.notice_title"]()
+      : mode === "own"
+        ? m["quota_usage.reset.notice_title_own"]()
+        : m["quota_usage.reset.notice_title_shared"]();
+  const noticeBody =
+    mode === "user"
+      ? m["quota_usage.reset.notice_body"]()
+      : mode === "own"
+        ? m["quota_usage.reset.notice_body_own"]({ user: target?.userName ?? "" })
+        : m["quota_usage.reset.notice_body_shared"]({ who: sharedWho(target?.sharedWith) });
+  const submitLabel =
+    mode === "user"
+      ? m["quota_usage.reset.submit"]()
+      : mode === "own"
+        ? m["quota_usage.reset.submit_own"]()
+        : m["quota_usage.reset.submit_shared"]();
+
   return (
     <Dialog
-      open={entry !== null}
-      title={m["quota_usage.reset.title"]({ rule: entry?.rule_name ?? "", user: userName })}
+      open={target !== null}
+      title={title}
       onClose={onClose}
       footer={
         <>
           <Button onClick={onClose}>{m["quota_usage.reset.cancel"]()}</Button>
           <Button variant="primary" busy={reset.isPending} onClick={submit}>
-            {m["quota_usage.reset.submit"]()}
+            {submitLabel}
           </Button>
         </>
       }
     >
-      <Notice tone="info" title={m["quota_usage.reset.notice_title"]()}>
-        {m["quota_usage.reset.notice_body"]()}
+      <Notice tone={mode === "shared" ? "warn" : "info"} title={noticeTitle}>
+        {noticeBody}
       </Notice>
       {reset.error ? (
         <Notice tone="danger">
@@ -359,5 +433,66 @@ function ResetForUserDialog({
         hint={m["quota_usage.reset.reason_hint"]()}
       />
     </Dialog>
+  );
+}
+
+/**
+ * The shared quotas (a group's total, the deployment's total), each with its
+ * whole-quota reset. A shared quota is reachable from every user it counts, but
+ * not from a group with no members or a global total on a deployment with no
+ * users yet, so this list makes every rule reachable from Quota usage.
+ */
+function SharedQuotas() {
+  const limits = useLimits();
+  const groups = useGroups();
+  const [resetting, setResetting] = useState<ResetTarget | null>(null);
+  const groupName = (id: string | null) =>
+    (groups.data?.items ?? []).find((group) => group.id === id)?.name ?? null;
+  const shared = (limits.data?.items ?? []).filter(
+    (rule: LimitRule) =>
+      rule.is_active &&
+      rule.applies_to === "aggregate" &&
+      (rule.scope === "global" || rule.scope === "group"),
+  );
+  if (shared.length === 0) return null;
+
+  const columns: Column<LimitRule>[] = [
+    { key: "rule", header: m["quota_usage.column.rule"](), render: (rule) => rule.name },
+    {
+      key: "counts",
+      header: m["quota_usage.shared_list.counts"](),
+      render: (rule) => sharedWho(rule.scope === "group" ? groupName(rule.scope_id) : null),
+    },
+    {
+      key: "actions",
+      header: "",
+      render: (rule) => (
+        <Button
+          onClick={() =>
+            setResetting({
+              ruleId: rule.id,
+              ruleName: rule.name,
+              mode: "shared",
+              sharedWith: rule.scope === "group" ? groupName(rule.scope_id) : null,
+            })
+          }
+        >
+          {m["quota_usage.action.reset_shared"]()}
+        </Button>
+      ),
+    },
+  ];
+
+  return (
+    <Card title={m["quota_usage.shared_list.title"]()} description={m["quota_usage.shared_list.hint"]()} flush>
+      <Table
+        columns={columns}
+        rows={shared}
+        rowKey={(rule) => rule.id}
+        empty=""
+        caption={m["quota_usage.shared_list.title"]()}
+      />
+      <ResetDialog target={resetting} onClose={() => setResetting(null)} />
+    </Card>
   );
 }

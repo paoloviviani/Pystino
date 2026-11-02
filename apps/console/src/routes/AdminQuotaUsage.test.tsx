@@ -65,7 +65,7 @@ const REPLACED = entry({
 const ROLLING = entry({
   rule_id: "r-rolling",
   rule_name: "tokens per day",
-  kind: "each_user",
+  kind: "shared",
   scope: "global",
   scope_label: null,
   period: null,
@@ -77,6 +77,16 @@ const ROLLING = entry({
   limit_value: "9",
   can_reset_for_user: false,
 });
+const OWN = entry({
+  rule_id: "r-own",
+  rule_name: "my requests",
+  kind: "own",
+  scope: "user",
+  scope_label: null,
+  current_value: "1",
+  percent: 25,
+  can_reset_for_user: false,
+});
 
 function summary(overrides: Partial<UserQuotaSummary> = {}): UserQuotaSummary {
   return {
@@ -86,6 +96,26 @@ function summary(overrides: Partial<UserQuotaSummary> = {}): UserQuotaSummary {
     is_active: true,
     rules: 2,
     most_constrained: entry(),
+    ...overrides,
+  };
+}
+
+function limit(overrides: Record<string, unknown>) {
+  return {
+    id: "r",
+    name: "rule",
+    scope: "global",
+    scope_id: null,
+    applies_to: "aggregate",
+    metric: "requests",
+    limit_value: "50",
+    current_value: "1",
+    window_label: "month",
+    window_seconds: null,
+    period: "month",
+    is_active: true,
+    overrides_each_user: false,
+    last_reset_at: null,
     ...overrides,
   };
 }
@@ -110,11 +140,31 @@ function serve(): Server {
         user_id: "u1",
         email: "ada@example.org",
         display_name: "Ada Lovelace",
-        entries: [entry({ current_value: used }), SHARED, REPLACED, ROLLING],
+        entries: [entry({ current_value: used }), SHARED, REPLACED, ROLLING, OWN],
       });
     }
     if (url.includes("/api/admin/quota-usage")) {
       return jsonResponse([summary(), summary({ user_id: "u2", email: "bob@example.org", display_name: null, rules: 0, most_constrained: null })]);
+    }
+    if (url.includes("/api/admin/limits")) {
+      return jsonResponse({
+        items: [
+          limit({ id: "r-shared", name: "group total", scope: "group", scope_id: "g1" }),
+          limit({ id: "r-global", name: "everyone total", scope: "global" }),
+          limit({ id: "r-member", name: "per member", scope: "group", scope_id: "g1", applies_to: "each_member" }),
+        ],
+        total: 3,
+        limit: 200,
+        offset: 0,
+      });
+    }
+    if (url.includes("/api/admin/groups")) {
+      return jsonResponse({
+        items: [{ id: "g1", name: "research", description: null }],
+        total: 1,
+        limit: 200,
+        offset: 0,
+      });
     }
     return jsonResponse([]);
   });
@@ -171,19 +221,74 @@ describe("AdminQuotaUsage", () => {
     await waitFor(() => expect(screen.getByText("0 of 4")).toBeInTheDocument());
   });
 
-  it("marks shared quotas and gives them no reset; shows a replaced rule as replaced", async () => {
+  it("offers a reset on every row kind, with the right button and no button where it is refused", async () => {
     vi.stubGlobal("fetch", serve().fetch);
     renderAt("/admin/quota-usage/u1");
 
-    const shared = (await screen.findByText("group total")).closest("tr")!;
-    expect(within(shared).getByText("shared")).toBeInTheDocument();
-    expect(within(shared).queryByRole("button", { name: "Reset for this user" })).toBeNull();
+    const row = async (name: string) => (await screen.findByText(name)).closest("tr")!;
+    const perUser = await row("per member");
+    expect(within(perUser).getByRole("button", { name: "Reset for this user" })).toBeInTheDocument();
 
-    const replaced = screen.getByText("each user requests").closest("tr")!;
+    const own = await row("my requests");
+    expect(within(own).getByRole("button", { name: "Reset this user's own quota" })).toBeInTheDocument();
+
+    const shared = await row("group total");
+    expect(within(shared).getByText("shared")).toBeInTheDocument();
+    expect(within(shared).getByRole("button", { name: "Reset whole quota…" })).toBeInTheDocument();
+    expect(within(shared).getByText("all members of research")).toBeInTheDocument();
+
+    // Held to their own rule: no button, and the reason is on the row.
+    const replaced = await row("each user requests");
     expect(within(replaced).getByText("Replaced by my requests")).toBeInTheDocument();
     expect(within(replaced).queryByRole("button")).toBeNull();
-    // Only the per-user quota offers the reset.
-    expect(screen.getAllByRole("button", { name: "Reset for this user" })).toHaveLength(1);
+    expect(within(replaced).getByText(/would change nothing/)).toBeInTheDocument();
+  });
+
+  it("resets the user's own quota whole: no user_id, and says it counts only this user", async () => {
+    const server = serve();
+    vi.stubGlobal("fetch", server.fetch);
+    const user = userEvent.setup();
+    renderAt("/admin/quota-usage/u1");
+
+    const own = (await screen.findByText("my requests")).closest("tr")!;
+    await user.click(within(own).getByRole("button", { name: "Reset this user's own quota" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/counts only Ada Lovelace/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Reset this user's own quota" }));
+    await waitFor(() => expect(server.resetBodies).toEqual([{ reason: "" }]));
+  });
+
+  it("resets a shared quota whole, naming everyone it counts", async () => {
+    const server = serve();
+    vi.stubGlobal("fetch", server.fetch);
+    const user = userEvent.setup();
+    renderAt("/admin/quota-usage/u1");
+
+    const shared = (await screen.findByText("group total")).closest("tr")!;
+    await user.click(within(shared).getByRole("button", { name: "Reset whole quota…" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/for all members of research, not only for one user/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/does not change|Every bill is unchanged/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Reset whole quota" }));
+    await waitFor(() => expect(server.resetBodies).toEqual([{ reason: "" }]));
+  });
+
+  it("lists the shared quotas on the index, each resettable whole", async () => {
+    const server = serve();
+    vi.stubGlobal("fetch", server.fetch);
+    const user = userEvent.setup();
+    renderAt("/admin/quota-usage");
+
+    const global = (await screen.findByText("everyone total")).closest("tr")!;
+    expect(within(global).getByText("all users")).toBeInTheDocument();
+    // A per-member rule is not shared: it is reset from the user's page.
+    const card = global.closest("table")!;
+    expect(within(card).queryByText("per member")).toBeNull();
+    await user.click(within(global).getByRole("button", { name: "Reset whole quota…" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/for all users, not only for one user/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Reset whole quota" }));
+    await waitFor(() => expect(server.resetBodies).toEqual([{ reason: "" }]));
   });
 
   it("words a rolling window's time as an estimate and a calendar one as exact", async () => {

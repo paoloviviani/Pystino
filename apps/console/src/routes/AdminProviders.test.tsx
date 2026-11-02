@@ -84,6 +84,16 @@ const PLUGINS = [
     is_default: false,
   },
   {
+    name: "anthropic",
+    label: "Anthropic (direct)",
+    description: "Anthropic's own API.",
+    kind: "provider",
+    billing_modes: ["own_prices"],
+    default_base_url: "https://api.anthropic.com/v1",
+    base_url_options: [],
+    is_default: false,
+  },
+  {
     name: "exa",
     label: "Exa (web search)",
     description: "Exa web search.",
@@ -213,6 +223,15 @@ function renderScreen(element: ReactElement) {
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+const CORTECS = () =>
+  entry({
+    id: "cortecs",
+    name: "Cortecs",
+    plugin: "cortecs",
+    base_url: "https://api.cortecs.ai/v1",
+    prefix: "",
+  });
 
 describe("AdminProviders", () => {
   it("lists a provider with its endpoint", async () => {
@@ -370,40 +389,24 @@ describe("AdminProviders", () => {
 });
 
 describe("AdminProviders: choosing a type", () => {
-  it("offers the installed types rather than a hardcoded list", async () => {
-    // Read from the API so installing a plugin makes it selectable without a
-    // console release, which is the point of the entry point existing.
+  it("offers catalogue entries, then one generic option per protocol", async () => {
+    // Type is the protocol: vendor plugins (OpenAI, Cortecs) are not types and
+    // search/plumbing plugins are not offered at all. Anthropic's generic option
+    // appears only when its plugin is installed.
     const user = userEvent.setup({ delay: null });
-    vi.stubGlobal("fetch", routes([provider()]));
+    vi.stubGlobal("fetch", routes([provider()], undefined, undefined, [CORTECS()]));
     renderScreen(<AdminProviders />);
 
     await user.click(await screen.findByRole("button", { name: "Add provider" }));
     const dialog = within(await screen.findByRole("dialog"));
-    const type = dialog.getByLabelText("Type");
-    expect(within(type).getByRole("option", { name: /OpenAI-compatible/ })).toBeInTheDocument();
-    expect(within(type).getByRole("option", { name: /Cortecs/ })).toBeInTheDocument();
-  });
-
-  it("offers only LLM-provider kinds when creating — no search, no plumbing", async () => {
-    // Search backends are created on the Search screen (ADR 0071) and the
-    // extractor is the deployment's own plumbing: neither belongs in an
-    // inference-provider picker.
-    const user = userEvent.setup({ delay: null });
-    vi.stubGlobal("fetch", routes([provider()]));
-    renderScreen(<AdminProviders />);
-
-    await user.click(await screen.findByRole("button", { name: "Add provider" }));
-    const dialog = within(await screen.findByRole("dialog"));
-    const type = dialog.getByLabelText("Type");
-    const options = within(type).getAllByRole("option");
-    const names = options.map((option) => option.textContent ?? "");
-    expect(names.some((text) => /OpenAI-compatible/.test(text))).toBe(true);
-    expect(names.some((text) => /OpenAI/.test(text))).toBe(true);
-    expect(names.some((text) => /Cortecs/.test(text))).toBe(true);
-    expect(names.some((text) => /Exa/.test(text))).toBe(false);
-    expect(names.some((text) => /Jina/.test(text))).toBe(false);
-    expect(names.some((text) => /Linkup/.test(text))).toBe(false);
-    expect(names.some((text) => /Extractor/.test(text))).toBe(false);
+    expect(dialog.queryByLabelText("Type")).not.toBeInTheDocument();
+    expect(dialog.queryByLabelText("Catalogue entry")).not.toBeInTheDocument();
+    const select = dialog.getByLabelText("Provider");
+    const names = within(select)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(names).toEqual(["Cortecs", "OpenAI-compatible (generic)", "Anthropic (generic)"]);
+    expect(select).toHaveValue("g:openai");
   });
 
   it("keeps the row's own type selectable when editing past the filter", async () => {
@@ -439,14 +442,14 @@ describe("AdminProviders: choosing a type", () => {
     // The generic type reads no authoritative figure, so offering the choice
     // would be offering a configuration the API refuses.
     const user = userEvent.setup({ delay: null });
-    vi.stubGlobal("fetch", routes([provider()]));
+    vi.stubGlobal("fetch", routes([provider()], undefined, undefined, [CORTECS()]));
     renderScreen(<AdminProviders />);
 
     await user.click(await screen.findByRole("button", { name: "Add provider" }));
     const dialog = within(await screen.findByRole("dialog"));
     expect(dialog.queryByLabelText("Billing")).not.toBeInTheDocument();
 
-    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
+    await user.selectOptions(dialog.getByLabelText("Provider"), "c:cortecs");
     expect(dialog.getByLabelText("Billing")).toBeInTheDocument();
   });
 
@@ -454,30 +457,28 @@ describe("AdminProviders: choosing a type", () => {
     // Admission happens before the request; the provider's figure arrives
     // after. An unpriced model reserves nothing and no ceiling ever trips.
     const user = userEvent.setup({ delay: null });
-    vi.stubGlobal("fetch", routes([provider()]));
+    vi.stubGlobal("fetch", routes([provider()], undefined, undefined, [CORTECS()]));
     renderScreen(<AdminProviders />);
 
     await user.click(await screen.findByRole("button", { name: "Add provider" }));
     const dialog = within(await screen.findByRole("dialog"));
-    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
+    await user.selectOptions(dialog.getByLabelText("Provider"), "c:cortecs");
     await user.selectOptions(dialog.getByLabelText("Billing"), "provider_reported");
 
     expect(dialog.getByText(/Prices are still needed/)).toBeInTheDocument();
   });
 
-  it("sends the kind implied by the type, not one the operator typed", async () => {
+  it("sends the kind implied by the entry's plugin, not one the operator typed", async () => {
     // Whether the serving endpoint is chosen per request is a property of the
     // counterparty, not an opinion an operator should have to hold.
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [] };
-    vi.stubGlobal("fetch", routes([provider()], captured));
+    vi.stubGlobal("fetch", routes([provider()], captured, undefined, [CORTECS()]));
     renderScreen(<AdminProviders />);
 
     await user.click(await screen.findByRole("button", { name: "Add provider" }));
     const dialog = within(await screen.findByRole("dialog"));
-    await user.type(dialog.getByLabelText("Name"), "cx");
-    await user.type(dialog.getByLabelText("Base URL"), "https://api.cortecs.ai/v1");
-    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
+    await user.selectOptions(dialog.getByLabelText("Provider"), "c:cortecs");
     await user.click(dialog.getByRole("button", { name: "Add" }));
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
@@ -486,7 +487,7 @@ describe("AdminProviders: choosing a type", () => {
     expect(body.kind).toBe("router");
   });
 
-  it("fills the endpoint in from the type, so Cortecs is a name and a key", async () => {
+  it("fills the endpoint in from the type, so Anthropic is a name and a key", async () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [] };
     vi.stubGlobal("fetch", routes([provider()], captured));
@@ -494,11 +495,11 @@ describe("AdminProviders: choosing a type", () => {
 
     await user.click(await screen.findByRole("button", { name: "Add provider" }));
     const dialog = within(await screen.findByRole("dialog"));
-    await user.type(dialog.getByLabelText("Name"), "cortecs");
-    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
+    await user.type(dialog.getByLabelText("Name"), "claude");
+    await user.selectOptions(dialog.getByLabelText("Provider"), "g:anthropic");
 
     const url = dialog.getByLabelText("Base URL") as HTMLInputElement;
-    expect(url.value).toBe("https://api.cortecs.ai/v1");
+    expect(url.value).toBe("https://api.anthropic.com/v1");
 
     // The dialog can be submitted without typing the endpoint at all: the
     // field was filled by the type, and the API would apply the same default
@@ -506,7 +507,8 @@ describe("AdminProviders: choosing a type", () => {
     await user.click(dialog.getByRole("button", { name: "Add" }));
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
     const body = captured.bodies.at(-1)!.body as Record<string, unknown>;
-    expect(body.base_url).toBe("https://api.cortecs.ai/v1");
+    expect(body.base_url).toBe("https://api.anthropic.com/v1");
+    expect(body.plugin).toBe("anthropic");
   });
 
   it("does not clobber an endpoint the operator typed themselves", async () => {
@@ -518,11 +520,11 @@ describe("AdminProviders: choosing a type", () => {
 
     await user.click(await screen.findByRole("button", { name: "Add provider" }));
     const dialog = within(await screen.findByRole("dialog"));
-    await user.type(dialog.getByLabelText("Base URL"), "https://cortecs.internal.test/v1");
-    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
+    await user.type(dialog.getByLabelText("Base URL"), "https://claude.internal.test/v1");
+    await user.selectOptions(dialog.getByLabelText("Provider"), "g:anthropic");
 
     expect((dialog.getByLabelText("Base URL") as HTMLInputElement).value).toBe(
-      "https://cortecs.internal.test/v1",
+      "https://claude.internal.test/v1",
     );
   });
 
@@ -681,7 +683,7 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
 
     await user.click(await screen.findByRole("button", { name: "Add provider" }));
     const dialog = await screen.findByRole("dialog");
-    await user.selectOptions(await within(dialog).findByLabelText("Catalogue entry"), "mistral");
+    await user.selectOptions(await within(dialog).findByLabelText("Provider"), "c:mistral");
 
     expect(within(dialog).getByLabelText("Base URL")).toHaveValue("https://api.mistral.test/v1");
     expect(within(dialog).getByLabelText("Model name prefix")).toHaveValue("mi-");
@@ -713,5 +715,139 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
     expect("catalogue_id" in (captured.bodies[0]?.body as object)).toBe(false);
+  });
+
+  it("choosing an entry sends its link and plugin; a generic option sends the plugin and no link", async () => {
+    const user = userEvent.setup();
+    const captured: Captured = { bodies: [] };
+    vi.stubGlobal("fetch", routes([], captured, undefined, [CORTECS()]));
+    renderScreen(<AdminProviders />);
+
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    const select = await dialog.findByLabelText("Provider");
+    await user.selectOptions(select, "c:cortecs");
+    expect(dialog.getByText("OpenAI-compatible, with Cortecs (router) customisations")).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(captured.bodies.length).toBe(1));
+    let body = captured.bodies[0]?.body as Record<string, unknown>;
+    expect(body.plugin).toBe("cortecs");
+    expect(body.catalogue_id).toBe("cortecs");
+
+    // Back to a generic option: the link goes. The URL was the previous
+    // plugin's own default, so it follows the new type (an operator's own URL
+    // is covered by "does not clobber an endpoint the operator typed").
+    await user.selectOptions(select, "g:anthropic");
+    expect(dialog.getByLabelText("Base URL")).toHaveValue("https://api.anthropic.com/v1");
+    await user.click(dialog.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(captured.bodies.length).toBe(2));
+    body = captured.bodies[1]?.body as Record<string, unknown>;
+    expect(body.plugin).toBe("anthropic");
+    expect("catalogue_id" in body).toBe(false);
+
+    await user.selectOptions(select, "g:openai");
+    await user.click(dialog.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(captured.bodies.length).toBe(3));
+    body = captured.bodies[2]?.body as Record<string, unknown>;
+    expect(body.plugin).toBeNull();
+    expect("catalogue_id" in body).toBe(false);
+  });
+
+  it("shows the Anthropic protocol for an Anthropic entry", async () => {
+    const user = userEvent.setup();
+    const anthropic = entry({
+      id: "anthropic",
+      name: "Anthropic",
+      plugin: "anthropic",
+      base_url: "https://api.anthropic.com/v1",
+      prefix: "",
+    });
+    vi.stubGlobal("fetch", routes([], undefined, undefined, [anthropic]));
+    renderScreen(<AdminProviders />);
+
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.selectOptions(await dialog.findByLabelText("Provider"), "c:anthropic");
+    expect(dialog.getByText("Anthropic", { selector: "p, span, div" })).toBeInTheDocument();
+    expect(dialog.queryByText(/customisations/)).not.toBeInTheDocument();
+  });
+
+  it("preselects the row's entry on edit, and does not rewrite the link", async () => {
+    const user = userEvent.setup();
+    const captured: Captured = { bodies: [] };
+    // Old row: its plugin (cortecs) disagrees with the entry's (openai).
+    vi.stubGlobal(
+      "fetch",
+      routes(
+        [provider({ plugin: "cortecs", kind: "router", catalogue_id: "mistral", catalogue: entry() })],
+        captured,
+        undefined,
+        [entry(), CORTECS()],
+      ),
+    );
+    renderScreen(<AdminProviders />);
+
+    await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByLabelText("Provider")).toHaveValue("c:mistral");
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    const body = captured.bodies[0]?.body as Record<string, unknown>;
+    expect(body.plugin).toBe("cortecs"); // the stored plugin is not silently changed
+    expect("catalogue_id" in body).toBe(false);
+  });
+
+  it("preselects the matching generic option for rows without an entry", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", routes([provider({ plugin: "anthropic" })], undefined, undefined, [entry()]));
+    renderScreen(<AdminProviders />);
+
+    await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByLabelText("Provider")).toHaveValue("g:anthropic");
+  });
+
+  it("preselects the one entry matching a legacy vendor plugin, without writing the link", async () => {
+    const user = userEvent.setup();
+    const captured: Captured = { bodies: [] };
+    vi.stubGlobal(
+      "fetch",
+      routes([provider({ plugin: "cortecs", kind: "router" })], captured, undefined, [CORTECS()]),
+    );
+    renderScreen(<AdminProviders />);
+
+    await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByLabelText("Provider")).toHaveValue("c:cortecs");
+    // Billing still follows the plugin.
+    expect(dialog.getByLabelText("Billing")).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    const body = captured.bodies[0]?.body as Record<string, unknown>;
+    expect(body.plugin).toBe("cortecs");
+    expect("catalogue_id" in body).toBe(false);
+  });
+
+  it("shows a disabled legacy option for a vendor plugin with no single matching entry", async () => {
+    const user = userEvent.setup();
+    const captured: Captured = { bodies: [] };
+    vi.stubGlobal("fetch", routes([provider({ plugin: "cortecs", kind: "router" })], captured));
+    renderScreen(<AdminProviders />);
+
+    await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    const select = dialog.getByLabelText("Provider");
+    expect(select).toHaveValue("legacy");
+    const option = within(select).getByRole("option", {
+      name: "Cortecs (router) (legacy, OpenAI-compatible)",
+    });
+    expect(option).toBeDisabled();
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    expect((captured.bodies[0]?.body as Record<string, unknown>).plugin).toBe("cortecs");
   });
 });

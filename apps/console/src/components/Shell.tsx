@@ -16,7 +16,7 @@ import {
 import { useState } from "react";
 import type { ComponentType, CSSProperties, ReactNode, SVGProps } from "react";
 import { NavLink, useLocation } from "react-router";
-import { ADMIN_GROUPS } from "../lib/adminNav";
+import { ADMIN_GROUPS, adminIcon } from "../lib/adminNav";
 import { request } from "../lib/api";
 import {
   NARROW_CONTENT_MAX_WIDTH,
@@ -34,22 +34,12 @@ import type { Theme } from "../lib/theme";
 import type { Me } from "../lib/types";
 import { m } from "../paraglide/messages.js";
 import {
-  BoxIcon,
   ChartColumnIcon,
-  EyeOffIcon,
-  GaugeIcon,
-  GlobeIcon,
   HouseIcon,
-  LayoutDashboardIcon,
   ListIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
-  ServerIcon,
-  SettingsIcon,
   ShieldIcon,
-  ShuffleIcon,
-  UserIcon,
-  UsersRoundIcon,
   XIcon,
 } from "./icons";
 
@@ -75,30 +65,6 @@ const NAV_YOU: NavItem[] = [
   { to: "/reports", label: m["shell.nav.your_usage"], icon: ChartColumnIcon },
   { to: "/requests", label: m["shell.nav.your_requests"], icon: ListIcon },
 ];
-
-/**
- * Which icon stands for an administration screen.
- *
- * Keyed by route rather than living in `ADMIN_GROUPS` (lib/adminNav.ts): the
- * landing page does not draw icons, and the vocabulary of that module is the
- * screens and their order, not how the sidebar decorates them.
- */
-const ADMIN_ICONS: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = {
-  "/admin": LayoutDashboardIcon,
-  "/admin/reports": ChartColumnIcon,
-  "/admin/requests": ListIcon,
-  "/admin/quotas": GaugeIcon,
-  "/admin/quota-usage": ListIcon,
-  "/admin/providers": ServerIcon,
-  "/admin/models": BoxIcon,
-  "/admin/routing": ShuffleIcon,
-  "/admin/search": GlobeIcon,
-  "/admin/redaction": EyeOffIcon,
-  "/admin/users": UserIcon,
-  "/admin/groups": UsersRoundIcon,
-  "/admin/audit": ShieldIcon,
-  "/admin/settings": SettingsIcon,
-};
 
 /**
  * Whether this reader has asked for exact figures, remembered across reloads.
@@ -370,7 +336,7 @@ function SidebarNav({
                 {
                   to: "/admin",
                   label: m["shell.nav.summary"],
-                  icon: ADMIN_ICONS["/admin"] ?? SettingsIcon,
+                  icon: adminIcon("/admin"),
                   end: true,
                 },
               ]}
@@ -395,7 +361,7 @@ function SidebarNav({
                   items={group.sections.map((section) => ({
                     to: section.to,
                     label: section.title,
-                    icon: ADMIN_ICONS[section.to] ?? SettingsIcon,
+                    icon: adminIcon(section.to),
                   }))}
                   rail={rail}
                   onClose={onClose}

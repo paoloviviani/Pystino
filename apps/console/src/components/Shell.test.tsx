@@ -309,6 +309,14 @@ describe("Shell: the sidebar", () => {
     expect(screen.getByRole("link", { name: "User view" })).toHaveAttribute("href", "/");
   });
 
+  it("draws an icon on every admin sidebar link", () => {
+    renderShell(me(), "/admin");
+    const nav = screen.getByRole("navigation");
+    const links = within(nav).getAllByRole("link");
+    expect(links.length).toBeGreaterThan(10);
+    for (const link of links) expect(link.querySelector("svg")).not.toBeNull();
+  });
+
   it("collapses to a rail: the labels go, the named links stay", () => {
     renderShell(me({ is_admin: true }), "/admin/models");
 

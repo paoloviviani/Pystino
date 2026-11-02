@@ -61,4 +61,18 @@ describe("Admin", () => {
       "/admin/settings",
     ]);
   });
+
+  it("draws the sidebar's icon before each card's title, hidden from assistive technology", () => {
+    render(
+      <MemoryRouter>
+        <Admin />
+      </MemoryRouter>,
+    );
+
+    for (const link of screen.getAllByRole("link")) {
+      const icon = link.querySelector("h2 svg");
+      expect(icon, link.getAttribute("href") ?? "").not.toBeNull();
+      expect(icon?.getAttribute("aria-hidden")).toBe("true");
+    }
+  });
 });

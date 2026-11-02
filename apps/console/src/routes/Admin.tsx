@@ -17,7 +17,7 @@ import { Card } from "@llmp/ui";
 import { Link } from "react-router";
 
 import { PageHeader } from "../components/PageHeader";
-import { ADMIN_GROUPS } from "../lib/adminNav";
+import { ADMIN_GROUPS, adminIcon } from "../lib/adminNav";
 import {
   PAGE,
   SECTION_GROUP,
@@ -38,13 +38,25 @@ export function Admin() {
             {group.heading()}
           </h2>
           <div className={SECTIONS}>
-            {group.sections.map((section) => (
+            {group.sections.map((section) => {
+              const Icon = adminIcon(section.to);
+              return (
               // The whole card is the target. A title-only link in a card of text
               // gives a mouse a strip to hit and everything else to miss.
               <Link key={section.to} to={section.to} className={SECTION_LINK}>
-                <Card title={section.title()} description={section.description()} />
+                <Card
+                  title={
+                    // The sidebar's own icon, at its size and colour.
+                    <span className="inline-flex items-center gap-2.5">
+                      <Icon aria-hidden="true" className="size-4 shrink-0 text-ink-muted" />
+                      {section.title()}
+                    </span>
+                  }
+                  description={section.description()}
+                />
               </Link>
-            ))}
+              );
+            })}
           </div>
         </section>
       ))}
