@@ -211,6 +211,21 @@ def bearer_headers(credential: str) -> dict[str, str]:
     return {"authorization": f"Bearer {credential}"}
 
 
+#: The two API protocols a provider can speak, which is the whole of a
+#: provider's *type*. Everything else a plugin knows (Cortecs, OpenRouter) is a
+#: quirk of a counterparty on top of the OpenAI protocol, not a third type.
+PROTOCOL_OPENAI = "openai"
+PROTOCOL_ANTHROPIC = "anthropic"
+
+
+def protocol_of(plugin: object) -> str:
+    """``"openai"`` or ``"anthropic"``. Read with ``getattr``, so a plugin that
+    does not say (every third-party one written before this existed) is the
+    OpenAI protocol."""
+    value = getattr(plugin, "protocol", PROTOCOL_OPENAI)
+    return PROTOCOL_ANTHROPIC if value == PROTOCOL_ANTHROPIC else PROTOCOL_OPENAI
+
+
 @runtime_checkable
 class ProviderPlugin(Protocol):
     """Everything the gateway needs to know that is specific to a counterparty."""
@@ -227,6 +242,10 @@ class ProviderPlugin(Protocol):
     #: choosing between types, not being addressed.
     description: str
     kind: ProviderKind
+    #: ``"openai"`` (the default, so a plugin may omit it) or ``"anthropic"``:
+    #: the API protocol this provider speaks. Chat completions to an
+    #: ``anthropic`` provider are served over its native Messages API.
+    #: Read through :func:`protocol_of`, not directly.
     #: The counterparty's public endpoint, when it has one worth pre-filling.
     #: Optional — a plugin for self-hosted endpoints (vLLM, Ollama) has no
     #: meaningful default, and ``None`` reads as that. Read with ``getattr`` at

@@ -1175,6 +1175,9 @@ class ProviderPluginResponse(ResponseModel):
     description: str
     #: `provider` implies the serving endpoint; `router` chooses it per request.
     kind: str
+    #: The API protocol this provider speaks, which is its type: `openai`
+    #: (OpenAI-compatible, whatever the counterparty's quirks) or `anthropic`.
+    protocol: Literal["openai", "anthropic"] = "openai"
     #: The billing modes this plugin can actually support. Pass-through appears
     #: only where the plugin asserts its reported figure is the real charge, so
     #: the UI cannot offer a configuration the API would refuse.

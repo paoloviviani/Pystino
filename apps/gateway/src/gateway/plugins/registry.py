@@ -25,7 +25,7 @@ from collections.abc import Callable
 from importlib.metadata import entry_points
 
 from gateway.plugins.anthropic import AnthropicPlugin
-from gateway.plugins.base import ProviderPlugin
+from gateway.plugins.base import ProviderPlugin, protocol_of
 from gateway.plugins.cortecs import CortecsRouterPlugin
 from gateway.plugins.duckduckgo import DuckDuckGoSearchPlugin
 from gateway.plugins.exa import ExaSearchPlugin
@@ -144,6 +144,8 @@ def describe() -> list[dict[str, object]]:
                 "label": getattr(plugin, "label", plugin.name),
                 "description": getattr(plugin, "description", ""),
                 "kind": plugin.kind.value,
+                # The provider's type: the API protocol it speaks.
+                "protocol": protocol_of(plugin),
                 "billing_modes": modes,
                 # The counterparty's public endpoint, where one exists, so the
                 # console pre-fills it and creating a Cortecs provider is typing

@@ -726,6 +726,34 @@ def _catalogue_entries(payload: Any) -> Iterable[Any]:
     return []
 
 
+def facts_by_id(payload: Any) -> dict[str, dict[str, Any]]:
+    """What each entry says about the model besides a price: modalities,
+    features, kind and limits, priced or not.
+
+    A price filled from the catalogue's hints is made from an id alone, so it
+    would import with no modalities (a model that takes images shown as text
+    only) and no context window. The facts are in the listing; this reads them
+    the way ``kinds_by_id`` and ``limits_by_id`` do, without needing a price.
+    """
+    facts: dict[str, dict[str, Any]] = {}
+    for entry in _catalogue_entries(payload):
+        if not isinstance(entry, dict):
+            continue
+        raw_id = _first(entry, _ID_KEYS)
+        if raw_id is None:
+            continue
+        context, output = _limits_of(entry)
+        facts[str(raw_id)] = {
+            "kind": _kind_of(entry),
+            "input_modalities": _string_list(entry.get("input_modalities")),
+            "output_modalities": _string_list(entry.get("output_modalities")),
+            "supported_features": _string_list(entry.get("supported_features")),
+            "context_window": context,
+            "max_output_tokens": output,
+        }
+    return facts
+
+
 def tags_in_payload(payload: Any) -> list[str]:
     """Every distinct tag the entries declare, sorted.
 
