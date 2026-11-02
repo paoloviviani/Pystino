@@ -188,7 +188,7 @@ async def last_row(session_factory: async_sessionmaker[AsyncSession]) -> UsageRe
 
 #: USD per Mtok from the built-in table: input, output, cache read, 5-minute write.
 PRICES = {
-    "claude-haiku-5-5": ("0.10", "0.50", "0.01", "0.125"),
+    "claude-haiku-5-5": ("0.50", "2.50", "0.05", "0.625"),
     "claude-sonnet-5-5": ("2", "10", "0.10", "2.5"),
     "claude-sonnet-4-5-20250929": ("3", "15", "0.30", "3.75"),
 }

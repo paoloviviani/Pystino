@@ -300,8 +300,9 @@ Anthropic publishes no price API, so the built-in catalogue entry
 (USD per Mtok, with the date and URL it was read), applied to every listed model
 without ticking "fill missing prices"; a model with no row is listed unpriced
 and cannot be imported without a typed price. Two things a price row cannot
-say: Haiku 5.5 is priced in two tiers by prompt size (the table holds the up to
-100,000 tokens tier) and `inference_geo: "us"` costs 1.1x (the gateway never
+say: Haiku 5.5 is priced in two tiers by prompt size, and the table holds the higher
+one (above 100,000 prompt tokens) so that no prompt is under-billed, at the cost
+of over-billing short ones; and `inference_geo: "us"` costs 1.1x (the gateway never
 sends it). Update the table, or override it from the operator directory, when
 Anthropic changes prices.
 
