@@ -106,7 +106,9 @@ providers:
 prices" is ticked: for a model the provider lists and publishes no price for, the
 latest hint already in force is used before the community file, and the price
 row is recorded with the source `catalogue_hint`. A price the provider publishes
-is never replaced.
+is never replaced. A provider whose plugin has no other source of prices
+(`anthropic`) has its hints applied without the tick, and the filled model also
+takes its kind, modalities, features and limits from the listing.
 
 ## Merging
 

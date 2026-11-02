@@ -131,7 +131,7 @@ that carries its
 vendor knowledge: which header names it wants, what unit it reports cost in,
 whether it is a provider or a router.
 In-tree plugins cover the generic OpenAI-compatible case (`generic`), OpenAI,
-Anthropic, Mistral, Nebius, OpenRouter, Cortecs and Tensorix, this
+Anthropic (chat completions are served over its native Messages API, see below), Mistral, Nebius, OpenRouter, Cortecs and Tensorix, this
 deployment's own extractor, and the search backends DuckDuckGo, Exa, Jina and
 Linkup. More can install via the `llmp.providers` entry point.
 
@@ -191,6 +191,126 @@ manual price is set aside for that reason, the import result says so in its
 where it came from: `catalogue`, `community`, or `manual` for one a person
 typed (ADR 0053), which is what makes a wrong figure traceable to the choice
 that took it.
+
+### Anthropic models over chat completions
+
+A model whose provider uses the `anthropic` plugin is called on Anthropic's
+native `/v1/messages`, not on its OpenAI-compatibility endpoint, which has no
+prompt caching, no thinking signatures and no PDFs. Clients keep sending and
+receiving the OpenAI shape on `POST /v1/chat/completions`; only the call to
+Anthropic differs. The provider's base URL is `https://api.anthropic.com/v1`.
+`POST /v1/messages` is unchanged: it still passes the Messages shape through.
+
+The translation sits at the upstream boundary (`gateway.translate`).
+Resolution, access, quotas, **redaction** and the ledger all run on the OpenAI
+request before it is translated, and the translated reply goes back through the
+same response stages, so placeholders are restored in the text, the reasoning
+and the tool-call arguments exactly as for any other provider.
+
+**What is translated.**
+
+| OpenAI | Messages |
+|---|---|
+| `system` / `developer` messages at the start | top-level `system` blocks, in order |
+| a `system` message later in the conversation | a user text block `[system message] ...` in that position (not folded into `system`, which would change the cached prefix) |
+| `image_url` data URL / http(s) URL | base64 / URL image block (JPEG, PNG, GIF, WebP) |
+| `file` part with `file_data` (PDF, or `text/*`) | `document` block (base64 PDF, or text); `file_id` is refused |
+| assistant `tool_calls`, `tool` messages | `tool_use` and `tool_result` blocks; consecutive results share one user turn; arguments that are not a JSON object are sent as `{"_invalid_arguments": "<raw>"}` |
+| `tools`, `tool_choice`, `parallel_tool_calls: false` | `tools` (`input_schema`), `tool_choice` (`none`, `auto`, `any`, `tool`), `disable_parallel_tool_use` |
+| `max_completion_tokens` / `max_tokens` | `max_tokens`; when absent the model row's `max_output_tokens`, else `GATEWAY_ANTHROPIC__DEFAULT_MAX_TOKENS` (8192) |
+| `stop`, `user` | `stop_sequences`, `metadata.user_id` (hashed when it looks like a name or an email) |
+| `response_format: json_schema` | `output_config.format` (`additionalProperties: false` is added to objects that lack it) |
+| `reasoning_effort` | see below |
+
+The conversation is made to alternate roles (same-role messages merge) and to
+start with a user turn (`(conversation start)` is inserted when it does not).
+`reasoning_content` on an assistant message is ignored: it carries no signature.
+
+**Refused with a 400:** `n` above 1, `logprobs`, audio, tools that are not
+functions, `response_format: json_object` (use `json_schema`), `file_id`, other
+part types. These are refused before the reservation, so they leave no ledger
+row. **Dropped without error:** `frequency_penalty`, `presence_penalty`,
+`seed`, `logit_bias`, `store`, `service_tier`, `prediction`, `stream_options`
+(usage is always read from the stream; the caller sees it only if it asked).
+
+**What the model accepts decides what is sent**, from the model id
+(`ModelTraits`): Claude 4.7 and later refuse `thinking: {type: "enabled"}`, so
+`reasoning_effort` becomes `thinking: {type: "adaptive", display: "summarized"}`
+plus `output_config.effort` (`low`, `medium`, `high`; `xhigh` and `max` pass
+through). Claude 4.5 and earlier take a budget instead (low 1024, medium 4096,
+high 16000, never above half of `max_tokens`). `none` turns thinking off where
+the API allows it and sends nothing where it does not (Opus 5.5 always
+thinks). Absent, no thinking parameter is sent. Claude 4.7 and later refuse
+`temperature` and `top_p`, so they are dropped; older models take `temperature`
+(or `top_p`, not both), and neither while manual thinking is on. Opus 5.5,
+Sonnet 5.5, Fable 5.1 and Mythos 5.1 refuse forced tool use, so
+`tool_choice: "required"` becomes `auto` there. An id the gateway cannot place
+is treated as the newest generation.
+
+**Thinking and tool loops.** Anthropic requires the thinking blocks of a turn,
+with their signatures, to come back with the tool results. The OpenAI shape
+cannot carry them, so the gateway keeps them: when a reply has thinking and
+tool calls, the blocks are stored in Valkey (a bounded in-process dictionary if
+there is none), keyed by the caller and each tool call id, for
+`GATEWAY_ANTHROPIC__THINKING_TTL_SECONDS` (default 3600) and put back, in their
+original order, in front of the `tool_use` blocks of the next request that
+carries those ids. Another caller's ids, another model and expired entries find
+nothing. A request that finds nothing is still sent: adaptive thinking models
+accept the turn without the blocks; with manual thinking (Claude 4.5 and
+earlier), where the API would answer 400, thinking is switched off for that
+request. The reply's thinking text is `reasoning_content` (the 5.x models
+return it empty unless asked for a summary, which `reasoning_effort` does).
+
+**Prompt caching.** `GATEWAY_ANTHROPIC__PROMPT_CACHE` is `auto` (default) or
+`off`. With `auto` up to four `cache_control` breakpoints are placed: the
+newest user-role turn (the last `tool_result` of a loop), the last system
+block, the last tool, and the user-role turn before the newest, so each step of
+a tool loop reads what the previous one wrote. A `cache_control` the client
+sent on a part, message or tool is kept and counts against the four; when there
+is one, no automatic breakpoint adds a TTL. A prompt below the model's minimum
+cacheable length (512 to 4096 tokens, by model) is simply not cached. The cost
+is a trade: a cache write is billed above the input rate (1.25x for the
+5-minute TTL), a read far below it (0.1x on most models), so `auto` pays off
+from the second request inside the TTL and costs 25% more on the cached part of
+a prompt that is never repeated. `GATEWAY_ANTHROPIC__PROMPT_CACHE_TTL=1h` makes
+the breakpoints last an hour (writes at 2x input); the gateway bills one-hour
+writes at 1.6 times the model's `cache_write_per_mtok`, so keep that field at
+the five-minute price.
+
+**Usage and money.** `prompt_tokens` is input plus cache reads plus cache
+writes (the OpenAI convention); `prompt_tokens_details.cached_tokens` is the
+reads and `cache_write_tokens` the writes (`cache_write_1h_tokens` the
+one-hour part). The ledger reads that exactly as it reads Anthropic's own
+usage on `/v1/messages`, so the two surfaces bill the same tokens the same:
+the remainder at the input price, reads at the cache-read price, writes at the
+cache-write price, and thinking tokens as output (Anthropic includes them in
+`output_tokens`). `finish_reason`: `end_turn` and `stop_sequence` are `stop`,
+`max_tokens` and `model_context_window_exceeded` `length`, `tool_use`
+`tool_calls`, `refusal` `content_filter`.
+
+**Errors** keep their status and become OpenAI-shaped; `529` (overloaded)
+becomes `503`, which failover treats like any 5xx. A stream that ends before
+`message_stop` ends with an error frame, never silently.
+
+**Models and prices.** Discovery on an Anthropic provider reads `GET /v1/models`
+(every page, `x-api-key`): id, display name, context window, output limit, and
+from the capabilities images, PDFs, tools, reasoning and structured outputs.
+Anthropic publishes no price API, so the built-in catalogue entry
+(`catalogue_data/providers.d/anthropic.yaml`) carries the public price table
+(USD per Mtok, with the date and URL it was read), applied to every listed model
+without ticking "fill missing prices"; a model with no row is listed unpriced
+and cannot be imported without a typed price. Two things a price row cannot
+say: Haiku 5.5 is priced in two tiers by prompt size (the table holds the up to
+100,000 tokens tier) and `inference_geo: "us"` costs 1.1x (the gateway never
+sends it). Update the table, or override it from the operator directory, when
+Anthropic changes prices.
+
+To check the whole path against the real API (a few small requests on Haiku and
+Sonnet 4.5):
+
+```bash
+ANTHROPIC_API_KEY=... uv run pytest apps/gateway/tests/test_anthropic_chat_live.py -s
+```
 
 ## Speech to text: `/v1/audio/transcriptions`
 
