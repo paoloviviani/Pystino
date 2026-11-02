@@ -23,7 +23,7 @@ import contextlib
 import logging
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Literal, Protocol, cast, runtime_checkable
@@ -176,6 +176,7 @@ from gateway.pricing import (
     CataloguePrice,
     CatalogueUnavailable,
     default_features,
+    facts_by_id,
     fetch_catalogue,
     kinds_by_id,
     limits_by_id,
@@ -1504,9 +1505,16 @@ async def _catalogue_source(
 
 
 def _fill_from_hints(
-    entry: CatalogueEntry, published: Sequence[CataloguePrice], unpriced: Sequence[str]
+    entry: CatalogueEntry,
+    published: Sequence[CataloguePrice],
+    unpriced: Sequence[str],
+    facts: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[CataloguePrice]:
-    """Prices from the catalogue entry's hints, for models listed and unpriced."""
+    """Prices from the catalogue entry's hints, for models listed and unpriced.
+
+    ``facts`` (``facts_by_id`` of the listing) gives the filled price the
+    model's kind, modalities, features and limits, which a hint does not carry.
+    """
     today = utcnow().date()
     out: list[CataloguePrice] = []
     for model_id in unpriced:
@@ -1515,6 +1523,7 @@ def _fill_from_hints(
         hint = entry.price_hint_for(model_id, today)
         if hint is None:
             continue
+        known = (facts or {}).get(model_id) or {}
         out.append(
             CataloguePrice(
                 model_id=model_id,
@@ -1526,6 +1535,7 @@ def _fill_from_hints(
                 per_page=hint.per_page,
                 per_minute=hint.per_minute,
                 per_image=hint.per_image,
+                **known,
             )
         )
     return out
@@ -1565,23 +1575,35 @@ async def _catalogue_with_prices(
     # Pressing Discover on the local extractor used to answer "could not fetch
     # http://extractor:8080/models: 404" — an error naming a URL the operator
     # never typed, for a provider that cannot fail in that way.
-    payload = plugin_registry.resolve(provider.plugin).builtin_catalogue()
+    plugin = plugin_registry.resolve(provider.plugin)
+    payload = plugin.builtin_catalogue()
     if payload is None:
+        # A plugin whose counterparty lists models its own way (Anthropic:
+        # x-api-key, paginated) fetches for itself; every other uses the
+        # generic bearer fetch.
+        fetcher = getattr(plugin, "fetch_catalogue", None)
         try:
-            payload = await fetch_catalogue(http, catalogue_url, api_key)
+            payload = (
+                await fetcher(http, catalogue_url, api_key)
+                if callable(fetcher)
+                else await fetch_catalogue(http, catalogue_url, api_key)
+            )
         except CatalogueUnavailable as exc:
             raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
 
     published, unpriced = _catalogue_parser(provider)(payload)
 
     filled: dict[str, str] = {}
-    if fill_missing and entry is not None and unpriced:
+    # A counterparty with no price API (Anthropic) has its dated hints applied
+    # without the operator asking; the community file still needs the tick.
+    hints_wanted = fill_missing or bool(getattr(plugin, "price_hints_always", False))
+    if hints_wanted and entry is not None and unpriced:
         # The catalogue's dated hints come before the community file: they are
         # the operator's (or the release's) own statement about this provider,
         # and only for a model the provider listed and left unpriced, exactly
         # like the community fill. They count as filled, so the console and the
         # price row say the figure did not come from the provider.
-        hinted = _fill_from_hints(entry, published, unpriced)
+        hinted = _fill_from_hints(entry, published, unpriced, facts_by_id(payload))
         published = [*published, *hinted]
         filled.update({h.model_id: "hint" for h in hinted})
         unpriced = [u for u in unpriced if u not in filled]
@@ -1651,7 +1673,12 @@ async def discover_models(
         catalogue_url,
         api_key,
         fill_missing=fill_missing_prices,
-        entry=catalogue.get(provider.catalogue_id),
+        entry=catalogue.get(provider.catalogue_id)
+        or (
+            catalogue.get(provider.plugin)
+            if getattr(plugin_registry.resolve(provider.plugin), "price_hints_always", False)
+            else None
+        ),
     )
 
     # Only this provider's models. A model served by another provider is not
@@ -2055,7 +2082,12 @@ async def import_models(
         catalogue_url,
         api_key,
         fill_missing=fill_missing_prices,
-        entry=catalogue.get(provider.catalogue_id),
+        entry=catalogue.get(provider.catalogue_id)
+        or (
+            catalogue.get(provider.plugin)
+            if getattr(plugin_registry.resolve(provider.plugin), "price_hints_always", False)
+            else None
+        ),
     )
     # The ids a manual price may name: what the provider listed and nobody
     # priced, minus the anonymous placeholders discovery never lists. The same
