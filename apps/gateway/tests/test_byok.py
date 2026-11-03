@@ -746,6 +746,41 @@ class TestNaming:
         assert '"model": "my/mine"' in streamed.text or '"model":"my/mine"' in streamed.text
 
 
+class TestOtherSurfaces:
+    async def test_embeddings_are_addressed_and_recorded_the_same_way(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        session_factory: Any,
+        alice: Member,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        provider = await new_provider(app, client, session_factory, alice)
+        await new_model(
+            app, client, session_factory, alice, provider["id"], "emb", kind="embedding"
+        )
+        fake_upstream.set_json(
+            {
+                "object": "list",
+                "model": "vendor/emb",
+                "data": [{"index": 0, "object": "embedding", "embedding": [0.1, 0.2]}],
+                "usage": {"prompt_tokens": 10, "total_tokens": 10},
+            }
+        )
+        response = await client.post(
+            "/v1/embeddings", headers=alice.auth, json={"model": "my/emb", "input": "x"}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["model"] == "my/emb"
+        async with session_factory() as session:
+            row = (await session.execute(select(UsageRecord))).scalar_one()
+        assert row.byok is True and row.model_name == "my/emb" and row.group_id is None
+        # And its kind is still enforced on the other surfaces, naming the name sent.
+        wrong = await chat(client, alice, "my/emb")
+        assert wrong.status_code == 400
+        assert "my/emb" in wrong.json()["error"]["message"]
+
+
 async def set_grants(session_factory: Any, seeded: Seeded, member: Member) -> None:
     """Let a member use the deployment's test model too (a grant to their group)."""
     async with session_factory() as session:

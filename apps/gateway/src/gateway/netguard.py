@@ -239,7 +239,12 @@ async def check_url(
         port = parts.port or (443 if parts.scheme == "https" else 80)
     except ValueError as exc:
         raise NetworkGuardError("The base URL has an invalid port.") from exc
-    await check_host(host, port, resolver=resolver, allow_private=allow_private)
+    if allow_private:
+        # Nothing to judge, so nothing to resolve: a name that does not resolve
+        # fails at connect time like any other provider's. (The connect-time
+        # backend still resolves and pins.)
+        return
+    await check_host(host, port, resolver=resolver, allow_private=False)
 
 
 def _is_ip(value: str) -> bool:

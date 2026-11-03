@@ -23,7 +23,10 @@ key) and models and uses them privately.
   for lookups. Partial indexes are supported by SQLite and PostgreSQL alike.
 
 * ``ck_*_owner`` keeps the pair consistent (both or neither, ``user`` the only
-  kind), and a private model is never an alias. That a private model's provider
+  kind), and a private model is never an alias. Written with an explicit
+  ``owner_kind IS NOT NULL`` in the second arm: a CHECK passes when its result is
+  NULL, and ``NULL = 'user'`` is NULL, so without it a row with an owner and no
+  kind satisfied the constraint (found by the migration test). That a private model's provider
   has the same owner is a cross-table fact no CHECK can state; the write path
   enforces it and the access predicate re-checks it on every read.
 
@@ -77,14 +80,15 @@ def upgrade() -> None:
         batch_op.create_check_constraint(
             "ck_providers_owner",
             "(owner_kind IS NULL AND owner_id IS NULL) OR "
-            "(owner_kind = 'user' AND owner_id IS NOT NULL)",
+            "(owner_kind IS NOT NULL AND owner_kind = 'user' AND owner_id IS NOT NULL)",
         )
     with op.batch_alter_table("models", schema=None) as batch_op:
         _owner_columns(batch_op, "models")
         batch_op.create_check_constraint(
             "ck_models_owner",
             "(owner_kind IS NULL AND owner_id IS NULL) OR "
-            "(owner_kind = 'user' AND owner_id IS NOT NULL AND NOT is_alias)",
+            "(owner_kind IS NOT NULL AND owner_kind = 'user' AND owner_id IS NOT NULL "
+            "AND NOT is_alias)",
         )
 
     for table in ("providers", "models"):
@@ -129,15 +133,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("oidc_config", schema=None) as batch_op:
-        batch_op.drop_constraint("ck_oidc_config_byok_mode", type_="check")
-        batch_op.drop_column("byok_private_networks")
-        batch_op.drop_column("byok_mode")
-    with op.batch_alter_table("groups", schema=None) as batch_op:
-        batch_op.drop_column("byok_allowed")
-    with op.batch_alter_table("usage_records", schema=None) as batch_op:
-        batch_op.drop_column("byok")
-
+    # First, before anything is dropped: SQLite DDL is not transactional, so a
+    # refusal after the first batch would leave a half-downgraded schema.
     private = op.get_bind().execute(
         sa.text("SELECT count(*) FROM models WHERE owner_id IS NOT NULL")
     ).scalar_one() + op.get_bind().execute(
@@ -149,6 +146,15 @@ def downgrade() -> None:
             "a globally unique name could collide them with deployment rows. Delete them "
             "first (DELETE FROM models WHERE owner_id IS NOT NULL, then providers) and re-run."
         )
+    with op.batch_alter_table("oidc_config", schema=None) as batch_op:
+        batch_op.drop_constraint("ck_oidc_config_byok_mode", type_="check")
+        batch_op.drop_column("byok_private_networks")
+        batch_op.drop_column("byok_mode")
+    with op.batch_alter_table("groups", schema=None) as batch_op:
+        batch_op.drop_column("byok_allowed")
+    with op.batch_alter_table("usage_records", schema=None) as batch_op:
+        batch_op.drop_column("byok")
+
     for table in ("providers", "models"):
         op.drop_index(f"ix_{table}_owner", table_name=table)
         op.drop_index(f"uq_{table}_owner_name", table_name=table)

@@ -1009,7 +1009,7 @@ class Provider(Base):
         Index("ix_providers_owner", "owner_kind", "owner_id"),
         CheckConstraint(
             "(owner_kind IS NULL AND owner_id IS NULL) OR "
-            "(owner_kind = 'user' AND owner_id IS NOT NULL)",
+            "(owner_kind IS NOT NULL AND owner_kind = 'user' AND owner_id IS NOT NULL)",
             name="ck_providers_owner",
         ),
     )
@@ -1151,7 +1151,8 @@ class ModelDef(Base):
         Index("ix_models_owner", "owner_kind", "owner_id"),
         CheckConstraint(
             "(owner_kind IS NULL AND owner_id IS NULL) OR "
-            "(owner_kind = 'user' AND owner_id IS NOT NULL AND NOT is_alias)",
+            "(owner_kind IS NOT NULL AND owner_kind = 'user' AND owner_id IS NOT NULL "
+            "AND NOT is_alias)",
             name="ck_models_owner",
         ),
     )
