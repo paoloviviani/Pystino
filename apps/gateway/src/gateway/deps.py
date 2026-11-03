@@ -149,6 +149,11 @@ def get_control_http(request: Request) -> Any:
     return request.app.state.control_http
 
 
+def get_byok_http(request: Request) -> Any:
+    """The control-plane client for a **private** provider: guarded (netguard.py)."""
+    return request.app.state.byok_http
+
+
 def get_secrets(request: Request) -> SecretBox:
     """The box that encrypts provider credentials at rest (ADR 0027)."""
     secrets: SecretBox = request.app.state.secrets
@@ -911,4 +916,5 @@ ProvidersDep = Annotated[ProviderRegistry, Depends(get_providers)]
 SecretsDep = Annotated[SecretBox, Depends(get_secrets)]
 CatalogueDep = Annotated[Catalogue, Depends(get_catalogue)]
 ControlHttpDep = Annotated[Any, Depends(get_control_http)]
+ByokHttpDep = Annotated[Any, Depends(get_byok_http)]
 EstimatorDep = Annotated[TokenEstimator, Depends(get_estimator)]

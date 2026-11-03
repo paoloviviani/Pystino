@@ -43,12 +43,14 @@ from gateway.accounting import RequestAccounting, RequestContext, TokenCounts
 from gateway.accounting.cost import CostBreakdown, compute_cost, select_price
 from gateway.accounting.search_price import quote_search
 from gateway.accounting.tokens import TokenEstimator
+from gateway.capabilities import holds_byok
 from gateway.catalogue import Catalogue, CatalogueFacts
 from gateway.config import EffectivePolicy, Settings
 from gateway.deps import Principal
 from gateway.errors import (
     AliasUnavailableError,
     BadRequestError,
+    ByokNotAllowedError,
     ContentBlockedError,
     ModelNotFoundError,
     ServiceUnavailableError,
@@ -57,6 +59,7 @@ from gateway.errors import (
 )
 from gateway.fx import FXService
 from gateway.models import (
+    MY_PREFIX,
     ApiSurface,
     ModelDef,
     ModelKind,
@@ -157,7 +160,7 @@ class ResolvedModel:
         two things that differ: which name goes in ``requested_model``, and
         which name a "wrong kind" error quotes back at the caller.
         """
-        return self.requested_name != self.model.name
+        return self.requested_name != self.model.api_name
 
     @property
     def provider(self) -> Provider:
@@ -300,8 +303,16 @@ async def resolve_plan(
     when the caller sent a session key and the alias has stickiness on — the
     target that session last used moved to the front if it is still in the list.
     """
+    byok = holds_byok(principal.user)
+    if name.startswith(MY_PREFIX) and not byok:
+        # The caller's own capability, so saying so leaks nothing: a clearer
+        # answer than a 404 for someone whose private models are held back.
+        raise ByokNotAllowedError(
+            "Your own providers and models (my/...) are not available to this account: "
+            "bring-your-own-key is not enabled for any of your groups."
+        )
     stmt = accessible_model_by_name(
-        name, user_id=principal.user.id, group_ids=[principal.billing_group.id]
+        name, user_id=principal.user.id, group_ids=[principal.billing_group.id], byok=byok
     )
     model = (await session.execute(stmt)).scalars().first()
     if model is None:
@@ -828,53 +839,22 @@ def bound_web_search(tools: Any, *, default: int) -> WebSearchBound:
     return WebSearchBound(reserved=reserved, enforced=enforced, default=default)
 
 
-async def begin(
+async def _admit(
     *,
-    # `fx` and `session_factory` rather than the `Request` these used to be read
-    # from. Nothing else in this function ever touched the request, and taking
-    # them explicitly is what lets knowledge-base ingestion — which has no
-    # request, because extraction and embedding belong in a background task
-    # rather than a request path (ADR 0019) — reserve and record through *this*
-    # pipeline instead of a second copy of it. A second copy of money code is
-    # the one duplication this project cannot afford.
     fx: FXService,
-    session_factory: async_sessionmaker[AsyncSession],
     session: AsyncSession,
     principal: Principal,
     settings: Settings,
     quota: QuotaEngine,
-    estimator: TokenEstimator,
     resolved: ResolvedModel,
-    surface: ApiSurface,
-    request_id: str,
     worst_case: TokenCounts,
-    # The most searches this request may run against a backend of our own
-    # (docs/web-search-plan.md, phase 2). A separate argument rather than a
-    # field on `worst_case`, because `TokenCounts` is what `compute_cost`
-    # multiplies by the model's per-token rates; a search is priced per request
-    # from the backend's `SearchPrice` (see `search_backend` below).
-    worst_case_own_searches: int = 0,
-    # The backend those searches go to, so the reservation can include what
-    # they cost. Without it the searches are counted and not priced here, as
-    # before; with it the cost metric sees the search price like any other cost.
-    search_backend: str | None = None,
-    outcome: RedactionOutcome | None = None,
-    streamed: bool = False,
-) -> Metered | JSONResponse:
-    """Reserve the worst case, then open the usage row. In that order.
+    worst_case_own_searches: int,
+    search_backend: str | None,
+) -> Reservation | JSONResponse:
+    """Admission: evaluate the quota rules and reserve the worst case, or refuse.
 
-    Reserving first means a caller over budget is refused before any money is
-    spent. Opening the row second — but still before the upstream call — means
-    a client that vanishes mid-generation still leaves a record of what it
-    used.
-
-    Returns the 429 response body instead of raising it, because a quota
-    refusal is a normal answer with a ``retry-after`` header on it, not an
-    exception.
+    The 429 is returned, not raised, as :func:`begin` documents.
     """
-    # The **target** (ADR 0101): admission and the reservation are priced by
-    # what serves the request, and rules that name the target apply, exactly as
-    # if the target had been called.
     model = resolved.model
     worst_case_cost = await estimate_cost(
         model, worst_case, currency=settings.billing_currency, fx=fx
@@ -923,11 +903,86 @@ async def begin(
             "Quota state is temporarily unavailable, so the request was refused "
             "rather than served unmetered."
         ) from exc
+    return reservation
+
+
+async def begin(
+    *,
+    # `fx` and `session_factory` rather than the `Request` these used to be read
+    # from. Nothing else in this function ever touched the request, and taking
+    # them explicitly is what lets knowledge-base ingestion — which has no
+    # request, because extraction and embedding belong in a background task
+    # rather than a request path (ADR 0019) — reserve and record through *this*
+    # pipeline instead of a second copy of it. A second copy of money code is
+    # the one duplication this project cannot afford.
+    fx: FXService,
+    session_factory: async_sessionmaker[AsyncSession],
+    session: AsyncSession,
+    principal: Principal,
+    settings: Settings,
+    quota: QuotaEngine,
+    estimator: TokenEstimator,
+    resolved: ResolvedModel,
+    surface: ApiSurface,
+    request_id: str,
+    worst_case: TokenCounts,
+    # The most searches this request may run against a backend of our own
+    # (docs/web-search-plan.md, phase 2). A separate argument rather than a
+    # field on `worst_case`, because `TokenCounts` is what `compute_cost`
+    # multiplies by the model's per-token rates; a search is priced per request
+    # from the backend's `SearchPrice` (see `search_backend` below).
+    worst_case_own_searches: int = 0,
+    # The backend those searches go to, so the reservation can include what
+    # they cost. Without it the searches are counted and not priced here, as
+    # before; with it the cost metric sees the search price like any other cost.
+    search_backend: str | None = None,
+    outcome: RedactionOutcome | None = None,
+    streamed: bool = False,
+) -> Metered | JSONResponse:
+    """Reserve the worst case, then open the usage row. In that order.
+
+    Reserving first means a caller over budget is refused before any money is
+    spent. Opening the row second — but still before the upstream call — means
+    a client that vanishes mid-generation still leaves a record of what it
+    used.
+
+    Returns the 429 response body instead of raising it, because a quota
+    refusal is a normal answer with a ``retry-after`` header on it, not an
+    exception.
+    """
+    # The **target** (ADR 0101): admission and the reservation are priced by
+    # what serves the request, and rules that name the target apply, exactly as
+    # if the target had been called.
+    model = resolved.model
+    # BYOK: the caller's own key pays, so there is nothing to admit against and
+    # nothing to reserve. An **empty** reservation rather than no reservation:
+    # every exit path settles one, and an empty one settles as a no-op, so the
+    # ordering this module exists to guarantee is unchanged. No counter moves,
+    # no limit is checked (a group cap of zero does not stop it), and the
+    # pre-flight cost estimate that could refuse on a missing exchange rate is
+    # skipped too. The ledger row below still records the usage, flagged.
+    reservation: Reservation | JSONResponse
+    if model.is_private:
+        reservation = Reservation(created_at=utcnow().timestamp())
+    else:
+        reservation = await _admit(
+            fx=fx,
+            session=session,
+            principal=principal,
+            settings=settings,
+            quota=quota,
+            resolved=resolved,
+            worst_case=worst_case,
+            worst_case_own_searches=worst_case_own_searches,
+            search_backend=search_backend,
+        )
+        if isinstance(reservation, JSONResponse):
+            return reservation
 
     accounting = RequestAccounting(
         context=RequestContext(
             request_id=request_id,
-            model_name=model.name,
+            model_name=model.api_name,
             # The alias, when the caller named one. Null for a direct call,
             # which is every request that existed before ADR 0101.
             requested_model=resolved.requested_name if resolved.via_alias else None,
@@ -935,7 +990,11 @@ async def begin(
             currency=settings.billing_currency,
             streamed=streamed,
             user_id=principal.user.id,
-            group_id=principal.billing_group.id,
+            # No billing group on a BYOK row: the group is not paying,
+            # `x-bill-to` has no meaning, and a row with no group cannot be
+            # picked up by a per-group total even by a query that forgot the
+            # `byok` filter.
+            group_id=None if model.is_private else principal.billing_group.id,
             api_key_id=principal.api_key.id if principal.api_key else None,
             model_id=model.id,
             estimated_prompt_tokens=worst_case.prompt,
@@ -946,6 +1005,7 @@ async def begin(
             surface=surface,
             plugin=resolved.provider.plugin,
             billing_mode=resolved.provider.billing_mode.value,
+            byok=model.is_private,
         ),
         session_factory=session_factory,
         settings=settings,
@@ -1024,10 +1084,11 @@ async def redact_or_block(
                 request_id=request_id,
                 status=UsageStatus.BLOCKED,
                 user_id=principal.user.id,
-                group_id=principal.billing_group.id,
+                group_id=None if model.is_private else principal.billing_group.id,
                 api_key_id=principal.api_key.id if principal.api_key else None,
                 model_id=model.id,
-                model_name=model.name,
+                model_name=model.api_name,
+                byok=model.is_private,
                 streamed=False,
                 api_surface=surface,
                 currency=settings.billing_currency,

@@ -99,6 +99,10 @@ class OIDCPolicy:
     code_agents_mode: str = "on"
     api_keys_mode: str = "on"
     local_connectors_mode: str = "on"
+    #: Bring your own key. Unlike the others the baseline is `off`.
+    byok_mode: str = "off"
+    #: Whether private (BYOK) providers may point at private networks.
+    byok_private_networks: bool = False
     #: IdP group name -> local group name. A claimed name resolves to a local
     #: group only through this table: an unmapped name resolves to nothing,
     #: even when a local group carries the same name.
@@ -178,6 +182,8 @@ def environment_policy(settings: OIDCSettings, access: AccessSettings | None = N
         code_agents_mode=access.code_agents if access is not None else "everyone",
         api_keys_mode=access.api_keys if access is not None else "everyone",
         local_connectors_mode=access.local_connectors if access is not None else "on",
+        byok_mode=access.byok if access is not None else "off",
+        byok_private_networks=access.byok_private_networks if access is not None else False,
     )
 
 
@@ -297,6 +303,17 @@ def effective_policy(
     elif normalized is not None:
         local_connectors_mode = normalized
         sources["local_connectors_mode"] = "console"
+    byok_mode = base.byok_mode
+    normalized = _normalize_capability_mode(row.byok_mode)
+    if row.byok_mode is not None and normalized is None:
+        logger.warning("ignoring oidc_config row %s: byok_mode %r", row.id, row.byok_mode)
+    elif normalized is not None:
+        byok_mode = normalized
+        sources["byok_mode"] = "console"
+    byok_private_networks = base.byok_private_networks
+    if row.byok_private_networks is not None:
+        byok_private_networks = row.byok_private_networks
+        sources["byok_private_networks"] = "console"
 
     return OIDCPolicy(
         join_mode=mode,
@@ -307,6 +324,8 @@ def effective_policy(
         code_agents_mode=code_agents_mode,
         api_keys_mode=api_keys_mode,
         local_connectors_mode=local_connectors_mode,
+        byok_mode=byok_mode,
+        byok_private_networks=byok_private_networks,
         sources=sources,
         config_id=row.id,
         config_at=row.created_at,
@@ -355,6 +374,8 @@ def pending_policy_row(
         code_agents_mode=stored.code_agents_mode if stored is not None else None,
         api_keys_mode=stored.api_keys_mode if stored is not None else None,
         local_connectors_mode=stored.local_connectors_mode if stored is not None else None,
+        byok_mode=stored.byok_mode if stored is not None else None,
+        byok_private_networks=stored.byok_private_networks if stored is not None else None,
     )
     if "auto_provision" in fields:
         row.auto_provision = fields["auto_provision"]  # type: ignore[assignment]
@@ -376,6 +397,10 @@ def pending_policy_row(
         row.api_keys_mode = fields["api_keys_mode"]  # type: ignore[assignment]
     if "local_connectors_mode" in fields:
         row.local_connectors_mode = fields["local_connectors_mode"]  # type: ignore[assignment]
+    if "byok_mode" in fields:
+        row.byok_mode = fields["byok_mode"]  # type: ignore[assignment]
+    if "byok_private_networks" in fields:
+        row.byok_private_networks = fields["byok_private_networks"]  # type: ignore[assignment]
     if fields.get("join_mode") is not None:
         row.auto_provision = None
         row.unknown_user_policy = None

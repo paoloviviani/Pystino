@@ -277,7 +277,11 @@ async def _load_target(session: SessionDep, model_id: uuid.UUID, *, alias_name: 
             select(ModelDef).where(ModelDef.id == model_id).options(selectinload(ModelDef.provider))
         )
     ).scalar_one_or_none()
-    if target is None:
+    # A user's private (BYOK) model is not a target at any price: an alias is
+    # a grant, and a grant to a private model would hand it to other people.
+    # Answered as "no such model" so an id belonging to someone else's key
+    # learns nothing.
+    if target is None or target.owner_id is not None:
         raise BadRequestError(
             f"No model with id {model_id} to point {alias_name!r} at.", code="unknown_target"
         )

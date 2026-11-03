@@ -2644,6 +2644,7 @@ def _group_admin_response(
         code_agents_allowed=group.code_agents_allowed,
         api_keys_allowed=group.api_keys_allowed,
         local_connectors_allowed=group.local_connectors_allowed,
+        byok_allowed=group.byok_allowed,
         member_count=member_count,
         models=models,
         # Which of `models` is an alias, so the Groups page can badge them
@@ -3017,6 +3018,8 @@ async def update_group(
         group.api_keys_allowed = payload.api_keys_allowed is True
     if "local_connectors_allowed" in fields:
         group.local_connectors_allowed = payload.local_connectors_allowed is True
+    if "byok_allowed" in fields:
+        group.byok_allowed = payload.byok_allowed is True
     await session.commit()
     await session.refresh(group)
     member_count = await session.scalar(
@@ -3048,6 +3051,7 @@ _CAPABILITY_FLAG_COLUMNS = {
     "code_agents": Group.code_agents_allowed,
     "api_keys": Group.api_keys_allowed,
     "local_connectors": Group.local_connectors_allowed,
+    "byok": Group.byok_allowed,
 }
 
 
@@ -3104,7 +3108,7 @@ async def bulk_group_capabilities(
     refuses, because the restriction's machine-link half could never fire.
     Granting is always fine.
     """
-    if payload.capability != "api_keys":
+    if payload.capability in ("code_agents", "local_connectors"):
         _require_chat(settings, "Code agents and local connectors")
     flag_column = _CAPABILITY_FLAG_COLUMNS[payload.capability]
     if payload.capability in ("code_agents", "local_connectors") and payload.value is False:
@@ -4067,6 +4071,11 @@ async def _user_responses(
             ),
             local_connectors_allowed=(
                 capabilities_by_id[user.id].local_connectors
+                if membership_in is None and user.id in capabilities_by_id
+                else None
+            ),
+            byok_allowed=(
+                capabilities_by_id[user.id].byok
                 if membership_in is None and user.id in capabilities_by_id
                 else None
             ),
@@ -5397,6 +5406,8 @@ async def _oidc_policy_response(request: Request, session: SessionDep) -> OidcPo
         code_agents_mode=policy.code_agents_mode,
         api_keys_mode=policy.api_keys_mode,
         local_connectors_mode=policy.local_connectors_mode,
+        byok_mode=policy.byok_mode,
+        byok_private_networks=policy.byok_private_networks,
         source=policy.source,
         sources=policy.sources,
         configured=(
@@ -5435,11 +5446,12 @@ async def preview_oidc_policy(
     # active non-admin people gain / lose it", which the console confirms
     # before applying. Either may be asked alone, and together they are a
     # preview of the same flag both ways.
-    bulk_capability: Literal["code_agents", "api_keys", "local_connectors"] | None = None,
+    bulk_capability: Literal["code_agents", "api_keys", "local_connectors", "byok"] | None = None,
     bulk_value: bool | None = None,
     code_agents_mode: str | None = None,
     api_keys_mode: str | None = None,
     local_connectors_mode: str | None = None,
+    byok_mode: str | None = None,
 ) -> OidcPolicyPreviewResponse:
     """What saving this group gate would do (ADR 0095 §7, ADR 0096).
 
@@ -5464,6 +5476,7 @@ async def preview_oidc_policy(
         code_agents_mode is not None
         or api_keys_mode is not None
         or local_connectors_mode is not None
+        or byok_mode is not None
     )
     if not want_bulk and not want_capabilities:
         if join_mode != "group":
@@ -5819,6 +5832,7 @@ async def set_oidc_policy(
         ("code_agents_mode", "code_agents_mode"),
         ("api_keys_mode", "api_keys_mode"),
         ("local_connectors_mode", "local_connectors_mode"),
+        ("byok_mode", "byok_mode"),
     ):
         value = fields.get(knob)
         # The 0.7.x spellings still save — meaning on/off — for one release

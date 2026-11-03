@@ -584,6 +584,10 @@ class ModelCard(ResponseModel):
     # this to tell "runs on this server, nothing leaves it" apart from an
     # ordinary catalogue entry.
     local: bool = False
+    # True for the caller's own (bring-your-own-key) model, whose `id` is then
+    # `my/<name>`. Never true for another caller's: a private model is listed
+    # to its owner only. Read with `.nullish()` by older clients.
+    byok: bool = False
 
 
 class ModelList(ResponseModel):
@@ -637,6 +641,10 @@ class CapabilityFlags(ResponseModel):
     api_keys: bool
     #: Local MCP connectors (ADR 0102): a connectors-only machine.
     local_connectors: bool | None = None
+    #: Bring your own key: the person may add their own providers and models
+    #: and use them privately (`/api/me/providers`, `/api/me/models`). Reported
+    #: with or without a chat.
+    byok: bool = False
 
 
 class CallerIdentity(ResponseModel):
@@ -1661,6 +1669,7 @@ class GroupAdminResponse(ResponseModel):
     code_agents_allowed: bool = False
     api_keys_allowed: bool = False
     local_connectors_allowed: bool = False
+    byok_allowed: bool = False
     member_count: int
     #: Every model name this group may use, aliases included — they are rows of
     #: the same table, and granting an alias is the point of having one.
@@ -1689,6 +1698,7 @@ class GroupUpdateRequest(BaseModel):
     code_agents_allowed: bool | None = None
     api_keys_allowed: bool | None = None
     local_connectors_allowed: bool | None = None
+    byok_allowed: bool | None = None
 
 
 class GroupCapabilityBulkResponse(ResponseModel):
@@ -1703,7 +1713,7 @@ class GroupCapabilityBulkRequest(BaseModel):
     capability's flag on every group, from the Settings screen's two bulk
     actions. Applied in one transaction, audited once."""
 
-    capability: Literal["code_agents", "api_keys", "local_connectors"]
+    capability: Literal["code_agents", "api_keys", "local_connectors", "byok"]
     value: bool
 
 
@@ -1822,6 +1832,7 @@ class UserAdminResponse(ResponseModel):
     code_agents_allowed: bool | None = None
     api_keys_allowed: bool | None = None
     local_connectors_allowed: bool | None = None
+    byok_allowed: bool | None = None
     # Who granted *this* person's membership of the group being listed (ADR
     # 0057): "manual" for an administrator's grant, "oidc" for the directory's.
     # Only the group-members route can answer it — a user has many memberships
@@ -2136,6 +2147,10 @@ class OidcPolicyUpdateRequest(BaseModel):
     code_agents_mode: Literal["on", "off", "everyone", "groups"] | None = None
     api_keys_mode: Literal["on", "off", "everyone", "groups"] | None = None
     local_connectors_mode: Literal["on", "off", "everyone", "groups"] | None = None
+    # Bring your own key: the default new groups get (baseline off), and the
+    # switch that lifts the network guard on private providers' base URLs.
+    byok_mode: Literal["on", "off", "everyone", "groups"] | None = None
+    byok_private_networks: bool | None = None
     reason: str = Field(default="", max_length=500)
 
 
@@ -2186,6 +2201,8 @@ class OidcPolicyResponse(ResponseModel):
     code_agents_mode: str = "on"
     api_keys_mode: str = "on"
     local_connectors_mode: str = "on"
+    byok_mode: str = "off"
+    byok_private_networks: bool = False
     # "console" when any field is a stored decision, "environment" otherwise;
     # `sources` says which, per field — "the console says X and the
     # environment says Y" is otherwise invisible.

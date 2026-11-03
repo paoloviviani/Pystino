@@ -2,8 +2,9 @@
 
 A capability is only a per-group flag: a person holds ``code_agents`` (the
 /code panel and the machine links that serve it), ``api_keys`` (minting
-and using ``gwk_`` keys) or ``local_connectors`` (a connectors-only machine
-serving the person's own MCP servers) as an administrator, or through an active
+and using ``gwk_`` keys), ``local_connectors`` (a connectors-only machine
+serving the person's own MCP servers) or ``byok`` (their own providers and
+models, with their own API key) as an administrator, or through an active
 membership in an active group with the flag on. There is no mode that gates
 access anymore — the deployment setting is the default new groups are
 created with (see :func:`default_flags`).
@@ -40,6 +41,8 @@ class Capabilities:
     code_agents: bool
     api_keys: bool
     local_connectors: bool = False
+    #: Bring your own key. Off unless a group (or being an administrator) says so.
+    byok: bool = False
 
 
 def effective_capabilities(user: User) -> Capabilities:
@@ -48,7 +51,19 @@ def effective_capabilities(user: User) -> Capabilities:
         code_agents=_holds(user, "code_agents"),
         api_keys=_holds(user, "api_keys"),
         local_connectors=_holds(user, "local_connectors"),
+        byok=_holds(user, "byok"),
     )
+
+
+def holds_byok(user: User) -> bool:
+    """Whether this person may use their own providers and models right now.
+
+    One flag read rather than the whole capability set: the request path asks
+    it for every `/v1` call, and it is the predicate that makes a private
+    model unusable-but-kept while the capability is gone and usable again the
+    moment it returns.
+    """
+    return _holds(user, "byok")
 
 
 def reported_flags(user: User, settings: Settings) -> CapabilityFlags:
@@ -56,15 +71,16 @@ def reported_flags(user: User, settings: Settings) -> CapabilityFlags:
 
     Code agents and local connectors are chat concepts: without a chat
     (`GATEWAY_CHAT__ENABLED` false) they are not reported at all, only
-    `api_keys` is.
+    `api_keys` and `byok` are (neither needs a chat).
     """
     flags = effective_capabilities(user)
     if not settings.chat.enabled:
-        return CapabilityFlags(api_keys=flags.api_keys)
+        return CapabilityFlags(api_keys=flags.api_keys, byok=flags.byok)
     return CapabilityFlags(
         code_agents=flags.code_agents,
         api_keys=flags.api_keys,
         local_connectors=flags.local_connectors,
+        byok=flags.byok,
     )
 
 
@@ -85,6 +101,7 @@ def default_flags(policy: OIDCPolicy | None) -> Capabilities:
         code_agents=_default_on(policy.code_agents_mode),
         api_keys=_default_on(policy.api_keys_mode),
         local_connectors=_default_on(policy.local_connectors_mode),
+        byok=_default_on(policy.byok_mode),
     )
 
 
@@ -108,6 +125,7 @@ def new_group_flags(defaults: Capabilities) -> dict[str, bool]:
         "code_agents_allowed": defaults.code_agents,
         "api_keys_allowed": defaults.api_keys,
         "local_connectors_allowed": defaults.local_connectors,
+        "byok_allowed": defaults.byok,
     }
 
 
@@ -145,4 +163,6 @@ def _group_flag(group: Group, flag_name: str) -> bool:
         return group.code_agents_allowed
     if flag_name == "local_connectors":
         return group.local_connectors_allowed
+    if flag_name == "byok":
+        return group.byok_allowed
     return group.api_keys_allowed

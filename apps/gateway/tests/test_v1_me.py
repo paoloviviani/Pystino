@@ -91,6 +91,7 @@ class TestIdentity:
                 "code_agents": True,
                 "api_keys": True,
                 "local_connectors": True,
+                "byok": False,
             },
         }
 

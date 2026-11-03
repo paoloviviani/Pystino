@@ -45,6 +45,9 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from gateway.periods import PeriodKind
 from gateway.types import Money, TZDateTime, utcnow
 
+#: The prefix a private (BYOK) model carries on every /v1 surface.
+MY_PREFIX = "my/"
+
 
 class Base(DeclarativeBase):
     # Map bare Python annotations onto our safe column types, so that a
@@ -388,6 +391,10 @@ class Group(Base):
     local_connectors_allowed: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
+    #: Bring your own key: a member may add their own providers and models
+    #: (their own API key) and use them privately. Off unless an administrator
+    #: switches it on, like the other flags.
+    byok_allowed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
     # The one search backend this group searches through on the unified
     # ``POST /v1/search`` route. Null means no policy: the group cannot use
@@ -977,10 +984,52 @@ class Provider(Base):
     """
 
     __tablename__ = "providers"
+    __table_args__ = (
+        # A deployment provider's name is unique among deployment providers; a
+        # private one's is unique per owner (BYOK). Two partial indexes, one
+        # per arm, because a single unique index over (owner_id, name) would
+        # let two deployment rows share a name: NULLs are distinct in both
+        # dialects.
+        Index(
+            "uq_providers_name_deployment",
+            "name",
+            unique=True,
+            sqlite_where=text("owner_id IS NULL"),
+            postgresql_where=text("owner_id IS NULL"),
+        ),
+        Index(
+            "uq_providers_owner_name",
+            "owner_kind",
+            "owner_id",
+            "name",
+            unique=True,
+            sqlite_where=text("owner_id IS NOT NULL"),
+            postgresql_where=text("owner_id IS NOT NULL"),
+        ),
+        Index("ix_providers_owner", "owner_kind", "owner_id"),
+        CheckConstraint(
+            "(owner_kind IS NULL AND owner_id IS NULL) OR "
+            "(owner_kind = 'user' AND owner_id IS NOT NULL)",
+            name="ck_providers_owner",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     # Referenced by people, not by requests: models point at the id.
-    name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(64), index=True)
+    # Whose private row this is (BYOK). Both null = a deployment provider, the
+    # only kind that existed before. Today the only owner kind is "user"; the
+    # pair is shaped so a team or organisation can own one later without a
+    # migration of the callers.
+    owner_kind: Mapped[str | None] = mapped_column(String(16), default=None)
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), default=None
+    )
+    # An administrator's hold on a private row. Separate from `is_active`,
+    # which its owner controls: the owner must not be able to undo it.
+    admin_disabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     description: Mapped[str | None] = mapped_column(Text, default=None)
 
     base_url: Mapped[str] = mapped_column(String(500))
@@ -1079,14 +1128,51 @@ class ModelDef(Base):
             "(NOT is_alias AND provider_id IS NOT NULL AND upstream_model IS NOT NULL)",
             name="ck_models_alias_or_served",
         ),
+        # Names: unique among deployment rows (aliases included: one namespace
+        # for callers), and unique per owner among private ones. A private model
+        # is addressed `my/<name>` on /v1, so it can never collide with a
+        # deployment name; see `gateway.access.MY_PREFIX`.
+        Index(
+            "uq_models_name_deployment",
+            "name",
+            unique=True,
+            sqlite_where=text("owner_id IS NULL"),
+            postgresql_where=text("owner_id IS NULL"),
+        ),
+        Index(
+            "uq_models_owner_name",
+            "owner_kind",
+            "owner_id",
+            "name",
+            unique=True,
+            sqlite_where=text("owner_id IS NOT NULL"),
+            postgresql_where=text("owner_id IS NOT NULL"),
+        ),
+        Index("ix_models_owner", "owner_kind", "owner_id"),
+        CheckConstraint(
+            "(owner_kind IS NULL AND owner_id IS NULL) OR "
+            "(owner_kind = 'user' AND owner_id IS NOT NULL AND NOT is_alias)",
+            name="ck_models_owner",
+        ),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     # What clients send as "model". Stable and ours to choose. Unique across
-    # served models **and** aliases alike: they share one name namespace, and a
-    # caller cannot tell the two apart. That is this one column, not two
-    # unique indexes that would have to be kept in step.
-    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    # deployment models **and** aliases alike: they share one name namespace,
+    # and a caller cannot tell the two apart (`uq_models_name_deployment`). A
+    # private model's name is unique per owner and is sent as `my/<name>`.
+    name: Mapped[str] = mapped_column(String(255), index=True)
+    #: Whose private row this is (BYOK); both null = a deployment model. A
+    #: private model's provider has the same owner (checked where it is
+    #: written, and again by the access predicate).
+    owner_kind: Mapped[str | None] = mapped_column(String(16), default=None)
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), default=None
+    )
+    #: An administrator's hold on a private model; the owner cannot lift it.
+    admin_disabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     # What we send upstream. Lets us rename or repoint without breaking clients.
     # Null for an alias only — the alias has no upstream of its own; its
     # target's is the one that gets sent.
@@ -1224,6 +1310,21 @@ class ModelDef(Base):
         # attribute access instead of issuing a query on the request path.
         lazy="raise",
     )
+
+    @property
+    def is_private(self) -> bool:
+        """Whether this is a user's own (BYOK) model rather than a deployment one."""
+        return self.owner_id is not None
+
+    @property
+    def api_name(self) -> str:
+        """The name a caller sends and sees on /v1: ``my/<name>`` for a private model.
+
+        The prefix belongs to the API surface and is never stored, so the same
+        row keeps its own short name in the owner's console while no private
+        name can ever shadow a deployment one.
+        """
+        return f"{MY_PREFIX}{self.name}" if self.owner_id is not None else self.name
 
     @property
     def targets(self) -> list[ModelDef]:
@@ -1541,6 +1642,13 @@ class UsageRecord(Base):
     route_attempt: Mapped[int | None] = mapped_column(Integer, default=None)
 
     streamed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    #: Served by the caller's own provider and key (BYOK). Recorded for the
+    #: caller's information only: such a row is never counted by a quota, and
+    #: no group, billing-group or administrator report adds it up. A column
+    #: rather than a join to `models.owner_id`, so every report filters it
+    #: without a join and it survives the model's deletion.
+    byok: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
@@ -2502,6 +2610,13 @@ class OIDCPolicyConfig(Base):
     code_agents_mode: Mapped[str | None] = mapped_column(String(16), default=None)
     api_keys_mode: Mapped[str | None] = mapped_column(String(16), default=None)
     local_connectors_mode: Mapped[str | None] = mapped_column(String(16), default=None)
+    #: Bring your own key: the default new groups are created with (`on`/`off`),
+    #: null deferring to ``GATEWAY_ACCESS__BYOK`` and then to off.
+    byok_mode: Mapped[str | None] = mapped_column(String(16), default=None)
+    #: Lifts the network guard on private providers' base URLs (loopback,
+    #: RFC 1918 and so on). Null = ``GATEWAY_ACCESS__BYOK_PRIVATE_NETWORKS``,
+    #: then off.
+    byok_private_networks: Mapped[bool | None] = mapped_column(Boolean, default=None)
     #: [[idp_name, local_name], ...]: what an IdP group means here. Unmapped
     #: groups keep their own name. Many IdP groups may map to one local group.
     group_mappings: Mapped[list[list[str]] | None] = mapped_column(JSON, default=None)

@@ -28,6 +28,7 @@ import httpx
 
 from gateway.config import UpstreamSettings
 from gateway.models import Provider
+from gateway.netguard import NetworkGuardError, Resolver, build_guarded_client, check_url
 from gateway.plugins import registry
 from gateway.plugins.base import ProviderPlugin
 from gateway.secrets import SecretBox, SecretDecryptionError
@@ -46,7 +47,7 @@ class _Entry:
     client: httpx.AsyncClient
     # What the provider looked like when this client was built. Any change means
     # the client is stale.
-    fingerprint: tuple[str, str, datetime]
+    fingerprint: tuple[str, str, datetime, bool]
 
 
 ClientFactory = Callable[[UpstreamSettings], httpx.AsyncClient]
@@ -68,9 +69,17 @@ class ProviderRegistry:
         secrets: SecretBox,
         *,
         client_factory: ClientFactory | None = None,
+        private_networks_allowed: Callable[[], bool] = lambda: False,
+        resolver: Resolver | None = None,
     ) -> None:
         self._settings = settings
         self._secrets = secrets
+        # BYOK: whether a *private* provider may point at a private network
+        # (the admin switch), read live so flipping it applies to the next
+        # request, and the resolver the preflight uses (a test seam).
+        self._private_networks_allowed = private_networks_allowed
+        self._resolver = resolver
+        self._injected_factory = client_factory is not None
         self._build_client = client_factory or build_http_client
         self._owns_clients = client_factory is None
         self._entries: dict[uuid.UUID, _Entry] = {}
@@ -79,12 +88,50 @@ class ProviderRegistry:
         # connection pool.
         self._lock = asyncio.Lock()
 
-    @staticmethod
-    def _fingerprint(provider: Provider) -> tuple[str, str, datetime]:
+    def _fingerprint(self, provider: Provider) -> tuple[str, str, datetime, bool]:
         # `updated_at` covers every other editable field, including the plugin —
         # and therefore how the credential is presented: an edit bumps it, which
         # retires the cached client.
-        return (provider.base_url, provider.api_key_encrypted, provider.updated_at)
+        #
+        # The last element is the network switch, for a private provider only:
+        # a kept-alive connection to a private address, opened while the switch
+        # was on, must not outlive the switch being turned off.
+        return (
+            provider.base_url,
+            provider.api_key_encrypted,
+            provider.updated_at,
+            provider.owner_id is not None and self._private_networks_allowed(),
+        )
+
+    def _client_for(self, provider: Provider, settings: UpstreamSettings) -> httpx.AsyncClient:
+        """The HTTP client for this provider: the guarded one when it is private.
+
+        A test's injected factory is used for private providers too (it is a
+        fake transport that never touches a network); the preflight in
+        :meth:`guard` still runs for them.
+        """
+        if provider.owner_id is None or self._injected_factory:
+            return self._build_client(settings)
+        return build_guarded_client(settings, allow_private=self._private_networks_allowed)
+
+    async def guard(self, provider: Provider) -> None:
+        """Refuse a private provider whose host the network guard does not allow.
+
+        Run before every request through a private provider, so the caller is
+        told which rule applied rather than getting a connection error; the
+        connect-time check in the guarded client is what cannot be raced.
+        Deployment providers are never checked.
+        """
+        if provider.owner_id is None:
+            return
+        try:
+            await check_url(
+                provider.base_url,
+                resolver=self._resolver,
+                allow_private=self._private_networks_allowed(),
+            )
+        except NetworkGuardError as exc:
+            raise ProviderConfigurationError(f"provider {provider.name!r}: {exc}") from exc
 
     @staticmethod
     def _plugin_for(provider: Provider) -> ProviderPlugin:
@@ -136,6 +183,7 @@ class ProviderRegistry:
                 "cannot be reached. Reactivate it or point the model elsewhere."
             )
 
+        await self.guard(provider)
         fingerprint = self._fingerprint(provider)
         entry = self._entries.get(provider.id)
         if entry is not None and entry.fingerprint == fingerprint:
@@ -149,7 +197,7 @@ class ProviderRegistry:
                 return entry.upstream
 
             settings = self._settings_for(provider)
-            client = self._build_client(settings)
+            client = self._client_for(provider, settings)
             upstream = OpenAICompatibleUpstream(settings, client, plugin=self._plugin_for(provider))
 
             stale = self._entries.get(provider.id)
@@ -187,7 +235,7 @@ class ProviderRegistry:
         base URL would then serve real traffic.
         """
         settings = self._settings_for(provider)
-        client = self._build_client(settings)
+        client = self._client_for(provider, settings)
         return OpenAICompatibleUpstream(settings, client, plugin=self._plugin_for(provider)), client
 
 
