@@ -771,6 +771,19 @@ class UsageSummaryResponse(ResponseModel):
     estimated_requests: int = 0
 
 
+class CallerUsageResponse(UsageSummaryResponse):
+    """A caller's own spend: what their quotas and groups see, and their own keys.
+
+    The inherited figures are usage on the deployment's providers, unchanged in
+    meaning. ``own_keys`` is usage on the caller's **own** providers and keys
+    (bring your own key): recorded for their information, priced at their own
+    price rows (unpriced models have no cost), and never counted by a quota or
+    by any group or administrator report.
+    """
+
+    own_keys: UsageSummaryResponse
+
+
 class LimitRuleResponse(ResponseModel):
     id: uuid.UUID
     name: str
@@ -892,7 +905,7 @@ class PystinoUsageResponse(ResponseModel):
     """
 
     limits: list[MyLimitResponse]
-    usage: UsageSummaryResponse
+    usage: CallerUsageResponse
     #: Per-group spend, keyed by group name — as `/api/me/usage/groups` keys it.
     groups: dict[str, UsageSummaryResponse]
 
@@ -1230,8 +1243,19 @@ class ProviderTestResponse(ResponseModel):
     latency_ms: int | None = None
 
 
+def _no_my_prefix(value: str | None) -> str | None:
+    """``my/`` addresses a user's own (BYOK) model on /v1, so no stored name may start with it."""
+    if value is not None and value.startswith("my/"):
+        raise ValueError(
+            "a model name cannot start with 'my/': that prefix addresses a user's own models"
+        )
+    return value
+
+
 class ModelCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
+
+    _name_is_not_reserved = field_validator("name")(_no_my_prefix)
     upstream_model: str = Field(min_length=1, max_length=255)
     # Which endpoint serves it. Required: a model with no provider cannot be
     # routed, and defaulting one would guess at spending money (ADR 0027).
@@ -1523,6 +1547,8 @@ MAX_ALIAS_TARGETS = 16
 
 class AliasCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
+
+    _name_is_not_reserved = field_validator("name")(_no_my_prefix)
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     #: The one model this alias serves — the single-target spelling, kept. Send
@@ -1564,6 +1590,8 @@ class AliasUpdateRequest(BaseModel):
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
+
+    _name_is_not_reserved = field_validator("name")(_no_my_prefix)
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     target_model_id: uuid.UUID | None = None
@@ -3005,6 +3033,8 @@ class ModelImportItem(BaseModel):
     upstream_model: str
     # Defaults to the upstream id with any provider prefix stripped.
     name: str | None = Field(default=None, max_length=255)
+
+    _name_is_not_reserved = field_validator("name")(_no_my_prefix)
     # A price supplied at import time, for a model the provider listed and left
     # unpriced. Ignored when the catalogue (or the community fill) has a price:
     # the counterparty's own figure outranks one typed from memory, and the

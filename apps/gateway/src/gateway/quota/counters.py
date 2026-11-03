@@ -543,6 +543,8 @@ class DatabaseCounterStore:
                     UsageRecord.created_at >= since,
                     UsageRecord.status != UsageStatus.IN_PROGRESS,
                     UsageRecord.user_id.in_(chunk),
+                    # Never BYOK: no quota counts usage on a caller's own key.
+                    UsageRecord.byok.is_(False),
                 )
                 .group_by(UsageRecord.user_id)
             )
@@ -607,6 +609,10 @@ class DatabaseCounterStore:
             # Refused requests never reach the ledger, but a row that is still
             # in progress has nothing to contribute yet.
             UsageRecord.status != UsageStatus.IN_PROGRESS,
+            # Never BYOK. The counters are rebuilt from this ledger, so the
+            # exclusion has to hold here as well as at admission, or a cold
+            # cache would resurrect usage the live path never counted.
+            UsageRecord.byok.is_(False),
         )
         if until is not None:
             # Half-open, so consecutive periods neither overlap nor leave a gap.
@@ -734,6 +740,7 @@ class DatabaseCounterStore:
                             UsageRecord.created_at < cutoff,
                             UsageRecord.status == UsageStatus.IN_PROGRESS,
                             UsageRecord.user_id.in_(chunk),
+                            UsageRecord.byok.is_(False),
                         )
                         .group_by(UsageRecord.user_id)
                     )
@@ -754,6 +761,7 @@ class DatabaseCounterStore:
                     UsageRecord.created_at >= since,
                     UsageRecord.created_at < cutoff,
                     UsageRecord.status == UsageStatus.IN_PROGRESS,
+                    UsageRecord.byok.is_(False),
                 )
                 if until is not None:
                     stmt = stmt.where(UsageRecord.created_at < until)

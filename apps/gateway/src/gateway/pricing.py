@@ -847,7 +847,13 @@ async def import_prices(
     # not polluted either — a community price file naming "fast" must report an
     # unknown model, not silently reprice an alias by its client-facing name.
     catalogue = list(
-        (await session.execute(select(ModelDef).where(ModelDef.is_alias.is_(False))))
+        (
+            await session.execute(
+                # Deployment models only: a user's private model is priced by
+                # its owner and no community file may reprice it.
+                select(ModelDef).where(ModelDef.is_alias.is_(False), ModelDef.owner_id.is_(None))
+            )
+        )
         .scalars()
         .all()
     )

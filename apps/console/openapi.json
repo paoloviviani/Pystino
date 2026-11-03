@@ -971,6 +971,17 @@
             ],
             "title": "Bundled Login"
           },
+          "byok_allowed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Byok Allowed"
+          },
           "code_agents_allowed": {
             "anyOf": [
               {
@@ -1144,6 +1155,7 @@
           "code_agents_allowed",
           "api_keys_allowed",
           "local_connectors_allowed",
+          "byok_allowed",
           "membership_source",
           "default_billing_group",
           "active_key_count",
@@ -1155,6 +1167,224 @@
           "password"
         ],
         "title": "BundledUserCreatedResponse",
+        "type": "object"
+      },
+      "ByokModelResponse": {
+        "properties": {
+          "admin_disabled": {
+            "title": "Admin Disabled",
+            "type": "boolean"
+          },
+          "api_name": {
+            "title": "Api Name",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/ByokOwner"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "title": "Provider Id",
+            "type": "string"
+          },
+          "provider_name": {
+            "title": "Provider Name",
+            "type": "string"
+          },
+          "upstream_model": {
+            "title": "Upstream Model",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/ByokUsage"
+          }
+        },
+        "required": [
+          "id",
+          "owner",
+          "name",
+          "api_name",
+          "upstream_model",
+          "kind",
+          "provider_id",
+          "provider_name",
+          "is_active",
+          "admin_disabled",
+          "usage",
+          "created_at"
+        ],
+        "title": "ByokModelResponse",
+        "type": "object"
+      },
+      "ByokOwner": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "name"
+        ],
+        "title": "ByokOwner",
+        "type": "object"
+      },
+      "ByokProviderResponse": {
+        "properties": {
+          "admin_disabled": {
+            "title": "Admin Disabled",
+            "type": "boolean"
+          },
+          "base_url_host": {
+            "title": "Base Url Host",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "has_api_key": {
+            "title": "Has Api Key",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "model_count": {
+            "title": "Model Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/ByokOwner"
+          },
+          "plugin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/ByokUsage"
+          }
+        },
+        "required": [
+          "id",
+          "owner",
+          "name",
+          "plugin",
+          "kind",
+          "base_url_host",
+          "has_api_key",
+          "is_active",
+          "admin_disabled",
+          "model_count",
+          "usage",
+          "created_at"
+        ],
+        "title": "ByokProviderResponse",
+        "type": "object"
+      },
+      "ByokUsage": {
+        "properties": {
+          "cost": {
+            "title": "Cost",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "requests": {
+            "title": "Requests",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "requests",
+          "total_tokens",
+          "cost",
+          "last_used_at"
+        ],
+        "title": "ByokUsage",
         "type": "object"
       },
       "CallerIdentity": {
@@ -1285,11 +1515,60 @@
         "title": "CallerIdentity",
         "type": "object"
       },
+      "CallerUsageResponse": {
+        "description": "A caller's own spend: what their quotas and groups see, and their own keys.\n\nThe inherited figures are usage on the deployment's providers, unchanged in\nmeaning. ``own_keys`` is usage on the caller's **own** providers and keys\n(bring your own key): recorded for their information, priced at their own\nprice rows (unpriced models have no cost), and never counted by a quota or\nby any group or administrator report.",
+        "properties": {
+          "cost": {
+            "title": "Cost",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "estimated_requests": {
+            "default": 0,
+            "title": "Estimated Requests",
+            "type": "integer"
+          },
+          "own_keys": {
+            "$ref": "#/components/schemas/UsageSummaryResponse"
+          },
+          "requests": {
+            "title": "Requests",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          },
+          "window_seconds": {
+            "title": "Window Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "window_seconds",
+          "requests",
+          "total_tokens",
+          "cost",
+          "currency",
+          "estimated_requests",
+          "own_keys"
+        ],
+        "title": "CallerUsageResponse",
+        "type": "object"
+      },
       "CapabilityFlags": {
         "description": "The two ADR 0096 capabilities, as one person effectively holds them.\n\n``code_agents``: the /code panel and the machine links that serve it.\n``api_keys``: minting and using ``gwk_`` keys. Computed from the folded\ndeployment setting and the person's memberships — see\n``gateway.capabilities``.",
         "properties": {
           "api_keys": {
             "title": "Api Keys",
+            "type": "boolean"
+          },
+          "byok": {
+            "default": false,
+            "title": "Byok",
             "type": "boolean"
           },
           "code_agents": {
@@ -1318,7 +1597,8 @@
         "required": [
           "code_agents",
           "api_keys",
-          "local_connectors"
+          "local_connectors",
+          "byok"
         ],
         "title": "CapabilityFlags",
         "type": "object"
@@ -2423,6 +2703,11 @@
             "title": "Api Keys Allowed",
             "type": "boolean"
           },
+          "byok_allowed": {
+            "default": false,
+            "title": "Byok Allowed",
+            "type": "boolean"
+          },
           "code_agents_allowed": {
             "default": false,
             "title": "Code Agents Allowed",
@@ -2493,6 +2778,7 @@
           "code_agents_allowed",
           "api_keys_allowed",
           "local_connectors_allowed",
+          "byok_allowed",
           "member_count",
           "models",
           "aliases",
@@ -2508,7 +2794,8 @@
             "enum": [
               "code_agents",
               "api_keys",
-              "local_connectors"
+              "local_connectors",
+              "byok"
             ],
             "title": "Capability",
             "type": "string"
@@ -2645,6 +2932,17 @@
               }
             ],
             "title": "Api Keys Allowed"
+          },
+          "byok_allowed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Byok Allowed"
           },
           "code_agents_allowed": {
             "anyOf": [
@@ -4179,6 +4477,11 @@
       "ModelCard": {
         "description": "One entry of ``GET /v1/models``, in OpenAI's shape.",
         "properties": {
+          "byok": {
+            "default": false,
+            "title": "Byok",
+            "type": "boolean"
+          },
           "context_window": {
             "anyOf": [
               {
@@ -4299,7 +4602,8 @@
           "output_modalities",
           "supported_features",
           "kind",
-          "local"
+          "local",
+          "byok"
         ],
         "title": "ModelCard",
         "type": "object"
@@ -5057,6 +5361,16 @@
             "title": "Auto Provision",
             "type": "boolean"
           },
+          "byok_mode": {
+            "default": "off",
+            "title": "Byok Mode",
+            "type": "string"
+          },
+          "byok_private_networks": {
+            "default": false,
+            "title": "Byok Private Networks",
+            "type": "boolean"
+          },
           "code_agents_mode": {
             "default": "on",
             "title": "Code Agents Mode",
@@ -5140,6 +5454,8 @@
           "code_agents_mode",
           "api_keys_mode",
           "local_connectors_mode",
+          "byok_mode",
+          "byok_private_networks",
           "source",
           "sources",
           "configured",
@@ -5178,6 +5494,34 @@
               }
             ],
             "title": "Auto Provision"
+          },
+          "byok_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "on",
+                  "off",
+                  "everyone",
+                  "groups"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Byok Mode"
+          },
+          "byok_private_networks": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Byok Private Networks"
           },
           "code_agents_mode": {
             "anyOf": [
@@ -5396,6 +5740,74 @@
           "offset"
         ],
         "title": "Page[ApiKeyResponse]",
+        "type": "object"
+      },
+      "Page_ByokModelResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ByokModelResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[ByokModelResponse]",
+        "type": "object"
+      },
+      "Page_ByokProviderResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ByokProviderResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[ByokProviderResponse]",
         "type": "object"
       },
       "Page_GroupAdminResponse_": {
@@ -6870,7 +7282,7 @@
             "type": "array"
           },
           "usage": {
-            "$ref": "#/components/schemas/UsageSummaryResponse"
+            "$ref": "#/components/schemas/CallerUsageResponse"
           }
         },
         "required": [
@@ -9241,6 +9653,17 @@
             ],
             "title": "Bundled Login"
           },
+          "byok_allowed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Byok Allowed"
+          },
           "code_agents_allowed": {
             "anyOf": [
               {
@@ -9410,6 +9833,7 @@
           "code_agents_allowed",
           "api_keys_allowed",
           "local_connectors_allowed",
+          "byok_allowed",
           "membership_source",
           "default_billing_group",
           "active_key_count",
@@ -10206,6 +10630,375 @@
         "summary": "List Admin Audit",
         "tags": [
           "admin-audit"
+        ]
+      }
+    },
+    "/api/admin/byok/models": {
+      "get": {
+        "description": "Every user's private models; ``q`` matches the owner's email or name, or the model's.",
+        "operationId": "list_private_models_api_admin_byok_models_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "owner_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Owner Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "provider_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider Id"
+            }
+          },
+          {
+            "description": "Rows to return, at most 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Rows to return, at most 200.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Rows to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Rows to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ByokModelResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Private Models",
+        "tags": [
+          "admin-byok"
+        ]
+      }
+    },
+    "/api/admin/byok/models/{model_id}/disable": {
+      "post": {
+        "description": "Hold a user's private model: unusable until released, and the owner cannot undo it.",
+        "operationId": "disable_private_model_api_admin_byok_models__model_id__disable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ByokModelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Disable Private Model",
+        "tags": [
+          "admin-byok"
+        ]
+      }
+    },
+    "/api/admin/byok/models/{model_id}/enable": {
+      "post": {
+        "description": "Release an administrator's hold on a private model.",
+        "operationId": "enable_private_model_api_admin_byok_models__model_id__enable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ByokModelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enable Private Model",
+        "tags": [
+          "admin-byok"
+        ]
+      }
+    },
+    "/api/admin/byok/providers": {
+      "get": {
+        "description": "Every user's private providers; ``q`` matches the owner or the provider.",
+        "operationId": "list_private_providers_api_admin_byok_providers_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "owner_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Owner Id"
+            }
+          },
+          {
+            "description": "Rows to return, at most 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Rows to return, at most 200.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Rows to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Rows to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ByokProviderResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Private Providers",
+        "tags": [
+          "admin-byok"
+        ]
+      }
+    },
+    "/api/admin/byok/providers/{provider_id}/disable": {
+      "post": {
+        "description": "Hold a user's private provider: unusable until released, and the owner cannot undo it.",
+        "operationId": "disable_private_provider_api_admin_byok_providers__provider_id__disable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Provider Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ByokProviderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Disable Private Provider",
+        "tags": [
+          "admin-byok"
+        ]
+      }
+    },
+    "/api/admin/byok/providers/{provider_id}/enable": {
+      "post": {
+        "description": "Release an administrator's hold on a private provider.",
+        "operationId": "enable_private_provider_api_admin_byok_providers__provider_id__enable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Provider Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ByokProviderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enable Private Provider",
+        "tags": [
+          "admin-byok"
         ]
       }
     },
@@ -12751,7 +13544,8 @@
                   "enum": [
                     "code_agents",
                     "api_keys",
-                    "local_connectors"
+                    "local_connectors",
+                    "byok"
                   ],
                   "type": "string"
                 },
@@ -12825,6 +13619,22 @@
               ],
               "title": "Local Connectors Mode"
             }
+          },
+          {
+            "in": "query",
+            "name": "byok_mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Byok Mode"
+            }
           }
         ],
         "responses": {
@@ -12883,7 +13693,7 @@
     },
     "/api/admin/provider-plugins": {
       "get": {
-        "description": "The provider types this deployment can offer.\n\nRead from the registry, so installing a plugin makes it selectable without a\nconsole release. Not paginated: this is a handful of installed packages, not\na listing that grows with use.",
+        "description": "The provider types this deployment can offer.\n\nRead from the registry, so installing a plugin makes it selectable without a\nconsole release. Not paginated: this is a handful of installed packages, not\na listing that grows with use. A member adding their own provider is offered\nonly the language-model types (never a search backend or this deployment's\nextractor).",
         "operationId": "list_provider_plugins_api_admin_provider_plugins_get",
         "responses": {
           "200": {
@@ -15534,9 +16344,919 @@
         ]
       }
     },
+    "/api/me/models": {
+      "get": {
+        "description": "Every model, including inactive ones — an operator needs to see those.\n\n``q`` matches the model's own name or the upstream one it maps to. It is a\nsubstring match, deliberately: an operator looking for a model half-knows\nits name, and a prefix match on a catalogue full of\n``meta-llama/Llama-3.3-70B-Instruct`` finds nothing.\n\n**Aliases are not here** (ADR 0101, decision 8): they have no provider, no\nupstream model and no price, so every column this screen renders would be\neither empty or wrong, and an operator editing \"the model\" needs the row\nthat actually reaches a provider. They have their own tab.",
+        "operationId": "list_models_api_me_models_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_inactive",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Include Inactive",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "provider_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider Id"
+            }
+          },
+          {
+            "description": "Rows to return, at most 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Rows to return, at most 200.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Rows to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Rows to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ModelAdminResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Models",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      },
+      "post": {
+        "description": "Add a model to the catalogue.\n\nIt is invisible to callers until a group is granted access or the model is\nmarked public (ADR 0045): absence of a ``group_model_access`` row and a\n``false`` ``is_public`` mean no access, with no other allow-all.",
+        "operationId": "create_model_api_me_models_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Model",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      }
+    },
+    "/api/me/models/discover": {
+      "get": {
+        "description": "Compare the provider's catalogue with ours.\n\nNothing is created. The catalogue stays an allowlist an administrator curates\n— auto-adopting whatever a provider publishes would let their release notes\nsilently change what users can spend money on. What this removes is the\ntedium of finding out *what* is on offer.\n\nReports drift in both directions. Models we serve that the provider no longer\noffers are the more dangerous half: they keep appearing in ``/v1/models`` and\nfail only when someone calls them.\n\n``fill_missing_prices`` consults the community file for models the provider\nlisted and left unpriced (ADR 0053). Every row says which of the two\nsupplied its figures, because an operator adopting them is entitled to know\nthat before clicking Import, not afterwards.",
+        "operationId": "discover_models_api_me_models_discover_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Provider Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "url",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Url"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fill_missing_prices",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Fill Missing Prices",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tag"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogueDiscoveryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discover Models",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      }
+    },
+    "/api/me/models/import": {
+      "post": {
+        "description": "Adopt selected upstream models, with their published prices.\n\nExplicitly enumerated, never \"import everything\": the allowlist decision stays\nwith a person, and this only removes the retyping.\n\n**Access is not granted.** A newly imported model is invisible until a group is\ngranted it, because absence of a ``group_model_access`` row means no access and\nthat invariant is worth more than one saved click.\n\nA model priced in another currency is **skipped entirely** rather than created\nwithout a price. An unpriced model serves happily and records a cost of zero,\nwhich is a quiet way to give away money — with one exception the meter, not\nthe catalogue, decides: a **search tier** imports without a price, because\nits meter counts requests and no rate multiplies it. What bounds it is the\nrequest ceiling, granted per group like any other access.\n\nA model the provider listed **unpriced** can still be imported when the\nrequest carries a price for it (`manual_price`): the operator supplies the\nfigure the catalogue withholds, validated against the kind the same way the\nmodel page's price form is, and recorded in the same append-only history\nwith the source that says a person typed it. The catalogue's own figure —\nthe provider's, or a community fill — always outranks a hand-typed one, and\nthe result says so when a manual price is set aside, because a price that\nsilently differed from the one reviewed is the failure this screen exists to\nprevent.\n\n``fill_missing_prices`` must match what the operator was shown: the price\nwritten here is stamped with who supplied it (`catalogue` or `community`),\nso the append-only history answers \"where did this figure come from\"\nwithout needing to remember which checkbox was ticked (ADR 0053).",
+        "operationId": "import_models_api_me_models_import_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Provider Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "url",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Url"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fill_missing_prices",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Fill Missing Prices",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tag"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelImportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Models",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      }
+    },
+    "/api/me/models/tags": {
+      "get": {
+        "description": "The tags this provider slices its catalogue by, for a dropdown.\n\nAsk the counterparty live rather than compile a list here: the vocabulary\nis theirs, and whoever compiles owns the staleness — the whole reason the\ndiscovery dialog's tag field is per-provider at all. The fetch is an\n``everything`` request named by the plugin (``catalogue_tag_all``), because\nthe spelling of \"everything\" is measured counterparty knowledge: Cortecs\nanswers ``tag=all`` with its whole catalogue and ``tag=All`` with an empty\none, so a guessed spelling would report a vocabulary of none.\n\n``supported: false`` for a provider whose plugin names no such fetch. The\nconsole keeps free text for those — a dropdown of one default option would\nbe a worse version of the box it replaced.",
+        "operationId": "list_catalogue_tags_api_me_models_tags_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Provider Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogueTagsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Catalogue Tags",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      }
+    },
+    "/api/me/models/{model_id}": {
+      "delete": {
+        "description": "Remove a model from the catalogue outright, not merely deactivate it.\n\nDeactivation is the tool for \"out of service\"; it still shows the row, which\nis exactly what an operator pruning a long catalogue import wants gone.\nDelete is safe against the ledger by construction, not by caution:\n``usage_records.model_id`` is ON DELETE SET NULL and every row carries the\ndenormalised ``model_name``, so historical spend stays readable and its\nattribution to users and groups is untouched. Prices and access grants die\nwith the model — they are meaningless without it.",
+        "operationId": "delete_model_api_me_models__model_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Model",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      },
+      "get": {
+        "description": "One model, with its grants and current price.\n\nThe listing carries the same shape, so this exists for the one thing a\nlisting cannot serve: a deep link. The console's model page is addressable —\na bookmark, a reload, a link pasted into a ticket — and searching the\ncatalogue by name to rebuild a page whose id is right there would be both\nslower and wrong, because the name is editable and the id is not.",
+        "operationId": "get_model_api_me_models__model_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Model",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      },
+      "patch": {
+        "description": "Change a model in place. Deactivate here rather than deleting.",
+        "operationId": "update_model_api_me_models__model_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Model",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      }
+    },
+    "/api/me/models/{model_id}/prices": {
+      "get": {
+        "description": "Price history, newest first. Nothing here is ever mutated.\n\nSliced in Python rather than in SQL: the rows are already loaded with the\nmodel, and a price history is short. The shape matches the other listings\nso a client does not have to care which.",
+        "operationId": "list_prices_api_me_models__model_id__prices_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Model Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Rows to return, at most 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Rows to return, at most 200.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Rows to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Rows to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PriceResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Prices",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      },
+      "post": {
+        "description": "Append a price.\n\nEffective-dated, so a future date schedules a change and a past date cannot\nalter what already-recorded requests cost.",
+        "operationId": "create_price_api_me_models__model_id__prices_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PriceCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Price",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      }
+    },
+    "/api/me/provider-catalogue": {
+      "get": {
+        "description": "The provider catalogue as read at startup, each field with its origin.\n\nRead-only by design: the catalogue is files, edited where they live, and\napplied on restart. Not paginated: a few dozen entries, never a listing that\ngrows with use.",
+        "operationId": "list_provider_catalogue_api_me_provider_catalogue_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CatalogueEntryResponse"
+                  },
+                  "title": "Response List Provider Catalogue Api Me Provider Catalogue Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Provider Catalogue",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      }
+    },
+    "/api/me/provider-plugins": {
+      "get": {
+        "description": "The provider types this deployment can offer.\n\nRead from the registry, so installing a plugin makes it selectable without a\nconsole release. Not paginated: this is a handful of installed packages, not\na listing that grows with use. A member adding their own provider is offered\nonly the language-model types (never a search backend or this deployment's\nextractor).",
+        "operationId": "list_provider_plugins_api_me_provider_plugins_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderPluginResponse"
+                  },
+                  "title": "Response List Provider Plugins Api Me Provider Plugins Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Provider Plugins",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      }
+    },
+    "/api/me/providers": {
+      "get": {
+        "operationId": "list_providers_api_me_providers_get",
+        "parameters": [
+          {
+            "description": "Rows to return, at most 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Rows to return, at most 200.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Rows to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Rows to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ProviderResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Providers",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      },
+      "post": {
+        "description": "Add an inference endpoint.\n\nNo model points at it yet, so creating one changes nothing observable until\na model is created against it or repointed.\n\nThe endpoint may be omitted when the chosen plugin knows it (Cortecs does);\nan operator re-typing a URL the plugin already knows is a typo with extra\nsteps. A type with no default — the generic OpenAI-compatible one, whose\nendpoints range from a cloud API to a laptop's Ollama — still requires one.\n\nA ``catalogue_id`` names the catalogue entry this provider is an instance of\n(backlog P4). What the request leaves out (plugin, endpoint, prefix) is taken\nfrom the entry; what it states wins. The entry is linked, not copied.",
+        "operationId": "create_provider_api_me_providers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Provider",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      }
+    },
+    "/api/me/providers/{provider_id}": {
+      "delete": {
+        "description": "Remove a provider.\n\nFor an inference provider, refused while any model points at it: the\ndatabase would refuse anyway — the foreign key is ON DELETE RESTRICT — but\na 409 naming the count is a far better answer than an integrity error, and\ncascading would leave historical spend attributed to a model that can no\nlonger be explained.\n\nFor a **search backend** the answer is the opposite, deliberately (ADR\n0071): a backend and its tiers are one concept on the search screen, and a\nhalf-deleted backend — tiers orphaned, policies pointing at a row that no\nlonger resolves — is worse than an atomic delete. So in one transaction the\ntiers die with the backend (prices and access grants among them, exactly as\n``delete_model`` does it; the usage ledger is conspicuously untouched),\ngroups whose unified-search policy named one of those tiers have the policy\ncleared — named in the response, so the console can say so rather than\nletting the administrator discover it as a 404 later — and the provider row\ngoes last. Historical spend stays readable the way a model delete leaves\nit: ``usage_records.model_id`` is ON DELETE SET NULL and every row carries\nthe denormalised name.",
+        "operationId": "delete_provider_api_me_providers__provider_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Provider Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchBackendDeleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Provider",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      },
+      "patch": {
+        "description": "Change a provider.\n\n``name`` is editable, which it was not. The argument against was that\npeople refer to a provider by name and a rename makes past mentions wrong —\ntrue, and outweighed by the case that actually happens: it was mistyped\nwhen it was created. There is no way out of that otherwise, because a\nprovider serving any model refuses to be deleted, so the typo is permanent\nand appears in the console and in ``owned_by`` on every ``/v1/models`` card\nit serves.\n\nNothing references the name as a key: models point at the row by id, and\n``usage_records`` stores the provider the *upstream* reported, not this\nname, so renaming leaves historical spend intact and correctly attributed.\n\nThe three-way ``api_key`` convention matters here — omitted keeps the stored\ncredential, a value replaces it, an empty string clears it. A two-way\noptional field cannot express \"remove the key\".",
+        "operationId": "update_provider_api_me_providers__provider_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Provider Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Provider",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      }
+    },
+    "/api/me/providers/{provider_id}/test": {
+      "post": {
+        "description": "Ask the provider's own plugin to check the row, and report what it found.\n\nRun against the row **as stored**, credential included, so it exercises\nexactly what a real request would send. A wrong base URL or a stale key\nshould be found when it is entered, not by a user's request failing an hour\nlater.\n\nWhat \"check the row\" means is the plugin's to decide (``ProviderPlugin.probe``,\n``plugins/base.py``): ``GET /models`` for an OpenAI-compatible counterparty,\nbut not for one that never serves such a route — the local extractor and a\nsearch backend both answer that with a 404 that reads as \"the provider is\ndown\" for one working exactly as documented.\n\nNever raises for a provider-side failure: \"it did not work, and here is why\"\nis the useful answer, and an exception would make the console show a generic\nerror instead of the detail.",
+        "operationId": "test_provider_api_me_providers__provider_id__test_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Provider Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderTestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Provider",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      }
+    },
     "/api/me/reports/usage": {
       "get": {
-        "description": "The caller's own spend over a calendar period.\n\nThe same report the administrator surface produces, pinned to this user — one\nimplementation, so the number a user sees for themselves is the number their\ngroup lead sees for them. Everyone can see their own spend; nobody sees\nanother's from here.\n\n``group_by=user`` is not offered: with the filter pinned it could only ever\nreturn a single row, which invites the misreading that it shows other people.",
+        "description": "The caller's own spend over a calendar period.\n\nThe same report the administrator surface produces, pinned to this user — one\nimplementation, so the number a user sees for themselves is the number their\ngroup lead sees for them. Everyone can see their own spend; nobody sees\nanother's from here.\n\n``group_by=user`` is not offered: with the filter pinned it could only ever\nreturn a single row, which invites the misreading that it shows other people.\n\n``own_keys=true`` reports **only** the usage on the caller's own providers\nand keys (bring your own key); by default that usage is left out, because\nit is not what their quotas and groups are charged. Never both in one\nfigure.",
         "operationId": "my_usage_report_api_me_reports_usage_get",
         "parameters": [
           {
@@ -15620,6 +17340,16 @@
                 }
               ],
               "title": "Split By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "own_keys",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Own Keys",
+              "type": "boolean"
             }
           }
         ],
@@ -15866,6 +17596,16 @@
             }
           },
           {
+            "in": "query",
+            "name": "own_keys",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Own Keys",
+              "type": "boolean"
+            }
+          },
+          {
             "description": "Rows to return, at most 200.",
             "in": "query",
             "name": "limit",
@@ -16017,6 +17757,16 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "in": "query",
+            "name": "own_keys",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Own Keys",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -16067,7 +17817,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UsageSummaryResponse"
+                  "$ref": "#/components/schemas/CallerUsageResponse"
                 }
               }
             },

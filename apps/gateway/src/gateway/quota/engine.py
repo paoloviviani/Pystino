@@ -631,6 +631,8 @@ class QuotaEngine:
                         UsageRecord.created_at >= since,
                         UsageRecord.status != UsageStatus.IN_PROGRESS,
                         UsageRecord.user_id.is_not(None),
+                        # Never BYOK: not a quota counter holder's usage.
+                        UsageRecord.byok.is_(False),
                     )
                     .distinct()
                 )
@@ -661,6 +663,8 @@ class QuotaEngine:
                         UsageRecord.created_at >= since,
                         UsageRecord.status != UsageStatus.IN_PROGRESS,
                         UsageRecord.user_id.is_not(None),
+                        # Never BYOK: not a quota counter holder's usage.
+                        UsageRecord.byok.is_(False),
                     )
                     .distinct()
                 )

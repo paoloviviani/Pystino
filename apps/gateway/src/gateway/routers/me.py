@@ -46,6 +46,7 @@ from gateway.schemas import (
     ApiKeyCreatedResponse,
     ApiKeyCreateRequest,
     ApiKeyResponse,
+    CallerUsageResponse,
     GroupSummary,
     MeResponse,
     MyLimitResponse,
@@ -251,13 +252,13 @@ async def delete_key(key_id: uuid.UUID, user: ManagementUserDep, session: Sessio
     await session.commit()
 
 
-@router.get("/me/usage", response_model=UsageSummaryResponse)
+@router.get("/me/usage", response_model=CallerUsageResponse)
 async def my_usage(
     user: ManagementUserDep,
     session: SessionDep,
     settings: SettingsDep,
     window_seconds: int = 86_400,
-) -> UsageSummaryResponse:
+) -> CallerUsageResponse:
     if not 60 <= window_seconds <= 366 * 86_400:
         raise BadRequestError("window_seconds must be between 60 and one year.")
 
@@ -276,6 +277,7 @@ async def my_usage_report(
     end: datetime | None = None,
     group_by: MyGroupBy = "model",
     split_by: MySplitBy | None = None,
+    own_keys: bool = False,
 ) -> UsageReport:
     """The caller's own spend over a calendar period.
 
@@ -286,6 +288,11 @@ async def my_usage_report(
 
     ``group_by=user`` is not offered: with the filter pinned it could only ever
     return a single row, which invites the misreading that it shows other people.
+
+    ``own_keys=true`` reports **only** the usage on the caller's own providers
+    and keys (bring your own key); by default that usage is left out, because
+    it is not what their quotas and groups are charged. Never both in one
+    figure.
     """
     return await build_report(
         session,
@@ -294,6 +301,7 @@ async def my_usage_report(
             group_by=GroupBy(group_by),
             split_by=GroupBy(split_by) if split_by else None,
             user_id=user.id,
+            own_keys=own_keys,
         ),
         currency=settings.billing_currency,
         timezone=settings.billing_timezone,
@@ -333,6 +341,7 @@ async def my_requests(
     group_id: uuid.UUID | None = None,
     model: str | None = None,
     status: UsageStatus | None = None,
+    own_keys: bool = False,
 ) -> Page[RequestLogRow]:
     """The caller's own requests, newest first, with no prompt or completion text.
 
@@ -347,6 +356,7 @@ async def my_requests(
             group_id=group_id,
             model=model,
             status=status,
+            own_keys=own_keys,
         ),
         page,
     )
@@ -363,6 +373,7 @@ async def my_requests_csv(
     group_id: uuid.UUID | None = None,
     model: str | None = None,
     status: UsageStatus | None = None,
+    own_keys: bool = False,
 ) -> Response:
     f = RequestLogFilter(
         period=resolve_period(period, start, end, settings.billing_timezone),
@@ -370,6 +381,7 @@ async def my_requests_csv(
         group_id=group_id,
         model=model,
         status=status,
+        own_keys=own_keys,
     )
     return Response(
         content=await requests_to_csv(session, f),

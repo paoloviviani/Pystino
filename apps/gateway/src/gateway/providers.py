@@ -114,6 +114,12 @@ class ProviderRegistry:
             return self._build_client(settings)
         return build_guarded_client(settings, allow_private=self._private_networks_allowed)
 
+    async def validate_private_url(self, url: str) -> None:
+        """Raise :class:`NetworkGuardError` unless a private provider may use ``url``."""
+        await check_url(
+            url, resolver=self._resolver, allow_private=self._private_networks_allowed()
+        )
+
     async def guard(self, provider: Provider) -> None:
         """Refuse a private provider whose host the network guard does not allow.
 
@@ -124,12 +130,12 @@ class ProviderRegistry:
         """
         if provider.owner_id is None:
             return
-        try:
-            await check_url(
-                provider.base_url,
-                resolver=self._resolver,
-                allow_private=self._private_networks_allowed(),
+        if provider.admin_disabled:
+            raise ProviderConfigurationError(
+                f"provider {provider.name!r} has been disabled by an administrator."
             )
+        try:
+            await self.validate_private_url(provider.base_url)
         except NetworkGuardError as exc:
             raise ProviderConfigurationError(f"provider {provider.name!r}: {exc}") from exc
 
