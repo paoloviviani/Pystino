@@ -16,7 +16,13 @@ import { AdminByok } from "./AdminByok";
  */
 
 const OWNER = { id: "u1", email: "ada@example.org", name: "Ada Lovelace" };
-const USAGE = { requests: 7, total_tokens: 1234, cost: "0.5", last_used_at: "2026-08-14T10:00:00Z" };
+const USAGE = {
+  requests: 7,
+  total_tokens: 1234,
+  cost: "0.5",
+  currency: "USD",
+  last_used_at: "2026-08-14T10:00:00Z",
+};
 
 function provider(overrides: Partial<ByokProvider> = {}): ByokProvider {
   return {
@@ -96,6 +102,23 @@ describe("AdminByok", () => {
     expect(screen.queryByText(/api key/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/hint/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/sk-/)).not.toBeInTheDocument();
+  });
+
+  it("shows cost in its own currency, and no sum when the currencies are mixed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/admin/byok/providers")) {
+          return jsonResponse([provider({ usage: { ...USAGE, cost: null, currency: null } })]);
+        }
+        if (url.includes("/api/admin/byok/models")) return jsonResponse([model()]);
+        return jsonResponse([]);
+      }),
+    );
+    renderPage();
+    expect(await screen.findByText("Costs in several currencies")).toBeInTheDocument();
+    expect(screen.getAllByText(/\$/).length).toBeGreaterThan(0);
   });
 
   it("holds a provider after a confirmation, through the disable route", async () => {

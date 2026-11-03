@@ -1354,8 +1354,26 @@
       "ByokUsage": {
         "properties": {
           "cost": {
-            "title": "Cost",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
           },
           "last_used_at": {
             "anyOf": [
@@ -1382,6 +1400,7 @@
           "requests",
           "total_tokens",
           "cost",
+          "currency",
           "last_used_at"
         ],
         "title": "ByokUsage",

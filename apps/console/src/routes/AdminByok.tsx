@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Dialog, Input, Notice, Pagination, Spinner, Table } from "@llmp/ui";
+import { Badge, Button, Card, Dialog, Input, Money, Notice, Pagination, Spinner, Table } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
 
@@ -53,10 +53,20 @@ function Usage({ row }: { row: Row }) {
       <div className={`${MUTED} ${NOWRAP}`}>
         {m["admin_byok.usage.tokens"]({ count: formatNumber(row.usage.total_tokens) })}
       </div>
-      {/* The raw decimal, in the currency of the owner's own price rows:
-          the API sends no currency here, and a symbol of our choosing would
-          be a guess about someone else's money. */}
-      <div className={`${MUTED} ${NOWRAP}`}>{m["admin_byok.usage.cost"]({ cost: row.usage.cost })}</div>
+      {/* In the currency of the owner's own price rows; a sum across rows
+          priced in different currencies would mean nothing, so the API sends
+          none and the cell says so. */}
+      <div className={`${MUTED} ${NOWRAP}`}>
+        {row.usage.cost === null || row.usage.currency === null ? (
+          row.usage.cost === null ? (
+            m["admin_byok.usage.cost_mixed"]()
+          ) : (
+            m["admin_byok.usage.cost_unpriced"]()
+          )
+        ) : (
+          <Money amount={row.usage.cost} currency={row.usage.currency} />
+        )}
+      </div>
     </>
   );
 }

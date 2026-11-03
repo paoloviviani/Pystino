@@ -43,7 +43,11 @@ router = APIRouter(prefix="/api/admin/byok", tags=["admin-byok"])
 class ByokUsage(ResponseModel):
     requests: int
     total_tokens: int
-    cost: Money
+    #: The sum of the rows' own costs, meaningful only in one currency: null when
+    #: the rows were priced in more than one (each private price row names its own).
+    cost: Money | None
+    #: That one currency, or null with no priced usage or with mixed currencies.
+    currency: str | None
     last_used_at: datetime | None
 
 
@@ -106,11 +110,16 @@ def _like(text: str) -> str:
 
 def _usage(row: Any | None) -> ByokUsage:
     if row is None:
-        return ByokUsage(requests=0, total_tokens=0, cost=Decimal(0), last_used_at=None)
+        return ByokUsage(
+            requests=0, total_tokens=0, cost=Decimal(0), currency=None, last_used_at=None
+        )
+    low, high = row[4], row[5]
+    mixed = low is not None and high is not None and low != high
     return ByokUsage(
         requests=int(row[0] or 0),
         total_tokens=int(row[1] or 0),
-        cost=Decimal(str(row[2] or 0)),
+        cost=None if mixed else Decimal(str(row[2] or 0)),
+        currency=None if mixed else low,
         last_used_at=row[3],
     )
 
@@ -121,6 +130,8 @@ def _usage_columns() -> tuple[Any, ...]:
         func.coalesce(func.sum(UsageRecord.total_tokens), 0),
         func.coalesce(func.sum(UsageRecord.cost), 0),
         func.max(UsageRecord.created_at),
+        func.min(UsageRecord.cost_currency),
+        func.max(UsageRecord.cost_currency),
     )
 
 
