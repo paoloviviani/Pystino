@@ -102,8 +102,11 @@ def _servable() -> Select[tuple[ModelDef]]:
     #
     # The owner match is the re-check of what the write path already enforces:
     # a deployment model never rides a private provider and a private model
-    # never rides anyone else's. `IS NOT DISTINCT FROM` because both sides are
-    # NULL for every deployment row.
+    # never rides anyone else's. Spelled out rather than with `IS NOT DISTINCT
+    # FROM` (both sides are NULL for every deployment row): that spelling is
+    # fine on both dialects, but `test_providers.py` asserts the compiled
+    # statement contains no DISTINCT at all, which is the property that
+    # matters here and is cheaper to keep than to explain away.
     return (
         select(ModelDef)
         .outerjoin(Provider, Provider.id == ModelDef.provider_id)
@@ -116,7 +119,10 @@ def _servable() -> Select[tuple[ModelDef]]:
                     ModelDef.is_alias.is_(False),
                     Provider.is_active.is_(True),
                     Provider.admin_disabled.is_(False),
-                    Provider.owner_id.is_not_distinct_from(ModelDef.owner_id),
+                    or_(
+                        and_(Provider.owner_id.is_(None), ModelDef.owner_id.is_(None)),
+                        Provider.owner_id == ModelDef.owner_id,
+                    ),
                 ),
             ),
         )
