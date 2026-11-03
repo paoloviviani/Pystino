@@ -16,6 +16,7 @@ import { downloadCsv } from "../lib/api";
 import { formatDateTime, formatNumber } from "../lib/format";
 import { FILTERS, MUTED, NOWRAP, PAGE } from "../lib/layout";
 import { recentPeriods } from "../lib/periods";
+import { useMe } from "../lib/queries";
 import {
   REQUEST_STATUSES,
   type RequestLogRow,
@@ -50,6 +51,10 @@ export function RequestLogView({ scope }: { scope: RequestLogScope }) {
   const [groupId, setGroupId] = useState("");
   const [model, setModel] = useState("");
   const [status, setStatus] = useState("");
+  const [ownKeys, setOwnKeys] = useState(false);
+  const me = useMe();
+  // Only a user who can have own-key usage is offered the switch.
+  const canOwnKeys = !admin && me.data?.capabilities?.byok === true;
   const [offset, setOffset] = useState(0);
 
   // A changed filter starts again from the first page: an operator on page
@@ -65,6 +70,7 @@ export function RequestLogView({ scope }: { scope: RequestLogScope }) {
     groupId: groupId || undefined,
     model: model || undefined,
     status: status || undefined,
+    ownKeys: canOwnKeys && ownKeys ? true : undefined,
     limit: PAGE_SIZE,
     offset,
   };
@@ -244,6 +250,23 @@ export function RequestLogView({ scope }: { scope: RequestLogScope }) {
             ))}
           </Select>
         </div>
+        {canOwnKeys && (
+          <label className="mt-4 flex items-start gap-2 text-body">
+            <input
+              type="checkbox"
+              checked={ownKeys}
+              onChange={(event) => {
+                setOwnKeys(event.target.checked);
+                setOffset(0);
+              }}
+              className="mt-1 accent-accent"
+            />
+            <span>
+              {m["request_log.own_keys.label"]()}
+              <span className={`block ${MUTED}`}>{m["request_log.own_keys.hint"]()}</span>
+            </span>
+          </label>
+        )}
       </Card>
 
       <Card flush>

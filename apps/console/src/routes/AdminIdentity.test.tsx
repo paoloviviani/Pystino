@@ -28,6 +28,8 @@ function policyFixture(overrides: Partial<OidcPolicy> = {}): OidcPolicy {
     code_agents_mode: "on",
     api_keys_mode: "on",
     local_connectors_mode: "on",
+    byok_mode: "off",
+    byok_private_networks: false,
     source: "environment",
     sources: {},
     configured: null,

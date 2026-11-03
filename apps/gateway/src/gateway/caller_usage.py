@@ -28,7 +28,7 @@ from gateway.config import Settings
 from gateway.models import Group, LimitRule, LimitScope, UsageRecord, UsageSource, UsageStatus
 from gateway.quota import QuotaEngine, QuotaSubject
 from gateway.quota.notifications import thresholds_for_user
-from gateway.schemas import MyLimitResponse, UsageSummaryResponse
+from gateway.schemas import CallerUsageResponse, MyLimitResponse, UsageSummaryResponse
 from gateway.types import utcnow
 
 
@@ -110,33 +110,55 @@ async def caller_usage(
     user_id: uuid.UUID,
     settings: Settings,
     window_seconds: int = 86_400,
-) -> UsageSummaryResponse:
-    """This caller's own rolling spend, over the trailing ``window_seconds``."""
-    since = utcnow() - timedelta(seconds=window_seconds)
-    stmt = select(
-        func.count(UsageRecord.id),
-        func.coalesce(func.sum(UsageRecord.total_tokens), 0),
-        func.coalesce(func.sum(UsageRecord.cost), 0),
-        # Surfaced so a reader can see how much of this figure is inferred rather
-        # than measured.
-        func.coalesce(
-            func.sum(case((UsageRecord.usage_source == UsageSource.ESTIMATED, 1), else_=0)),
-            0,
-        ),
-    ).where(
-        UsageRecord.user_id == user_id,
-        UsageRecord.created_at >= since,
-        UsageRecord.status != UsageStatus.IN_PROGRESS,
-    )
-    requests, tokens, cost, estimated = (await session.execute(stmt)).one()
+) -> CallerUsageResponse:
+    """This caller's own rolling spend, over the trailing ``window_seconds``.
 
-    return UsageSummaryResponse(
+    The top-level figures are what counts against the caller's quotas and what
+    their groups are charged: usage on a deployment's providers. Usage on their
+    **own** keys (BYOK) is recorded for their information only, never counted
+    by a quota, and is reported beside it as ``own_keys`` so no existing field
+    changes meaning.
+    """
+    since = utcnow() - timedelta(seconds=window_seconds)
+    stmt = (
+        select(
+            UsageRecord.byok,
+            func.count(UsageRecord.id),
+            func.coalesce(func.sum(UsageRecord.total_tokens), 0),
+            func.coalesce(func.sum(UsageRecord.cost), 0),
+            # Surfaced so a reader can see how much of this figure is inferred
+            # rather than measured.
+            func.coalesce(
+                func.sum(case((UsageRecord.usage_source == UsageSource.ESTIMATED, 1), else_=0)),
+                0,
+            ),
+        )
+        .where(
+            UsageRecord.user_id == user_id,
+            UsageRecord.created_at >= since,
+            UsageRecord.status != UsageStatus.IN_PROGRESS,
+        )
+        .group_by(UsageRecord.byok)
+    )
+    by_flag = {row[0]: row[1:] for row in (await session.execute(stmt)).all()}
+    requests, tokens, cost, estimated = by_flag.get(False, (0, 0, 0, 0))
+    own_requests, own_tokens, own_cost, own_estimated = by_flag.get(True, (0, 0, 0, 0))
+
+    return CallerUsageResponse(
         window_seconds=window_seconds,
         requests=int(requests or 0),
         total_tokens=int(tokens or 0),
         cost=Decimal(str(cost or 0)),
         currency=settings.billing_currency,
         estimated_requests=int(estimated or 0),
+        own_keys=UsageSummaryResponse(
+            window_seconds=window_seconds,
+            requests=int(own_requests or 0),
+            total_tokens=int(own_tokens or 0),
+            cost=Decimal(str(own_cost or 0)),
+            currency=settings.billing_currency,
+            estimated_requests=int(own_estimated or 0),
+        ),
     )
 
 
@@ -164,6 +186,9 @@ async def caller_group_usage(
             UsageRecord.group_id.in_(group_ids),
             UsageRecord.created_at >= since,
             UsageRecord.status != UsageStatus.IN_PROGRESS,
+            # A BYOK row has no group, so this is a belt on the braces: no
+            # group is ever shown a total that includes someone's own key.
+            UsageRecord.byok.is_(False),
         )
         .group_by(UsageRecord.group_id)
     )

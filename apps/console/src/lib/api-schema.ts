@@ -102,6 +102,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/byok/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Private Models
+         * @description Every user's private models; ``q`` matches the owner's email or name, or the model's.
+         */
+        get: operations["list_private_models_api_admin_byok_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/byok/models/{model_id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disable Private Model
+         * @description Hold a user's private model: unusable until released, and the owner cannot undo it.
+         */
+        post: operations["disable_private_model_api_admin_byok_models__model_id__disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/byok/models/{model_id}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enable Private Model
+         * @description Release an administrator's hold on a private model.
+         */
+        post: operations["enable_private_model_api_admin_byok_models__model_id__enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/byok/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Private Providers
+         * @description Every user's private providers; ``q`` matches the owner or the provider.
+         */
+        get: operations["list_private_providers_api_admin_byok_providers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/byok/providers/{provider_id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disable Private Provider
+         * @description Hold a user's private provider: unusable until released, and the owner cannot undo it.
+         */
+        post: operations["disable_private_provider_api_admin_byok_providers__provider_id__disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/byok/providers/{provider_id}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enable Private Provider
+         * @description Release an administrator's hold on a private provider.
+         */
+        post: operations["enable_private_provider_api_admin_byok_providers__provider_id__enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/email": {
         parameters: {
             query?: never;
@@ -1189,7 +1309,9 @@ export interface paths {
          *
          *     Read from the registry, so installing a plugin makes it selectable without a
          *     console release. Not paginated: this is a handful of installed packages, not
-         *     a listing that grows with use.
+         *     a listing that grows with use. A member adding their own provider is offered
+         *     only the language-model types (never a search backend or this deployment's
+         *     extractor).
          */
         get: operations["list_provider_plugins_api_admin_provider_plugins_get"];
         put?: never;
@@ -2226,6 +2348,409 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Models
+         * @description Every model, including inactive ones — an operator needs to see those.
+         *
+         *     ``q`` matches the model's own name or the upstream one it maps to. It is a
+         *     substring match, deliberately: an operator looking for a model half-knows
+         *     its name, and a prefix match on a catalogue full of
+         *     ``meta-llama/Llama-3.3-70B-Instruct`` finds nothing.
+         *
+         *     **Aliases are not here** (ADR 0101, decision 8): they have no provider, no
+         *     upstream model and no price, so every column this screen renders would be
+         *     either empty or wrong, and an operator editing "the model" needs the row
+         *     that actually reaches a provider. They have their own tab.
+         */
+        get: operations["list_models_api_me_models_get"];
+        put?: never;
+        /**
+         * Create Model
+         * @description Add a model to the catalogue.
+         *
+         *     It is invisible to callers until a group is granted access or the model is
+         *     marked public (ADR 0045): absence of a ``group_model_access`` row and a
+         *     ``false`` ``is_public`` mean no access, with no other allow-all.
+         */
+        post: operations["create_model_api_me_models_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/models/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Discover Models
+         * @description Compare the provider's catalogue with ours.
+         *
+         *     Nothing is created. The catalogue stays an allowlist an administrator curates
+         *     — auto-adopting whatever a provider publishes would let their release notes
+         *     silently change what users can spend money on. What this removes is the
+         *     tedium of finding out *what* is on offer.
+         *
+         *     Reports drift in both directions. Models we serve that the provider no longer
+         *     offers are the more dangerous half: they keep appearing in ``/v1/models`` and
+         *     fail only when someone calls them.
+         *
+         *     ``fill_missing_prices`` consults the community file for models the provider
+         *     listed and left unpriced (ADR 0053). Every row says which of the two
+         *     supplied its figures, because an operator adopting them is entitled to know
+         *     that before clicking Import, not afterwards.
+         */
+        get: operations["discover_models_api_me_models_discover_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/models/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Models
+         * @description Adopt selected upstream models, with their published prices.
+         *
+         *     Explicitly enumerated, never "import everything": the allowlist decision stays
+         *     with a person, and this only removes the retyping.
+         *
+         *     **Access is not granted.** A newly imported model is invisible until a group is
+         *     granted it, because absence of a ``group_model_access`` row means no access and
+         *     that invariant is worth more than one saved click.
+         *
+         *     A model priced in another currency is **skipped entirely** rather than created
+         *     without a price. An unpriced model serves happily and records a cost of zero,
+         *     which is a quiet way to give away money — with one exception the meter, not
+         *     the catalogue, decides: a **search tier** imports without a price, because
+         *     its meter counts requests and no rate multiplies it. What bounds it is the
+         *     request ceiling, granted per group like any other access.
+         *
+         *     A model the provider listed **unpriced** can still be imported when the
+         *     request carries a price for it (`manual_price`): the operator supplies the
+         *     figure the catalogue withholds, validated against the kind the same way the
+         *     model page's price form is, and recorded in the same append-only history
+         *     with the source that says a person typed it. The catalogue's own figure —
+         *     the provider's, or a community fill — always outranks a hand-typed one, and
+         *     the result says so when a manual price is set aside, because a price that
+         *     silently differed from the one reviewed is the failure this screen exists to
+         *     prevent.
+         *
+         *     ``fill_missing_prices`` must match what the operator was shown: the price
+         *     written here is stamped with who supplied it (`catalogue` or `community`),
+         *     so the append-only history answers "where did this figure come from"
+         *     without needing to remember which checkbox was ticked (ADR 0053).
+         */
+        post: operations["import_models_api_me_models_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/models/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Catalogue Tags
+         * @description The tags this provider slices its catalogue by, for a dropdown.
+         *
+         *     Ask the counterparty live rather than compile a list here: the vocabulary
+         *     is theirs, and whoever compiles owns the staleness — the whole reason the
+         *     discovery dialog's tag field is per-provider at all. The fetch is an
+         *     ``everything`` request named by the plugin (``catalogue_tag_all``), because
+         *     the spelling of "everything" is measured counterparty knowledge: Cortecs
+         *     answers ``tag=all`` with its whole catalogue and ``tag=All`` with an empty
+         *     one, so a guessed spelling would report a vocabulary of none.
+         *
+         *     ``supported: false`` for a provider whose plugin names no such fetch. The
+         *     console keeps free text for those — a dropdown of one default option would
+         *     be a worse version of the box it replaced.
+         */
+        get: operations["list_catalogue_tags_api_me_models_tags_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/models/{model_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Model
+         * @description One model, with its grants and current price.
+         *
+         *     The listing carries the same shape, so this exists for the one thing a
+         *     listing cannot serve: a deep link. The console's model page is addressable —
+         *     a bookmark, a reload, a link pasted into a ticket — and searching the
+         *     catalogue by name to rebuild a page whose id is right there would be both
+         *     slower and wrong, because the name is editable and the id is not.
+         */
+        get: operations["get_model_api_me_models__model_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Model
+         * @description Remove a model from the catalogue outright, not merely deactivate it.
+         *
+         *     Deactivation is the tool for "out of service"; it still shows the row, which
+         *     is exactly what an operator pruning a long catalogue import wants gone.
+         *     Delete is safe against the ledger by construction, not by caution:
+         *     ``usage_records.model_id`` is ON DELETE SET NULL and every row carries the
+         *     denormalised ``model_name``, so historical spend stays readable and its
+         *     attribution to users and groups is untouched. Prices and access grants die
+         *     with the model — they are meaningless without it.
+         */
+        delete: operations["delete_model_api_me_models__model_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Model
+         * @description Change a model in place. Deactivate here rather than deleting.
+         */
+        patch: operations["update_model_api_me_models__model_id__patch"];
+        trace?: never;
+    };
+    "/api/me/models/{model_id}/prices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Prices
+         * @description Price history, newest first. Nothing here is ever mutated.
+         *
+         *     Sliced in Python rather than in SQL: the rows are already loaded with the
+         *     model, and a price history is short. The shape matches the other listings
+         *     so a client does not have to care which.
+         */
+        get: operations["list_prices_api_me_models__model_id__prices_get"];
+        put?: never;
+        /**
+         * Create Price
+         * @description Append a price.
+         *
+         *     Effective-dated, so a future date schedules a change and a past date cannot
+         *     alter what already-recorded requests cost.
+         */
+        post: operations["create_price_api_me_models__model_id__prices_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/provider-catalogue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Provider Catalogue
+         * @description The provider catalogue as read at startup, each field with its origin.
+         *
+         *     Read-only by design: the catalogue is files, edited where they live, and
+         *     applied on restart. Not paginated: a few dozen entries, never a listing that
+         *     grows with use.
+         */
+        get: operations["list_provider_catalogue_api_me_provider_catalogue_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/provider-plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Provider Plugins
+         * @description The provider types this deployment can offer.
+         *
+         *     Read from the registry, so installing a plugin makes it selectable without a
+         *     console release. Not paginated: this is a handful of installed packages, not
+         *     a listing that grows with use. A member adding their own provider is offered
+         *     only the language-model types (never a search backend or this deployment's
+         *     extractor).
+         */
+        get: operations["list_provider_plugins_api_me_provider_plugins_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Providers */
+        get: operations["list_providers_api_me_providers_get"];
+        put?: never;
+        /**
+         * Create Provider
+         * @description Add an inference endpoint.
+         *
+         *     No model points at it yet, so creating one changes nothing observable until
+         *     a model is created against it or repointed.
+         *
+         *     The endpoint may be omitted when the chosen plugin knows it (Cortecs does);
+         *     an operator re-typing a URL the plugin already knows is a typo with extra
+         *     steps. A type with no default — the generic OpenAI-compatible one, whose
+         *     endpoints range from a cloud API to a laptop's Ollama — still requires one.
+         *
+         *     A ``catalogue_id`` names the catalogue entry this provider is an instance of
+         *     (backlog P4). What the request leaves out (plugin, endpoint, prefix) is taken
+         *     from the entry; what it states wins. The entry is linked, not copied.
+         */
+        post: operations["create_provider_api_me_providers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/providers/{provider_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Provider
+         * @description Remove a provider.
+         *
+         *     For an inference provider, refused while any model points at it: the
+         *     database would refuse anyway — the foreign key is ON DELETE RESTRICT — but
+         *     a 409 naming the count is a far better answer than an integrity error, and
+         *     cascading would leave historical spend attributed to a model that can no
+         *     longer be explained.
+         *
+         *     For a **search backend** the answer is the opposite, deliberately (ADR
+         *     0071): a backend and its tiers are one concept on the search screen, and a
+         *     half-deleted backend — tiers orphaned, policies pointing at a row that no
+         *     longer resolves — is worse than an atomic delete. So in one transaction the
+         *     tiers die with the backend (prices and access grants among them, exactly as
+         *     ``delete_model`` does it; the usage ledger is conspicuously untouched),
+         *     groups whose unified-search policy named one of those tiers have the policy
+         *     cleared — named in the response, so the console can say so rather than
+         *     letting the administrator discover it as a 404 later — and the provider row
+         *     goes last. Historical spend stays readable the way a model delete leaves
+         *     it: ``usage_records.model_id`` is ON DELETE SET NULL and every row carries
+         *     the denormalised name.
+         */
+        delete: operations["delete_provider_api_me_providers__provider_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Provider
+         * @description Change a provider.
+         *
+         *     ``name`` is editable, which it was not. The argument against was that
+         *     people refer to a provider by name and a rename makes past mentions wrong —
+         *     true, and outweighed by the case that actually happens: it was mistyped
+         *     when it was created. There is no way out of that otherwise, because a
+         *     provider serving any model refuses to be deleted, so the typo is permanent
+         *     and appears in the console and in ``owned_by`` on every ``/v1/models`` card
+         *     it serves.
+         *
+         *     Nothing references the name as a key: models point at the row by id, and
+         *     ``usage_records`` stores the provider the *upstream* reported, not this
+         *     name, so renaming leaves historical spend intact and correctly attributed.
+         *
+         *     The three-way ``api_key`` convention matters here — omitted keeps the stored
+         *     credential, a value replaces it, an empty string clears it. A two-way
+         *     optional field cannot express "remove the key".
+         */
+        patch: operations["update_provider_api_me_providers__provider_id__patch"];
+        trace?: never;
+    };
+    "/api/me/providers/{provider_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Provider
+         * @description Ask the provider's own plugin to check the row, and report what it found.
+         *
+         *     Run against the row **as stored**, credential included, so it exercises
+         *     exactly what a real request would send. A wrong base URL or a stale key
+         *     should be found when it is entered, not by a user's request failing an hour
+         *     later.
+         *
+         *     What "check the row" means is the plugin's to decide (``ProviderPlugin.probe``,
+         *     ``plugins/base.py``): ``GET /models`` for an OpenAI-compatible counterparty,
+         *     but not for one that never serves such a route — the local extractor and a
+         *     search backend both answer that with a 404 that reads as "the provider is
+         *     down" for one working exactly as documented.
+         *
+         *     Never raises for a provider-side failure: "it did not work, and here is why"
+         *     is the useful answer, and an exception would make the console show a generic
+         *     error instead of the detail.
+         */
+        post: operations["test_provider_api_me_providers__provider_id__test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/reports/usage": {
         parameters: {
             query?: never;
@@ -2244,6 +2769,11 @@ export interface paths {
          *
          *     ``group_by=user`` is not offered: with the filter pinned it could only ever
          *     return a single row, which invites the misreading that it shows other people.
+         *
+         *     ``own_keys=true`` reports **only** the usage on the caller's own providers
+         *     and keys (bring your own key); by default that usage is left out, because
+         *     it is not what their quotas and groups are charged. Never both in one
+         *     figure.
          */
         get: operations["my_usage_report_api_me_reports_usage_get"];
         put?: never;
@@ -3410,6 +3940,8 @@ export interface components {
             authelia_sync_message: string | null;
             /** Bundled Login */
             bundled_login: string | null;
+            /** Byok Allowed */
+            byok_allowed: boolean | null;
             /** Code Agents Allowed */
             code_agents_allowed: boolean | null;
             /** Deactivated By */
@@ -3454,6 +3986,96 @@ export interface components {
             subject: string;
             /** Username */
             username: string | null;
+        };
+        /** ByokModelResponse */
+        ByokModelResponse: {
+            /** Admin Disabled */
+            admin_disabled: boolean;
+            /** Api Name */
+            api_name: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            owner: components["schemas"]["ByokOwner"];
+            /**
+             * Provider Id
+             * Format: uuid
+             */
+            provider_id: string;
+            /** Provider Name */
+            provider_name: string;
+            /** Upstream Model */
+            upstream_model: string;
+            usage: components["schemas"]["ByokUsage"];
+        };
+        /** ByokOwner */
+        ByokOwner: {
+            /** Email */
+            email: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string | null;
+        };
+        /** ByokProviderResponse */
+        ByokProviderResponse: {
+            /** Admin Disabled */
+            admin_disabled: boolean;
+            /** Base Url Host */
+            base_url_host: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Has Api Key */
+            has_api_key: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Kind */
+            kind: string;
+            /** Model Count */
+            model_count: number;
+            /** Name */
+            name: string;
+            owner: components["schemas"]["ByokOwner"];
+            /** Plugin */
+            plugin: string | null;
+            usage: components["schemas"]["ByokUsage"];
+        };
+        /** ByokUsage */
+        ByokUsage: {
+            /** Cost */
+            cost: string | null;
+            /** Currency */
+            currency: string | null;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Requests */
+            requests: number;
+            /** Total Tokens */
+            total_tokens: number;
         };
         /**
          * CallerIdentity
@@ -3506,6 +4128,34 @@ export interface components {
             sessions_valid_after: string | null;
         };
         /**
+         * CallerUsageResponse
+         * @description A caller's own spend: what their quotas and groups see, and their own keys.
+         *
+         *     The inherited figures are usage on the deployment's providers, unchanged in
+         *     meaning. ``own_keys`` is usage on the caller's **own** providers and keys
+         *     (bring your own key): recorded for their information, priced at their own
+         *     price rows (unpriced models have no cost), and never counted by a quota or
+         *     by any group or administrator report.
+         */
+        CallerUsageResponse: {
+            /** Cost */
+            cost: string;
+            /** Currency */
+            currency: string;
+            /**
+             * Estimated Requests
+             * @default 0
+             */
+            estimated_requests: number;
+            own_keys: components["schemas"]["UsageSummaryResponse"];
+            /** Requests */
+            requests: number;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Window Seconds */
+            window_seconds: number;
+        };
+        /**
          * CapabilityFlags
          * @description The two ADR 0096 capabilities, as one person effectively holds them.
          *
@@ -3517,6 +4167,11 @@ export interface components {
         CapabilityFlags: {
             /** Api Keys */
             api_keys: boolean;
+            /**
+             * Byok
+             * @default false
+             */
+            byok: boolean;
             /** Code Agents */
             code_agents: boolean | null;
             /** Local Connectors */
@@ -3953,6 +4608,11 @@ export interface components {
              */
             api_keys_allowed: boolean;
             /**
+             * Byok Allowed
+             * @default false
+             */
+            byok_allowed: boolean;
+            /**
              * Code Agents Allowed
              * @default false
              */
@@ -3993,7 +4653,7 @@ export interface components {
              * Capability
              * @enum {string}
              */
-            capability: "code_agents" | "api_keys" | "local_connectors";
+            capability: "code_agents" | "api_keys" | "local_connectors" | "byok";
             /** Value */
             value: boolean;
         };
@@ -4058,6 +4718,8 @@ export interface components {
         GroupUpdateRequest: {
             /** Api Keys Allowed */
             api_keys_allowed?: boolean | null;
+            /** Byok Allowed */
+            byok_allowed?: boolean | null;
             /** Code Agents Allowed */
             code_agents_allowed?: boolean | null;
             /** Local Connectors Allowed */
@@ -4692,6 +5354,11 @@ export interface components {
          * @description One entry of ``GET /v1/models``, in OpenAI's shape.
          */
         ModelCard: {
+            /**
+             * Byok
+             * @default false
+             */
+            byok: boolean;
             /** Context Window */
             context_window: number | null;
             /** Created */
@@ -5023,6 +5690,16 @@ export interface components {
             /** Auto Provision */
             auto_provision: boolean;
             /**
+             * Byok Mode
+             * @default off
+             */
+            byok_mode: string;
+            /**
+             * Byok Private Networks
+             * @default false
+             */
+            byok_private_networks: boolean;
+            /**
              * Code Agents Mode
              * @default on
              */
@@ -5076,6 +5753,10 @@ export interface components {
             api_keys_mode?: ("on" | "off" | "everyone" | "groups") | null;
             /** Auto Provision */
             auto_provision?: boolean | null;
+            /** Byok Mode */
+            byok_mode?: ("on" | "off" | "everyone" | "groups") | null;
+            /** Byok Private Networks */
+            byok_private_networks?: boolean | null;
             /** Code Agents Mode */
             code_agents_mode?: ("on" | "off" | "everyone" | "groups") | null;
             /** Group Fallback */
@@ -5129,6 +5810,28 @@ export interface components {
         Page_ApiKeyResponse_: {
             /** Items */
             items: components["schemas"]["ApiKeyResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** Page[ByokModelResponse] */
+        Page_ByokModelResponse_: {
+            /** Items */
+            items: components["schemas"]["ByokModelResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** Page[ByokProviderResponse] */
+        Page_ByokProviderResponse_: {
+            /** Items */
+            items: components["schemas"]["ByokProviderResponse"][];
             /** Limit */
             limit: number;
             /** Offset */
@@ -5653,7 +6356,7 @@ export interface components {
             };
             /** Limits */
             limits: components["schemas"]["MyLimitResponse"][];
-            usage: components["schemas"]["UsageSummaryResponse"];
+            usage: components["schemas"]["CallerUsageResponse"];
         };
         /** QuotaHealthResponse */
         QuotaHealthResponse: {
@@ -6686,6 +7389,8 @@ export interface components {
             authelia_sync_message: string | null;
             /** Bundled Login */
             bundled_login: string | null;
+            /** Byok Allowed */
+            byok_allowed: boolean | null;
             /** Code Agents Allowed */
             code_agents_allowed: boolean | null;
             /** Deactivated By */
@@ -7069,6 +7774,203 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_AdminAuditEventResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_private_models_api_admin_byok_models_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                owner_id?: string | null;
+                provider_id?: string | null;
+                /** @description Rows to return, at most 200. */
+                limit?: number;
+                /** @description Rows to skip. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ByokModelResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disable_private_model_api_admin_byok_models__model_id__disable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ByokModelResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enable_private_model_api_admin_byok_models__model_id__enable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ByokModelResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_private_providers_api_admin_byok_providers_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                owner_id?: string | null;
+                /** @description Rows to return, at most 200. */
+                limit?: number;
+                /** @description Rows to skip. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ByokProviderResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disable_private_provider_api_admin_byok_providers__provider_id__disable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ByokProviderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enable_private_provider_api_admin_byok_providers__provider_id__enable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ByokProviderResponse"];
                 };
             };
             /** @description Validation Error */
@@ -8659,11 +9561,12 @@ export interface operations {
             query?: {
                 join_mode?: string;
                 required_groups?: string[];
-                bulk_capability?: ("code_agents" | "api_keys" | "local_connectors") | null;
+                bulk_capability?: ("code_agents" | "api_keys" | "local_connectors" | "byok") | null;
                 bulk_value?: boolean | null;
                 code_agents_mode?: string | null;
                 api_keys_mode?: string | null;
                 local_connectors_mode?: string | null;
+                byok_mode?: string | null;
             };
             header?: never;
             path?: never;
@@ -10149,6 +11052,549 @@ export interface operations {
             };
         };
     };
+    list_models_api_me_models_get: {
+        parameters: {
+            query?: {
+                include_inactive?: boolean;
+                q?: string;
+                provider_id?: string | null;
+                /** @description Rows to return, at most 200. */
+                limit?: number;
+                /** @description Rows to skip. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ModelAdminResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_model_api_me_models_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelAdminResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discover_models_api_me_models_discover_get: {
+        parameters: {
+            query: {
+                provider_id: string;
+                url?: string | null;
+                fill_missing_prices?: boolean;
+                tag?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogueDiscoveryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_models_api_me_models_import_post: {
+        parameters: {
+            query: {
+                provider_id: string;
+                url?: string | null;
+                fill_missing_prices?: boolean;
+                tag?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelImportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_catalogue_tags_api_me_models_tags_get: {
+        parameters: {
+            query: {
+                provider_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogueTagsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_model_api_me_models__model_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelAdminResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_model_api_me_models__model_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_model_api_me_models__model_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelAdminResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_prices_api_me_models__model_id__prices_get: {
+        parameters: {
+            query?: {
+                /** @description Rows to return, at most 200. */
+                limit?: number;
+                /** @description Rows to skip. */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_PriceResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_price_api_me_models__model_id__prices_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PriceCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_provider_catalogue_api_me_provider_catalogue_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogueEntryResponse"][];
+                };
+            };
+        };
+    };
+    list_provider_plugins_api_me_provider_plugins_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderPluginResponse"][];
+                };
+            };
+        };
+    };
+    list_providers_api_me_providers_get: {
+        parameters: {
+            query?: {
+                /** @description Rows to return, at most 200. */
+                limit?: number;
+                /** @description Rows to skip. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ProviderResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_provider_api_me_providers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_provider_api_me_providers__provider_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchBackendDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_provider_api_me_providers__provider_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_provider_api_me_providers__provider_id__test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderTestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     my_usage_report_api_me_reports_usage_get: {
         parameters: {
             query?: {
@@ -10157,6 +11603,7 @@ export interface operations {
                 end?: string | null;
                 group_by?: "model" | "provider" | "day" | "group" | "api_key" | "total";
                 split_by?: ("group" | "model" | "provider") | null;
+                own_keys?: boolean;
             };
             header?: never;
             path?: never;
@@ -10228,6 +11675,7 @@ export interface operations {
                 group_id?: string | null;
                 model?: string | null;
                 status?: components["schemas"]["UsageStatus"] | null;
+                own_keys?: boolean;
                 /** @description Rows to return, at most 200. */
                 limit?: number;
                 /** @description Rows to skip. */
@@ -10268,6 +11716,7 @@ export interface operations {
                 group_id?: string | null;
                 model?: string | null;
                 status?: components["schemas"]["UsageStatus"] | null;
+                own_keys?: boolean;
             };
             header?: never;
             path?: never;
@@ -10312,7 +11761,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UsageSummaryResponse"];
+                    "application/json": components["schemas"]["CallerUsageResponse"];
                 };
             };
             /** @description Validation Error */

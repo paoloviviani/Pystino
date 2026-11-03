@@ -30,7 +30,7 @@ function me(overrides: Partial<Me> = {}): Me {
     default_billing_group: { id: "g1", name: "platform-admins", description: null },
     issuer: "local",
     has_password: true,
-    capabilities: { code_agents: true, api_keys: true, local_connectors: true },
+    capabilities: { code_agents: true, api_keys: true, local_connectors: true, byok: false },
     chat_enabled: true,
     ...overrides,
   };
@@ -77,6 +77,21 @@ function stubNavigation() {
   // navigate, not where the browser ends up.
   vi.stubGlobal("location", { assign, href: "http://console.test/" });
 }
+
+describe("Shell: bring your own key", () => {
+  it("offers the page only to a user who holds the capability", () => {
+    renderShell(me({ is_admin: false, capabilities: { code_agents: true, api_keys: true, local_connectors: true, byok: true } }));
+    expect(screen.getByRole("link", { name: "Your providers and models" })).toHaveAttribute(
+      "href",
+      "/me/providers",
+    );
+  });
+
+  it("leaves the entry out without the capability", () => {
+    renderShell(me({ is_admin: false }));
+    expect(screen.queryByRole("link", { name: "Your providers and models" })).not.toBeInTheDocument();
+  });
+});
 
 describe("Shell", () => {
   it("shows who is signed in", () => {
@@ -298,6 +313,7 @@ describe("Shell: the sidebar", () => {
       "/admin/models",
       "/admin/routing",
       "/admin/search",
+      "/admin/private-providers",
       "/admin/redaction",
       "/admin/users",
       "/admin/groups",

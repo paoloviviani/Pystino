@@ -584,6 +584,10 @@ class ModelCard(ResponseModel):
     # this to tell "runs on this server, nothing leaves it" apart from an
     # ordinary catalogue entry.
     local: bool = False
+    # True for the caller's own (bring-your-own-key) model, whose `id` is then
+    # `my/<name>`. Never true for another caller's: a private model is listed
+    # to its owner only. Read with `.nullish()` by older clients.
+    byok: bool = False
 
 
 class ModelList(ResponseModel):
@@ -637,6 +641,10 @@ class CapabilityFlags(ResponseModel):
     api_keys: bool
     #: Local MCP connectors (ADR 0102): a connectors-only machine.
     local_connectors: bool | None = None
+    #: Bring your own key: the person may add their own providers and models
+    #: and use them privately (`/api/me/providers`, `/api/me/models`). Reported
+    #: with or without a chat.
+    byok: bool = False
 
 
 class CallerIdentity(ResponseModel):
@@ -763,6 +771,19 @@ class UsageSummaryResponse(ResponseModel):
     estimated_requests: int = 0
 
 
+class CallerUsageResponse(UsageSummaryResponse):
+    """A caller's own spend: what their quotas and groups see, and their own keys.
+
+    The inherited figures are usage on the deployment's providers, unchanged in
+    meaning. ``own_keys`` is usage on the caller's **own** providers and keys
+    (bring your own key): recorded for their information, priced at their own
+    price rows (unpriced models have no cost), and never counted by a quota or
+    by any group or administrator report.
+    """
+
+    own_keys: UsageSummaryResponse
+
+
 class LimitRuleResponse(ResponseModel):
     id: uuid.UUID
     name: str
@@ -884,7 +905,7 @@ class PystinoUsageResponse(ResponseModel):
     """
 
     limits: list[MyLimitResponse]
-    usage: UsageSummaryResponse
+    usage: CallerUsageResponse
     #: Per-group spend, keyed by group name — as `/api/me/usage/groups` keys it.
     groups: dict[str, UsageSummaryResponse]
 
@@ -1222,8 +1243,19 @@ class ProviderTestResponse(ResponseModel):
     latency_ms: int | None = None
 
 
+def _no_my_prefix(value: str | None) -> str | None:
+    """``my/`` addresses a user's own (BYOK) model on /v1, so no stored name may start with it."""
+    if value is not None and value.startswith("my/"):
+        raise ValueError(
+            "a model name cannot start with 'my/': that prefix addresses a user's own models"
+        )
+    return value
+
+
 class ModelCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
+
+    _name_is_not_reserved = field_validator("name")(_no_my_prefix)
     upstream_model: str = Field(min_length=1, max_length=255)
     # Which endpoint serves it. Required: a model with no provider cannot be
     # routed, and defaulting one would guess at spending money (ADR 0027).
@@ -1515,6 +1547,8 @@ MAX_ALIAS_TARGETS = 16
 
 class AliasCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
+
+    _name_is_not_reserved = field_validator("name")(_no_my_prefix)
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     #: The one model this alias serves — the single-target spelling, kept. Send
@@ -1556,6 +1590,8 @@ class AliasUpdateRequest(BaseModel):
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
+
+    _name_is_not_reserved = field_validator("name")(_no_my_prefix)
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     target_model_id: uuid.UUID | None = None
@@ -1661,6 +1697,7 @@ class GroupAdminResponse(ResponseModel):
     code_agents_allowed: bool = False
     api_keys_allowed: bool = False
     local_connectors_allowed: bool = False
+    byok_allowed: bool = False
     member_count: int
     #: Every model name this group may use, aliases included — they are rows of
     #: the same table, and granting an alias is the point of having one.
@@ -1689,6 +1726,7 @@ class GroupUpdateRequest(BaseModel):
     code_agents_allowed: bool | None = None
     api_keys_allowed: bool | None = None
     local_connectors_allowed: bool | None = None
+    byok_allowed: bool | None = None
 
 
 class GroupCapabilityBulkResponse(ResponseModel):
@@ -1703,7 +1741,7 @@ class GroupCapabilityBulkRequest(BaseModel):
     capability's flag on every group, from the Settings screen's two bulk
     actions. Applied in one transaction, audited once."""
 
-    capability: Literal["code_agents", "api_keys", "local_connectors"]
+    capability: Literal["code_agents", "api_keys", "local_connectors", "byok"]
     value: bool
 
 
@@ -1822,6 +1860,7 @@ class UserAdminResponse(ResponseModel):
     code_agents_allowed: bool | None = None
     api_keys_allowed: bool | None = None
     local_connectors_allowed: bool | None = None
+    byok_allowed: bool | None = None
     # Who granted *this* person's membership of the group being listed (ADR
     # 0057): "manual" for an administrator's grant, "oidc" for the directory's.
     # Only the group-members route can answer it — a user has many memberships
@@ -2136,6 +2175,10 @@ class OidcPolicyUpdateRequest(BaseModel):
     code_agents_mode: Literal["on", "off", "everyone", "groups"] | None = None
     api_keys_mode: Literal["on", "off", "everyone", "groups"] | None = None
     local_connectors_mode: Literal["on", "off", "everyone", "groups"] | None = None
+    # Bring your own key: the default new groups get (baseline off), and the
+    # switch that lifts the network guard on private providers' base URLs.
+    byok_mode: Literal["on", "off", "everyone", "groups"] | None = None
+    byok_private_networks: bool | None = None
     reason: str = Field(default="", max_length=500)
 
 
@@ -2186,6 +2229,8 @@ class OidcPolicyResponse(ResponseModel):
     code_agents_mode: str = "on"
     api_keys_mode: str = "on"
     local_connectors_mode: str = "on"
+    byok_mode: str = "off"
+    byok_private_networks: bool = False
     # "console" when any field is a stored decision, "environment" otherwise;
     # `sources` says which, per field — "the console says X and the
     # environment says Y" is otherwise invisible.
@@ -2988,6 +3033,8 @@ class ModelImportItem(BaseModel):
     upstream_model: str
     # Defaults to the upstream id with any provider prefix stripped.
     name: str | None = Field(default=None, max_length=255)
+
+    _name_is_not_reserved = field_validator("name")(_no_my_prefix)
     # A price supplied at import time, for a model the provider listed and left
     # unpriced. Ignored when the catalogue (or the community fill) has a price:
     # the counterparty's own figure outranks one typed from memory, and the

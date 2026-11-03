@@ -27,6 +27,7 @@ from gateway.identity_registry import (
     reseed_from_env,
 )
 from gateway.logging_config import configure_logging
+from gateway.netguard import build_guarded_client
 from gateway.oidc import sweep_env_admin_email_rule
 from gateway.oidc_policy import OIDCPolicyResolver
 from gateway.providers import ProviderRegistry
@@ -44,6 +45,7 @@ from gateway.retention import TranscriptRetentionLoop
 from gateway.routers import (
     admin,
     admin_audit,
+    admin_byok,
     aliases,
     auth,
     billing,
@@ -104,6 +106,16 @@ async def _build_counter_store(app: FastAPI, settings: Settings) -> Any:
     return ValkeyCounterStore(client)
 
 
+def _byok_private_networks(app: FastAPI) -> bool:
+    """Whether the admin has let private providers reach private networks.
+
+    Read from the folded policy on every call (a plain attribute read), so the
+    switch applies to the next request and a missing resolver means off.
+    """
+    resolver = getattr(app.state, "oidc_policy", None)
+    return bool(resolver is not None and resolver.policy.byok_private_networks)
+
+
 async def init_app_state(
     app: FastAPI,
     settings: Settings,
@@ -140,6 +152,14 @@ async def init_app_state(
     # default is only a fallback nothing routes through any more.
     injected_upstream = upstream_http
     upstream_http = upstream_http or build_http_client(settings.upstream)
+    # The client a user's *private* provider's catalogue and probe calls go
+    # through: the guarded one (netguard.py), because the URL is theirs. An
+    # injected control client is a test's fake transport and is reused.
+    byok_http = control_http or build_guarded_client(
+        settings.upstream,
+        allow_private=lambda: _byok_private_networks(app),
+        read_timeout=10.0,
+    )
     control_http = control_http or httpx.AsyncClient(timeout=httpx.Timeout(10.0))
 
     store = await _build_counter_store(app, settings)
@@ -148,6 +168,7 @@ async def init_app_state(
     app.state.engine = engine
     app.state.upstream_http = upstream_http
     app.state.control_http = control_http
+    app.state.byok_http = byok_http
     # One client per provider, built on demand (ADR 0027). `settings.upstream`
     # still supplies transport tuning — timeouts and pool sizes are properties of
     # this gateway, not of any provider — but the endpoint and credentials now
@@ -160,6 +181,9 @@ async def init_app_state(
         # provider rather than building real ones the fake would never see. In
         # production this is None, so each provider gets its own pool.
         client_factory=(lambda _settings: injected_upstream) if injected_upstream else None,
+        # BYOK: the admin switch that lets private providers reach private
+        # networks, read live from the folded policy.
+        private_networks_allowed=lambda: _byok_private_networks(app),
     )
     # The quota notifier is built before the engine so the engine can carry it
     # (ADR 0052); its poller starts beside the others further down. The set is
@@ -352,6 +376,8 @@ async def shutdown_app_state(app: FastAPI) -> None:
 
     await app.state.upstream_http.aclose()
     await app.state.control_http.aclose()
+    if app.state.byok_http is not app.state.control_http:
+        await app.state.byok_http.aclose()
     if (providers := getattr(app.state, "providers", None)) is not None:
         await providers.aclose()
     # Stops the poller and releases the engine's own resources — a connection
@@ -443,6 +469,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router)
     app.include_router(me.router)
     app.include_router(admin.router)
+    app.include_router(admin.me_router)
+    app.include_router(admin_byok.router)
     app.include_router(aliases.router)
     app.include_router(admin_audit.router)
     app.include_router(identity_events.router)

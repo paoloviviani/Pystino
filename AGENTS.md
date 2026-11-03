@@ -550,6 +550,22 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
   catalogue and the reachable agents), 5 selects + 2 writes for a metered
   request, and a bearer token may cost no more than a key. `selectinload` on a
   many-to-one relation costs a round trip that `joinedload` does not.
+- **A member's own key (BYOK, `docs/byok.md`) is the one usage that is never
+  counted.** `usage_records.byok` marks it, and every read of the ledger that
+  feeds a quota, a group or billing total, an administrator report or the
+  request log filters it (`ReportFilter.own_keys`, `RequestLogFilter.own_keys`,
+  the three counter queries in `quota/counters.py`, `quota/engine.py`): a new
+  query over `usage_records` has to decide on purpose, or a BYOK request will be
+  billed to a group or counted against a cap. `_metered.begin` gives such a
+  request an empty reservation (no admission) and no billing group. The routes
+  that serve one catalogue operation for both administrators and members
+  (`CatalogueScope`, `byok.py`) are registered twice, on `/api/admin` and
+  `/api/me`; `_load_provider`/`_load_model` default to deployment rows, so
+  anything that forgets a scope cannot reach a private row. `access.py` is still
+  the one predicate: callers that do not pass `byok=True` see deployment models
+  only. A private provider's URL is the one thing in this gateway a member
+  chooses, so its client is `netguard.build_guarded_client` (the connect itself
+  is pinned to the validated address; never swap it for a plain client).
 - **A routed alias leaves one ledger row per attempt.** Same `request_id`,
   `route_attempt` 1, 2, 3: failed attempts are `upstream_error` at zero cost
   against the target that failed, and the one that served is billed to its

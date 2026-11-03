@@ -161,7 +161,7 @@ async def create_response(
             return await _stream(
                 request=request,
                 payload=payload,
-                model_name=model.name,
+                model_name=resolved.requested_name,
                 outcome=outcome,
                 redactor=redactor,
                 upstream=upstream,

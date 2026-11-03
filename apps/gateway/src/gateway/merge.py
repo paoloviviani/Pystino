@@ -131,6 +131,15 @@ MERGE_RULES: tuple[MergeRule, ...] = (
     # merged person's next sign-in records what their token says, and an
     # import in between only reaches them at that sign-in.
     MergeRule("seen_group_users", "user_id", MergeRuleKind.DELETE),
+    # Bring-your-own-key: the merged-away account's private models and providers
+    # (and the encrypted keys on them) are dropped, not moved. Moving would have
+    # to resolve per-owner name collisions with the target's own rows and carry
+    # one person's credential onto another account silently; a dropped row costs
+    # the person a minute to re-add and the ledger keeps its rows (model_id goes
+    # to NULL, the name is denormalised). Models first: `models.provider_id` is
+    # RESTRICT. Prices and anything hanging off a model go with it by ON DELETE.
+    MergeRule("models", "owner_id", MergeRuleKind.DELETE),
+    MergeRule("providers", "owner_id", MergeRuleKind.DELETE),
     MergeRule("quota_notification_settings", "user_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE),
     MergeRule("quota_notification_state", "user_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE),
 )

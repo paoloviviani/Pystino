@@ -92,8 +92,19 @@ class AccessSettings(BaseModel):
     #: the person's own MCP servers to the chat, signed in with the same
     #: machine client as an agent machine but with no model access.
     local_connectors: Literal["on", "off"] = "on"
+    #: Bring your own key: a member adds their own providers and models (their
+    #: own API key) and uses them privately. Unlike the others the default is
+    #: **off**: it lets a person send traffic, with their own credential, to a
+    #: host of their choosing, which is a decision for the deployment.
+    byok: Literal["on", "off"] = "off"
+    #: Lifts the network guard on private providers' base URLs. Off: a
+    #: private provider's host must resolve only to public addresses, so a user
+    #: cannot steer the gateway at loopback, RFC 1918 ranges, the cloud
+    #: metadata address or this deployment's own services. Turn it on only when
+    #: users legitimately run endpoints on your network (a lab's vLLM).
+    byok_private_networks: bool = False
 
-    @field_validator("code_agents", "api_keys", "local_connectors", mode="before")
+    @field_validator("code_agents", "api_keys", "local_connectors", "byok", mode="before")
     @classmethod
     def _legacy_modes_still_parse(cls, value: object) -> object:
         # One release only: a deployment that set the 0.7.x vocabulary keeps

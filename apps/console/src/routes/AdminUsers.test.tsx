@@ -49,6 +49,7 @@ function user(index: number, overrides: Partial<AdminUser> = {}): AdminUser {
     code_agents_allowed: true,
     api_keys_allowed: true,
     local_connectors_allowed: true,
+    byok_allowed: false,
     ...overrides,
   };
 }

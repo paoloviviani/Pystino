@@ -132,6 +132,21 @@ class ApiKeysNotAllowedError(GatewayError):
     code = "api_keys_not_allowed"
 
 
+class ByokNotAllowedError(GatewayError):
+    """The caller does not hold the bring-your-own-key capability.
+
+    Refused, never deleted: private providers and models of a person who loses
+    the capability stop working until a group flag restores it, and come back
+    the moment it does. The same code on the management API (`/api/me/providers`
+    and friends) and on `/v1` (a `my/<name>` model), so a client needs one
+    string to recognise.
+    """
+
+    status_code = status.HTTP_403_FORBIDDEN
+    error_type = "invalid_request_error"
+    code = "byok_not_allowed"
+
+
 class ContentBlockedError(GatewayError):
     """A redaction policy refused the request before any provider saw it.
 

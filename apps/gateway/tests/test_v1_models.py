@@ -196,6 +196,7 @@ class TestUnauthenticatedListing:
             "output_modalities",
             "supported_features",
             "local",
+            "byok",
         }
 
     async def test_a_caller_with_no_grant_sees_nothing_once_authenticated(

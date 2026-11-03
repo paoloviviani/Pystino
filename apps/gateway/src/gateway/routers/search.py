@@ -129,7 +129,9 @@ async def _policy_backend(
     400 instead, a mistake the administrator can fix.
     """
     stmt = (
-        accessible_models(user_id=principal.user.id, group_ids=[principal.billing_group.id])
+        accessible_models(
+            user_id=principal.user.id, group_ids=[principal.require_billing_group().id]
+        )
         .where(ModelDef.id == backend_id)
         # Prices and the provider, like `accessible_model_by_name`: the
         # metering path needs both immediately, and touching an unloaded
@@ -195,7 +197,7 @@ async def unified_search(
         # No name: the policy names the backend. None means the group cannot
         # use this route at all — a 404 with a message an administrator can act
         # on, rather than a backend the caller could route around.
-        backend_id = principal.billing_group.search_model_id
+        backend_id = principal.require_billing_group().search_model_id
         if backend_id is None:
             raise NotFoundError(
                 "No search provider is configured for your billing group.",

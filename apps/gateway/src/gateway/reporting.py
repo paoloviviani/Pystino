@@ -138,6 +138,13 @@ class ReportFilter:
     user_id: uuid.UUID | None = None
     api_key_id: uuid.UUID | None = None
     model_name: str | None = None
+    #: Bring-your-own-key usage is **never** part of a report that anyone but
+    #: its owner reads: it is not charged to a group, counted by a quota or
+    #: billed. So the default is to leave it out, everywhere, and the one
+    #: caller that wants it (a person's own "your own keys" view) asks for
+    #: *only* it. There is deliberately no "both": a total that mixed the two
+    #: would be a number nobody could reconcile with an invoice.
+    own_keys: bool = False
 
 
 def _day_expression(timezone: str, dialect: str) -> ColumnElement[Any]:
@@ -263,6 +270,7 @@ def _base_query(filters: ReportFilter, timezone: str, dialect: str) -> Select[An
         # In-flight requests have no final usage yet. Counting them would make a
         # report change value while you are reading it.
         UsageRecord.status != UsageStatus.IN_PROGRESS,
+        UsageRecord.byok.is_(filters.own_keys),
     )
 
     if filters.group_id is not None:
@@ -447,6 +455,7 @@ async def _reconciliation(
             UsageRecord.created_at < filters.period.end,
             UsageRecord.status != UsageStatus.IN_PROGRESS,
             UsageRecord.upstream_cost.is_not(None),
+            UsageRecord.byok.is_(filters.own_keys),
         )
         .group_by(Provider.name, UsageRecord.upstream_cost_currency)
         .order_by(Provider.name)
@@ -667,6 +676,7 @@ async def build_report(
                 UsageRecord.created_at >= filters.period.start,
                 UsageRecord.created_at < filters.period.end,
                 UsageRecord.status == UsageStatus.IN_PROGRESS,
+                UsageRecord.byok.is_(filters.own_keys),
             )
         )
     ).scalar_one()
@@ -682,6 +692,7 @@ async def build_report(
                 UsageRecord.created_at < filters.period.end,
                 UsageRecord.status != UsageStatus.IN_PROGRESS,
                 UsageRecord.model_substituted.is_(True),
+                UsageRecord.byok.is_(filters.own_keys),
             )
         )
     ).scalar_one()
@@ -697,6 +708,7 @@ async def build_report(
                 UsageRecord.created_at < filters.period.end,
                 UsageRecord.status != UsageStatus.IN_PROGRESS,
                 UsageRecord.cost_source == CostSource.OWN_PRICES_FALLBACK,
+                UsageRecord.byok.is_(filters.own_keys),
             )
         )
     ).scalar_one()
@@ -805,5 +817,9 @@ def report_to_csv(report: UsageReport) -> str:
 
 
 async def known_model_names(session: AsyncSession) -> list[str]:
-    """Catalogue names, for validating a ``model`` filter."""
-    return list((await session.execute(select(ModelDef.name))).scalars().all())
+    """Deployment catalogue names, for validating a ``model`` filter."""
+    return list(
+        (await session.execute(select(ModelDef.name).where(ModelDef.owner_id.is_(None))))
+        .scalars()
+        .all()
+    )

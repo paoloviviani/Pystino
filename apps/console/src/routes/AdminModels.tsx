@@ -22,6 +22,7 @@ import {
   KNOWN_INPUTS,
   KNOWN_OUTPUTS,
 } from "../components/CapabilityPicker";
+import { ApiName } from "../components/ApiName";
 import { PageHeader } from "../components/PageHeader";
 import { formatNumber } from "../lib/format";
 import { Message } from "../components/Message";
@@ -44,6 +45,8 @@ import type {
   ManualImportPrice,
   ModelKind,
 } from "../lib/types";
+import { byokErrorText } from "../lib/byokErrors";
+import { useScopeName } from "../lib/scope";
 import { useOptionalToast } from "../lib/toast";
 
 
@@ -105,6 +108,11 @@ const KIND_SECTIONS: {
 
 
 export function AdminModels() {
+  // Either audience (lib/scope.ts): the deployment's catalogue, or a user's own
+  // private models. A private model has no grants, public flag or aliases, so
+  // those columns and the model page's matching sections are left out.
+  const mine = useScopeName() === "me";
+  const modelsPath = mine ? "/me/models" : "/admin/models";
 
   // A rate is money too, so it follows the reader's precision preference. Read
   // by hand rather than via <Money> because these figures sit inside a phrase
@@ -160,13 +168,18 @@ export function AdminModels() {
                 what a request carries and what every report is grouped by, so
                 it has to stay visible beside the friendlier name rather than
                 be replaced by it. */}
-            <Link to={`/admin/models/${model.id}`}>
+            <Link to={`${modelsPath}/${model.id}`}>
               {model.display_name || model.name}
             </Link>{" "}
             {model.kind !== "chat" && <Badge tone="accent">{model.kind}</Badge>}
           </div>
-          {model.display_name && (
-            <div className={CODE}>{model.name}</div>
+          {mine ? (
+            // What a request carries, with a button to copy it.
+            <div>
+              <ApiName name={model.name} />
+            </div>
+          ) : (
+            model.display_name && <div className={CODE}>{model.name}</div>
           )}
           <div className={`${MUTED} ${CODE} ${CLAMP}`} title={model.upstream_model}>
             {model.upstream_model}
@@ -242,28 +255,32 @@ export function AdminModels() {
           <Badge tone="warn">{m["admin_models.badge.no_price"]()}</Badge>
         ),
     },
-    {
-      key: "access",
-      header: m["admin_models.column.access"](),
-      hideBelow: "lg",
-      render: (model) =>
-        model.granted_to.length === 0 && model.granted_to_users.length === 0 ? (
-          <span className={MUTED}>{m["admin_models.access.nobody"]()}</span>
-        ) : (
-          <div className={CHIPS}>
-            {model.granted_to.map((group) => (
-              <Badge key={group}>{group}</Badge>
-            ))}
-            {/* Personal grants are unioned with group grants, so they are shown
-                alongside rather than in a separate column. */}
-            {model.granted_to_users.map((user) => (
-              <Badge key={user} tone="accent">
-                {user}
-              </Badge>
-            ))}
-          </div>
-        ),
-    },
+    ...(mine
+      ? []
+      : [
+        {
+          key: "access" as const,
+          header: m["admin_models.column.access"](),
+          hideBelow: "lg" as const,
+          render: (model: AdminModel) =>
+            model.granted_to.length === 0 && model.granted_to_users.length === 0 ? (
+              <span className={MUTED}>{m["admin_models.access.nobody"]()}</span>
+            ) : (
+              <div className={CHIPS}>
+                {model.granted_to.map((group) => (
+                  <Badge key={group}>{group}</Badge>
+                ))}
+                {/* Personal grants are unioned with group grants, so they are shown
+                    alongside rather than in a separate column. */}
+                {model.granted_to_users.map((user) => (
+                  <Badge key={user} tone="accent">
+                    {user}
+                  </Badge>
+                ))}
+              </div>
+            ),
+        },
+    ]),
     {
       key: "status",
       header: m["admin_models.column.status"](),
@@ -275,7 +292,7 @@ export function AdminModels() {
           ) : (
             <Badge>{m["admin_models.badge.inactive"]()}</Badge>
           )}
-          {model.is_public && <Badge tone="accent">{m["admin_models.badge.public"]()}</Badge>}
+          {!mine && model.is_public && <Badge tone="accent">{m["admin_models.badge.public"]()}</Badge>}
         </div>
       ),
     },
@@ -284,7 +301,7 @@ export function AdminModels() {
       header: "",
       render: (model) => (
         <div className={ROW_ACTIONS}>
-          <Button variant="secondary" onClick={() => navigate(`/admin/models/${model.id}`)}>
+          <Button variant="secondary" onClick={() => navigate(`${modelsPath}/${model.id}`)}>
             {m["admin_models.action.edit"]()}
           </Button>
           <RowActions
@@ -326,8 +343,9 @@ export function AdminModels() {
   return (
     <div className={PAGE}>
       <PageHeader
-        title={m["admin_models.title"]()}
-        subtitle={m["admin_models.subtitle"]()}
+        level={mine ? "section" : "page"}
+        title={mine ? m["byok_models.title"]() : m["admin_models.title"]()}
+        subtitle={mine ? m["byok_models.subtitle"]() : m["admin_models.subtitle"]()}
         actions={
           <>
             <Button onClick={() => setDiscovering(true)}>{m["admin_models.discover"]()}</Button>
@@ -341,16 +359,14 @@ export function AdminModels() {
       {update.error ? (
         <Notice tone="danger" title={m["admin_models.load_error.update"]()}>
           {/* i18n: server text — the API's own error message. */}
-          {update.error instanceof Error ? update.error.message : m["admin_models.unknown_error"]()}
+          {byokErrorText(update.error, m["admin_models.unknown_error"]())}
         </Notice>
       ) : null}
 
       {deleteModel.error ? (
         <Notice tone="danger" title={m["admin_models.load_error.delete"]()}>
           {/* i18n: server text — the API's own error message. */}
-          {deleteModel.error instanceof Error
-            ? deleteModel.error.message
-            : m["admin_models.unknown_error"]()}
+          {byokErrorText(deleteModel.error, m["admin_models.unknown_error"]())}
         </Notice>
       ) : null}
 
@@ -381,7 +397,7 @@ export function AdminModels() {
         ) : models.error ? (
           <Notice tone="danger" title={m["admin_models.load_error.title"]()}>
             {/* i18n: server text — the API's own error message. */}
-            {models.error instanceof Error ? models.error.message : m["admin_models.unknown_error"]()}
+            {byokErrorText(models.error, m["admin_models.unknown_error"]())}
           </Notice>
         ) : (
           <>
@@ -550,6 +566,7 @@ function DeleteModelDialog({ model, onClose }: { model: AdminModel | null; onClo
 }
 
 function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const mine = useScopeName() === "me";
   const create = useCreateModel();
   const providers = useProviders();
   const toast = useOptionalToast();
@@ -589,7 +606,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
           <Button
             variant="primary"
             busy={create.isPending}
-            disabled={!name.trim() || !upstream.trim() || !providerId}
+            disabled={!name.trim() || !upstream.trim() || !providerId || (mine && name.trim().startsWith("my/"))}
             onClick={() =>
               create.mutate(
                 {
@@ -630,7 +647,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
         {create.error ? (
           <Notice tone="danger">
             {/* i18n: server text — the API's own error message. */}
-            {create.error instanceof Error ? create.error.message : m["admin_models.unknown_error"]()}
+            {byokErrorText(create.error, m["admin_models.unknown_error"]())}
           </Notice>
         ) : null}
 
@@ -661,7 +678,13 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder={m["admin_models.create.name_placeholder"]()}
-          hint={m["admin_models.create.name_hint"]()}
+          hint={
+            mine && name.trim().startsWith("my/")
+              ? m["byok_error.reserved_prefix"]()
+              : mine
+                ? m["byok_models.create.name_hint"]({ example: `my/${name.trim() || "name"}` })
+                : m["admin_models.create.name_hint"]()
+          }
         />
         <Input
           label={m["admin_models.create.upstream"]()}
@@ -681,7 +704,9 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
           <option value="embedding">{m["admin_models.kind.embedding"]()}</option>
           <option value="image">{m["admin_models.kind.image"]()}</option>
           <option value="transcription">{m["admin_models.kind.transcription"]()}</option>
-          <option value="decision">{m["admin_models.kind.decision"]()}</option>
+          {/* A decision model is the deployment's own machinery; the gateway
+              refuses it for a private provider, so it is not offered. */}
+          {!mine && <option value="decision">{m["admin_models.kind.decision"]()}</option>}
         </Select>
 
         {/* Describing it now rather than importing-then-editing. Left empty this
@@ -729,7 +754,9 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
 
         {/* Both are deliberate: a new model is invisible until someone chooses to
             expose it, and an unpriced model would record a cost of zero. */}
-        <Notice tone="info">{m["admin_models.create.starting_note"]()}</Notice>
+        <Notice tone="info">
+          {mine ? m["byok_models.create.starting_note"]() : m["admin_models.create.starting_note"]()}
+        </Notice>
       </div>
     </Dialog>
   );
@@ -1420,9 +1447,13 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
         {discovery.error ? (
           <Notice tone="danger" title={m["admin_models.discover.load_error.title"]()}>
             {/* i18n: server text — the API's own error message. */}
-            {discovery.error instanceof Error
-              ? discovery.error.message
-              : m["admin_models.unknown_error"]()}
+            {byokErrorText(discovery.error, m["admin_models.unknown_error"]())}
+          </Notice>
+        ) : null}
+        {importModels.error ? (
+          <Notice tone="danger" title={m["admin_models.discover.toast_failed"]()}>
+            {/* i18n: server text — the API's own error message. */}
+            {byokErrorText(importModels.error, m["admin_models.unknown_error"]())}
           </Notice>
         ) : null}
 

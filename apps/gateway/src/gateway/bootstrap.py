@@ -38,7 +38,7 @@ import logging
 import uuid
 
 import sqlalchemy as sa
-from sqlalchemy import Connection, insert, select, update
+from sqlalchemy import Connection, select, update
 
 from gateway.models import BillingMode, ModelDef, ModelKind, Provider, ProviderKind
 from gateway.plugins.extractor import LocalExtractorPlugin
@@ -78,6 +78,27 @@ _model_seed = sa.table(
     sa.column("input_modalities", sa.JSON()),
     sa.column("output_modalities", sa.JSON()),
     sa.column("supported_features", sa.JSON()),
+    sa.column("created_at", sa.DateTime(timezone=True)),
+    sa.column("updated_at", sa.DateTime(timezone=True)),
+)
+
+
+#: The same for `providers` (BYOK added `owner_kind`, `owner_id` and
+#: `admin_disabled` in 0077, and revision 0041 runs long before them).
+_provider_seed = sa.table(
+    "providers",
+    sa.column("id", sa.Uuid()),
+    sa.column("name", sa.String()),
+    sa.column("description", sa.Text()),
+    sa.column("base_url", sa.String()),
+    sa.column("api_key_encrypted", sa.Text()),
+    sa.column("api_key_hint", sa.String()),
+    sa.column("extra_headers", sa.JSON()),
+    sa.column("is_active", sa.Boolean()),
+    sa.column("prefix", sa.String()),
+    sa.column("plugin", sa.String()),
+    sa.column("kind", sa.String()),
+    sa.column("billing_mode", sa.String()),
     sa.column("created_at", sa.DateTime(timezone=True)),
     sa.column("updated_at", sa.DateTime(timezone=True)),
 )
@@ -154,7 +175,7 @@ def seed_extractor(connection: Connection) -> None:
 
     provider_id = uuid.uuid4()
     connection.execute(
-        insert(Provider).values(
+        _provider_seed.insert().values(
             id=provider_id,
             name=plugin.name,
             description="This deployment's own extractor service, seeded automatically.",
@@ -172,8 +193,8 @@ def seed_extractor(connection: Connection) -> None:
             is_active=True,
             prefix="",
             plugin=plugin.name,
-            kind=ProviderKind.INTERNAL,
-            billing_mode=BillingMode.OWN_PRICES,
+            kind=ProviderKind.INTERNAL.value,
+            billing_mode=BillingMode.OWN_PRICES.value,
             created_at=utcnow(),
             updated_at=utcnow(),
         )

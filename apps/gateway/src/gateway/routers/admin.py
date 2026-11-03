@@ -60,12 +60,26 @@ from gateway.admin_audit import (
     record_audit,
     search_price_view,
 )
+from gateway.byok import (
+    MAX_PRIVATE_MODELS,
+    MODEL_KINDS,
+    CatalogueScope,
+    CatalogueScopeDep,
+    check_private_url,
+    delete_owned_catalogue,
+    enforce_ceiling,
+    refuse_my_prefix,
+    require_headers,
+    require_model_kind,
+    require_plugin,
+)
 from gateway.capabilities import Capabilities, effective_capabilities, new_group_flags
 from gateway.catalogue import Catalogue, CatalogueEntry
 from gateway.config import EffectivePolicy, RedactionPolicy, RedactionSettings, Settings
 from gateway.deployment_state import mark_bootstrap_consumed
 from gateway.deps import (
     AdminUserDep,
+    ByokHttpDep,
     CatalogueDep,
     ControlHttpDep,
     ProvidersDep,
@@ -340,6 +354,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["administration"])
 
+#: The same provider, model, catalogue and price operations for a member who holds
+#: the bring-your-own-key capability, acting on their own rows (`gateway.byok`).
+#: Each handler below that carries `scope: CatalogueScopeDep` is registered on
+#: both routers, so there is one implementation and the two cannot drift.
+me_router = APIRouter(prefix="/api/me", tags=["bring-your-own-key"])
+
 
 class ConflictError(GatewayError):
     status_code = status.HTTP_409_CONFLICT
@@ -552,7 +572,11 @@ async def _user_grants_by_model(
 
 
 async def _load_model(
-    session: SessionDep, model_id: uuid.UUID, *, grantable: bool = False
+    session: SessionDep,
+    model_id: uuid.UUID,
+    *,
+    grantable: bool = False,
+    scope: CatalogueScope | None = None,
 ) -> ModelDef:
     """A **served** model by id, for an endpoint that only means served models.
 
@@ -576,10 +600,16 @@ async def _load_model(
     reads the id, writes an access row, and touches no served-model column — so
     the reason for the refusal does not apply. Everything else keeps it.
     """
+    # `scope` is whose catalogue this is: the deployment's when omitted, so every
+    # admin-only caller (grants, aliases, search) can never reach a private model
+    # by id. Another user's model is "no such model", not "forbidden".
     model = (
         await session.execute(
             select(ModelDef)
-            .where(ModelDef.id == model_id)
+            .where(
+                ModelDef.id == model_id,
+                scope.model_filter() if scope is not None else ModelDef.owner_id.is_(None),
+            )
             .options(selectinload(ModelDef.prices), selectinload(ModelDef.provider))
         )
     ).scalar_one_or_none()
@@ -595,9 +625,16 @@ async def _load_model(
     return model
 
 
-async def _load_provider(session: SessionDep, provider_id: uuid.UUID) -> Provider:
+async def _load_provider(
+    session: SessionDep, provider_id: uuid.UUID, scope: CatalogueScope | None = None
+) -> Provider:
     provider = (
-        await session.execute(select(Provider).where(Provider.id == provider_id))
+        await session.execute(
+            select(Provider).where(
+                Provider.id == provider_id,
+                scope.provider_filter() if scope is not None else Provider.owner_id.is_(None),
+            )
+        )
     ).scalar_one_or_none()
     if provider is None:
         raise NotFoundError(f"No provider with id {provider_id}.")
@@ -733,6 +770,15 @@ async def _model_counts(session: SessionDep) -> dict[uuid.UUID | None, int]:
     return _pairs(rows)
 
 
+def _byok_plugin_ok(plugin_name: str | None) -> bool:
+    """Whether a member may add a provider of this type (see `byok.require_plugin`)."""
+    try:
+        require_plugin(plugin_name)
+    except BadRequestError:
+        return False
+    return True
+
+
 def _store_api_key(provider: Provider, secrets: SecretBox, plaintext: str) -> None:
     """Encrypt and attach a credential, or clear it.
 
@@ -751,8 +797,9 @@ def _store_api_key(provider: Provider, secrets: SecretBox, plaintext: str) -> No
 
 
 @router.get("/provider-catalogue", response_model=list[CatalogueEntryResponse])
+@me_router.get("/provider-catalogue", response_model=list[CatalogueEntryResponse])
 async def list_provider_catalogue(
-    admin: AdminUserDep, catalogue: CatalogueDep
+    scope: CatalogueScopeDep, catalogue: CatalogueDep
 ) -> list[CatalogueEntryResponse]:
     """The provider catalogue as read at startup, each field with its origin.
 
@@ -760,14 +807,20 @@ async def list_provider_catalogue(
     applied on restart. Not paginated: a few dozen entries, never a listing that
     grows with use.
     """
-    return [_catalogue_entry_response(entry) for entry in catalogue.ordered()]
+    entries = catalogue.ordered()
+    if scope.private:
+        # Only the entries a member could actually add: language-model
+        # providers. The rest are deployment infrastructure.
+        entries = [entry for entry in entries if _byok_plugin_ok(entry.plugin)]
+    return [_catalogue_entry_response(entry) for entry in entries]
 
 
 @router.get("/providers", response_model=Page[ProviderResponse])
+@me_router.get("/providers", response_model=Page[ProviderResponse])
 async def list_providers(
-    admin: AdminUserDep, session: SessionDep, page: PageDep, catalogue: CatalogueDep
+    scope: CatalogueScopeDep, session: SessionDep, page: PageDep, catalogue: CatalogueDep
 ) -> Page[ProviderResponse]:
-    stmt = select(Provider).order_by(Provider.name)
+    stmt = select(Provider).where(scope.provider_filter()).order_by(Provider.name)
     total = await count_of(session, stmt)
     providers = (await session.execute(page.apply(stmt))).scalars().all()
     counts = await _model_counts(session)
@@ -784,23 +837,31 @@ async def list_providers(
 
 
 @router.get("/provider-plugins", response_model=list[ProviderPluginResponse])
-async def list_provider_plugins(admin: AdminUserDep) -> list[ProviderPluginResponse]:
+@me_router.get("/provider-plugins", response_model=list[ProviderPluginResponse])
+async def list_provider_plugins(scope: CatalogueScopeDep) -> list[ProviderPluginResponse]:
     """The provider types this deployment can offer.
 
     Read from the registry, so installing a plugin makes it selectable without a
     console release. Not paginated: this is a handful of installed packages, not
-    a listing that grows with use.
+    a listing that grows with use. A member adding their own provider is offered
+    only the language-model types (never a search backend or this deployment's
+    extractor).
     """
-    return [ProviderPluginResponse.model_validate(entry) for entry in plugin_registry.describe()]
+    entries = plugin_registry.describe()
+    if scope.private:
+        entries = [entry for entry in entries if entry["kind"] in ("provider", "router")]
+    return [ProviderPluginResponse.model_validate(entry) for entry in entries]
 
 
 @router.post("/providers", response_model=ProviderResponse, status_code=status.HTTP_201_CREATED)
+@me_router.post("/providers", response_model=ProviderResponse, status_code=status.HTTP_201_CREATED)
 async def create_provider(
     payload: ProviderCreateRequest,
-    admin: AdminUserDep,
+    scope: CatalogueScopeDep,
     session: SessionDep,
     secrets: SecretsDep,
     catalogue: CatalogueDep,
+    providers: ProvidersDep,
 ) -> ProviderResponse:
     """Add an inference endpoint.
 
@@ -836,8 +897,18 @@ async def create_provider(
                 f"The {plugin.label!r} type has no default endpoint — give the base URL."
             )
 
+    if scope.private:
+        # A member's own provider: language models only, a base URL the
+        # network guard allows, and no headers that interfere with the request.
+        require_plugin(plugin_name, payload.kind)
+        require_headers(payload.extra_headers)
+        await check_private_url(providers, base_url)
+        await enforce_ceiling(session, scope, models=False)
+
     provider = Provider(
         id=uuid.uuid4(),
+        owner_kind="user" if scope.owner is not None else None,
+        owner_id=scope.owner.id if scope.owner is not None else None,
         name=payload.name,
         description=payload.description,
         base_url=base_url.rstrip("/"),
@@ -853,9 +924,8 @@ async def create_provider(
         _store_api_key(provider, secrets, payload.api_key.get_secret_value())
 
     session.add(provider)
-    record_audit(
+    scope.audit(
         session,
-        admin,
         "provider.create",
         "provider",
         provider.id,
@@ -875,6 +945,7 @@ async def create_provider(
     # (ADR 0071). Tiers are body fields now, not models, so there is nothing
     # to import — the backend exists, therefore it may be granted.
     if provider.kind == ProviderKind.SEARCH:
+        refuse_my_prefix(provider.name)
         session.add(
             ModelDef(
                 name=provider.name,
@@ -903,10 +974,11 @@ async def create_provider(
 
 
 @router.patch("/providers/{provider_id}", response_model=ProviderResponse)
+@me_router.patch("/providers/{provider_id}", response_model=ProviderResponse)
 async def update_provider(
     provider_id: uuid.UUID,
     payload: ProviderUpdateRequest,
-    admin: AdminUserDep,
+    scope: CatalogueScopeDep,
     session: SessionDep,
     secrets: SecretsDep,
     providers: ProvidersDep,
@@ -930,11 +1002,23 @@ async def update_provider(
     credential, a value replaces it, an empty string clears it. A two-way
     optional field cannot express "remove the key".
     """
-    provider = await _load_provider(session, provider_id)
+    provider = await _load_provider(session, provider_id, scope)
     fields = payload.model_dump(exclude_unset=True)
     audit_before = provider_view(provider)
     headers_before = headers_snapshot(provider)
     audit_markers: dict[str, str] = {}
+
+    if scope.private:
+        # The same refusals as on create, against the row as it will be.
+        if "plugin" in fields or "kind" in fields:
+            require_plugin(
+                fields.get("plugin", provider.plugin),
+                fields.get("kind"),
+            )
+        if fields.get("extra_headers"):
+            require_headers(fields["extra_headers"])
+        if fields.get("base_url") is not None:
+            await check_private_url(providers, fields["base_url"].rstrip("/"))
 
     if "api_key" in fields:
         secret = payload.api_key.get_secret_value() if payload.api_key is not None else ""
@@ -964,7 +1048,10 @@ async def update_provider(
             if provider.prefix and model.name.startswith(provider.prefix):
                 stripped = model.name[len(provider.prefix) :]
             renames.append((model, f"{new_prefix}{stripped}"))
-        others = (await session.execute(select(ModelDef))).scalars().all()
+        # Only the names this provider's owner shares a namespace with.
+        others = (
+            (await session.execute(select(ModelDef).where(scope.model_filter()))).scalars().all()
+        )
         taken = {model.name for model in others if model.provider_id != provider.id}
         collisions = sorted({target for _, target in renames if target in taken})
         if collisions:
@@ -1005,9 +1092,8 @@ async def update_provider(
     ):
         # Same header names, different values: say so without saying what.
         audit_markers["extra_headers_values"] = "rotated"
-    record_audit(
+    scope.audit(
         session,
-        admin,
         "provider.update",
         "provider",
         provider.id,
@@ -1041,9 +1127,10 @@ async def update_provider(
 
 
 @router.delete("/providers/{provider_id}", response_model=SearchBackendDeleteResponse)
+@me_router.delete("/providers/{provider_id}", response_model=SearchBackendDeleteResponse)
 async def delete_provider(
     provider_id: uuid.UUID,
-    admin: AdminUserDep,
+    scope: CatalogueScopeDep,
     session: SessionDep,
     providers: ProvidersDep,
 ) -> Response | SearchBackendDeleteResponse:
@@ -1068,7 +1155,7 @@ async def delete_provider(
     it: ``usage_records.model_id`` is ON DELETE SET NULL and every row carries
     the denormalised name.
     """
-    provider = await _load_provider(session, provider_id)
+    provider = await _load_provider(session, provider_id, scope)
     audit_before = provider_view(provider)
 
     if provider.kind == ProviderKind.INTERNAL:
@@ -1090,9 +1177,8 @@ async def delete_provider(
             )
 
         await session.execute(delete(Provider).where(Provider.id == provider_id))
-        record_audit(
+        scope.audit(
             session,
-            admin,
             "provider.delete",
             "provider",
             provider_id,
@@ -1142,9 +1228,8 @@ async def delete_provider(
         await session.execute(delete(UserModelAccess).where(UserModelAccess.model_id.in_(tier_ids)))
         await session.execute(delete(ModelDef).where(ModelDef.provider_id == provider_id))
     await session.execute(delete(Provider).where(Provider.id == provider_id))
-    record_audit(
+    scope.audit(
         session,
-        admin,
         "provider.delete",
         "provider",
         provider_id,
@@ -1158,9 +1243,10 @@ async def delete_provider(
 
 
 @router.post("/providers/{provider_id}/test", response_model=ProviderTestResponse)
+@me_router.post("/providers/{provider_id}/test", response_model=ProviderTestResponse)
 async def test_provider(
     provider_id: uuid.UUID,
-    admin: AdminUserDep,
+    scope: CatalogueScopeDep,
     session: SessionDep,
     providers: ProvidersDep,
 ) -> ProviderTestResponse:
@@ -1181,9 +1267,12 @@ async def test_provider(
     is the useful answer, and an exception would make the console show a generic
     error instead of the detail.
     """
-    provider = await _load_provider(session, provider_id)
+    provider = await _load_provider(session, provider_id, scope)
 
     try:
+        # A private provider's host is checked first (and again at connect time
+        # by its guarded client), so the answer names the rule.
+        await providers.guard(provider)
         upstream, client = providers.build_probe(provider)
     except ProviderConfigurationError as exc:
         return ProviderTestResponse(ok=False, detail=str(exc))
@@ -1215,8 +1304,9 @@ async def test_provider(
 
 
 @router.get("/models", response_model=Page[ModelAdminResponse])
+@me_router.get("/models", response_model=Page[ModelAdminResponse])
 async def list_models(
-    admin: AdminUserDep,
+    scope: CatalogueScopeDep,
     session: SessionDep,
     page: PageDep,
     include_inactive: bool = True,
@@ -1238,7 +1328,7 @@ async def list_models(
     stmt = (
         select(ModelDef)
         .options(selectinload(ModelDef.prices), selectinload(ModelDef.provider))
-        .where(ModelDef.is_alias.is_(False))
+        .where(ModelDef.is_alias.is_(False), scope.model_filter())
         .order_by(ModelDef.name)
     )
     if not include_inactive:
@@ -1265,8 +1355,9 @@ async def list_models(
 
 
 @router.post("/models", response_model=ModelAdminResponse, status_code=status.HTTP_201_CREATED)
+@me_router.post("/models", response_model=ModelAdminResponse, status_code=status.HTTP_201_CREATED)
 async def create_model(
-    payload: ModelCreateRequest, admin: AdminUserDep, session: SessionDep
+    payload: ModelCreateRequest, scope: CatalogueScopeDep, session: SessionDep
 ) -> ModelAdminResponse:
     """Add a model to the catalogue.
 
@@ -1276,12 +1367,25 @@ async def create_model(
     """
     # Checked before insert so the failure is "no such provider" rather than a
     # foreign-key violation.
-    provider = await _load_provider(session, payload.provider_id)
+    provider = await _load_provider(session, payload.provider_id, scope)
+    if scope.private:
+        # Before the decision check below: a decision model is not something a
+        # member may add, and that is the answer, not "this provider has no
+        # decision support".
+        require_model_kind(ModelKind(payload.kind))
+        if payload.is_public:
+            raise BadRequestError(
+                "Your own models are private: they cannot be made public.",
+                code="byok_not_shareable",
+            )
+        await enforce_ceiling(session, scope, models=True)
     if payload.kind == ModelKind.DECISION.value:
         _require_decision_provider(provider, payload.name)
 
     model = ModelDef(
         id=uuid.uuid4(),
+        owner_kind="user" if scope.owner is not None else None,
+        owner_id=scope.owner.id if scope.owner is not None else None,
         name=payload.name,
         upstream_model=payload.upstream_model,
         provider_id=payload.provider_id,
@@ -1298,9 +1402,7 @@ async def create_model(
         is_public=payload.is_public,
     )
     session.add(model)
-    record_audit(
-        session, admin, "model.create", "model", model.id, model.name, after=model_view(model)
-    )
+    scope.audit(session, "model.create", "model", model.id, model.name, after=model_view(model))
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -1311,21 +1413,30 @@ async def create_model(
 
 
 @router.patch("/models/{model_id}", response_model=ModelAdminResponse)
+@me_router.patch("/models/{model_id}", response_model=ModelAdminResponse)
 async def update_model(
     model_id: uuid.UUID,
     payload: ModelUpdateRequest,
-    admin: AdminUserDep,
+    scope: CatalogueScopeDep,
     session: SessionDep,
 ) -> ModelAdminResponse:
     """Change a model in place. Deactivate here rather than deleting."""
-    model = await _load_model(session, model_id)
+    model = await _load_model(session, model_id, scope=scope)
     audit_before = model_view(model)
     fields = payload.model_dump(exclude_unset=True)
     provider = model.provider
     if (provider_id := fields.get("provider_id")) is not None:
         # Repointing at another endpoint is allowed and is how a migration off a
         # provider happens; pointing at one that does not exist is not.
-        provider = await _load_provider(session, provider_id)
+        provider = await _load_provider(session, provider_id, scope)
+    if scope.private:
+        if fields.get("is_public"):
+            raise BadRequestError(
+                "Your own models are private: they cannot be made public.",
+                code="byok_not_shareable",
+            )
+        if fields.get("kind") is not None:
+            require_model_kind(ModelKind(fields["kind"]))
     if (kind := fields.pop("kind", None)) is not None:
         model.kind = ModelKind(kind)
     if model.kind is ModelKind.DECISION and provider is not None and not model.is_alias:
@@ -1334,9 +1445,8 @@ async def update_model(
         _require_decision_provider(provider, model.name)
     for field, value in fields.items():
         setattr(model, field, value)
-    record_audit(
+    scope.audit(
         session,
-        admin,
         "model.update",
         "model",
         model.id,
@@ -1370,7 +1480,8 @@ async def update_model(
 
 
 @router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_model(model_id: uuid.UUID, admin: AdminUserDep, session: SessionDep) -> None:
+@me_router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_model(model_id: uuid.UUID, scope: CatalogueScopeDep, session: SessionDep) -> None:
     """Remove a model from the catalogue outright, not merely deactivate it.
 
     Deactivation is the tool for "out of service"; it still shows the row, which
@@ -1381,7 +1492,7 @@ async def delete_model(model_id: uuid.UUID, admin: AdminUserDep, session: Sessio
     attribution to users and groups is untouched. Prices and access grants die
     with the model — they are meaningless without it.
     """
-    model = await _load_model(session, model_id)
+    model = await _load_model(session, model_id, scope=scope)
     audit_before = model_view(model)
     if model.provider is not None and model.provider.kind == ProviderKind.INTERNAL:
         # The same protection as the provider row itself, and for the same
@@ -1428,9 +1539,8 @@ async def delete_model(model_id: uuid.UUID, admin: AdminUserDep, session: Sessio
     await session.execute(delete(GroupModelAccess).where(GroupModelAccess.model_id == model_id))
     await session.execute(delete(UserModelAccess).where(UserModelAccess.model_id == model_id))
     await session.execute(delete(ModelDef).where(ModelDef.id == model_id))
-    record_audit(
+    scope.audit(
         session,
-        admin,
         "model.delete",
         "model",
         model_id,
@@ -1469,6 +1579,7 @@ async def _catalogue_source(
     provider_id: uuid.UUID,
     url: str | None,
     tag: str | None = None,
+    scope: CatalogueScope | None = None,
 ) -> tuple[Provider, str, str | None]:
     """Where to fetch a catalogue from, and with which credential.
 
@@ -1482,7 +1593,17 @@ async def _catalogue_source(
     offers, and reading the list from a community file answered that question
     with a third party's opinion (ADR 0053).
     """
-    provider = await _load_provider(session, provider_id)
+    provider = await _load_provider(session, provider_id, scope)
+    if url and scope is not None and scope.private:
+        # The override exists so an administrator can read a catalogue that
+        # lives away from `{base_url}/models`. For a member it would be a URL
+        # of their choosing fetched with their provider's key attached: the
+        # catalogue is always the provider's own endpoint.
+        raise BadRequestError(
+            "A catalogue URL cannot be given for your own provider: the provider's own "
+            "/models endpoint is used.",
+            code="byok_catalogue_url",
+        )
     catalogue_url = url or f"{provider.base_url}/models"
     if tag:
         # Cortecs' catalogue **defaults to `tag=Instruct`**, so an unfiltered
@@ -1502,6 +1623,28 @@ async def _catalogue_source(
                 f"provider {provider.name!r}: {exc}", code="provider_key_unreadable"
             ) from exc
     return provider, catalogue_url, api_key
+
+
+async def _catalogue_http(
+    scope: CatalogueScope,
+    provider: Provider,
+    providers: Any,
+    control_http: Any,
+    byok_http: Any,
+) -> Any:
+    """The HTTP client a catalogue fetch uses: the guarded one for a private provider.
+
+    Refuses first (400) when the provider's host is one the guard does not
+    allow, so the member is told which rule applied. The guarded client checks
+    again at connect time, which is the check that cannot be raced.
+    """
+    if not scope.private:
+        return control_http
+    try:
+        await providers.guard(provider)
+    except ProviderConfigurationError as exc:
+        raise BadRequestError(str(exc), code="provider_url_blocked") from exc
+    return byok_http
 
 
 def _fill_from_hints(
@@ -1636,12 +1779,15 @@ async def _catalogue_with_prices(
 
 
 @router.get("/models/discover", response_model=CatalogueDiscoveryResponse)
+@me_router.get("/models/discover", response_model=CatalogueDiscoveryResponse)
 async def discover_models(
-    admin: AdminUserDep,
+    scope: CatalogueScopeDep,
     session: SessionDep,
     settings: SettingsDep,
     secrets: SecretsDep,
-    http: ControlHttpDep,
+    control_http: ControlHttpDep,
+    byok_http: ByokHttpDep,
+    providers: ProvidersDep,
     catalogue: CatalogueDep,
     provider_id: uuid.UUID,
     url: str | None = None,
@@ -1665,8 +1811,11 @@ async def discover_models(
     that before clicking Import, not afterwards.
     """
     provider, catalogue_url, api_key = await _catalogue_source(
-        session, secrets, provider_id, url, tag
+        session, secrets, provider_id, url, tag, scope
     )
+    # A private provider's catalogue is read through the guarded client, after
+    # the network guard has judged its host: the URL is the member's.
+    http = await _catalogue_http(scope, provider, providers, control_http, byok_http)
     by_upstream, unpriced, filled, kinds, limits = await _catalogue_with_prices(
         http,
         provider,
@@ -1860,11 +2009,14 @@ async def discover_models(
 
 
 @router.get("/models/tags", response_model=CatalogueTagsResponse)
+@me_router.get("/models/tags", response_model=CatalogueTagsResponse)
 async def list_catalogue_tags(
-    admin: AdminUserDep,
+    scope: CatalogueScopeDep,
     session: SessionDep,
     secrets: SecretsDep,
-    http: ControlHttpDep,
+    control_http: ControlHttpDep,
+    byok_http: ByokHttpDep,
+    providers: ProvidersDep,
     provider_id: uuid.UUID,
 ) -> CatalogueTagsResponse:
     """The tags this provider slices its catalogue by, for a dropdown.
@@ -1881,7 +2033,8 @@ async def list_catalogue_tags(
     console keeps free text for those — a dropdown of one default option would
     be a worse version of the box it replaced.
     """
-    provider = await _load_provider(session, provider_id)
+    provider = await _load_provider(session, provider_id, scope)
+    http = await _catalogue_http(scope, provider, providers, control_http, byok_http)
     plugin = plugin_registry.resolve(provider.plugin)
     catalogue_url = f"{provider.base_url}/models"
 
@@ -2028,14 +2181,21 @@ async def _manual_catalogue_price(
     response_model=ModelImportResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@me_router.post(
+    "/models/import",
+    response_model=ModelImportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def import_models(
     request: Request,
     payload: ModelImportRequest,
-    admin: AdminUserDep,
+    scope: CatalogueScopeDep,
     session: SessionDep,
     settings: SettingsDep,
     secrets: SecretsDep,
-    http: ControlHttpDep,
+    control_http: ControlHttpDep,
+    byok_http: ByokHttpDep,
+    providers: ProvidersDep,
     catalogue: CatalogueDep,
     provider_id: uuid.UUID,
     url: str | None = None,
@@ -2074,8 +2234,9 @@ async def import_models(
     without needing to remember which checkbox was ticked (ADR 0053).
     """
     provider, catalogue_url, api_key = await _catalogue_source(
-        session, secrets, provider_id, url, tag
+        session, secrets, provider_id, url, tag, scope
     )
+    http = await _catalogue_http(scope, provider, providers, control_http, byok_http)
     by_upstream, unpriced, filled, kinds, limits = await _catalogue_with_prices(
         http,
         provider,
@@ -2095,7 +2256,11 @@ async def import_models(
     # imported by naming it.
     listed_unpriced = set(unpriced) - ANONYMOUS_UNPARSABLE
 
-    existing = (await session.execute(select(ModelDef))).scalars().all()
+    # Only the rows in this scope: a deployment import is judged against the
+    # deployment's names, a member's against their own. A private name can
+    # never clash with a deployment one because it is addressed `my/<name>`.
+    existing = (await session.execute(select(ModelDef).where(scope.model_filter()))).scalars().all()
+    own_count = len(existing) if scope.private else 0
     # Names clash with aliases too — one name namespace across both (ADR 0101),
     # so importing a model over a live alias would break every caller using it.
     taken_names = {model.name for model in existing}
@@ -2232,7 +2397,37 @@ async def import_models(
                 continue
             price = candidate
 
+        if scope.private:
+            # What a member may add as their own (see `byok.MODEL_KINDS`), and
+            # how many; reported per item like every other refusal here.
+            if price.kind not in MODEL_KINDS:
+                results.append(
+                    ModelImportResult(
+                        upstream_model=item.upstream_model,
+                        name=name,
+                        imported=False,
+                        priced=False,
+                        reason=f"a {price.kind.value} model cannot be added as your own",
+                    )
+                )
+                continue
+            if own_count >= MAX_PRIVATE_MODELS:
+                results.append(
+                    ModelImportResult(
+                        upstream_model=item.upstream_model,
+                        name=name,
+                        imported=False,
+                        priced=False,
+                        reason=f"you already have {MAX_PRIVATE_MODELS} models, the most one "
+                        "account may add",
+                    )
+                )
+                continue
+            own_count += 1
+
         model = ModelDef(
+            owner_kind="user" if scope.owner is not None else None,
+            owner_id=scope.owner.id if scope.owner is not None else None,
             name=name,
             upstream_model=item.upstream_model,
             provider_id=provider.id,
@@ -2252,9 +2447,7 @@ async def import_models(
         model.id = uuid.uuid4()
         session.add(model)
         await session.flush()
-        record_audit(
-            session, admin, "model.create", "model", model.id, model.name, after=model_view(model)
-        )
+        scope.audit(session, "model.create", "model", model.id, model.name, after=model_view(model))
         # Who supplied this figure, kept on the row itself. Until ADR 0053 every
         # catalogue import wrote `cortecs` regardless of provider or source, so a
         # community price for an OpenAI model was recorded as Cortecs' own. A
@@ -2287,9 +2480,8 @@ async def import_models(
             source=source,
         )
         session.add(imported_price)
-        record_audit(
+        scope.audit(
             session,
-            admin,
             "price.create",
             "price",
             imported_price.id,
@@ -2318,8 +2510,9 @@ async def import_models(
 # above them would swallow both and answer a discovery request with "422: value
 # is not a valid uuid" — a route that exists, reached by nobody.
 @router.get("/models/{model_id}", response_model=ModelAdminResponse)
+@me_router.get("/models/{model_id}", response_model=ModelAdminResponse)
 async def get_model(
-    model_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
+    model_id: uuid.UUID, scope: CatalogueScopeDep, session: SessionDep
 ) -> ModelAdminResponse:
     """One model, with its grants and current price.
 
@@ -2329,7 +2522,7 @@ async def get_model(
     catalogue by name to rebuild a page whose id is right there would be both
     slower and wrong, because the name is editable and the id is not.
     """
-    model = await _load_model(session, model_id)
+    model = await _load_model(session, model_id, scope=scope)
     grants = await _grants_by_model(session, [model.id])
     user_grants = await _user_grants_by_model(session, [model.id])
     return _model_response(
@@ -2368,8 +2561,9 @@ async def _aliases_pointing_at(session: SessionDep, model_id: uuid.UUID) -> list
 
 
 @router.get("/models/{model_id}/prices", response_model=Page[PriceResponse])
+@me_router.get("/models/{model_id}/prices", response_model=Page[PriceResponse])
 async def list_prices(
-    model_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, page: PageDep
+    model_id: uuid.UUID, scope: CatalogueScopeDep, session: SessionDep, page: PageDep
 ) -> Page[PriceResponse]:
     """Price history, newest first. Nothing here is ever mutated.
 
@@ -2377,7 +2571,7 @@ async def list_prices(
     model, and a price history is short. The shape matches the other listings
     so a client does not have to care which.
     """
-    model = await _load_model(session, model_id)
+    model = await _load_model(session, model_id, scope=scope)
     ordered = sorted(model.prices, key=lambda price: price.effective_from, reverse=True)
     return page.slice([response for price in ordered if (response := _price_response(price))])
 
@@ -2387,11 +2581,16 @@ async def list_prices(
     response_model=PriceResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@me_router.post(
+    "/models/{model_id}/prices",
+    response_model=PriceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_price(
     request: Request,
     model_id: uuid.UUID,
     payload: PriceCreateRequest,
-    admin: AdminUserDep,
+    scope: CatalogueScopeDep,
     session: SessionDep,
     settings: SettingsDep,
 ) -> PriceResponse:
@@ -2400,7 +2599,7 @@ async def create_price(
     Effective-dated, so a future date schedules a change and a past date cannot
     alter what already-recorded requests cost.
     """
-    model = await _load_model(session, model_id)
+    model = await _load_model(session, model_id, scope=scope)
 
     currency = await _price_currency(payload.currency, settings, request.app.state.fx)
 
@@ -2427,9 +2626,7 @@ async def create_price(
         source=PriceSource.MANUAL,
     )
     session.add(price)
-    record_audit(
-        session, admin, "price.create", "price", price.id, model.name, after=price_view(price)
-    )
+    scope.audit(session, "price.create", "price", price.id, model.name, after=price_view(price))
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -2644,6 +2841,7 @@ def _group_admin_response(
         code_agents_allowed=group.code_agents_allowed,
         api_keys_allowed=group.api_keys_allowed,
         local_connectors_allowed=group.local_connectors_allowed,
+        byok_allowed=group.byok_allowed,
         member_count=member_count,
         models=models,
         # Which of `models` is an alias, so the Groups page can badge them
@@ -3017,6 +3215,8 @@ async def update_group(
         group.api_keys_allowed = payload.api_keys_allowed is True
     if "local_connectors_allowed" in fields:
         group.local_connectors_allowed = payload.local_connectors_allowed is True
+    if "byok_allowed" in fields:
+        group.byok_allowed = payload.byok_allowed is True
     await session.commit()
     await session.refresh(group)
     member_count = await session.scalar(
@@ -3048,6 +3248,7 @@ _CAPABILITY_FLAG_COLUMNS = {
     "code_agents": Group.code_agents_allowed,
     "api_keys": Group.api_keys_allowed,
     "local_connectors": Group.local_connectors_allowed,
+    "byok": Group.byok_allowed,
 }
 
 
@@ -3104,7 +3305,7 @@ async def bulk_group_capabilities(
     refuses, because the restriction's machine-link half could never fire.
     Granting is always fine.
     """
-    if payload.capability != "api_keys":
+    if payload.capability in ("code_agents", "local_connectors"):
         _require_chat(settings, "Code agents and local connectors")
     flag_column = _CAPABILITY_FLAG_COLUMNS[payload.capability]
     if payload.capability in ("code_agents", "local_connectors") and payload.value is False:
@@ -4067,6 +4268,11 @@ async def _user_responses(
             ),
             local_connectors_allowed=(
                 capabilities_by_id[user.id].local_connectors
+                if membership_in is None and user.id in capabilities_by_id
+                else None
+            ),
+            byok_allowed=(
+                capabilities_by_id[user.id].byok
                 if membership_in is None and user.id in capabilities_by_id
                 else None
             ),
@@ -5317,6 +5523,9 @@ async def delete_user(
         .where(UsageRecord.user_id == user.id, UsageRecord.assistant_text.is_not(None))
         .values(assistant_text=None)
     )
+    # Their private (BYOK) models and providers, and the keys on them, go with
+    # them: explicitly and in this order (see `byok.delete_owned_catalogue`).
+    await delete_owned_catalogue(session, user.id)
     await session.delete(user)
     erasure = await queue_erasure(session, gateway_user_id=user.id, identities=identities)
     await session.commit()
@@ -5397,6 +5606,8 @@ async def _oidc_policy_response(request: Request, session: SessionDep) -> OidcPo
         code_agents_mode=policy.code_agents_mode,
         api_keys_mode=policy.api_keys_mode,
         local_connectors_mode=policy.local_connectors_mode,
+        byok_mode=policy.byok_mode,
+        byok_private_networks=policy.byok_private_networks,
         source=policy.source,
         sources=policy.sources,
         configured=(
@@ -5435,11 +5646,12 @@ async def preview_oidc_policy(
     # active non-admin people gain / lose it", which the console confirms
     # before applying. Either may be asked alone, and together they are a
     # preview of the same flag both ways.
-    bulk_capability: Literal["code_agents", "api_keys", "local_connectors"] | None = None,
+    bulk_capability: Literal["code_agents", "api_keys", "local_connectors", "byok"] | None = None,
     bulk_value: bool | None = None,
     code_agents_mode: str | None = None,
     api_keys_mode: str | None = None,
     local_connectors_mode: str | None = None,
+    byok_mode: str | None = None,
 ) -> OidcPolicyPreviewResponse:
     """What saving this group gate would do (ADR 0095 §7, ADR 0096).
 
@@ -5464,6 +5676,7 @@ async def preview_oidc_policy(
         code_agents_mode is not None
         or api_keys_mode is not None
         or local_connectors_mode is not None
+        or byok_mode is not None
     )
     if not want_bulk and not want_capabilities:
         if join_mode != "group":
@@ -5819,6 +6032,7 @@ async def set_oidc_policy(
         ("code_agents_mode", "code_agents_mode"),
         ("api_keys_mode", "api_keys_mode"),
         ("local_connectors_mode", "local_connectors_mode"),
+        ("byok_mode", "byok_mode"),
     ):
         value = fields.get(knob)
         # The 0.7.x spellings still save — meaning on/off — for one release
@@ -6096,6 +6310,8 @@ async def usage_by_group(
             .where(
                 UsageRecord.created_at >= since,
                 UsageRecord.status != UsageStatus.IN_PROGRESS,
+                # Bring-your-own-key usage is not charged to a group.
+                UsageRecord.byok.is_(False),
             )
             .group_by(UsageRecord.group_id)
         )

@@ -51,6 +51,7 @@ from gateway.access import (
     alias_unavailable_reason,
     all_active_models,
 )
+from gateway.capabilities import holds_byok
 from gateway.deps import OptionalPrincipalDep, PrincipalDep, SessionDep
 from gateway.errors import BadRequestError
 from gateway.models import ModelDef, ModelKind, ModelRouteTarget, Provider, ProviderKind
@@ -117,7 +118,16 @@ async def list_models(
     # nothing — the full catalogue, not the subset a groupless caller would
     # see.
     base = (
-        accessible_models(user_id=principal.user.id, group_ids=[principal.billing_group.id])
+        accessible_models(
+            user_id=principal.user.id,
+            group_ids=[principal.billing_group.id] if principal.billing_group else [],
+            # The caller's own private models, only while they hold the
+            # capability: losing it hides them, regaining it brings them back.
+            byok=holds_byok(principal.user),
+            # No billing group (a BYOK user with none): the deployment's
+            # models are not theirs to list, since asking for one is refused.
+            deployment=principal.billing_group is not None,
+        )
         if principal is not None
         else all_active_models()
     )
@@ -206,7 +216,8 @@ def _card(
     """
     if not model.is_alias:
         return ModelCard(
-            id=model.name,
+            id=model.api_name,
+            byok=model.is_private,
             created=int(model.created_at.timestamp()),
             owned_by=model.provider.name if model.provider is not None else "gateway",
             context_window=model.context_window,
@@ -257,7 +268,11 @@ async def retrieve_model(
     # — here, admitting a name the list would not show — was the other half of
     # the mismatch the listing once had.
     stmt = accessible_model_by_name(
-        model_name, user_id=principal.user.id, group_ids=[principal.billing_group.id]
+        model_name,
+        user_id=principal.user.id,
+        group_ids=[principal.billing_group.id] if principal.billing_group else [],
+        byok=holds_byok(principal.user),
+        deployment=principal.billing_group is not None,
     )
     rows = (
         await session.execute(_with_alias_target(stmt).order_by(ModelRouteTarget.position))

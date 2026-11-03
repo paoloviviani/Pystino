@@ -160,6 +160,10 @@ class RequestContext:
     plugin: str | None = None
     #: Whose figure is the charge, from `providers.billing_mode` (ADR 0032).
     billing_mode: str = "own_prices"
+    #: Served by the caller's own provider and key (BYOK). Written to the row
+    #: and nothing else: no quota counts it and no group or administrator
+    #: report adds it up (see `UsageRecord.byok`).
+    byok: bool = False
 
 
 if TYPE_CHECKING:
@@ -265,6 +269,7 @@ class RequestAccounting:
             model_name=self._ctx.model_name,
             requested_model=self._ctx.requested_model,
             route_attempt=self._ctx.route_attempt,
+            byok=self._ctx.byok,
             streamed=self._ctx.streamed,
             api_surface=self._ctx.surface,
             currency=self._ctx.currency,

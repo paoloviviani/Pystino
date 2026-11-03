@@ -13,6 +13,16 @@ Absence of any grant means no access. There are no denials — an explicit deny
 overriding a group grant would turn "why can this person not use that model"
 into a question requiring a search.
 
+**A private (BYOK) model is the other arm, and the only other one.** A model
+with an owner is usable by that owner and by nobody else, and only while the
+owner holds the ``byok`` capability: no group grant, no personal grant and no
+``is_public`` applies to it, and the deployment arm above never reaches it. It
+is addressed ``my/<name>`` on every ``/v1`` surface (the prefix belongs to the
+API, it is not stored). Losing the capability makes the rows unusable, not
+deleted; regaining it restores them. Every caller that does not pass
+``byok=True`` sees deployment models only, which is why the unauthenticated
+listing and the search route needed no change.
+
 A model whose *provider* is inactive is also excluded. Deactivating a provider
 is how an operator takes an endpoint out of service, and leaving its models
 listed would advertise something every request then fails on.
@@ -32,10 +42,11 @@ import enum
 import uuid
 from collections.abc import Iterable
 
-from sqlalchemy import ColumnElement, Select, and_, literal, or_, select
+from sqlalchemy import ColumnElement, Select, and_, false, literal, or_, select
 from sqlalchemy.orm import joinedload, selectinload
 
 from gateway.models import (
+    MY_PREFIX,
     GroupModelAccess,
     ModelDef,
     ModelRouteTarget,
@@ -64,15 +75,12 @@ class AliasUnavailable(enum.StrEnum):
     TARGET_IS_ALIAS = "target_is_alias"
 
 
-def all_active_models() -> Select[tuple[ModelDef]]:
-    """Every active model behind an active provider, with no grant check at all.
+def _servable() -> Select[tuple[ModelDef]]:
+    """Every active model behind an active provider, deployment and private alike.
 
-    The unauthenticated half of ``GET /v1/models`` (ADR 0081): a public listing
-    has no caller to check a grant against, and grant-filtering an absent caller
-    down to "public models only" would be a narrower endpoint than the one being
-    exempted from authentication, not the same one made anonymous. Factored out
-    of :func:`accessible_models` rather than duplicated, per this module's own
-    rule about one predicate written in one place.
+    The common spine of the two public statements below; not exported, because
+    a caller that used it directly would be asking for private rows with no
+    owner check.
     """
     # An **outer** join, and the alias arm beside the served arm — the two go
     # together, because either alone drops every alias (ADR 0101).
@@ -91,26 +99,68 @@ def all_active_models() -> Select[tuple[ModelDef]]:
     # the target is dereferenced — refusing the request, not hiding the name,
     # because an administrator has to be able to see an alias whose target is
     # down in order to retarget it.
+    #
+    # The owner match is the re-check of what the write path already enforces:
+    # a deployment model never rides a private provider and a private model
+    # never rides anyone else's. Spelled out rather than with `IS NOT DISTINCT
+    # FROM` (both sides are NULL for every deployment row): that spelling is
+    # fine on both dialects, but `test_providers.py` asserts the compiled
+    # statement contains no DISTINCT at all, which is the property that
+    # matters here and is cheaper to keep than to explain away.
     return (
         select(ModelDef)
         .outerjoin(Provider, Provider.id == ModelDef.provider_id)
         .where(
             ModelDef.is_active.is_(True),
+            ModelDef.admin_disabled.is_(False),
             or_(
                 ModelDef.is_alias.is_(True),
-                and_(ModelDef.is_alias.is_(False), Provider.is_active.is_(True)),
+                and_(
+                    ModelDef.is_alias.is_(False),
+                    Provider.is_active.is_(True),
+                    Provider.admin_disabled.is_(False),
+                    or_(
+                        and_(Provider.owner_id.is_(None), ModelDef.owner_id.is_(None)),
+                        Provider.owner_id == ModelDef.owner_id,
+                    ),
+                ),
             ),
         )
     )
 
 
+def all_active_models() -> Select[tuple[ModelDef]]:
+    """Every active **deployment** model behind an active provider, with no grant check at all.
+
+    The unauthenticated half of ``GET /v1/models`` (ADR 0081): a public listing
+    has no caller to check a grant against, and grant-filtering an absent caller
+    down to "public models only" would be a narrower endpoint than the one being
+    exempted from authentication, not the same one made anonymous. Factored out
+    of :func:`accessible_models` rather than duplicated, per this module's own
+    rule about one predicate written in one place.
+    """
+    return _servable().where(ModelDef.owner_id.is_(None))
+
+
 def accessible_models(
-    *, user_id: uuid.UUID | None, group_ids: Iterable[uuid.UUID]
+    *,
+    user_id: uuid.UUID | None,
+    group_ids: Iterable[uuid.UUID],
+    byok: bool = False,
+    deployment: bool = True,
 ) -> Select[tuple[ModelDef]]:
     """Every active model this caller may use, as a statement to refine further.
 
     Returned rather than executed so callers can add their own filters and
-    eager-loads without a second round trip.
+    eager-loads without a second round trip. ``byok`` is whether the caller
+    currently holds the capability (the caller has the user loaded and asks
+    :func:`gateway.capabilities.holds_byok`, so this costs no query): it adds
+    the caller's **own** private models, and nothing else about the predicate
+    changes. ``deployment=False`` drops the deployment arm, for a caller with no
+    billing group: nothing is granted to a group they do not have, and public
+    models are not theirs to list or use either, since their request would be
+    refused for want of a group to bill. Only their own private models remain
+    (and none at all unless ``byok`` is set).
     """
     groups = list(group_ids)
 
@@ -128,7 +178,12 @@ def accessible_models(
     # EXISTS cannot fan out, so there is nothing to deduplicate and no DISTINCT
     # to go wrong. It is also the cheaper plan: no join-then-dedup over the
     # grant tables.
-    reachable: list[ColumnElement[bool]] = []
+    #
+    # The public flag is a column predicate alongside the grant EXISTS clauses,
+    # not a third EXISTS: it reads off the row already being fetched, and
+    # "public" is a property of the model rather than a relationship to it. A
+    # public model needs no grant at all, so the empty case still admits it.
+    reachable: list[ColumnElement[bool]] = [ModelDef.is_public.is_(True)]
     if groups:
         reachable.append(
             select(literal(1))
@@ -148,25 +203,31 @@ def accessible_models(
             .exists()
         )
 
-    statement = all_active_models()
-
-    if not reachable:
-        # No groups and no personal grants — but a public model needs no grant
-        # at all, so the empty case still has to admit one. `where(false)`
-        # rather than an early return of an empty list, so the caller still
-        # gets a statement and this function has one shape.
-        return statement.where(or_(ModelDef.is_public.is_(True), ModelDef.id.is_(None)))
-
-    # The public flag is a column predicate alongside the grant EXISTS clauses,
-    # not a third EXISTS: it reads off the row already being fetched, and
-    # "public" is a property of the model rather than a relationship to it.
-    return statement.where(or_(*reachable, ModelDef.is_public.is_(True)))
+    # The deployment arm: owner-less rows, by the rule in the module docstring.
+    # The private arm is a separate disjunct, so a grant row that somehow named
+    # a private model (the admin routes refuse to write one) still reaches
+    # nothing: grants only ever widen the first.
+    deployment_arm = and_(ModelDef.owner_id.is_(None), or_(*reachable))
+    if byok and user_id is not None:
+        own = and_(ModelDef.owner_kind == "user", ModelDef.owner_id == user_id)
+        return _servable().where(or_(deployment_arm, own) if deployment else own)
+    return _servable().where(deployment_arm if deployment else false())
 
 
 def accessible_model_by_name(
-    name: str, *, user_id: uuid.UUID | None, group_ids: Iterable[uuid.UUID]
+    name: str,
+    *,
+    user_id: uuid.UUID | None,
+    group_ids: Iterable[uuid.UUID],
+    byok: bool = False,
+    deployment: bool = True,
 ) -> Select[tuple[ModelDef]]:
     """One named model, if this caller may use it.
+
+    ``name`` is the name **as sent on /v1**: ``my/<name>`` addresses the
+    caller's own private model and anything else a deployment model, so the two
+    namespaces cannot shadow each other and a name that is not the caller's
+    answers exactly as one that does not exist.
 
     Eager-loads prices and the provider: the chat path needs both immediately,
     and touching an unloaded relationship from async code raises MissingGreenlet
@@ -179,13 +240,21 @@ def accessible_model_by_name(
     dereference through :func:`alias_targets`, once, and only when the name it
     sent turned out to be one.
     """
-    return (
-        accessible_models(user_id=user_id, group_ids=group_ids)
-        .where(ModelDef.name == name)
+    statement = accessible_models(
+        user_id=user_id, group_ids=group_ids, byok=byok, deployment=deployment
+    )
+    if name.startswith(MY_PREFIX):
+        statement = statement.where(
+            ModelDef.name == name[len(MY_PREFIX) :], ModelDef.owner_id.is_not(None)
+        )
+    else:
+        statement = statement.where(ModelDef.name == name, ModelDef.owner_id.is_(None))
+    return statement.options(
         # The provider is many-to-one, so it joins without multiplying rows;
         # prices are to-many and stay a separate IN query. One round trip saved
         # on every metered request.
-        .options(selectinload(ModelDef.prices), joinedload(ModelDef.provider))
+        selectinload(ModelDef.prices),
+        joinedload(ModelDef.provider),
     )
 
 
@@ -206,6 +275,13 @@ def alias_unavailable_reason(alias: ModelDef, target: ModelDef | None) -> AliasU
         return AliasUnavailable.TARGET_DELETED
     if target.is_alias:
         return AliasUnavailable.TARGET_IS_ALIAS
+    if target.owner_id is not None:
+        # A deployment alias must never reach a user's private model. The save
+        # path refuses to write one; a row forced into the table is classified
+        # as a target that is not there, which is what it is *for this alias*,
+        # rather than as a new wire value the console would not know how to
+        # label.
+        return AliasUnavailable.TARGET_DELETED
     if not target.is_active:
         return AliasUnavailable.TARGET_INACTIVE
     if target.provider is None or not target.provider.is_active:

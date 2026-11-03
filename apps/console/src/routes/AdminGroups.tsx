@@ -65,7 +65,11 @@ export function AdminGroups() {
 
   const flipCapability = (
     group: AdminGroup,
-    knob: "code_agents_allowed" | "api_keys_allowed" | "local_connectors_allowed",
+    knob:
+      | "code_agents_allowed"
+      | "api_keys_allowed"
+      | "local_connectors_allowed"
+      | "byok_allowed",
     value: boolean,
   ) =>
     updateGroup.mutate(
@@ -160,6 +164,21 @@ export function AdminGroups() {
             {m["admin_groups.capability.local_connectors"]()}
           </label>
           )}
+          {/* Not a chat concept: private providers are used on /v1 whether or
+              not this deployment serves a chat, so it is always offered. */}
+          <label className="inline-flex items-center gap-1.5 text-body">
+            <input
+              type="checkbox"
+              aria-label={m["admin_groups.capability.byok_aria"]({ name: group.name })}
+              checked={group.byok_allowed}
+              onChange={(event) =>
+                flipCapability(group, "byok_allowed", event.target.checked)
+              }
+              disabled={updateGroup.isPending}
+              className="accent-accent"
+            />
+            {m["admin_groups.capability.byok"]()}
+          </label>
         </div>
       ),
     },

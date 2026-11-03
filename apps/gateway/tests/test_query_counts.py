@@ -688,3 +688,112 @@ class TestTheQuotaUsagePage:
         twenty = await page(20)
         print(f"\n  /quota-usage: {one} selects for 1 user, {twenty} for 20")
         assert twenty == one, f"{one} selects for 1 user, {twenty} for 20"
+
+
+class TestTheByokPath:
+    """A member's own provider and model cost no more round trips than a deployment's.
+
+    The private arm is one more disjunct in the access predicate's WHERE, not a
+    second query, and a BYOK request skips admission altogether (no limit-rule
+    select), so these bounds are the same as — or one tighter than — the
+    deployment path's.
+    """
+
+    async def _own_model(self, session_factory: async_sessionmaker[AsyncSession], seeded: Seeded):  # type: ignore[no-untyped-def]
+        from decimal import Decimal
+
+        from gateway.models import ModelDef, ModelPrice, Provider
+
+        async with session_factory() as session:
+            provider = Provider(
+                name="mine",
+                base_url="http://fake-upstream/v1",
+                owner_kind="user",
+                owner_id=seeded.user.id,
+            )
+            session.add(provider)
+            await session.flush()
+            model = ModelDef(
+                name="mine",
+                upstream_model="vendor/mine",
+                provider_id=provider.id,
+                owner_kind="user",
+                owner_id=seeded.user.id,
+            )
+            session.add(model)
+            await session.flush()
+            session.add(
+                ModelPrice(
+                    model_id=model.id,
+                    input_per_mtok=Decimal("1"),
+                    output_per_mtok=Decimal("2"),
+                    currency="EUR",
+                )
+            )
+            # The seeded member holds the capability through their group.
+            from gateway.models import Group
+
+            group = await session.get(Group, seeded.group.id)
+            assert group is not None
+            group.byok_allowed = True
+            await session.commit()
+
+    async def test_a_byok_chat_completion_costs_no_more_than_a_deployment_one(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        app: object,
+        fake_upstream: FakeUpstream,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await self._own_model(session_factory, seeded)
+        engine = app.state.engine  # type: ignore[attr-defined]
+        fake_upstream.set_json(
+            {
+                "id": "c1",
+                "object": "chat.completion",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+            }
+        )
+        body = {"model": "my/mine", "messages": [{"role": "user", "content": "hi"}]}
+        # The private provider's host is checked before the request: the test
+        # app resolves nothing for `fake-upstream`, which is not a public name.
+        app.state.providers._private_networks_allowed = lambda: True  # type: ignore[attr-defined]
+        await client.post("/v1/chat/completions", json=body, headers=seeded.auth)
+
+        with counted(engine) as statements:
+            response = await client.post("/v1/chat/completions", json=body, headers=seeded.auth)
+        assert response.status_code == 200, response.text
+
+        selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+        writes = [
+            s for s in statements if s.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+        ]
+        print(f"\n  byok path: {len(selects)} selects, {len(writes)} writes")
+        print(summarise(selects))
+        assert len(writes) <= 2, f"{len(writes)} writes:\n{summarise(writes)}"
+        # Four, one under the deployment path: no limit-rule select, because
+        # nothing is admitted against.
+        assert len(selects) <= 4, f"{len(selects)} selects:\n{summarise(selects)}"
+        assert not any("limit_rules" in s for s in selects)
+
+    async def test_listing_with_a_private_model_costs_what_it_did(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        app: object,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await self._own_model(session_factory, seeded)
+        engine = app.state.engine  # type: ignore[attr-defined]
+        await client.get("/v1/models", headers=seeded.auth)
+
+        with counted(engine) as statements:
+            response = await client.get("/v1/models", headers=seeded.auth)
+        assert response.status_code == 200
+        assert "my/mine" in {card["id"] for card in response.json()["data"]}
+
+        selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+        print(f"\n  /v1/models with a private model: {len(selects)} selects")
+        assert len(selects) <= 4, f"{len(selects)} selects:\n{summarise(selects)}"

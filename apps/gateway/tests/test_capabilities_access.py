@@ -75,15 +75,17 @@ def _membership(group: Group, source: MembershipSource = MembershipSource.MANUAL
     return Membership(group=group, source=source)
 
 
-def _caps(code_agents: bool, api_keys: bool, local_connectors: bool = False) -> Capabilities:
+def _caps(
+    code_agents: bool, api_keys: bool, local_connectors: bool = False, byok: bool = False
+) -> Capabilities:
     return Capabilities(
-        code_agents=code_agents, api_keys=api_keys, local_connectors=local_connectors
+        code_agents=code_agents, api_keys=api_keys, local_connectors=local_connectors, byok=byok
     )
 
 
 class TestEffectiveCapabilities:
     def test_admin_holds_both_with_no_groups(self) -> None:
-        assert effective_capabilities(_user(is_admin=True)) == _caps(True, True, True)
+        assert effective_capabilities(_user(is_admin=True)) == _caps(True, True, True, byok=True)
 
     def test_flagged_active_group_grants(self) -> None:
         member = _user(memberships=[_membership(_group("agents", code_agents=True, api_keys=True))])
@@ -179,6 +181,7 @@ class TestV1MeReportsCapabilities:
             "code_agents": True,
             "api_keys": True,
             "local_connectors": True,
+            "byok": False,
         }
 
     async def test_a_person_in_no_group_holds_neither(
@@ -196,6 +199,7 @@ class TestV1MeReportsCapabilities:
             "code_agents": False,
             "api_keys": False,
             "local_connectors": False,
+            "byok": False,
         }
 
     async def test_reflects_the_persons_flags(
@@ -218,6 +222,7 @@ class TestV1MeReportsCapabilities:
             "code_agents": True,
             "api_keys": False,
             "local_connectors": True,
+            "byok": False,
         }
 
 

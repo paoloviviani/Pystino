@@ -64,6 +64,9 @@ class RequestLogFilter:
     #: Matches the alias the caller asked for *or* the model that served it.
     model: str | None = None
     status: UsageStatus | None = None
+    #: Bring-your-own-key requests are left out of every log but their owner's
+    #: ("only" those), exactly as the reports do (`ReportFilter.own_keys`).
+    own_keys: bool = False
 
 
 def _conditions(f: RequestLogFilter) -> list[Any]:
@@ -71,6 +74,7 @@ def _conditions(f: RequestLogFilter) -> list[Any]:
     conditions: list[Any] = [
         UsageRecord.created_at >= f.period.start,
         UsageRecord.created_at < f.period.end,
+        UsageRecord.byok.is_(f.own_keys),
     ]
     if f.user_id is not None:
         conditions.append(UsageRecord.user_id == f.user_id)

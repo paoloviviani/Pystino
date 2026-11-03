@@ -6,6 +6,7 @@ import {
   EyeOffIcon,
   GaugeIcon,
   GlobeIcon,
+  KeyRoundIcon,
   LayoutDashboardIcon,
   ListIcon,
   ServerIcon,
@@ -106,6 +107,14 @@ export const ADMIN_GROUPS: AdminGroup[] = [
         title: m["admin.sections.web_search.title"],
         description: m["admin.sections.web_search.description"],
       },
+      {
+        // Users' own providers (bring your own key): what leaves the gateway
+        // for a host an administrator did not choose, so it is read in Serving
+        // with the providers it parallels.
+        to: "/admin/private-providers",
+        title: m["admin.sections.private_providers.title"],
+        description: m["admin.sections.private_providers.description"],
+      },
     ],
   },
   {
@@ -172,6 +181,7 @@ const ADMIN_ICONS: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = {
   "/admin/models": BoxIcon,
   "/admin/routing": ShuffleIcon,
   "/admin/search": GlobeIcon,
+  "/admin/private-providers": KeyRoundIcon,
   "/admin/redaction": EyeOffIcon,
   "/admin/users": UserIcon,
   "/admin/groups": UsersRoundIcon,

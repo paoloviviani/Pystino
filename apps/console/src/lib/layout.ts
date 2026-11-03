@@ -235,6 +235,9 @@ const WIDE_ROUTES = new Set([
   "/admin/requests",
   "/admin/audit",
   "/admin/users",
+  "/admin/private-providers",
+  "/me/providers",
+  "/me/models",
 ]);
 
 /**

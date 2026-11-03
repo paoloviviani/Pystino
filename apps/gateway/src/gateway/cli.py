@@ -74,7 +74,9 @@ async def _seed(
             # normally already here; seeding a fresh database created with
             # create_all rather than alembic still needs it.
             provider = (
-                await session.execute(select(Provider).where(Provider.name == "default"))
+                await session.execute(
+                    select(Provider).where(Provider.name == "default", Provider.owner_id.is_(None))
+                )
             ).scalar_one_or_none()
             if provider is None:
                 provider = Provider(
@@ -94,7 +96,9 @@ async def _seed(
                 await session.flush()
 
             model = (
-                await session.execute(select(ModelDef).where(ModelDef.name == model_name))
+                await session.execute(
+                    select(ModelDef).where(ModelDef.name == model_name, ModelDef.owner_id.is_(None))
+                )
             ).scalar_one_or_none()
             if model is None:
                 model = ModelDef(

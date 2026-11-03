@@ -21,8 +21,8 @@ import type {
 export const keys = {
   me: ["me"] as const,
   myKeys: ["me", "keys"] as const,
-  myReport: (period: string, groupBy: string, splitBy: string) =>
-    ["me", "report", period, groupBy, splitBy] as const,
+  myReport: (period: string, groupBy: string, splitBy: string, ownKeys = false) =>
+    ["me", "report", period, groupBy, splitBy, ownKeys] as const,
   myLimits: ["me", "limits"] as const,
 };
 
@@ -62,15 +62,28 @@ export function useChatEnabled(): boolean {
   return useMe().data?.chat_enabled === true;
 }
 
-export function useMyReport(period: string, groupBy: string, splitBy = "") {
+/**
+ * `ownKeys` asks for the usage on the caller's own providers instead (bring
+ * your own key). The two are never one figure: by default that usage is left
+ * out, because it is not what their quotas and groups are charged.
+ */
+export function useMyReport(
+  period: string,
+  groupBy: string,
+  splitBy = "",
+  ownKeys = false,
+  enabled = true,
+) {
   const query = period ? `period=${encodeURIComponent(period)}&` : "";
   const split = splitBy ? `&split_by=${encodeURIComponent(splitBy)}` : "";
+  const own = ownKeys ? "&own_keys=true" : "";
   return useQuery({
-    queryKey: keys.myReport(period, groupBy, splitBy),
+    queryKey: keys.myReport(period, groupBy, splitBy, ownKeys),
     queryFn: () =>
       request<UsageReport>(
-        `/api/me/reports/usage?${query}group_by=${encodeURIComponent(groupBy)}${split}`,
+        `/api/me/reports/usage?${query}group_by=${encodeURIComponent(groupBy)}${split}${own}`,
       ),
+    enabled,
     retry: retryUnlessRejected,
   });
 }

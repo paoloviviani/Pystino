@@ -52,6 +52,14 @@ target that failed, and the attempt that served is billed to the target that
 served it. A requests limit counts every attempt. See
 [routing policies](model-aliases.md#routing-several-targets-per-alias).
 
+**On a member's own key.** A request served by a [member's own provider and
+key](byok.md) writes a row too, with `byok = true`, the member's `user_id`, **no
+billing group** and the model name `my/<name>`, priced at the member's own price
+rows (an unpriced model has no cost). It is for their information only: it
+reserves nothing and counts in no quota (including the rebuilds from the
+ledger), and no group, billing or administrator report adds it up. It shows in
+the member's own usage as a separate total.
+
 ## The request log
 
 **Reports by provider, and the console's charts.** `GET /api/admin/reports/usage`

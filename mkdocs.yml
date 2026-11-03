@@ -82,6 +82,7 @@ nav:
   - Accounting and quotas: accounting-and-quotas.md
   - Billing groups: billing-groups.md
   - Model aliases: model-aliases.md
+  - Bring your own key: byok.md
   - Decision models: decision-models.md
   - Provider catalogue: provider-catalogue.md
   - Redaction: redaction.md
