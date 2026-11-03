@@ -59,6 +59,7 @@ usual target.
 | `test_web_search_live.py` | per-search billing through PostgreSQL's `Numeric`, including the CSV export's own column list |
 | `benchmark_live.py` | per-layer cost; reproduces [Measured performance](performance.md) |
 | `test_public_tls_live.py` | TLS, the IdP refusing a wrong password, a Secure session cookie, and that nothing else is on a routable address |
+| `test_byok_live.py` | BYOK end to end: the group capability, a private provider and `my/<name>` through `/v1`, usage recorded but not charged, the network guard on real sockets, administrator holds, a member without the capability |
 
 They sign in the way a browser does — the gateway's OIDC login through the
 bundled Authelia (`scripts/live_session.py`) — so they run against the public
