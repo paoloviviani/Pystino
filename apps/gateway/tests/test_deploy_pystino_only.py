@@ -120,3 +120,14 @@ def test_authelia_config_comments_hold_no_template_expression() -> None:
 @pytest.mark.parametrize("path", ["caddy/modes/gateway.caddy", ".gitignore", "proxy.d/README.md"])
 def test_expected_files_exist(path: str) -> None:
     assert (DEPLOY / path).is_file(), path
+
+
+def test_the_published_proxy_refuses_multipath_tcp() -> None:
+    # CVE-2026-98432: the public exploit reaches a Linux IPv4 TCP use-after-free
+    # through an MPTCP listener, and Caddy (Go 1.24+) opens MPTCP listeners by
+    # default. Off in Go and in the proxy's own network namespace.
+    compose = (DEPLOY / "compose.yaml").read_text()
+    proxy = re.search(r"^  proxy:\n((?:(?:    .*)?\n)*)", compose, re.MULTILINE)
+    assert proxy, "deploy/compose.yaml has no proxy service"
+    assert "\n      GODEBUG: multipathtcp=0\n" in proxy.group(1)
+    assert '\n    sysctls:\n      net.mptcp.enabled: "0"\n' in proxy.group(1)

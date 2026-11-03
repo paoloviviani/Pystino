@@ -279,6 +279,7 @@ uv run python scripts/test_bill_to_live.py           # x-bill-to against a real 
 uv run python scripts/test_pystino_usage_live.py     # GET /v1/pystino/usage under both credentials
 uv run python scripts/test_citations_live.py         # citation offsets after a real placeholder
 uv run python scripts/test_public_tls_live.py        # TLS, the IdP, a Secure cookie, nothing else exposed
+uv run python scripts/test_byok_live.py              # BYOK: grant, private provider, my/<name>, the guard, admin holds
 uv run python scripts/benchmark_live.py              # per-layer cost; see docs/performance.md
 ```
 
