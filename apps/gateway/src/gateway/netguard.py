@@ -110,6 +110,96 @@ _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
 _SIX_TO_FOUR = ipaddress.ip_network("2002::/16")
 
+
+def _proc_routes_v4(text: str) -> list[ipaddress.IPv4Network]:
+    """Directly connected IPv4 subnets from ``/proc/net/route`` (gateway 0)."""
+    nets: list[ipaddress.IPv4Network] = []
+    for line in text.splitlines()[1:]:
+        cols = line.split()
+        if len(cols) < 8:
+            continue
+        dest, gateway, mask = cols[1], cols[2], cols[7]
+        if gateway != "00000000" or dest == "00000000":
+            continue
+        try:
+            d = ipaddress.IPv4Address(int(dest, 16).to_bytes(4, "little"))
+            m = ipaddress.IPv4Address(int(mask, 16).to_bytes(4, "little"))
+            nets.append(ipaddress.IPv4Network(f"{d}/{m}", strict=False))
+        except ValueError:
+            continue
+    return nets
+
+
+def _proc_routes_v6(text: str) -> list[ipaddress.IPv6Network]:
+    """Directly connected IPv6 subnets from ``/proc/net/ipv6_route``."""
+    nets: list[ipaddress.IPv6Network] = []
+    for line in text.splitlines():
+        cols = line.split()
+        if len(cols) < 10:
+            continue
+        dest, plen, nexthop = cols[0], int(cols[1], 16), cols[4]
+        if plen == 0 or nexthop.strip("0"):
+            continue
+        try:
+            net = ipaddress.IPv6Network(f"{ipaddress.IPv6Address(bytes.fromhex(dest))}/{plen}")
+        except ValueError:
+            continue
+        if not (net.is_link_local or net.is_multicast or net.prefixlen == 128):
+            nets.append(net)
+    return nets
+
+
+_own_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] | None = None
+
+
+def own_networks() -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+    """The subnets this process's own interfaces sit on, read once.
+
+    In a container these are exactly the compose networks: the gateway's own
+    database, cache, redaction service and siblings live there. "Allow private
+    networks" is for a user's LAN (an Ollama on the office network), which the
+    container reaches through its default route, not for those. Linux only;
+    elsewhere (development) the list is empty.
+    """
+    global _own_networks
+    if _own_networks is None:
+        found: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+        for path, parse in (
+            ("/proc/net/route", _proc_routes_v4),
+            ("/proc/net/ipv6_route", _proc_routes_v6),
+        ):
+            try:
+                with open(path, encoding="ascii") as fh:
+                    found.extend(parse(fh.read()))
+            except OSError:
+                continue
+        _own_networks = found
+    return _own_networks
+
+
+def always_refused_address(address: str) -> str | None:
+    """What stays refused even with private networks allowed: this host and the
+    gateway's own networks, which are never a user's provider."""
+    try:
+        ip = ipaddress.ip_address(address.split("%", 1)[0])
+    except ValueError:
+        return f"{address!r} is not an IP address"
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if ip.is_unspecified:
+        return "an unspecified address"
+    if ip.is_loopback:
+        return "a loopback address (this gateway's own host)"
+    if ip.is_link_local:
+        return "a link-local address (this includes the cloud metadata address)"
+    if ip.is_multicast:
+        return "a multicast address"
+    for net in own_networks():
+        if ip.version == net.version and ip in net:
+            return "an address on this gateway's own network (its database, cache and services)"
+    return None
+
+
 #: Resolves a host to the addresses a connection would use. A seam: tests supply
 #: one, production uses the event loop's ``getaddrinfo``.
 Resolver = Callable[[str, int], Awaitable[list[str]]]
@@ -203,6 +293,13 @@ async def check_host(
     """
     resolve = resolver or system_resolver
     literal = host.strip("[]")
+    name = host.rstrip(".").lower()
+    if allow_private and (name in INTERNAL_SERVICE_NAMES or name.endswith(".localhost")):
+        raise NetworkGuardError(
+            f"This provider's host is not allowed: {name!r} is one of this deployment's own "
+            "services, which a private provider may never reach, even with private networks "
+            "allowed."
+        )
     if not allow_private and (reason := hostname_problem(host)):
         raise NetworkGuardError(
             f"This provider's host is not allowed: {reason}. A private provider "
@@ -210,6 +307,13 @@ async def check_host(
             "networks for private providers)."
         )
     addresses = [literal] if _is_ip(literal) else await resolve(host.rstrip("."), port)
+    if allow_private:
+        for address in addresses:
+            if reason := always_refused_address(address):
+                raise NetworkGuardError(
+                    f"This provider's host {host!r} resolves to {address}, {reason}. Private "
+                    "networks are allowed, but never this gateway's own host or networks."
+                )
     if not allow_private:
         for address in addresses:
             if reason := address_problem(address):
@@ -240,9 +344,20 @@ async def check_url(
     except ValueError as exc:
         raise NetworkGuardError("The base URL has an invalid port.") from exc
     if allow_private:
-        # Nothing to judge, so nothing to resolve: a name that does not resolve
-        # fails at connect time like any other provider's. (The connect-time
-        # backend still resolves and pins.)
+        # The stack's own host, services and networks stay refused. A name that
+        # does not resolve yet fails at connect time like any other provider's
+        # (the connect-time backend resolves, checks and pins again).
+        name = host.rstrip(".").lower()
+        if name in INTERNAL_SERVICE_NAMES or name.endswith(".localhost"):
+            raise NetworkGuardError(
+                f"This provider's host is not allowed: {name!r} is one of this deployment's "
+                "own services, which a private provider may never reach."
+            )
+        if _is_ip(host.strip("[]")) and (reason := always_refused_address(host.strip("[]"))):
+            raise NetworkGuardError(
+                f"This provider's host {host!r} is {reason}. Private networks are allowed, "
+                "but never this gateway's own host or networks."
+            )
         return
     await check_host(host, port, resolver=resolver, allow_private=False)
 

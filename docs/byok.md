@@ -68,7 +68,11 @@ so a proxy cannot route around the guard. A catalogue URL override
 **`byok_private_networks`** (`ACCESS_BYOK_PRIVATE_NETWORKS` /
 `GATEWAY_ACCESS__BYOK_PRIVATE_NETWORKS`, or **Settings**; default **off**) lifts
 the guard for private providers, for a deployment whose members legitimately run
-endpoints on its network (a lab's vLLM). It applies to the very next request,
+endpoints on its network (a lab's vLLM). It never opens this deployment itself:
+loopback, link-local (the cloud metadata address), this stack's service names,
+and every subnet the gateway's own interfaces are on (in a container, the compose
+networks: its database, cache and siblings) stay refused, so a member can reach
+their LAN but never the gateway's own services. It applies to the very next request,
 and turning it back off refuses the next request even over a connection opened
 while it was on. It never needs setting for providers on the public internet.
 

@@ -10,21 +10,54 @@ client refuses loopback and does not follow a redirect.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 from collections.abc import AsyncIterator
 from typing import Any
 
 import httpcore
 import httpx
 import pytest
+from gateway import netguard
 from gateway.config import UpstreamSettings
 from gateway.netguard import (
     GuardedBackend,
     NetworkGuardError,
     address_problem,
     build_guarded_client,
+    check_host,
     check_url,
     hostname_problem,
 )
+
+
+class ToLocal(httpcore.AsyncNetworkBackend):
+    """Records the address the guard pinned, then connects to the local test
+    server: lets a test use a LAN address without a LAN."""
+
+    def __init__(self) -> None:
+        from httpcore import AnyIOBackend
+
+        self.inner = AnyIOBackend()
+        self.addresses: list[str] = []
+
+    async def connect_tcp(self, host: str, port: int, **kwargs: Any) -> httpcore.AsyncNetworkStream:
+        self.addresses.append(host)
+        return await self.inner.connect_tcp("127.0.0.1", port, **kwargs)
+
+    async def sleep(self, seconds: float) -> None:
+        await self.inner.sleep(seconds)
+
+
+async def lan_dns(host: str, port: int) -> list[str]:
+    return ["10.1.2.3"]
+
+
+@pytest.fixture(autouse=True)
+def _no_own_networks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The machine running the tests has its own subnets (a CI runner on 10.x);
+    the tests that need some set them explicitly."""
+    monkeypatch.setattr(netguard, "_own_networks", [])
+
 
 PUBLIC = "93.184.216.34"
 
@@ -160,9 +193,15 @@ class TestCheckUrl:
         with pytest.raises(NetworkGuardError):
             await check_url("https://user:pw@api.example.com/v1", resolver=public_dns)
 
-    async def test_the_admin_switch_lifts_the_guard(self) -> None:
+    async def test_the_admin_switch_lifts_the_guard_for_a_lan(self) -> None:
         await check_url("http://10.0.0.5:8000/v1", allow_private=True)
-        await check_url("http://gateway:8000/v1", resolver=public_dns, allow_private=True)
+        await check_url("http://ollama.office.lan:11434/v1", allow_private=True)
+
+    async def test_the_admin_switch_keeps_this_deployments_services_out(self) -> None:
+        with pytest.raises(NetworkGuardError, match="own services"):
+            await check_url("http://gateway:8000/v1", resolver=public_dns, allow_private=True)
+        with pytest.raises(NetworkGuardError, match="loopback"):
+            await check_url("http://127.0.0.1:8000/v1", allow_private=True)
 
 
 class _RecordingBackend(httpcore.AsyncNetworkBackend):
@@ -296,29 +335,87 @@ class TestTheRealClient:
             await client.aclose()
         assert received == []
 
-    async def test_the_admin_switch_lets_a_private_provider_through(
+    async def test_the_admin_switch_lets_a_lan_provider_through(
         self, local_server: tuple[int, list[bytes]]
     ) -> None:
+        """A LAN address (here a name resolving to 10.1.2.3, which this box's own
+        interfaces are not on) passes with the switch; the connect goes to the
+        local test server through the pinned address seam."""
         port, received = local_server
+
+        inner = ToLocal()
         client = build_guarded_client(
-            UpstreamSettings(base_url="http://x/v1"), allow_private=lambda: True
+            UpstreamSettings(base_url="http://x/v1"),
+            allow_private=lambda: True,
+            resolver=lan_dns,
+            inner=inner,
         )
         try:
-            response = await client.get(f"http://127.0.0.1:{port}/models")
+            response = await client.get(f"http://ollama.example.com:{port}/models")
         finally:
             await client.aclose()
         assert response.status_code == 200
+        assert inner.addresses == ["10.1.2.3"]
         assert len(received) == 1
+
+    @pytest.mark.parametrize(
+        "address",
+        ["127.0.0.1", "::1", "169.254.169.254", "0.0.0.0", "::ffff:127.0.0.1"],  # noqa: S104
+    )
+    async def test_the_admin_switch_never_reaches_this_host(self, address: str) -> None:
+        async def resolve(host: str, port: int) -> list[str]:
+            return [address]
+
+        with pytest.raises(NetworkGuardError):
+            await check_host("ollama.example.com", 80, resolver=resolve, allow_private=True)
+
+    @pytest.mark.parametrize("host", ["postgres", "valkey", "redaction", "gateway", "x.localhost"])
+    async def test_the_admin_switch_never_reaches_this_deployments_services(
+        self, host: str
+    ) -> None:
+        with pytest.raises(NetworkGuardError):
+            await check_url(f"http://{host}:8000/v1", allow_private=True)
+
+    async def test_the_admin_switch_never_reaches_the_gateways_own_networks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The compose networks are the subnets of the gateway's own interfaces."""
+        monkeypatch.setattr(netguard, "_own_networks", [ipaddress.ip_network("172.18.0.0/16")])
+
+        async def resolve(host: str, port: int) -> list[str]:
+            return ["172.18.0.5"]
+
+        with pytest.raises(NetworkGuardError, match="own network"):
+            await check_host("sneaky.example.com", 5432, resolver=resolve, allow_private=True)
+
+        async def lan(host: str, port: int) -> list[str]:
+            return ["192.168.1.20"]
+
+        assert await check_host("ollama.example.com", 11434, resolver=lan, allow_private=True) == [
+            "192.168.1.20"
+        ]
+
+
+def test_own_networks_parse_proc_route() -> None:
+    v4 = netguard._proc_routes_v4(
+        "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n"
+        "eth0\t00000000\t010012AC\t0003\t0\t0\t0\t00000000\n"
+        "eth0\t000012AC\t00000000\t0001\t0\t0\t0\t0000FFFF\n"
+    )
+    assert v4 == [ipaddress.ip_network("172.18.0.0/16")]
 
     async def test_a_redirect_is_not_followed(self, local_server: tuple[int, list[bytes]]) -> None:
         """Even with the guard lifted, the 302 to the metadata address is
         returned as a response: no second request is made anywhere."""
         port, received = local_server
         client = build_guarded_client(
-            UpstreamSettings(base_url="http://x/v1"), allow_private=lambda: True
+            UpstreamSettings(base_url="http://x/v1"),
+            allow_private=lambda: True,
+            resolver=lan_dns,
+            inner=ToLocal(),
         )
         try:
-            response = await client.get(f"http://127.0.0.1:{port}/redirect")
+            response = await client.get(f"http://ollama.example.com:{port}/redirect")
         finally:
             await client.aclose()
         assert response.status_code == 302
