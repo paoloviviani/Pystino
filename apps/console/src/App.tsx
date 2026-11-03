@@ -17,7 +17,9 @@ import { AdminRedactionRule } from "./routes/AdminRedactionRule";
 import { Admin } from "./routes/Admin";
 import { AdminReports } from "./routes/AdminReports";
 import { AdminRequests } from "./routes/AdminRequests";
+import { MyProviders } from "./routes/MyProviders";
 import { MyRequests } from "./routes/MyRequests";
+import { AdminByok } from "./routes/AdminByok";
 import { AdminGroups } from "./routes/AdminGroups";
 import { AdminSettings } from "./routes/AdminSettings";
 import { AdminUsers } from "./routes/AdminUsers";
@@ -65,6 +67,12 @@ export function App() {
             including administrators, whose own spend is not administration. */}
         <Route path="/reports" element={<Reports />} />
         <Route path="/requests" element={<MyRequests />} />
+        {/* Bring your own key. Not admin-gated and not capability-gated in the
+            router: the page itself explains a missing capability, so a
+            bookmarked link says why rather than reading as a broken deploy. */}
+        <Route path="/me/providers" element={<MyProviders me={me_} part="providers" />} />
+        <Route path="/me/models" element={<MyProviders me={me_} part="models" />} />
+        <Route path="/me/models/:modelId" element={<MyProviders me={me_} part="model" />} />
 
         {/* Wrapped rather than conditionally registered: a non-admin who follows
             a bookmarked link should be told, not handed a blank 404 that reads
@@ -91,6 +99,14 @@ export function App() {
           element={
             <RequireAdmin me={me_}>
               <AdminModelDetail />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/private-providers"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminByok />
             </RequireAdmin>
           }
         />

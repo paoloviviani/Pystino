@@ -311,9 +311,15 @@ async def resolve_plan(
             "Your own providers and models (my/...) are not available to this account: "
             "bring-your-own-key is not enabled for any of your groups."
         )
-    stmt = accessible_model_by_name(
-        name, user_id=principal.user.id, group_ids=[principal.billing_group.id], byok=byok
-    )
+    # A deployment model is granted to a group, so it needs the caller's billing
+    # group (and refuses a caller with none, as authentication once did for all
+    # of them). `my/<name>` is the caller's own and bills nothing: it needs no
+    # group, which is what lets a BYOK user with no group use their models.
+    if name.startswith(MY_PREFIX):
+        group_ids = [principal.billing_group.id] if principal.billing_group else []
+    else:
+        group_ids = [principal.require_billing_group().id]
+    stmt = accessible_model_by_name(name, user_id=principal.user.id, group_ids=group_ids, byok=byok)
     model = (await session.execute(stmt)).scalars().first()
     if model is None:
         raise ModelNotFoundError(
@@ -994,7 +1000,7 @@ async def begin(
             # `x-bill-to` has no meaning, and a row with no group cannot be
             # picked up by a per-group total even by a query that forgot the
             # `byok` filter.
-            group_id=None if model.is_private else principal.billing_group.id,
+            group_id=None if model.is_private else principal.require_billing_group().id,
             api_key_id=principal.api_key.id if principal.api_key else None,
             model_id=model.id,
             estimated_prompt_tokens=worst_case.prompt,
@@ -1044,7 +1050,7 @@ def redaction_policy(
     effective: EffectivePolicy = resolver.policy_for(
         provider_id=model.provider_id if model is not None else None,
         model_id=model.id if model is not None else None,
-        group_id=principal.billing_group.id,
+        group_id=principal.billing_group.id if principal.billing_group else None,
         user_id=principal.user.id,
         api_key_id=principal.api_key.id if principal.api_key is not None else None,
     )
@@ -1084,7 +1090,7 @@ async def redact_or_block(
                 request_id=request_id,
                 status=UsageStatus.BLOCKED,
                 user_id=principal.user.id,
-                group_id=None if model.is_private else principal.billing_group.id,
+                group_id=None if model.is_private else principal.require_billing_group().id,
                 api_key_id=principal.api_key.id if principal.api_key else None,
                 model_id=model.id,
                 model_name=model.api_name,

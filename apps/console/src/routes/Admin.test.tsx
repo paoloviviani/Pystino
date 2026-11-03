@@ -50,6 +50,9 @@ describe("Admin", () => {
       "/admin/models",
       "/admin/routing",
       "/admin/search",
+      // What users added with their own keys: a provider the deployment did
+      // not choose, read beside the ones it did.
+      "/admin/private-providers",
       // Privacy.
       "/admin/redaction",
       // People.

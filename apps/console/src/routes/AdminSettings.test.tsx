@@ -558,10 +558,10 @@ describe("AdminSettings capabilities card", () => {
   async function openCard() {
     // Await the settled card, not its header: the policy query answers after
     // the first paint, and a test that stops at the header races the spinner.
-    // Three capability rows (agents, keys, local connectors) once the chat
-    // flag has loaded, each with a "New groups" select.
+    // Four capability rows (agents, keys, local connectors, bring your own
+    // key) once the chat flag has loaded, each with a "New groups" select.
     await waitFor(() =>
-      expect(screen.getAllByLabelText("New groups")).toHaveLength(3),
+      expect(screen.getAllByLabelText("New groups")).toHaveLength(4),
     );
     return screen.getAllByLabelText("New groups")[0]!;
   }
@@ -571,8 +571,9 @@ describe("AdminSettings capabilities card", () => {
     renderScreen(<AdminSettings />);
     await openCard();
     const selects = screen.getAllByLabelText("New groups") as HTMLSelectElement[];
-    // Card order: coding agents, API keys, local connectors.
-    expect(selects.map((s) => s.value)).toEqual(["off", "on", "on"]);
+    // Card order: coding agents, API keys, local connectors, bring your own
+    // key (which is off unless the deployment decided otherwise).
+    expect(selects.map((s) => s.value)).toEqual(["off", "on", "on", "off"]);
   });
 
   it("saves the local connectors default as its own policy field", async () => {
@@ -591,6 +592,28 @@ describe("AdminSettings capabilities card", () => {
     });
   });
 
+  it("saves the bring-your-own-key default as byok_mode", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockRoutes({ policy: policyFixture() });
+    renderScreen(<AdminSettings />);
+    await openCard();
+    await user.selectOptions(screen.getAllByLabelText("New groups")[3]!, "on");
+    await waitFor(() => expect(puts()).toEqual([{ byok_mode: "on" }]));
+  });
+
+  it("warns about internal addresses and saves the private-networks switch", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockRoutes({ policy: policyFixture() });
+    renderScreen(<AdminSettings />);
+    await openCard();
+    const toggle = screen.getByLabelText(/let private providers use private networks/i);
+    expect(toggle).not.toBeChecked();
+    // The warning is for the state that is dangerous, not for the safe one.
+    expect(screen.queryByText(/internal addresses are reachable/i)).not.toBeInTheDocument();
+    await user.click(toggle);
+    await waitFor(() => expect(puts()).toEqual([{ byok_private_networks: true }]));
+  });
+
   it("shows only the API keys capability when the gateway has no chat", async () => {
     mockRoutes({ policy: policyFixture(), chatEnabled: false });
     renderScreen(<AdminSettings />);
@@ -601,7 +624,8 @@ describe("AdminSettings capabilities card", () => {
       ).toBe(true),
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(screen.getAllByLabelText("New groups")).toHaveLength(1);
+    // API keys, and bring your own key: neither is a chat concept.
+    expect(screen.getAllByLabelText("New groups")).toHaveLength(2);
     expect(screen.queryByText("Coding agents")).not.toBeInTheDocument();
     expect(screen.queryByText("Local connectors")).not.toBeInTheDocument();
     expect(screen.getByText("API keys")).toBeInTheDocument();

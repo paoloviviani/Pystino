@@ -42,7 +42,7 @@ import enum
 import uuid
 from collections.abc import Iterable
 
-from sqlalchemy import ColumnElement, Select, and_, literal, or_, select
+from sqlalchemy import ColumnElement, Select, and_, false, literal, or_, select
 from sqlalchemy.orm import joinedload, selectinload
 
 from gateway.models import (
@@ -143,7 +143,11 @@ def all_active_models() -> Select[tuple[ModelDef]]:
 
 
 def accessible_models(
-    *, user_id: uuid.UUID | None, group_ids: Iterable[uuid.UUID], byok: bool = False
+    *,
+    user_id: uuid.UUID | None,
+    group_ids: Iterable[uuid.UUID],
+    byok: bool = False,
+    deployment: bool = True,
 ) -> Select[tuple[ModelDef]]:
     """Every active model this caller may use, as a statement to refine further.
 
@@ -152,7 +156,11 @@ def accessible_models(
     currently holds the capability (the caller has the user loaded and asks
     :func:`gateway.capabilities.holds_byok`, so this costs no query): it adds
     the caller's **own** private models, and nothing else about the predicate
-    changes.
+    changes. ``deployment=False`` drops the deployment arm, for a caller with no
+    billing group: nothing is granted to a group they do not have, and public
+    models are not theirs to list or use either, since their request would be
+    refused for want of a group to bill. Only their own private models remain
+    (and none at all unless ``byok`` is set).
     """
     groups = list(group_ids)
 
@@ -199,11 +207,11 @@ def accessible_models(
     # The private arm is a separate disjunct, so a grant row that somehow named
     # a private model (the admin routes refuse to write one) still reaches
     # nothing: grants only ever widen the first.
-    deployment = and_(ModelDef.owner_id.is_(None), or_(*reachable))
+    deployment_arm = and_(ModelDef.owner_id.is_(None), or_(*reachable))
     if byok and user_id is not None:
         own = and_(ModelDef.owner_kind == "user", ModelDef.owner_id == user_id)
-        return _servable().where(or_(deployment, own))
-    return _servable().where(deployment)
+        return _servable().where(or_(deployment_arm, own) if deployment else own)
+    return _servable().where(deployment_arm if deployment else false())
 
 
 def accessible_model_by_name(
@@ -212,6 +220,7 @@ def accessible_model_by_name(
     user_id: uuid.UUID | None,
     group_ids: Iterable[uuid.UUID],
     byok: bool = False,
+    deployment: bool = True,
 ) -> Select[tuple[ModelDef]]:
     """One named model, if this caller may use it.
 
@@ -231,7 +240,9 @@ def accessible_model_by_name(
     dereference through :func:`alias_targets`, once, and only when the name it
     sent turned out to be one.
     """
-    statement = accessible_models(user_id=user_id, group_ids=group_ids, byok=byok)
+    statement = accessible_models(
+        user_id=user_id, group_ids=group_ids, byok=byok, deployment=deployment
+    )
     if name.startswith(MY_PREFIX):
         statement = statement.where(
             ModelDef.name == name[len(MY_PREFIX) :], ModelDef.owner_id.is_not(None)

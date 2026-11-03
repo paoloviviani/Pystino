@@ -214,7 +214,43 @@ describe("Reports", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const urls = fetchMock.mock.calls.map((call) => String(call[0]));
-    expect(urls.every((url) => url.includes("/api/me/"))).toBe(true);
+    // "/api/me" itself is the identity the page reads its capabilities from.
+    expect(urls.every((url) => url.startsWith("/api/me"))).toBe(true);
+  });
+
+  it("shows the user's own keys apart, never added to the figures above", async () => {
+    const own = report({
+      rows: [{ ...report().rows[0]!, label: "my/llama", requests: 4, cost: "0.5" }],
+      totals: { ...report().totals, requests: 4, cost: "0.5" },
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/me") return jsonResponse({ capabilities: { byok: true } });
+      return jsonResponse(url.includes("own_keys=true") ? own : report());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderScreen();
+
+    expect(await screen.findByText("Your own keys")).toBeInTheDocument();
+    expect(await screen.findByText("my/llama")).toBeInTheDocument();
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls.some((url) => url.includes("own_keys=true"))).toBe(true);
+    // The main report is asked for without the flag: its meaning is unchanged.
+    expect(urls.some((url) => url.startsWith("/api/me/reports/usage") && !url.includes("own_keys"))).toBe(true);
+  });
+
+  it("has no own-keys section, and never asks for one, without the capability", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === "/api/me"
+        ? jsonResponse({ capabilities: { byok: false } })
+        : jsonResponse(report()),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText("gpt-4o")).toBeInTheDocument());
+    expect(screen.queryByText("Your own keys")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("own_keys"))).toBe(false);
   });
 
   it("offers no breakdown by user or group", async () => {
@@ -275,7 +311,8 @@ describe("Reports", () => {
       ).toBe(true),
     );
     const urls = fetchMock.mock.calls.map((call) => String(call[0]));
-    expect(urls.every((url) => url.includes("/api/me/"))).toBe(true);
+    // "/api/me" itself is the identity the page reads its capabilities from.
+    expect(urls.every((url) => url.startsWith("/api/me"))).toBe(true);
     expect(urls.some((url) => url.includes("split_by=user"))).toBe(false);
   });
 

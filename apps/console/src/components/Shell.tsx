@@ -36,6 +36,7 @@ import { m } from "../paraglide/messages.js";
 import {
   ChartColumnIcon,
   HouseIcon,
+  KeyRoundIcon,
   ListIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
@@ -65,6 +66,17 @@ const NAV_YOU: NavItem[] = [
   { to: "/reports", label: m["shell.nav.your_usage"], icon: ChartColumnIcon },
   { to: "/requests", label: m["shell.nav.your_requests"], icon: ListIcon },
 ];
+
+/**
+ * Bring your own key. Shown only to a user who holds the capability: an entry
+ * that leads to "not enabled for your account" is a link nobody should be
+ * offered.
+ */
+const NAV_BYOK: NavItem = {
+  to: "/me/providers",
+  label: m["shell.nav.your_providers"],
+  icon: KeyRoundIcon,
+};
 
 /**
  * Whether this reader has asked for exact figures, remembered across reloads.
@@ -370,7 +382,11 @@ function SidebarNav({
             ))}
           </>
         ) : (
-          <NavList items={NAV_YOU} rail={rail} onClose={onClose} />
+          <NavList
+            items={me.capabilities?.byok === true ? [...NAV_YOU, NAV_BYOK] : NAV_YOU}
+            rail={rail}
+            onClose={onClose}
+          />
         )}
       </nav>
 

@@ -5,8 +5,11 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { ApiError, request } from "./api";
+import { type Scope, useScopeName } from "./scope";
 import { MAX_LIMIT, type Page, type PageQuery, pageParams } from "./paging";
 import type {
+  ByokModel,
+  ByokProvider,
   AdminAlias,
   AdminGroup,
   AdminModel,
@@ -73,49 +76,72 @@ import type {
  * commonest way for an admin UI to lie.
  */
 
-export const adminKeys = {
-  providers: ["admin", "providers"] as const,
-  models: ["admin", "models"] as const,
-  // Prefixed by `models`, so every mutation that invalidates the catalogue
-  // refreshes an open model page too — which is the whole reason the page can
-  // afford to be a second view of the same row rather than its own cache.
-  model: (modelId: string) => ["admin", "models", modelId] as const,
-  searchPrices: ["admin", "search-prices"] as const,
-  prices: (modelId: string) => ["admin", "models", modelId, "prices"] as const,
-  // Prefixed by `models`, deliberately, not a sibling of it: a retarget or a
-  // grant change has to refresh an open model page too, because the model page
-  // shows which aliases point at it (ADR 0101). Putting aliases under
-  // `["admin", "aliases"]` would mean every alias mutation had to remember to
-  // invalidate the catalogue as well.
-  aliases: ["admin", "models", "aliases"] as const,
-  alias: (aliasId: string) => ["admin", "models", "aliases", aliasId] as const,
-  discovery: ["admin", "models", "discover"] as const,
-  tags: ["admin", "models", "tags"] as const,
-  groups: ["admin", "groups"] as const,
-  groupMembers: (groupId: string) =>
-    ["admin", "groups", groupId, "members"] as const,
-  seenGroups: ["admin", "groups", "seen"] as const,
-  limits: ["admin", "limits"] as const,
-  quotaHealth: ["admin", "quota", "health"] as const,
-  resets: (ruleId: string) => ["admin", "limits", ruleId, "resets"] as const,
-  quotaUsage: ["admin", "quota-usage"] as const,
-  users: ["admin", "users"] as const,
-  pendingErasures: ["admin", "erasures", "pending"] as const,
-  identityEvents: (userId: string) =>
-    ["admin", "identity-events", userId] as const,
-  email: ["admin", "email"] as const,
-  identityProviders: ["admin", "identity-providers"] as const,
-  syncRuns: (id: string) =>
-    ["admin", "identity-providers", id, "runs"] as const,
-  directory: (id: string) =>
-    ["admin", "identity-providers", id, "directory"] as const,
-  oidcPolicy: ["admin", "oidc-policy"] as const,
-  redaction: ["admin", "redaction"] as const,
-  redactionRules: ["admin", "redaction", "rules"] as const,
-  providerPlugins: ["admin", "provider-plugins"] as const,
-  providerCatalogue: ["admin", "provider-catalogue"] as const,
-  report: (query: string) => ["admin", "report", query] as const,
-};
+function makeKeys(root: string) {
+  return {
+    providers: [root, "providers"] as const,
+    models: [root, "models"] as const,
+    // Prefixed by `models`, so every mutation that invalidates the catalogue
+    // refreshes an open model page too — which is the whole reason the page can
+    // afford to be a second view of the same row rather than its own cache.
+    model: (modelId: string) => [root, "models", modelId] as const,
+    searchPrices: [root, "search-prices"] as const,
+    prices: (modelId: string) => [root, "models", modelId, "prices"] as const,
+    // Prefixed by `models`, deliberately, not a sibling of it: a retarget or a
+    // grant change has to refresh an open model page too, because the model page
+    // shows which aliases point at it (ADR 0101). Putting aliases under
+    // `[root, "aliases"]` would mean every alias mutation had to remember to
+    // invalidate the catalogue as well.
+    aliases: [root, "models", "aliases"] as const,
+    alias: (aliasId: string) => [root, "models", "aliases", aliasId] as const,
+    discovery: [root, "models", "discover"] as const,
+    tags: [root, "models", "tags"] as const,
+    groups: [root, "groups"] as const,
+    groupMembers: (groupId: string) =>
+      [root, "groups", groupId, "members"] as const,
+    seenGroups: [root, "groups", "seen"] as const,
+    limits: [root, "limits"] as const,
+    quotaHealth: [root, "quota", "health"] as const,
+    resets: (ruleId: string) => [root, "limits", ruleId, "resets"] as const,
+    quotaUsage: [root, "quota-usage"] as const,
+    users: [root, "users"] as const,
+    pendingErasures: [root, "erasures", "pending"] as const,
+    identityEvents: (userId: string) =>
+      [root, "identity-events", userId] as const,
+    email: [root, "email"] as const,
+    identityProviders: [root, "identity-providers"] as const,
+    syncRuns: (id: string) =>
+      [root, "identity-providers", id, "runs"] as const,
+    directory: (id: string) =>
+      [root, "identity-providers", id, "directory"] as const,
+    oidcPolicy: [root, "oidc-policy"] as const,
+    redaction: [root, "redaction"] as const,
+    redactionRules: [root, "redaction", "rules"] as const,
+    providerPlugins: [root, "provider-plugins"] as const,
+    providerCatalogue: [root, "provider-catalogue"] as const,
+    byokProviders: [root, "byok", "providers"] as const,
+    byokModels: [root, "byok", "models"] as const,
+    report: (query: string) => [root, "report", query] as const,
+  };
+}
+
+export const adminKeys = makeKeys("admin");
+
+/** A user's own private catalogue is cached apart from the deployment's. */
+const byokKeys = makeKeys("byok");
+
+/**
+ * The endpoints and cache keys for the catalogue being managed: the
+ * deployment's, or the signed-in user's own (see lib/scope.ts).
+ */
+function scopeOf(scope: Scope) {
+  return scope === "me"
+    ? { base: "/api/me", keys: byokKeys }
+    : { base: "/api/admin", keys: adminKeys };
+}
+
+function useScope() {
+  return scopeOf(useScopeName());
+}
 
 /**
  * Every listing is a page now, so the window is part of the cache key.
@@ -149,11 +175,12 @@ const pagedOptions = {
 } as const;
 
 export function useProviders(query: PageQuery = { limit: MAX_LIMIT }) {
+  const { base, keys } = useScope();
   const search = pageParams(query);
   return useQuery({
-    queryKey: pagedKey(adminKeys.providers, search),
+    queryKey: pagedKey(keys.providers, search),
     queryFn: () =>
-      request<Page<AdminProvider>>(`/api/admin/providers?${search}`),
+      request<Page<AdminProvider>>(`${base}/providers?${search}`),
     ...pagedOptions,
   });
 }
@@ -185,15 +212,16 @@ export interface ProviderInput {
 }
 
 export function useCreateProvider() {
+  const { base, keys } = useScope();
   const client = useQueryClient();
   return useMutation({
     mutationFn: (input: ProviderInput) =>
-      request<AdminProvider>("/api/admin/providers", {
+      request<AdminProvider>(`${base}/providers`, {
         method: "POST",
         body: input,
       }),
     onSuccess: () =>
-      client.invalidateQueries({ queryKey: adminKeys.providers }),
+      client.invalidateQueries({ queryKey: keys.providers }),
   });
 }
 
@@ -212,18 +240,20 @@ export function useCreateProvider() {
  */
 /** The YAML provider catalogue as read at startup, each field with its origin. */
 export function useProviderCatalogue() {
+  const { base, keys } = useScope();
   return useQuery({
-    queryKey: adminKeys.providerCatalogue,
-    queryFn: () => request<CatalogueEntry[]>("/api/admin/provider-catalogue"),
+    queryKey: keys.providerCatalogue,
+    queryFn: () => request<CatalogueEntry[]>(`${base}/provider-catalogue`),
     // Files read once at startup: it cannot change under a running gateway.
     staleTime: 10 * 60_000,
   });
 }
 
 export function useProviderPlugins() {
+  const { base, keys } = useScope();
   return useQuery({
-    queryKey: adminKeys.providerPlugins,
-    queryFn: () => request<ProviderPlugin[]>("/api/admin/provider-plugins"),
+    queryKey: keys.providerPlugins,
+    queryFn: () => request<ProviderPlugin[]>(`${base}/provider-plugins`),
     staleTime: 10 * 60_000,
   });
 }
@@ -391,29 +421,31 @@ export function usePreviewRedaction() {
 }
 
 export function useUpdateProvider() {
+  const { base, keys } = useScope();
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...body }: ProviderInput & { id: string }) =>
-      request<AdminProvider>(`/api/admin/providers/${id}`, {
+      request<AdminProvider>(`${base}/providers/${id}`, {
         method: "PATCH",
         body,
       }),
     onSuccess: () => {
-      client.invalidateQueries({ queryKey: adminKeys.providers });
+      client.invalidateQueries({ queryKey: keys.providers });
       // A deactivated provider takes its models out of service, and the
       // catalogue shows that per model.
-      client.invalidateQueries({ queryKey: adminKeys.models });
+      client.invalidateQueries({ queryKey: keys.models });
     },
   });
 }
 
 export function useDeleteProvider() {
+  const { base, keys } = useScope();
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      request<void>(`/api/admin/providers/${id}`, { method: "DELETE" }),
+      request<void>(`${base}/providers/${id}`, { method: "DELETE" }),
     onSuccess: () =>
-      client.invalidateQueries({ queryKey: adminKeys.providers }),
+      client.invalidateQueries({ queryKey: keys.providers }),
   });
 }
 
@@ -452,9 +484,10 @@ export function useDeleteSearchBackend() {
  * an error state would hide it behind a generic message.
  */
 export function useTestProvider() {
+  const { base } = useScope();
   return useMutation({
     mutationFn: (id: string) =>
-      request<ProviderTestResult>(`/api/admin/providers/${id}/test`, {
+      request<ProviderTestResult>(`${base}/providers/${id}/test`, {
         method: "POST",
       }),
   });
@@ -463,10 +496,11 @@ export function useTestProvider() {
 // -- catalogue ---------------------------------------------------------------
 
 export function useModels(query: PageQuery = { limit: MAX_LIMIT }) {
+  const { base, keys } = useScope();
   const search = pageParams(query);
   return useQuery({
-    queryKey: pagedKey(adminKeys.models, search),
-    queryFn: () => request<Page<AdminModel>>(`/api/admin/models?${search}`),
+    queryKey: pagedKey(keys.models, search),
+    queryFn: () => request<Page<AdminModel>>(`${base}/models?${search}`),
     ...pagedOptions,
   });
 }
@@ -479,9 +513,10 @@ export function useModels(query: PageQuery = { limit: MAX_LIMIT }) {
  * pasted into a ticket.
  */
 export function useModel(modelId: string | null) {
+  const { base, keys } = useScope();
   return useQuery({
-    queryKey: adminKeys.model(modelId ?? ""),
-    queryFn: () => request<AdminModel>(`/api/admin/models/${modelId}`),
+    queryKey: keys.model(modelId ?? ""),
+    queryFn: () => request<AdminModel>(`${base}/models/${modelId}`),
     enabled: modelId !== null,
     retry: retryUnlessRejected,
   });
@@ -491,11 +526,12 @@ export function usePrices(
   modelId: string | null,
   query: PageQuery = { limit: MAX_LIMIT },
 ) {
+  const { base, keys } = useScope();
   const search = pageParams(query);
   return useQuery({
-    queryKey: pagedKey(adminKeys.prices(modelId ?? ""), search),
+    queryKey: pagedKey(keys.prices(modelId ?? ""), search),
     queryFn: () =>
-      request<Page<Price>>(`/api/admin/models/${modelId}/prices?${search}`),
+      request<Page<Price>>(`${base}/models/${modelId}/prices?${search}`),
     enabled: modelId !== null,
     ...pagedOptions,
   });
@@ -522,14 +558,15 @@ export function useDiscovery(
   fillMissingPrices = false,
   tag = "",
 ) {
+  const { base, keys } = useScope();
   return useQuery({
     // Both refinements are part of the key: the same provider answers
     // differently with the fill on or a different tag asked for, and a cached
     // answer shown under changed controls is a screen that contradicts itself.
-    queryKey: [...adminKeys.discovery, providerId, fillMissingPrices, tag],
+    queryKey: [...keys.discovery, providerId, fillMissingPrices, tag],
     queryFn: () =>
       request<CatalogueDiscovery>(
-        `/api/admin/models/discover?provider_id=${encodeURIComponent(providerId ?? "")}` +
+        `${base}/models/discover?provider_id=${encodeURIComponent(providerId ?? "")}` +
           `&fill_missing_prices=${fillMissingPrices}` +
           (tag ? `&tag=${encodeURIComponent(tag)}` : ""),
       ),
@@ -549,11 +586,12 @@ export function useDiscovery(
  * the operator picks a different slice of it.
  */
 export function useCatalogueTags(providerId: string | null) {
+  const { base, keys } = useScope();
   return useQuery({
-    queryKey: [...adminKeys.tags, providerId],
+    queryKey: [...keys.tags, providerId],
     queryFn: () =>
       request<CatalogueTags>(
-        `/api/admin/models/tags?provider_id=${encodeURIComponent(providerId ?? "")}`,
+        `${base}/models/tags?provider_id=${encodeURIComponent(providerId ?? "")}`,
       ),
     enabled: providerId !== null,
     retry: false,
@@ -576,11 +614,12 @@ export interface CreateModelInput {
 }
 
 export function useCreateModel() {
+  const { base, keys } = useScope();
   const client = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateModelInput) =>
-      request<AdminModel>("/api/admin/models", { method: "POST", body: input }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.models }),
+      request<AdminModel>(`${base}/models`, { method: "POST", body: input }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.models }),
   });
 }
 
@@ -601,15 +640,17 @@ export interface ModelUpdateInput {
 }
 
 export function useUpdateModel() {
+  const { base, keys } = useScope();
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string } & ModelUpdateInput) =>
-      request<AdminModel>(`/api/admin/models/${id}`, { method: "PATCH", body }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.models }),
+      request<AdminModel>(`${base}/models/${id}`, { method: "PATCH", body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.models }),
   });
 }
 
 export function useImportModels() {
+  const { base, keys } = useScope();
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({
@@ -629,7 +670,7 @@ export function useImportModels() {
       tag?: string;
     }) =>
       request<ModelImportResponse>(
-        `/api/admin/models/import?provider_id=${encodeURIComponent(providerId)}` +
+        `${base}/models/import?provider_id=${encodeURIComponent(providerId)}` +
           `&fill_missing_prices=${fillMissingPrices}` +
           (tag ? `&tag=${encodeURIComponent(tag)}` : ""),
         {
@@ -645,8 +686,8 @@ export function useImportModels() {
       ),
     onSuccess: () => {
       // Both: the catalogue gained rows, and discovery's "available" list lost them.
-      client.invalidateQueries({ queryKey: adminKeys.models });
-      client.invalidateQueries({ queryKey: adminKeys.discovery });
+      client.invalidateQueries({ queryKey: keys.models });
+      client.invalidateQueries({ queryKey: keys.discovery });
     },
   });
 }
@@ -660,14 +701,15 @@ export function useImportModels() {
  * point.
  */
 export function useDeleteModel() {
+  const { base, keys } = useScope();
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      request<void>(`/api/admin/models/${id}`, { method: "DELETE" }),
+      request<void>(`${base}/models/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       // The provider listing shows model_count, which just changed.
-      client.invalidateQueries({ queryKey: adminKeys.models });
-      client.invalidateQueries({ queryKey: adminKeys.providers });
+      client.invalidateQueries({ queryKey: keys.models });
+      client.invalidateQueries({ queryKey: keys.providers });
     },
   });
 }
@@ -854,19 +896,20 @@ export interface CreatePriceInput {
 }
 
 export function useCreatePrice() {
+  const { base, keys } = useScope();
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ modelId, ...body }: CreatePriceInput) =>
-      request<Price>(`/api/admin/models/${modelId}/prices`, {
+      request<Price>(`${base}/models/${modelId}/prices`, {
         method: "POST",
         body,
       }),
     onSuccess: (_price, variables) => {
       client.invalidateQueries({
-        queryKey: adminKeys.prices(variables.modelId),
+        queryKey: keys.prices(variables.modelId),
       });
       // The catalogue shows each model's current price, which may have changed.
-      client.invalidateQueries({ queryKey: adminKeys.models });
+      client.invalidateQueries({ queryKey: keys.models });
     },
   });
 }
@@ -1494,7 +1537,7 @@ export interface PolicyPreviewQuery {
   join_mode?: string;
   required_groups?: string[];
   /** ADR 0096 (amended): preview a bulk flip; both fields together. */
-  bulk_capability?: "code_agents" | "api_keys" | "local_connectors";
+  bulk_capability?: "code_agents" | "api_keys" | "local_connectors" | "byok";
   bulk_value?: boolean;
 }
 
@@ -1716,3 +1759,53 @@ export function useMintScimToken() {
 // The People dialog these once served is removed (ADR 0093 §14, correction
 // 7); the routes stay for stage (b) to build the Users-page replacement
 // against.
+
+// -- private providers and models (BYOK), the administrators' view -----------
+
+/** Every user's private providers: owner, host, usage; never a credential. */
+export function useByokProviders(query: PageQuery = { limit: 50 }) {
+  const search = pageParams(query);
+  return useQuery({
+    queryKey: pagedKey(adminKeys.byokProviders, search),
+    queryFn: () =>
+      request<Page<ByokProvider>>(`/api/admin/byok/providers?${search}`),
+    ...pagedOptions,
+  });
+}
+
+export function useByokModels(query: PageQuery = { limit: 50 }) {
+  const search = pageParams(query);
+  return useQuery({
+    queryKey: pagedKey(adminKeys.byokModels, search),
+    queryFn: () => request<Page<ByokModel>>(`/api/admin/byok/models?${search}`),
+    ...pagedOptions,
+  });
+}
+
+/**
+ * Hold or release one private provider or model. A hold is the administrator's
+ * own flag, separate from the owner's switch, so the owner cannot undo it.
+ */
+export function useByokHold() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      target,
+      id,
+      hold,
+    }: {
+      target: "providers" | "models";
+      id: string;
+      hold: boolean;
+    }) =>
+      request<ByokProvider | ByokModel>(
+        `/api/admin/byok/${target}/${id}/${hold ? "disable" : "enable"}`,
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      // A held provider stops its models too, and the listings count both.
+      client.invalidateQueries({ queryKey: adminKeys.byokProviders });
+      client.invalidateQueries({ queryKey: adminKeys.byokModels });
+    },
+  });
+}

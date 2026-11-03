@@ -78,6 +78,15 @@ export type ModelKind =
 
 export type Price = Schemas["PriceResponse"];
 
+/** Another user's private provider, as an administrator sees it: never a key. */
+export type ByokProvider = Schemas["ByokProviderResponse"];
+
+/** Whose a private row is. */
+export type ByokOwner = Schemas["ByokOwner"];
+
+/** Another user's private model, as an administrator sees it. */
+export type ByokModel = Schemas["ByokModelResponse"];
+
 /** One row of a search backend's per-request price history. */
 export type SearchPrice = Schemas["SearchPriceResponse"];
 
@@ -501,6 +510,7 @@ export type OidcPolicy = Narrow<
     code_agents_mode: CapabilityMode;
     api_keys_mode: CapabilityMode;
     local_connectors_mode: CapabilityMode;
+    byok_mode: CapabilityMode;
     source: "console" | "environment";
   }
 >;

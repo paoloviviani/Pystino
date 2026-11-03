@@ -38,10 +38,11 @@ function row(overrides: Partial<RequestLogRow> = {}): RequestLogRow {
   };
 }
 
-function routes(seen: string[], items: RequestLogRow[] = [row()]) {
+function routes(seen: string[], items: RequestLogRow[] = [row()], byok = false) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     seen.push(url);
+    if (url === "/api/me") return jsonResponse({ capabilities: { byok } });
     if (url.includes("/requests")) {
       return jsonResponse({ items, total: items.length, limit: 50, offset: 0 });
     }
@@ -156,5 +157,29 @@ describe("request log", () => {
     expect(assign).toHaveBeenCalledWith(
       expect.stringMatching(/^\/api\/admin\/requests\.csv\?.*status=blocked/),
     );
+  });
+
+  it("lets a user with their own keys look at that usage alone, and says it is separate", async () => {
+    const user = userEvent.setup({ delay: null });
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", routes(seen, [row()], true));
+    renderScreen(<MyRequests />);
+
+    const toggle = await screen.findByLabelText(/only my own keys/i);
+    expect(seen.some((url) => url.includes("own_keys"))).toBe(false);
+    await user.click(toggle);
+    await waitFor(() =>
+      expect(seen.some((url) => url.startsWith("/api/me/requests?") && url.includes("own_keys=true"))).toBe(
+        true,
+      ),
+    );
+  });
+
+  it("offers no own-keys switch without the capability", async () => {
+    vi.stubGlobal("fetch", routes([], [row()], false));
+    renderScreen(<MyRequests />);
+
+    await waitFor(() => expect(screen.getByText("fast")).toBeInTheDocument());
+    expect(screen.queryByLabelText(/only my own keys/i)).not.toBeInTheDocument();
   });
 });

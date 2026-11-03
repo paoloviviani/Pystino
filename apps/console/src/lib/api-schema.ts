@@ -4067,7 +4067,9 @@ export interface components {
         /** ByokUsage */
         ByokUsage: {
             /** Cost */
-            cost: string;
+            cost: string | null;
+            /** Currency */
+            currency: string | null;
             /** Last Used At */
             last_used_at: string | null;
             /** Requests */

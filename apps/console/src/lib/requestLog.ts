@@ -43,6 +43,8 @@ export interface RequestLogQuery {
   groupId?: string;
   model?: string;
   status?: string;
+  /** Only the usage on the caller's own providers (bring your own key). */
+  ownKeys?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -59,6 +61,7 @@ export function requestFilterString(query: RequestLogQuery): string {
   if (query.groupId) params.set("group_id", query.groupId);
   if (query.model) params.set("model", query.model);
   if (query.status) params.set("status", query.status);
+  if (query.ownKeys) params.set("own_keys", "true");
   return params.toString();
 }
 
