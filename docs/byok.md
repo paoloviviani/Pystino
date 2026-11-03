@@ -27,6 +27,11 @@ It needs no chat (unlike `code_agents`): it is reported on `/v1/me` and
 | Console, **Settings** | the default new groups get, and a bulk on/off (`POST /api/admin/groups/capabilities` with `"capability": "byok"`) |
 | `ACCESS_BYOK` / `GATEWAY_ACCESS__BYOK` | the default `byok` flag new groups are created with: `on` or `off`. **Default `off`**, unlike the other capabilities: it lets a person send traffic, with their own credential, to a host of their choosing, which is a decision for the deployment. Existing groups are never changed by it. The console's Settings page decides once it saves (`byok_mode` on `PUT /api/admin/oidc/policy`) |
 
+A person holding the capability needs **no billing group** to use their own
+models: those bill nothing, so a missing, disabled or no-longer-member default
+group does not stop `my/...`. Deployment models still need one and are refused as
+before, and `/v1/models` lists only their own models while they have none.
+
 Switching it off for a person does **not delete** anything. Their private
 providers and models stay in the database and stop working (`my/...` answers
 403 `byok_not_allowed`, and the models drop out of `/v1/models`); switching it
