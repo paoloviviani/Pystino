@@ -22,7 +22,7 @@ from gateway.redaction import (
     available_engines,
     build_redactor,
 )
-from gateway.redaction.http import HttpDetectionRedactor, apply_spans
+from gateway.redaction.http import HttpDetectionRedactor, _Cache, apply_spans
 from gateway.sse.events import SSEEvent
 from llmp_shared import EntitySpan, PlaceholderMap, placeholder_for
 from pydantic import SecretStr
@@ -441,6 +441,36 @@ class TestCaching:
         second = await redactor.redact_request(messages)
         assert detector.call_count == 1
         assert first.messages[0]["content"] == second.messages[0]["content"]
+
+    def test_the_cache_key_tells_every_type_filter_apart(self) -> None:
+        """``None`` (everything) and ``[]`` (nothing) are different questions."""
+        key = _Cache.key
+        assert key("t", "en", 0.5, None, None, None) != key("t", "en", 0.5, [], None, None)
+        assert key("t", "en", 0.5, ["A,B"], None, None) != key(
+            "t", "en", 0.5, ["A", "B"], None, None
+        )
+        assert key("t", "en", 0.5, None, None, None) != key("t", "en", 0.5, None, False, None)
+        assert key("t", "en", 0.5, None, None, None) != key("t", "en", 0.5, None, None, False)
+        assert key("a\x1f", "en", 0.5, None, None, None) != key(
+            "a", "en\x1f", 0.5, None, None, None
+        )
+
+    async def test_a_text_cached_under_a_nothing_enabled_policy_is_redetected(self) -> None:
+        """Fail-open otherwise: a catch-all rule added later would leave a
+        re-sent conversation unredacted until the cache evicted it."""
+        detector = FakeDetector({"Mario Rossi": "PERSON"})
+        redactor = detector.redactor()
+        nothing = RedactionPolicy(default_mode=EntityMode.OFF)
+        everything = RedactionPolicy(default_mode=EntityMode.REDACT)
+        assert nothing.detected_types() == []
+        assert everything.detected_types() is None
+
+        await redactor.detect(["Mario Rossi"], policy=nothing)
+        assert detector.call_count == 1
+        spans = await redactor.detect(["Mario Rossi"], policy=everything)
+        assert detector.call_count == 2
+        assert detector.requests[1]["entity_types"] is None
+        assert [s.entity_type for s in spans[0]] == ["PERSON"]
 
     async def test_the_cache_cannot_change_the_result(self) -> None:
         """It is an optimisation over a pure function, which is what makes it safe."""

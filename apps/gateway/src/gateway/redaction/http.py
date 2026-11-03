@@ -91,10 +91,12 @@ class _Cache:
         pattern_matching: bool | None,
         ner: bool | None,
     ) -> str:
-        parts = (
-            f"{language}\x1f{threshold}\x1f{','.join(types or [])}\x1f"
-            f"{pattern_matching}\x1f{ner}\x1f{text}"
-        )
+        # JSON, not a joined string: it keeps None apart from [] (``types=None``
+        # is "everything the detector knows", ``[]`` is "nothing enabled", and
+        # a text cached as clean under the second must not be served for the
+        # first, or it goes upstream unredacted) and it cannot be confused by a
+        # separator appearing inside a value.
+        parts = json.dumps([language, threshold, types, pattern_matching, ner, text])
         return hashlib.sha256(parts.encode()).hexdigest()
 
     def get(self, key: str) -> list[EntitySpan] | None:
