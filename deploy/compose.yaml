@@ -300,6 +300,14 @@ services:
       TLS_DIRECTIVE: ${TLS_DIRECTIVE:-}
       ACME_EMAIL: ${ACME_EMAIL:-admin@example.org}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-private_ranges}
+      # No Multipath TCP on the published listeners. Go 1.24+ opens them as
+      # MPTCP by default, the public exploit path of CVE-2026-98432 (a Linux
+      # IPv4 TCP use-after-free; the real fix is a patched kernel). Caddy never
+      # needs MPTCP, so it is off twice: in Go, and in this container's network
+      # namespace (which does not inherit the host's net.mptcp.enabled).
+      GODEBUG: multipathtcp=0
+    sysctls:
+      net.mptcp.enabled: "0"
     volumes:
       - caddy-data:/data
       - caddy-config:/config
