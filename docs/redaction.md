@@ -379,7 +379,9 @@ and 135ms on a 1,000-token prompt).
   preview; the per-rule editor is its own page.
 - `GET /api/admin/redaction` reports what is in force.
 - The detection cache is a **per-process LRU** — adding worker processes
-  lowers the hit rate. At scale, a shared cache in Valkey is the answer (see
+  lowers the hit rate. It is keyed on the text *and* everything the detector
+  was asked (language, threshold, entity types, engine options), so a change
+  of policy never serves a result computed under another. At scale, a shared cache in Valkey is the answer (see
   [Measured performance](performance.md)).
 - Scoping redaction is a **performance lever** as much as a policy one: not
   running NER where no rule requires it is the largest single optimisation
