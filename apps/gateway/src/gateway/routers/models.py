@@ -120,10 +120,13 @@ async def list_models(
     base = (
         accessible_models(
             user_id=principal.user.id,
-            group_ids=[principal.billing_group.id],
+            group_ids=[principal.billing_group.id] if principal.billing_group else [],
             # The caller's own private models, only while they hold the
             # capability: losing it hides them, regaining it brings them back.
             byok=holds_byok(principal.user),
+            # No billing group (a BYOK user with none): the deployment's
+            # models are not theirs to list, since asking for one is refused.
+            deployment=principal.billing_group is not None,
         )
         if principal is not None
         else all_active_models()
@@ -267,8 +270,9 @@ async def retrieve_model(
     stmt = accessible_model_by_name(
         model_name,
         user_id=principal.user.id,
-        group_ids=[principal.billing_group.id],
+        group_ids=[principal.billing_group.id] if principal.billing_group else [],
         byok=holds_byok(principal.user),
+        deployment=principal.billing_group is not None,
     )
     rows = (
         await session.execute(_with_alias_target(stmt).order_by(ModelRouteTarget.position))

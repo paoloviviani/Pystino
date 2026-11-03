@@ -22,7 +22,7 @@ import { Disclosures } from "../components/Disclosures";
 import { UsagePlots } from "../components/UsagePlots";
 import { downloadCsv } from "../lib/api";
 import { recentPeriods } from "../lib/periods";
-import { useMyReport } from "../lib/queries";
+import { useMe, useMyReport } from "../lib/queries";
 import type { UsageReportRow } from "../lib/types";
 import {
   FILTERS,
@@ -53,6 +53,12 @@ export function Reports() {
   const [groupBy, setGroupBy] = useState("model");
 
   const report = useMyReport(period, groupBy);
+  // Usage on the user's own providers (bring your own key) is a separate
+  // figure, never added to the above: it is not what their quotas and groups
+  // are charged. Asked for only by a user who can have any.
+  const me = useMe();
+  const canOwnKeys = me.data?.capabilities?.byok === true;
+  const ownKeys = useMyReport(period, "model", "", true, canOwnKeys);
   const currency = report.data?.currency ?? "EUR";
 
   const columns: Column<UsageReportRow>[] = [
@@ -273,6 +279,61 @@ export function Reports() {
           </>
         )}
       </Card>
+
+      {canOwnKeys && (
+        <Card
+          title={m["reports.own_keys.title"]()}
+          description={m["reports.own_keys.description"]()}
+          flush
+        >
+          {ownKeys.isPending ? (
+            <Spinner />
+          ) : ownKeys.error ? (
+            <div className="p-5">
+              <Notice tone="danger" title={m["reports.error.title"]()}>
+                {/* i18n: server text — the API's own error message. */}
+                {ownKeys.error instanceof Error ? ownKeys.error.message : m["reports.error.unknown"]()}
+              </Notice>
+            </div>
+          ) : (
+            <>
+              <div className="p-5">
+                <div className={STATS}>
+                  <Stat
+                    label={m["reports.own_keys.requests"]()}
+                    value={formatNumber(ownKeys.data?.totals.requests ?? 0)}
+                    detail={m["reports.stat.tokens_detail"]({
+                      tokens: ownKeys.data?.totals.total_tokens ?? 0,
+                    })}
+                  />
+                  <Stat
+                    label={m["reports.own_keys.cost"]()}
+                    value={
+                      <Money
+                        amount={ownKeys.data?.totals.cost ?? "0"}
+                        currency={ownKeys.data?.currency ?? currency}
+                      />
+                    }
+                    detail={m["reports.own_keys.cost_detail"]()}
+                  />
+                </div>
+              </div>
+              <Table
+                columns={[
+                  { ...columns[0]!, header: headingFor("model") },
+                  columns[1]!,
+                  columns[2]!,
+                  columns[columns.length - 1]!,
+                ]}
+                rows={ownKeys.data?.rows ?? []}
+                rowKey={(row, index) => row.key ?? `own-${index}`}
+                empty={m["reports.own_keys.empty"]()}
+                caption={m["reports.own_keys.title"]()}
+              />
+            </>
+          )}
+        </Card>
+      )}
     </div>
   );
 }

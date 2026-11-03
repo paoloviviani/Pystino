@@ -82,6 +82,7 @@ function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual", chatEnab
         code_agents_allowed?: boolean;
         api_keys_allowed?: boolean;
         local_connectors_allowed?: boolean;
+        byok_allowed?: boolean;
       };
       return jsonResponse({
         id: "g2",
@@ -92,6 +93,7 @@ function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual", chatEnab
         code_agents_allowed: payload.code_agents_allowed ?? false,
         api_keys_allowed: payload.api_keys_allowed ?? true,
         local_connectors_allowed: payload.local_connectors_allowed ?? true,
+        byok_allowed: payload.byok_allowed ?? false,
         member_count: 1,
         models: [],
             aliases: [],
@@ -101,7 +103,7 @@ function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual", chatEnab
     if (url.includes("/api/admin/groups"))
       return jsonResponse({
         items: [
-          { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, code_agents_allowed: false, api_keys_allowed: true, local_connectors_allowed: true, member_count: 1, models: [],
+          { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, code_agents_allowed: false, api_keys_allowed: true, local_connectors_allowed: true, byok_allowed: false, member_count: 1, models: [],
             aliases: [], search_backend: null },
         ],
         total: 1,
@@ -328,6 +330,27 @@ describe("AdminGroups — capability flags (ADR 0096)", () => {
       );
       expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
         local_connectors_allowed: false,
+      });
+    });
+  });
+
+  it("flips bring your own key through the group PATCH route, chat or no chat", async () => {
+    // Not a chat concept: private providers are used on /v1, so the toggle is
+    // there on a deployment that serves no chat too.
+    const fetchMock = routes([], "manual", false);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderScreen();
+    const toggle = await screen.findByRole("checkbox", { name: "engineering: bring your own key" });
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          String(url).includes("/api/admin/groups/g2") && (init as RequestInit).method === "PATCH",
+      );
+      expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+        byok_allowed: true,
       });
     });
   });

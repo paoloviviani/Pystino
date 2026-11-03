@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from gateway.accounting import TokenEstimator
-from gateway.capabilities import Capabilities, default_flags, effective_capabilities
+from gateway.capabilities import Capabilities, default_flags, effective_capabilities, holds_byok
 from gateway.catalogue import Catalogue
 from gateway.config import Settings
 from gateway.errors import (
@@ -58,15 +58,37 @@ _LAST_USED_RESOLUTION = timedelta(seconds=60)
 
 @dataclass(slots=True)
 class Principal:
-    """An authenticated caller and the group its usage is billed to."""
+    """An authenticated caller and the group its usage is billed to.
+
+    ``billing_group`` is ``None`` for exactly one kind of caller: a user who holds
+    the bring-your-own-key capability and has no billing group that resolves
+    (none set, the default disabled, or no longer a member). Their own private
+    models bill nothing, so a group is not needed to use them; every deployment
+    model still needs one, and asks for it through :meth:`require_billing_group`,
+    which refuses with the very sentence :func:`resolve_billing_group` would
+    have refused the request with at authentication. Anyone else without a group
+    is still refused at authentication, as before.
+    """
 
     user: User
-    billing_group: Group
+    billing_group: Group | None
     api_key: ApiKey | None = None
+    #: Why ``billing_group`` is ``None``: the refusal a deployment model gets.
+    billing_refusal: str | None = None
+
+    def require_billing_group(self) -> Group:
+        """The group that pays for a deployment model, or the refusal that applies."""
+        if self.billing_group is None:
+            raise PermissionError_(
+                self.billing_refusal
+                or "No billing group is set for this key or user. Set a default billing "
+                "group in the management API before making requests."
+            )
+        return self.billing_group
 
     @property
     def quota_subject(self) -> QuotaSubject:
-        return QuotaSubject(user_id=self.user.id, group_id=self.billing_group.id)
+        return QuotaSubject(user_id=self.user.id, group_id=self.require_billing_group().id)
 
 
 @dataclass(slots=True)
@@ -390,6 +412,27 @@ def resolve_billing_group_or_none(user: User, *, pinned: Group | None = None) ->
     return group
 
 
+def principal_for(user: User, *, pinned: Group | None, api_key: ApiKey | None = None) -> Principal:
+    """The ``/v1`` principal for an authenticated user, billing group resolved.
+
+    A user with no billing group that resolves is refused here, exactly as
+    :func:`resolve_billing_group` always did, **unless** they hold the
+    bring-your-own-key capability: their own models bill nothing and need no
+    group, so they authenticate with ``billing_group=None`` and a deployment
+    model's request is refused later, at the point it needs the group, with the
+    same sentence (:meth:`Principal.require_billing_group`).
+    """
+    try:
+        group = resolve_billing_group(user, pinned=pinned)
+    except PermissionError_ as exc:
+        if not holds_byok(user):
+            raise
+        return Principal(
+            user=user, billing_group=None, api_key=api_key, billing_refusal=exc.message
+        )
+    return Principal(user=user, billing_group=group, api_key=api_key)
+
+
 async def _touch_last_used(session: AsyncSession, api_key: ApiKey) -> None:
     now = utcnow()
     if api_key.last_used_at is not None and now - api_key.last_used_at < _LAST_USED_RESOLUTION:
@@ -505,9 +548,9 @@ async def get_principal(
         pinned = api_key.billing_group
     _refuse_key_outside_groups(request, api_key.user)
     _refuse_key_without_api_keys(api_key.user)
-    group = resolve_billing_group(api_key.user, pinned=pinned)
+    principal = principal_for(api_key.user, pinned=pinned, api_key=api_key)
     await _touch_last_used(session, api_key)
-    return Principal(user=api_key.user, billing_group=group, api_key=api_key)
+    return principal
 
 
 async def get_optional_principal(
@@ -723,7 +766,7 @@ async def _bearer_principal(request: Request, session: AsyncSession, token: str)
     # ADR 0057 records for `is_admin` and the default.
     requested = requested_billing_group(request)
     pinned = _pin_from_header(user, requested) if requested else None
-    return Principal(user=user, billing_group=resolve_billing_group(user, pinned=pinned))
+    return principal_for(user, pinned=pinned)
 
 
 async def get_authenticated_caller(

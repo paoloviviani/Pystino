@@ -492,7 +492,7 @@ function RemoveProviderDialog({
 
 // -- capability defaults (ADR 0096, amended) -----------------------------------
 
-type CapabilityKey = "code_agents" | "api_keys" | "local_connectors";
+type CapabilityKey = "code_agents" | "api_keys" | "local_connectors" | "byok";
 
 const CAPABILITIES: {
   key: CapabilityKey;
@@ -518,6 +518,12 @@ const CAPABILITIES: {
     titleLower: m["admin_settings.capability.local_connectors_lower"],
     hint: m["admin_settings.capability.local_connectors_hint"],
   },
+  {
+    key: "byok",
+    title: m["admin_settings.capability.byok"],
+    titleLower: m["admin_settings.capability.byok_lower"],
+    hint: m["admin_settings.capability.byok_hint"],
+  },
 ];
 
 /**
@@ -537,10 +543,10 @@ function CapabilityDefaultsCard() {
   const bulk = useBulkGroupCapabilities();
   const toast = useOptionalToast();
   // Code agents and local connectors are chat concepts: without a chat only
-  // the API-key capability exists.
+  // the API-key and bring-your-own-key capabilities exist.
   const chatEnabled = useChatEnabled();
   const capabilities = CAPABILITIES.filter(
-    (entry) => chatEnabled || entry.key === "api_keys",
+    (entry) => chatEnabled || entry.key === "api_keys" || entry.key === "byok",
   );
 
   const [pending, setPending] = useState<{
@@ -688,6 +694,50 @@ function CapabilityDefaultsCard() {
             </div>
           );
         })}
+
+        {/* The network guard's switch lives with the capability it guards. Off
+            by default: with it on, a user can point the gateway, with their own
+            key, at any address it can reach. */}
+        <div className="flex flex-col gap-3 rounded-md border border-line p-4">
+          <label className="inline-flex items-center gap-2 text-body font-medium">
+            <input
+              type="checkbox"
+              checked={policy.data?.byok_private_networks === true}
+              disabled={save.isPending}
+              onChange={(event) =>
+                save.mutate(
+                  { byok_private_networks: event.target.checked },
+                  {
+                    onSuccess: () =>
+                      toast?.add({
+                        title: m["admin_settings.byok_private_networks.toast_saved"](),
+                        type: "success",
+                      }),
+                    onError: (caught: unknown) =>
+                      toast?.add({
+                        // i18n: server text — the gateway's own error message.
+                        title:
+                          caught instanceof Error
+                            ? caught.message
+                            : m["admin_settings.capability.toast_save_failed"](),
+                        type: "error",
+                      }),
+                  },
+                )
+              }
+              className="accent-accent"
+            />
+            {m["admin_settings.byok_private_networks.label"]()}
+          </label>
+          <div className={`text-body ${MUTED}`}>
+            {m["admin_settings.byok_private_networks.hint"]()}
+          </div>
+          {policy.data?.byok_private_networks === true && (
+            <Notice tone="warn" title={m["admin_settings.byok_private_networks.warning_title"]()}>
+              {m["admin_settings.byok_private_networks.warning"]()}
+            </Notice>
+          )}
+        </div>
       </div>
 
       <CapabilityBulkConfirm

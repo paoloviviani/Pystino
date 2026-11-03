@@ -77,4 +77,4 @@ async def list_billable_groups(principal: PrincipalDep) -> BillableGroups:
         if (group := membership.group) is not None and group.is_active
     ]
     groups.sort(key=lambda g: g.name)
-    return BillableGroups(data=groups, billing_group=principal.billing_group.name)
+    return BillableGroups(data=groups, billing_group=principal.require_billing_group().name)

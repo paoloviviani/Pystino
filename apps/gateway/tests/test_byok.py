@@ -1847,3 +1847,83 @@ class TestErasureAndMerge:
         async with session_factory() as session:
             names = {row.name for row in (await session.execute(select(ModelDef))).scalars().all()}
             assert "alice-one" not in names and "bob-one" in names
+
+
+# --------------------------------------------------------------------------
+# a user with the capability and no billing group
+# --------------------------------------------------------------------------
+
+
+async def drop_default_group(session_factory: Any, member: Member) -> None:
+    """No billing group that resolves: the default is cleared (the key pins one
+    too, so it is cleared as well)."""
+    async with session_factory() as session:
+        user = await session.get(User, member.user_id)
+        assert user is not None
+        user.default_billing_group_id = None
+        key = (
+            await session.execute(select(ApiKey).where(ApiKey.user_id == member.user_id))
+        ).scalar_one()
+        key.billing_group_id = None
+        await session.commit()
+
+
+class TestNoBillingGroup:
+    async def test_own_models_work_and_bill_no_group(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        session_factory: Any,
+        seeded: Seeded,
+        alice: Member,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        await own(app, client, session_factory, alice)
+        await set_grants(session_factory, seeded, alice)
+        await drop_default_group(session_factory, alice)
+        fake_upstream.set_json(completion_body("ok"))
+
+        response = await chat(client, alice, "my/mine")
+        assert response.status_code == 200, response.text
+        async with session_factory() as session:
+            row = (await session.execute(select(UsageRecord))).scalar_one()
+        assert row.byok is True and row.group_id is None and row.user_id == alice.user_id
+
+        # The listing and the retrieval show her own models, never the deployment's
+        # (asking for one is refused, so offering it would be a lie).
+        listed = (await client.get("/v1/models", headers=alice.auth)).json()["data"]
+        assert [card["id"] for card in listed] == ["my/mine"]
+        assert (await client.get("/v1/models/my/mine", headers=alice.auth)).status_code == 200
+        assert (await client.get("/v1/models/test-model", headers=alice.auth)).status_code == 404
+
+    async def test_a_deployment_model_still_needs_a_group_and_says_so_as_before(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        session_factory: Any,
+        seeded: Seeded,
+        alice: Member,
+    ) -> None:
+        await own(app, client, session_factory, alice)
+        await set_grants(session_factory, seeded, alice)
+        await drop_default_group(session_factory, alice)
+
+        response = await chat(client, alice, "test-model")
+        assert response.status_code == 403
+        assert "No billing group is set" in response.json()["error"]["message"]
+        # And the routes that bill a group refuse the same way.
+        assert (await client.get("/v1/billing/groups", headers=alice.auth)).status_code == 403
+
+    async def test_without_the_capability_no_group_is_refused_at_the_door(
+        self,
+        client: httpx.AsyncClient,
+        session_factory: Any,
+        seeded: Seeded,
+    ) -> None:
+        plain = await add_member(session_factory, "plain", byok=False)
+        await drop_default_group(session_factory, plain)
+
+        for model in ("test-model", "my/anything"):
+            response = await chat(client, plain, model)
+            assert response.status_code == 403
+        assert (await client.get("/v1/models", headers=plain.auth)).status_code == 403

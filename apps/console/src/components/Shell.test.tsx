@@ -78,6 +78,21 @@ function stubNavigation() {
   vi.stubGlobal("location", { assign, href: "http://console.test/" });
 }
 
+describe("Shell: bring your own key", () => {
+  it("offers the page only to a user who holds the capability", () => {
+    renderShell(me({ is_admin: false, capabilities: { code_agents: true, api_keys: true, local_connectors: true, byok: true } }));
+    expect(screen.getByRole("link", { name: "Your providers and models" })).toHaveAttribute(
+      "href",
+      "/me/providers",
+    );
+  });
+
+  it("leaves the entry out without the capability", () => {
+    renderShell(me({ is_admin: false }));
+    expect(screen.queryByRole("link", { name: "Your providers and models" })).not.toBeInTheDocument();
+  });
+});
+
 describe("Shell", () => {
   it("shows who is signed in", () => {
     renderShell();
@@ -298,6 +313,7 @@ describe("Shell: the sidebar", () => {
       "/admin/models",
       "/admin/routing",
       "/admin/search",
+      "/admin/private-providers",
       "/admin/redaction",
       "/admin/users",
       "/admin/groups",

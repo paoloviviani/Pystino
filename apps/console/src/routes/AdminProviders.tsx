@@ -40,11 +40,20 @@ import {
   ROW_ACTIONS,
   shortHint,
 } from "../lib/layout";
+import { byokErrorText } from "../lib/byokErrors";
+import { useScopeName } from "../lib/scope";
 import { useOptionalToast } from "../lib/toast";
 import { formatNumber } from "../lib/format";
 import { m } from "../paraglide/messages.js";
 
+/**
+ * The providers screen, for either audience (lib/scope.ts): the deployment's
+ * for an administrator, and a user's own private ones where the surrounding
+ * route has set the scope to "me". Same list, same form; only the endpoints
+ * and the wording differ.
+ */
 export function AdminProviders() {
+  const mine = useScopeName() === "me";
   const providers = useProviders();
   const plugins = useProviderPlugins();
   const update = useUpdateProvider();
@@ -319,8 +328,9 @@ export function AdminProviders() {
   return (
     <div className={PAGE}>
       <PageHeader
-        title={m["admin_providers.title"]()}
-        subtitle={m["admin_providers.subtitle"]()}
+        level={mine ? "section" : "page"}
+        title={mine ? m["byok_providers.title"]() : m["admin_providers.title"]()}
+        subtitle={mine ? m["byok_providers.subtitle"]() : m["admin_providers.subtitle"]()}
         actions={
           <Button variant="primary" onClick={() => setCreating(true)}>
             {m["admin_providers.add"]()}
@@ -331,9 +341,7 @@ export function AdminProviders() {
       {remove.error ? (
         <Notice tone="danger" title={m["admin_providers.delete_error.title"]()}>
           {/* i18n: server text — the API's own error message. */}
-          {remove.error instanceof Error
-            ? remove.error.message
-            : m["admin_providers.unknown_error"]()}
+          {byokErrorText(remove.error, m["admin_providers.unknown_error"]())}
         </Notice>
       ) : null}
 
@@ -361,9 +369,7 @@ export function AdminProviders() {
         ) : providers.error ? (
           <Notice tone="danger" title={m["admin_providers.load_error.title"]()}>
             {/* i18n: server text — the API's own error message. */}
-            {providers.error instanceof Error
-              ? providers.error.message
-              : m["admin_providers.unknown_error"]()}
+            {byokErrorText(providers.error, m["admin_providers.unknown_error"]())}
           </Notice>
         ) : (
           <>
@@ -801,9 +807,7 @@ export function ProviderDialog({
       {error ? (
         <Notice tone="danger">
           {/* i18n: server text — the API's own error message. */}
-          {error instanceof Error
-            ? error.message
-            : m["admin_providers.unknown_error"]()}
+          {byokErrorText(error, m["admin_providers.unknown_error"]())}
         </Notice>
       ) : null}
 

@@ -22,6 +22,7 @@ import {
   KNOWN_INPUTS,
   KNOWN_OUTPUTS,
 } from "../components/CapabilityPicker";
+import { ApiName } from "../components/ApiName";
 import { ModelAccess } from "../components/ModelAccess";
 import { PageHeader } from "../components/PageHeader";
 import { formatDateTime, formatNumber } from "../lib/format";
@@ -46,6 +47,7 @@ import {
   PAGE,
 } from "../lib/layout";
 import type { AdminModel, ModelKind, Price } from "../lib/types";
+import { useScopeName } from "../lib/scope";
 import { useOptionalToast } from "../lib/toast";
 
 /**
@@ -64,6 +66,7 @@ import { useOptionalToast } from "../lib/toast";
  * where it left off.
  */
 export function AdminModelDetail() {
+  const modelsPath = useScopeName() === "me" ? "/me/models" : "/admin/models";
   const { modelId = null } = useParams();
   const model = useModel(modelId);
 
@@ -83,7 +86,7 @@ export function AdminModelDetail() {
           {model.error instanceof Error
             ? model.error.message
             : m["model_detail.unknown_error"]()}{" "}
-          <Link to="/admin/models">{m["model_detail.back_link"]()}</Link>
+          <Link to={modelsPath}>{m["model_detail.back_link"]()}</Link>
         </Notice>
       </div>
     );
@@ -93,6 +96,11 @@ export function AdminModelDetail() {
 }
 
 function ModelPage({ model }: { model: AdminModel }) {
+  // Either audience (lib/scope.ts). A private model is never public, never
+  // granted and never the target of an alias, so those sections are left out.
+  const mine = useScopeName() === "me";
+  const modelsPath = mine ? "/me/models" : "/admin/models";
+  const providersPath = mine ? "/me/providers" : "/admin/providers";
   const update = useUpdateModel();
   const del = useDeleteModel();
   const navigate = useNavigate();
@@ -130,12 +138,13 @@ function ModelPage({ model }: { model: AdminModel }) {
   return (
     <div className={PAGE}>
       <PageHeader
+        level={mine ? "section" : "page"}
         title={model.name}
         subtitle={
           <Message
             message={m["model_detail.subtitle"]}
             markup={{
-              link: (children) => <Link to="/admin/models">{children}</Link>,
+              link: (children) => <Link to={modelsPath}>{children}</Link>,
               code: (children) => <code className={CODE}>{children}</code>,
             }}
             inputs={{
@@ -206,7 +215,7 @@ function ModelPage({ model }: { model: AdminModel }) {
                       title: m["model_detail.toast.deleted"](),
                       type: "success",
                     });
-                    navigate("/admin/models");
+                    navigate(modelsPath);
                   },
                   onError: () =>
                     toast?.add({
@@ -295,43 +304,45 @@ function ModelPage({ model }: { model: AdminModel }) {
               <Badge>{m["model_detail.badge.inactive"]()}</Badge>
             )}
           </Detail>
-          <Detail label={m["model_detail.detail.visibility"]()}>
-            <div className={CHIPS}>
-              {model.is_public ? (
-                <Badge tone="accent">{m["model_detail.badge.public"]()}</Badge>
-              ) : (
-                <Badge>{m["model_detail.badge.private"]()}</Badge>
-              )}
-              <Button
-                busy={
-                  update.isPending && update.variables?.is_public !== undefined
-                }
-                onClick={() =>
-                  update.mutate(
-                    { id: model.id, is_public: !model.is_public },
-                    {
-                      onSuccess: () =>
-                        toast?.add({
-                          title: m["model_detail.toast.updated"](),
-                          type: "success",
-                        }),
-                      onError: () =>
-                        toast?.add({
-                          title: m["model_detail.toast.update_failed"](),
-                          type: "error",
-                        }),
-                    },
-                  )
-                }
-              >
-                {model.is_public
-                  ? m["model_detail.action.restrict"]()
-                  : m["model_detail.action.make_public"]()}
-              </Button>
-            </div>
-          </Detail>
+          {!mine && (
+            <Detail label={m["model_detail.detail.visibility"]()}>
+              <div className={CHIPS}>
+                {model.is_public ? (
+                  <Badge tone="accent">{m["model_detail.badge.public"]()}</Badge>
+                ) : (
+                  <Badge>{m["model_detail.badge.private"]()}</Badge>
+                )}
+                <Button
+                  busy={
+                    update.isPending && update.variables?.is_public !== undefined
+                  }
+                  onClick={() =>
+                    update.mutate(
+                      { id: model.id, is_public: !model.is_public },
+                      {
+                        onSuccess: () =>
+                          toast?.add({
+                            title: m["model_detail.toast.updated"](),
+                            type: "success",
+                          }),
+                        onError: () =>
+                          toast?.add({
+                            title: m["model_detail.toast.update_failed"](),
+                            type: "error",
+                          }),
+                      },
+                    )
+                  }
+                >
+                  {model.is_public
+                    ? m["model_detail.action.restrict"]()
+                    : m["model_detail.action.make_public"]()}
+                </Button>
+              </div>
+            </Detail>
+          )}
           <Detail label={m["model_detail.detail.callers_name"]()}>
-            <code className={CODE}>{model.name}</code>
+            {mine ? <ApiName name={model.name} /> : <code className={CODE}>{model.name}</code>}
           </Detail>
           <Detail label={m["model_detail.detail.display_name"]()}>
             <div className="flex flex-wrap items-center gap-2">
@@ -368,26 +379,28 @@ function ModelPage({ model }: { model: AdminModel }) {
             <code className={CODE}>{model.upstream_model}</code>
           </Detail>
           <Detail label={m["model_detail.detail.provider"]()}>
-            <Link to="/admin/providers">{model.provider_name}</Link>
+            <Link to={providersPath}>{model.provider_name}</Link>
           </Detail>
         </dl>
       </Card>
 
       <Describe model={model} />
       <Pricing model={model} />
-      <ModelAccess
-        id={model.id}
-        name={model.name}
-        grantedToUsers={model.granted_to_users}
-        revokedNote={() => m["model_detail.access.revoke_note"]()}
-        cardDescription={() => m["model_detail.access.description"]()}
-      />
+      {!mine && (
+        <ModelAccess
+          id={model.id}
+          name={model.name}
+          grantedToUsers={model.granted_to_users}
+          revokedNote={() => m["model_detail.access.revoke_note"]()}
+          cardDescription={() => m["model_detail.access.description"]()}
+        />
+      )}
 
       {/* The reverse direction over the routing table: which names resolve to
           **this** model. Here because deleting or deactivating it is what
           breaks them, and an administrator should not have to know that an
           alias exists to be told one is about to stop working (ADR 0101). */}
-      {pointingHere.length > 0 ? (
+      {!mine && pointingHere.length > 0 ? (
         <Card
           title={m["model_detail.aliases.title"]()}
           description={m["model_detail.aliases.description"]()}
