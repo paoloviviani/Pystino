@@ -127,6 +127,20 @@ def main() -> int:
     expect("/api/me answers", status == 200, f"HTTP {status}")
     profile = json.loads(body) if status == 200 else {}
     expect("it names the signed-in user", bool(profile.get("email")), str(profile)[:120])
+    # Console access (migration 0078): an administrator always holds it, and the
+    # Groups listing carries the per-group flag.
+    expect(
+        "an administrator holds the console capability",
+        (profile.get("capabilities") or {}).get("console") is True,
+        str(profile.get("capabilities")),
+    )
+    status, _, body = fetch(admin_session, "/api/admin/groups")
+    groups = json.loads(body).get("items", []) if status == 200 else []
+    expect(
+        "every group reports console_allowed",
+        bool(groups) and all("console_allowed" in group for group in groups),
+        str(groups)[:160],
+    )
 
     status, _, body = fetch(admin_session, "/api/me/reports/usage?group_by=model")
     expect("/api/me/reports/usage answers", status == 200, f"HTTP {status}")

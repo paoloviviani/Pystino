@@ -115,6 +115,7 @@ describe("AdminSettings providers card", () => {
     api_keys_mode: "on",
     local_connectors_mode: "on",
     byok_mode: "off",
+    console_mode: "on",
     byok_private_networks: false,
     source: "environment",
     sources: {},
@@ -392,6 +393,7 @@ describe("AdminSettings capabilities card", () => {
       api_keys_mode: "on",
       local_connectors_mode: "on",
       byok_mode: "off",
+      console_mode: "on",
       byok_private_networks: false,
       source: "environment",
       sources: {},
@@ -558,10 +560,10 @@ describe("AdminSettings capabilities card", () => {
   async function openCard() {
     // Await the settled card, not its header: the policy query answers after
     // the first paint, and a test that stops at the header races the spinner.
-    // Four capability rows (agents, keys, local connectors, bring your own
-    // key) once the chat flag has loaded, each with a "New groups" select.
+    // Five capability rows (agents, keys, local connectors, bring your own
+    // key, console access) once the chat flag has loaded, each with a "New groups" select.
     await waitFor(() =>
-      expect(screen.getAllByLabelText("New groups")).toHaveLength(4),
+      expect(screen.getAllByLabelText("New groups")).toHaveLength(5),
     );
     return screen.getAllByLabelText("New groups")[0]!;
   }
@@ -572,8 +574,9 @@ describe("AdminSettings capabilities card", () => {
     await openCard();
     const selects = screen.getAllByLabelText("New groups") as HTMLSelectElement[];
     // Card order: coding agents, API keys, local connectors, bring your own
-    // key (which is off unless the deployment decided otherwise).
-    expect(selects.map((s) => s.value)).toEqual(["off", "on", "on", "off"]);
+    // key (which is off unless the deployment decided otherwise), console
+    // access.
+    expect(selects.map((s) => s.value)).toEqual(["off", "on", "on", "off", "on"]);
   });
 
   it("saves the local connectors default as its own policy field", async () => {
@@ -601,6 +604,16 @@ describe("AdminSettings capabilities card", () => {
     await waitFor(() => expect(puts()).toEqual([{ byok_mode: "on" }]));
   });
 
+  it("saves the console access default as console_mode", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockRoutes({ policy: policyFixture() });
+    renderScreen(<AdminSettings />);
+    await openCard();
+    expect(screen.getByText("Console access")).toBeInTheDocument();
+    await user.selectOptions(screen.getAllByLabelText("New groups")[4]!, "off");
+    await waitFor(() => expect(puts()).toEqual([{ console_mode: "off" }]));
+  });
+
   it("warns about internal addresses and saves the private-networks switch", async () => {
     const user = userEvent.setup({ delay: null });
     mockRoutes({ policy: policyFixture() });
@@ -624,8 +637,8 @@ describe("AdminSettings capabilities card", () => {
       ).toBe(true),
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
-    // API keys, and bring your own key: neither is a chat concept.
-    expect(screen.getAllByLabelText("New groups")).toHaveLength(2);
+    // API keys, bring your own key and console access: none is a chat concept.
+    expect(screen.getAllByLabelText("New groups")).toHaveLength(3);
     expect(screen.queryByText("Coding agents")).not.toBeInTheDocument();
     expect(screen.queryByText("Local connectors")).not.toBeInTheDocument();
     expect(screen.getByText("API keys")).toBeInTheDocument();

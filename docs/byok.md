@@ -23,7 +23,7 @@ It needs no chat (unlike `code_agents`): it is reported on `/v1/me` and
 
 | Where | What |
 |---|---|
-| Console, **Groups** | the per-group `byok_allowed` flag (`PATCH /api/admin/groups/{id}`) |
+| Console, **Groups** | the per-group `byok_allowed` flag (`PATCH /api/admin/groups/{id}`); a group with it on and `console_allowed` off is flagged with a warning |
 | Console, **Settings** | the default new groups get, and a bulk on/off (`POST /api/admin/groups/capabilities` with `"capability": "byok"`) |
 | `ACCESS_BYOK` / `GATEWAY_ACCESS__BYOK` | the default `byok` flag new groups are created with: `on` or `off`. **Default `off`**, unlike the other capabilities: it lets a person send traffic, with their own credential, to a host of their choosing, which is a decision for the deployment. Existing groups are never changed by it. The console's Settings page decides once it saves (`byok_mode` on `PUT /api/admin/oidc/policy`) |
 
@@ -148,7 +148,10 @@ Everything under `/api/me/` is **cookie-session only**, like the rest of `/api`.
 
 ### Capability and errors
 
-`GET /v1/me` and `GET /api/me` report `capabilities.byok` (boolean).
+`GET /v1/me` and `GET /api/me` report `capabilities.byok` (boolean). It is
+**false without console access** ([Identity](identity.md#console-access)): BYOK
+is managed in the console, so a group's `byok_allowed` only takes effect for
+members who also hold `console` (administrators hold both).
 
 Every `/api/me/providers*`, `/api/me/models*`, `/api/me/provider-plugins` and
 `/api/me/provider-catalogue` call needs it: without it the answer is

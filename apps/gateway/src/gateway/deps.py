@@ -15,13 +15,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from gateway.accounting import TokenEstimator
-from gateway.capabilities import Capabilities, default_flags, effective_capabilities, holds_byok
+from gateway.capabilities import (
+    Capabilities,
+    default_flags,
+    effective_capabilities,
+    holds_byok,
+    holds_console,
+)
 from gateway.catalogue import Catalogue
 from gateway.config import Settings
 from gateway.errors import (
     AgentsNotAllowedError,
     ApiKeysNotAllowedError,
     AuthenticationError,
+    ConsoleNotAllowedError,
     OutsideAccessGroupsError,
     PermissionError_,
 )
@@ -946,8 +953,28 @@ async def get_admin_user(
     return user
 
 
+async def get_console_user(
+    user: Annotated[User, Depends(get_management_user)],
+) -> User:
+    """A management-API caller who may use the console (the ``console`` capability).
+
+    A person in no group with console access is refused with 403
+    ``console_not_allowed``: their account is managed through the chat, and
+    their ``/v1`` bearer access is untouched (the chat never calls ``/api/me``).
+    Administrators always pass. Only ``GET /api/me`` (which the console reads
+    to learn it should show the "managed through the chat" page) and
+    ``/auth/session`` take the plain session user instead.
+    """
+    if not holds_console(user):
+        raise ConsoleNotAllowedError("Your account does not have console access.")
+    return user
+
+
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
-ManagementUserDep = Annotated[User, Depends(get_management_user)]
+#: A signed-in console user: the session cookie, plus the ``console`` capability.
+ManagementUserDep = Annotated[User, Depends(get_console_user)]
+#: The session cookie alone, whatever the capabilities (``GET /api/me`` only).
+SessionUserDep = Annotated[User, Depends(get_management_user)]
 AdminUserDep = Annotated[User, Depends(get_admin_user)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 PrincipalDep = Annotated[Principal, Depends(get_principal)]

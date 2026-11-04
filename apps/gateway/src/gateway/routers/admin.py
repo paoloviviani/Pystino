@@ -2842,6 +2842,7 @@ def _group_admin_response(
         api_keys_allowed=group.api_keys_allowed,
         local_connectors_allowed=group.local_connectors_allowed,
         byok_allowed=group.byok_allowed,
+        console_allowed=group.console_allowed,
         member_count=member_count,
         models=models,
         # Which of `models` is an alias, so the Groups page can badge them
@@ -3217,6 +3218,8 @@ async def update_group(
         group.local_connectors_allowed = payload.local_connectors_allowed is True
     if "byok_allowed" in fields:
         group.byok_allowed = payload.byok_allowed is True
+    if "console_allowed" in fields:
+        group.console_allowed = payload.console_allowed is True
     await session.commit()
     await session.refresh(group)
     member_count = await session.scalar(
@@ -3249,6 +3252,7 @@ _CAPABILITY_FLAG_COLUMNS = {
     "api_keys": Group.api_keys_allowed,
     "local_connectors": Group.local_connectors_allowed,
     "byok": Group.byok_allowed,
+    "console": Group.console_allowed,
 }
 
 
@@ -4273,6 +4277,11 @@ async def _user_responses(
             ),
             byok_allowed=(
                 capabilities_by_id[user.id].byok
+                if membership_in is None and user.id in capabilities_by_id
+                else None
+            ),
+            console_allowed=(
+                capabilities_by_id[user.id].console
                 if membership_in is None and user.id in capabilities_by_id
                 else None
             ),
@@ -5607,6 +5616,7 @@ async def _oidc_policy_response(request: Request, session: SessionDep) -> OidcPo
         api_keys_mode=policy.api_keys_mode,
         local_connectors_mode=policy.local_connectors_mode,
         byok_mode=policy.byok_mode,
+        console_mode=policy.console_mode,
         byok_private_networks=policy.byok_private_networks,
         source=policy.source,
         sources=policy.sources,
@@ -5646,12 +5656,14 @@ async def preview_oidc_policy(
     # active non-admin people gain / lose it", which the console confirms
     # before applying. Either may be asked alone, and together they are a
     # preview of the same flag both ways.
-    bulk_capability: Literal["code_agents", "api_keys", "local_connectors", "byok"] | None = None,
+    bulk_capability: Literal["code_agents", "api_keys", "local_connectors", "byok", "console"]
+    | None = None,
     bulk_value: bool | None = None,
     code_agents_mode: str | None = None,
     api_keys_mode: str | None = None,
     local_connectors_mode: str | None = None,
     byok_mode: str | None = None,
+    console_mode: str | None = None,
 ) -> OidcPolicyPreviewResponse:
     """What saving this group gate would do (ADR 0095 §7, ADR 0096).
 
@@ -5677,6 +5689,7 @@ async def preview_oidc_policy(
         or api_keys_mode is not None
         or local_connectors_mode is not None
         or byok_mode is not None
+        or console_mode is not None
     )
     if not want_bulk and not want_capabilities:
         if join_mode != "group":
@@ -6033,6 +6046,7 @@ async def set_oidc_policy(
         ("api_keys_mode", "api_keys_mode"),
         ("local_connectors_mode", "local_connectors_mode"),
         ("byok_mode", "byok_mode"),
+        ("console_mode", "console_mode"),
     ):
         value = fields.get(knob)
         # The 0.7.x spellings still save — meaning on/off — for one release

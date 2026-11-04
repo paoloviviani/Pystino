@@ -29,7 +29,7 @@ import mimetypes
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
@@ -132,6 +132,57 @@ class ConsoleStatics(StaticFiles):
         return response
 
 
+#: Where a member without console access is sent: the chat's own usage page.
+CHAT_USAGE_PATH = "/settings/usage"
+
+#: The console's own sign-in hop (also the chat's way into a gateway sign-in):
+#: never redirected away, so a sign-in in progress is not interrupted.
+_LOGIN_PATH = "login"
+
+
+def chat_usage_url(settings: Settings) -> str | None:
+    """The chat's usage page, from `GATEWAY_CHAT__URL`; None when it is not set."""
+    base = settings.chat.url.strip().rstrip("/")
+    if not base.startswith(("http://", "https://", "/")):
+        return None
+    return f"{base}{CHAT_USAGE_PATH}"
+
+
+async def _no_console_redirect(request: Request) -> str | None:
+    """Where to send the signed-in person, if the console is not theirs.
+
+    A redirect only for a valid session whose person is not an administrator and
+    holds no console access, and only when the deployment says where its chat
+    is. Anything else (no cookie, a bad or stale session, an administrator, a
+    person with the capability, no chat URL) answers None and the console loads
+    as before: unauthenticated visitors still reach the sign-in, and a
+    standalone deployment's member reaches the plain "managed through the chat"
+    page. A convenience only: `/api/me/*` refuses them regardless.
+    """
+    from gateway.capabilities import holds_console
+    from gateway.deps import load_user_for_management
+    from gateway.errors import AuthenticationError
+    from gateway.oidc import OIDCError, verify_session_token
+
+    settings: Settings = request.app.state.settings
+    target = chat_usage_url(settings)
+    token = request.cookies.get(settings.session_cookie_name)
+    if target is None or not token:
+        return None
+    try:
+        claims = verify_session_token(token, secret=settings.session_secret.get_secret_value())
+    except OIDCError:
+        return None
+    async with request.app.state.session_factory() as session:
+        try:
+            user = await load_user_for_management(
+                session, claims.user_id, issued_at=claims.issued_at
+            )
+        except AuthenticationError:
+            return None
+    return None if user.is_admin or holds_console(user) else target
+
+
 def build_router(directory: Path) -> APIRouter:
     """Routes for the entry document and the client-side routes beneath it."""
     router = APIRouter(include_in_schema=False)
@@ -145,8 +196,9 @@ def build_router(directory: Path) -> APIRouter:
         )
 
     @router.get(MOUNT_PATH)
-    async def console_root() -> FileResponse:
-        return entry()
+    async def console_root(request: Request) -> Response:
+        away = await _no_console_redirect(request)
+        return RedirectResponse(away, status_code=307) if away else entry()
 
     @router.get(f"{MOUNT_PATH}/{{spa_path:path}}")
     async def console_spa(spa_path: str, request: Request) -> Response:
@@ -156,9 +208,12 @@ def build_router(directory: Path) -> APIRouter:
         rather than receive HTML, or the browser reports a syntax error in a
         file that does not exist and the real cause — a bad deploy — is invisible.
         """
-        del request
         if spa_path.startswith("assets/") or "." in spa_path.rsplit("/", 1)[-1]:
             return Response(status_code=404)
+        if spa_path.strip("/") != _LOGIN_PATH:
+            away = await _no_console_redirect(request)
+            if away:
+                return RedirectResponse(away, status_code=307)
         return entry()
 
     return router

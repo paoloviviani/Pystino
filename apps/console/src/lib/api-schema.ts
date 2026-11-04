@@ -3944,6 +3944,8 @@ export interface components {
             byok_allowed: boolean | null;
             /** Code Agents Allowed */
             code_agents_allowed: boolean | null;
+            /** Console Allowed */
+            console_allowed: boolean | null;
             /** Deactivated By */
             deactivated_by: string | null;
             /** Default Billing Group */
@@ -4174,6 +4176,11 @@ export interface components {
             byok: boolean;
             /** Code Agents */
             code_agents: boolean | null;
+            /**
+             * Console
+             * @default true
+             */
+            console: boolean;
             /** Local Connectors */
             local_connectors: boolean | null;
         };
@@ -4617,6 +4624,11 @@ export interface components {
              * @default false
              */
             code_agents_allowed: boolean;
+            /**
+             * Console Allowed
+             * @default true
+             */
+            console_allowed: boolean;
             /** Description */
             description: string | null;
             /**
@@ -4653,7 +4665,7 @@ export interface components {
              * Capability
              * @enum {string}
              */
-            capability: "code_agents" | "api_keys" | "local_connectors" | "byok";
+            capability: "code_agents" | "api_keys" | "local_connectors" | "byok" | "console";
             /** Value */
             value: boolean;
         };
@@ -4722,6 +4734,8 @@ export interface components {
             byok_allowed?: boolean | null;
             /** Code Agents Allowed */
             code_agents_allowed?: boolean | null;
+            /** Console Allowed */
+            console_allowed?: boolean | null;
             /** Local Connectors Allowed */
             local_connectors_allowed?: boolean | null;
         };
@@ -5169,6 +5183,11 @@ export interface components {
              * @default false
              */
             chat_enabled: boolean;
+            /**
+             * Chat Url
+             * @default
+             */
+            chat_url: string;
             default_billing_group: components["schemas"]["GroupSummary"] | null;
             /** Display Name */
             display_name: string | null;
@@ -5706,6 +5725,11 @@ export interface components {
             code_agents_mode: string;
             configured: components["schemas"]["OidcPolicyChange"] | null;
             /**
+             * Console Mode
+             * @default on
+             */
+            console_mode: string;
+            /**
              * Group Fallback
              * @default refuse
              */
@@ -5759,6 +5783,8 @@ export interface components {
             byok_private_networks?: boolean | null;
             /** Code Agents Mode */
             code_agents_mode?: ("on" | "off" | "everyone" | "groups") | null;
+            /** Console Mode */
+            console_mode?: ("on" | "off" | "everyone" | "groups") | null;
             /** Group Fallback */
             group_fallback?: ("refuse" | "approval") | null;
             /** Group Mappings */
@@ -7393,6 +7419,8 @@ export interface components {
             byok_allowed: boolean | null;
             /** Code Agents Allowed */
             code_agents_allowed: boolean | null;
+            /** Console Allowed */
+            console_allowed: boolean | null;
             /** Deactivated By */
             deactivated_by: string | null;
             /** Default Billing Group */
@@ -9561,12 +9589,13 @@ export interface operations {
             query?: {
                 join_mode?: string;
                 required_groups?: string[];
-                bulk_capability?: ("code_agents" | "api_keys" | "local_connectors" | "byok") | null;
+                bulk_capability?: ("code_agents" | "api_keys" | "local_connectors" | "byok" | "console") | null;
                 bulk_value?: boolean | null;
                 code_agents_mode?: string | null;
                 api_keys_mode?: string | null;
                 local_connectors_mode?: string | null;
                 byok_mode?: string | null;
+                console_mode?: string | null;
             };
             header?: never;
             path?: never;
