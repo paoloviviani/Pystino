@@ -69,7 +69,8 @@ export function AdminGroups() {
       | "code_agents_allowed"
       | "api_keys_allowed"
       | "local_connectors_allowed"
-      | "byok_allowed",
+      | "byok_allowed"
+      | "console_allowed",
     value: boolean,
   ) =>
     updateGroup.mutate(
@@ -179,6 +180,29 @@ export function AdminGroups() {
             />
             {m["admin_groups.capability.byok"]()}
           </label>
+          {/* BYOK is managed in the console, so a group that has it without
+              the console gives its members a capability they cannot use. */}
+          {group.byok_allowed && !group.console_allowed && (
+            <div className={`text-body ${MUTED}`} role="note">
+              {m["admin_groups.capability.byok_needs_console"]()}
+            </div>
+          )}
+          <label className="inline-flex items-center gap-1.5 text-body">
+            <input
+              type="checkbox"
+              aria-label={m["admin_groups.capability.console_aria"]({ name: group.name })}
+              checked={group.console_allowed}
+              onChange={(event) =>
+                flipCapability(group, "console_allowed", event.target.checked)
+              }
+              disabled={updateGroup.isPending}
+              className="accent-accent"
+            />
+            {m["admin_groups.capability.console"]()}
+          </label>
+          <div className={`text-body ${MUTED}`}>
+            {m["admin_groups.capability.console_admins_note"]()}
+          </div>
         </div>
       ),
     },

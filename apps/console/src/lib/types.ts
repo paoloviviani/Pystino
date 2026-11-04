@@ -511,6 +511,7 @@ export type OidcPolicy = Narrow<
     api_keys_mode: CapabilityMode;
     local_connectors_mode: CapabilityMode;
     byok_mode: CapabilityMode;
+    console_mode: CapabilityMode;
     source: "console" | "environment";
   }
 >;

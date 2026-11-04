@@ -42,6 +42,7 @@ multi-factor authentication, that is also the IdP's job**: the bundled Authelia 
 | `ACCESS_CODE_AGENTS` | `GATEWAY_ACCESS__CODE_AGENTS` | the default `code_agents` flag new groups are created with: `on` (default) or `off`; the console's Settings page decides once it saves, and the old `everyone`/`groups` spellings still parse for one release ([Chat-only people](#chat-only-people)) |
 | (none; set by the Cerea kit) | `GATEWAY_CHAT__ENABLED` | `true` on a full chat + Pystino deployment, default `false`. The `code_agents` and `local_connectors` capabilities below exist only when it is `true`: otherwise they are hidden in the console, refused by the admin API, not reported on `/v1/me`, and the machine-client gate does not apply ([deployment](deployment.md)) |
 | `ACCESS_LOCAL_CONNECTORS` | `GATEWAY_ACCESS__LOCAL_CONNECTORS` | the default `local_connectors` flag new groups are created with: `on` (default) or `off`; the console's Settings page decides once it saves ([Chat-only people](#chat-only-people)) |
+| `ACCESS_CONSOLE` | `GATEWAY_ACCESS__CONSOLE` | the default `console` flag new groups are created with: `on` (default) or `off`; the console's Settings page decides once it saves ([Console access](#console-access)). `GATEWAY_CHAT__URL` (optional; the Cerea kit sets `<PUBLIC_ORIGIN>/chat`) is the chat's address: a member without console access is redirected to its `/settings/usage` |
 | `ACCESS_BYOK` | `GATEWAY_ACCESS__BYOK` | the default `byok` flag new groups are created with: `on` or `off` (default **off**); the console's Settings page decides once it saves ([Bring your own key](byok.md)). `ACCESS_BYOK_PRIVATE_NETWORKS` (`GATEWAY_ACCESS__BYOK_PRIVATE_NETWORKS`, default `false`) lifts the network guard on members' own providers' URLs |
 | `ACCESS_API_KEYS` | `GATEWAY_ACCESS__API_KEYS` | the default `api_keys` flag new groups are created with: `on` (default) or `off`; the console's Settings page decides once it saves, and the old `everyone`/`groups` spellings still parse for one release ([Chat-only people](#chat-only-people)) |
 | `OIDC_DEFAULT_GROUP` | `GATEWAY_OIDC__DEFAULT_GROUP` | the group everyone joins once, `users` by default; empty turns it off ([the default group](#the-default-group)) |
@@ -204,8 +205,8 @@ right host by hand for now.)
 ## Chat-only people
 
 A deployment may want some people to use the chat and nothing else — no
-coding agents, no API keys — while others keep everything. Two capabilities
-(ADR 0096, amended) answer that, and each is **only a per-group flag**: a
+coding agents, no API keys, no console — while others keep everything. The
+capabilities (ADR 0096, amended) answer that, and each is **only a per-group flag**: a
 person holds one when they are an administrator, or hold an active
 membership (any source — a directory grant counts the same as a hand grant)
 in an active group with the flag on. There is no "everyone | groups" mode
@@ -216,7 +217,40 @@ that gates access any more.
 | `code_agents` | the `/code` panel and the machine links that serve it (galopin's enrolment and the agent session; the plain-API-key opencode script is an **API-key** use, not this) |
 | `api_keys` | minting API keys, and using one already minted |
 | `local_connectors` | a connectors-only machine: galopin serving the person's own local MCP servers to the chat. It signs in with the same machine client as an agent machine but gets **no model access** |
-| `byok` | adding their own providers and models (their own API key) and using them privately ([Bring your own key](byok.md)). Unlike the others it needs no chat, and **new groups default to off** (`ACCESS_BYOK`) |
+| `byok` | adding their own providers and models (their own API key) and using them privately ([Bring your own key](byok.md)). Unlike the others it needs no chat, and **new groups default to off** (`ACCESS_BYOK`). **It needs `console`** (below) |
+| `console` | signing in to the gateway's web console (keys, usage, limits, requests). **New groups default to on** (`ACCESS_CONSOLE`) |
+
+### Console access
+
+`console` lets a deployment give some users the chat and nothing else. A user
+whose groups all lack it can still sign in (nothing about the identity changes),
+but opening any console route (including right after signing in) answers an
+**HTTP redirect (307) to the chat's usage page**, `<GATEWAY_CHAT__URL>/settings/usage`.
+Only a person with a valid session who is neither an administrator nor holds the
+capability is redirected; visitors without a session still reach the console's
+sign-in, and `/console/login` is never redirected. Where the deployment does not
+say where its chat is (`GATEWAY_CHAT__URL` empty, a standalone Pystino) the
+console loads and shows a plain page saying the account is managed through the
+chat. The cookie-backed management API (`/api/me/*`, apart from
+`GET /api/me` itself, which tells the console what to show) answers **403
+`console_not_allowed`**. Their `/v1` access is untouched: the chat reads quotas
+from `GET /v1/pystino/usage`, so a chat-only user sees theirs in the chat's
+Settings → Usage and never needs the console.
+
+- **Administrators always have the console**: they administer through it, so no
+  group flag can lock one out. The Groups screen says so beside the checkbox.
+- **Existing groups are on** (migration 0078), and so are new ones unless the
+  deployment says otherwise (`ACCESS_CONSOLE=off`, or **Settings**): nothing
+  changes until an administrator turns it off, per group or with the bulk action.
+- **`byok` needs `console`**, because bring-your-own-key is managed in the console.
+  A user's effective `byok` is off without it (as reported on `/v1/me`
+  and `/api/me`, and at request time: their `my/...` models are kept and work again
+  when console access returns). The Groups screen warns when a group has `byok` on
+  and `console` off.
+- `GET /v1/me` and `GET /api/me` report `capabilities.console`; a client that
+  does not see the field treats it as allowed. `GATEWAY_CHAT__URL` is where the
+  chat is (the Cerea kit sets it to `<PUBLIC_ORIGIN>/chat`); without it there is
+  no redirect and no link.
 
 `local_connectors` is managed exactly like `code_agents`: a per-group flag, a
 new-group default (`ACCESS_LOCAL_CONNECTORS`, `on` by default), the same bulk

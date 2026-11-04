@@ -92,6 +92,7 @@ class TestIdentity:
                 "api_keys": True,
                 "local_connectors": True,
                 "byok": False,
+                "console": True,
             },
         }
 

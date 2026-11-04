@@ -97,6 +97,12 @@ class AccessSettings(BaseModel):
     #: **off**: it lets a person send traffic, with their own credential, to a
     #: host of their choosing, which is a decision for the deployment.
     byok: Literal["on", "off"] = "off"
+    #: Console access: whether a member may use the gateway's web console
+    #: (their keys, usage, limits, requests). Off for a group means its members
+    #: use the chat only and see their quotas there. Default **on**, so nothing
+    #: changes until an administrator turns it off. Administrators always have
+    #: the console. BYOK is managed in the console, so it needs this too.
+    console: Literal["on", "off"] = "on"
     #: Lifts the network guard on private providers' base URLs. Off: a
     #: private provider's host must resolve only to public addresses, so a user
     #: cannot steer the gateway at loopback, RFC 1918 ranges, the cloud
@@ -104,7 +110,9 @@ class AccessSettings(BaseModel):
     #: users legitimately run endpoints on your network (a lab's vLLM).
     byok_private_networks: bool = False
 
-    @field_validator("code_agents", "api_keys", "local_connectors", "byok", mode="before")
+    @field_validator(
+        "code_agents", "api_keys", "local_connectors", "byok", "console", mode="before"
+    )
     @classmethod
     def _legacy_modes_still_parse(cls, value: object) -> object:
         # One release only: a deployment that set the 0.7.x vocabulary keeps
@@ -466,6 +474,10 @@ class ChatSettings(BaseModel):
     #: and the machine-client gate does not apply. The columns exist either
     #: way, so flipping this later needs no migration.
     enabled: bool = False
+    #: Where members reach the chat in a browser (`GATEWAY_CHAT__URL`). Optional:
+    #: only the console's "your account is managed through the chat" page uses
+    #: it, to link back; empty means no link.
+    url: str = ""
     erasure_url: str = ""
     erasure_token: SecretStr = SecretStr("")
 

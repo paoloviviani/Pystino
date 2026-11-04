@@ -91,6 +91,7 @@ function group(overrides: Partial<AdminGroup> = {}): AdminGroup {
     api_keys_allowed: false,
     local_connectors_allowed: false,
     byok_allowed: false,
+    console_allowed: true,
     member_count: 3,
     models: ["linkup"],
             aliases: [],

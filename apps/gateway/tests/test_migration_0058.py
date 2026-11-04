@@ -51,6 +51,7 @@ CREATE TABLE oidc_config (
     api_keys_mode VARCHAR(16),
     local_connectors_mode VARCHAR(16),
     byok_mode VARCHAR(16),
+    console_mode VARCHAR(16),
     byok_private_networks BOOLEAN,
     reason VARCHAR(500) NOT NULL,
     created_by CHAR(32),

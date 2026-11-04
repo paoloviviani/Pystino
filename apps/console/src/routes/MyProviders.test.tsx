@@ -27,8 +27,9 @@ function me(byok: boolean): Me {
     default_billing_group: null,
     issuer: "local",
     has_password: true,
-    capabilities: { code_agents: false, api_keys: true, local_connectors: false, byok },
+    capabilities: { code_agents: false, api_keys: true, local_connectors: false, byok, console: true },
     chat_enabled: false,
+    chat_url: "",
   } as Me;
 }
 

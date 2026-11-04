@@ -492,7 +492,7 @@ function RemoveProviderDialog({
 
 // -- capability defaults (ADR 0096, amended) -----------------------------------
 
-type CapabilityKey = "code_agents" | "api_keys" | "local_connectors" | "byok";
+type CapabilityKey = "code_agents" | "api_keys" | "local_connectors" | "byok" | "console";
 
 const CAPABILITIES: {
   key: CapabilityKey;
@@ -524,6 +524,12 @@ const CAPABILITIES: {
     titleLower: m["admin_settings.capability.byok_lower"],
     hint: m["admin_settings.capability.byok_hint"],
   },
+  {
+    key: "console",
+    title: m["admin_settings.capability.console"],
+    titleLower: m["admin_settings.capability.console_lower"],
+    hint: m["admin_settings.capability.console_hint"],
+  },
 ];
 
 /**
@@ -543,10 +549,14 @@ function CapabilityDefaultsCard() {
   const bulk = useBulkGroupCapabilities();
   const toast = useOptionalToast();
   // Code agents and local connectors are chat concepts: without a chat only
-  // the API-key and bring-your-own-key capabilities exist.
+  // the API-key, bring-your-own-key and console capabilities exist.
   const chatEnabled = useChatEnabled();
   const capabilities = CAPABILITIES.filter(
-    (entry) => chatEnabled || entry.key === "api_keys" || entry.key === "byok",
+    (entry) =>
+      chatEnabled ||
+      entry.key === "api_keys" ||
+      entry.key === "byok" ||
+      entry.key === "console",
   );
 
   const [pending, setPending] = useState<{

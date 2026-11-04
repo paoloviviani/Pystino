@@ -623,6 +623,9 @@ class MeResponse(ResponseModel):
     #: `GATEWAY_CHAT__ENABLED`: the console shows the chat-only capabilities
     #: (code agents, local connectors) only when true.
     chat_enabled: bool = False
+    #: `GATEWAY_CHAT__URL`: where members open the chat, for the page a member
+    #: without console access lands on. Empty when the deployment does not say.
+    chat_url: str = ""
 
 
 class CapabilityFlags(ResponseModel):
@@ -645,6 +648,11 @@ class CapabilityFlags(ResponseModel):
     #: and use them privately (`/api/me/providers`, `/api/me/models`). Reported
     #: with or without a chat.
     byok: bool = False
+    #: Console access: the person may use the gateway's web console. Chat-only
+    #: members (false) manage nothing here and read their quotas in the chat.
+    #: `byok` is reported false whenever this is, since BYOK is managed in the
+    #: console. Defaults to true, so an older client's absence reads as allowed.
+    console: bool = True
 
 
 class CallerIdentity(ResponseModel):
@@ -1698,6 +1706,7 @@ class GroupAdminResponse(ResponseModel):
     api_keys_allowed: bool = False
     local_connectors_allowed: bool = False
     byok_allowed: bool = False
+    console_allowed: bool = True
     member_count: int
     #: Every model name this group may use, aliases included — they are rows of
     #: the same table, and granting an alias is the point of having one.
@@ -1727,6 +1736,7 @@ class GroupUpdateRequest(BaseModel):
     api_keys_allowed: bool | None = None
     local_connectors_allowed: bool | None = None
     byok_allowed: bool | None = None
+    console_allowed: bool | None = None
 
 
 class GroupCapabilityBulkResponse(ResponseModel):
@@ -1741,7 +1751,7 @@ class GroupCapabilityBulkRequest(BaseModel):
     capability's flag on every group, from the Settings screen's two bulk
     actions. Applied in one transaction, audited once."""
 
-    capability: Literal["code_agents", "api_keys", "local_connectors", "byok"]
+    capability: Literal["code_agents", "api_keys", "local_connectors", "byok", "console"]
     value: bool
 
 
@@ -1861,6 +1871,7 @@ class UserAdminResponse(ResponseModel):
     api_keys_allowed: bool | None = None
     local_connectors_allowed: bool | None = None
     byok_allowed: bool | None = None
+    console_allowed: bool | None = None
     # Who granted *this* person's membership of the group being listed (ADR
     # 0057): "manual" for an administrator's grant, "oidc" for the directory's.
     # Only the group-members route can answer it — a user has many memberships
@@ -2178,6 +2189,7 @@ class OidcPolicyUpdateRequest(BaseModel):
     # Bring your own key: the default new groups get (baseline off), and the
     # switch that lifts the network guard on private providers' base URLs.
     byok_mode: Literal["on", "off", "everyone", "groups"] | None = None
+    console_mode: Literal["on", "off", "everyone", "groups"] | None = None
     byok_private_networks: bool | None = None
     reason: str = Field(default="", max_length=500)
 
@@ -2230,6 +2242,7 @@ class OidcPolicyResponse(ResponseModel):
     api_keys_mode: str = "on"
     local_connectors_mode: str = "on"
     byok_mode: str = "off"
+    console_mode: str = "on"
     byok_private_networks: bool = False
     # "console" when any field is a stored decision, "environment" otherwise;
     # `sources` says which, per field — "the console says X and the

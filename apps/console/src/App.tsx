@@ -1,4 +1,5 @@
 import { Notice, Spinner } from "@llmp/ui";
+import { NoConsole } from "./routes/NoConsole";
 import { Navigate, Route, Routes } from "react-router";
 import { RequireAdmin } from "./components/RequireAdmin";
 import { Shell } from "./components/Shell";
@@ -58,6 +59,14 @@ export function App() {
   }
 
   const me_ = me.data;
+
+  // A signed-in account whose groups withhold the console: the sign-in is
+  // fine, the console is not for them. Absent means allowed (older gateways);
+  // administrators always have it. The gateway refuses their `/api/me/*`
+  // calls regardless; this page only says why instead of rendering 403s.
+  if (me_.capabilities?.console === false && !me_.is_admin) {
+    return <NoConsole chatUrl={me_.chat_url} />;
+  }
 
   return (
     <Shell me={me_}>

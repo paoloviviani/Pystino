@@ -21,7 +21,7 @@ from pydantic import Field
 
 from gateway import identity_policy
 from gateway.config import Settings
-from gateway.deps import ManagementUserDep, SessionDep, SettingsDep
+from gateway.deps import SessionDep, SessionUserDep, SettingsDep
 from gateway.errors import (
     BadRequestError,
     ModelNotFoundError,
@@ -547,6 +547,6 @@ async def logout(request: Request, session: SessionDep, settings: SettingsDep) -
 
 
 @router.get("/session")
-async def whoami(user: ManagementUserDep) -> dict[str, Any]:
+async def whoami(user: SessionUserDep) -> dict[str, Any]:
     """Cheap check that a session cookie is still good."""
     return {"user_id": str(user.id), "email": user.email, "is_admin": user.is_admin}

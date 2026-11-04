@@ -22,7 +22,7 @@ from sqlalchemy.orm import selectinload
 
 from gateway.caller_usage import caller_group_usage, caller_limits, caller_usage
 from gateway.capabilities import effective_capabilities, reported_flags
-from gateway.deps import ManagementUserDep, QuotaDep, SessionDep, SettingsDep
+from gateway.deps import ManagementUserDep, QuotaDep, SessionDep, SessionUserDep, SettingsDep
 from gateway.errors import ApiKeysNotAllowedError, BadRequestError, NotFoundError, PermissionError_
 from gateway.models import (
     ApiKey,
@@ -87,7 +87,7 @@ def _key_response(key: ApiKey) -> ApiKeyResponse:
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(user: ManagementUserDep, session: SessionDep, settings: SettingsDep) -> MeResponse:
+async def me(user: SessionUserDep, session: SessionDep, settings: SettingsDep) -> MeResponse:
     groups = [membership.group for membership in user.memberships]
     default = next((group for group in groups if group.id == user.default_billing_group_id), None)
     # ADR 0096 (amended): the person's memberships, already loaded by
@@ -110,6 +110,7 @@ async def me(user: ManagementUserDep, session: SessionDep, settings: SettingsDep
         ),
         capabilities=capabilities,
         chat_enabled=settings.chat.enabled,
+        chat_url=settings.chat.url,
     )
 
 
