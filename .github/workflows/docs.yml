@@ -16,6 +16,7 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "CHANGELOG.md"
   workflow_dispatch:
 
 permissions:
