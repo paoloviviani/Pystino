@@ -52,7 +52,6 @@ Paired with Cerea 0.35.1.
 Paired with Cerea 0.34.2.
 
 - **Transcription is a model kind.** `/v1/audio/transcriptions` (and translations) are served, metered per minute of audio and routed like other kinds. Uploads are counted and parsing is bounded. Live-checked against Cortecs, whose transcription behaviour is documented.
-- Maintainers: Claude co-author trailers are allowed in commit messages.
 
 ## v0.20.0 — 2026-10-30
 
