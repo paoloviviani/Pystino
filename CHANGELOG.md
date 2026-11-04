@@ -4,6 +4,10 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+## v0.25.0 — 2026-11-04
+
+Paired with Cerea 0.39.0.
+
 - Console: **Your providers and models** now opens by naming the feature ("Bring your own key").
 
 ## v0.24.0 — 2026-11-03
