@@ -577,6 +577,50 @@ class TestMetering:
         assert record.upstream_cost_details == {"prompt_cost": 7, "completion_cost": 0}
         assert record.computed_cost == Decimal("0.000006006")
 
+    async def test_the_2026_11_04_trial_figures_clef_flash_314_tokens(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """Measured live on 2026-11-04 against `clef-flash`: a predicate answer
+        has `probability` and no `confidence`, and 314 input tokens at 0.042
+        EUR/M (13.188 micro-EUR) were reported as `cost: 14`. The 14 is the
+        charge, to the micro-EUR; the table's figure stays beside it."""
+        await make_cortecs(session, seeded, mode=BillingMode.PROVIDER_REPORTED)
+        await add_decision_model(session, seeded, upstream="clef-flash")
+        answer = {
+            "model": "clef-flash",
+            "answers": [{"type": "predicate", "name": "safe", "probability": 0.963}],
+            "usage": {
+                "input_tokens": 314,
+                "output_tokens": 0,
+                "total_tokens": 314,
+                "cost": 14,
+                "cost_details": {"prompt_cost": 14, "completion_cost": 0},
+            },
+        }
+        fake_upstream.set_json(answer, headers=SERVED_HEADERS)
+
+        response = await client.post(
+            "/v1/decisions",
+            json={
+                "model": "decider",
+                "input": INPUT_TEXT,
+                "questions": [{"type": "predicate", "name": "safe", "instructions": "Safe?"}],
+            },
+            headers=seeded.auth,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["answers"] == answer["answers"]
+        record = await latest_record(session)
+        assert record.cost == Decimal("0.000014")
+        assert record.computed_cost == Decimal("0.000013188")
+        assert record.cost_source is CostSource.PROVIDER_REPORTED
+        assert record.prompt_tokens == 314
+
     async def test_own_prices_mode_charges_the_table_and_keeps_theirs(
         self,
         client: httpx.AsyncClient,

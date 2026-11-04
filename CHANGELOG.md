@@ -4,6 +4,8 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **Decision models: discovery and live check.** Importing from Cortecs with the tag `Decision` lists `clef-flash` and `laya` as kind **Decision**, priced from the catalogue. `scripts/test_decisions_live.py` checks the routes, the reported micro-EUR cost, quota settlement and the refusals against a real Cortecs key. (ADR 0100)
+
 ## v0.25.0 — 2026-11-04
 
 Paired with Cerea 0.39.0.
