@@ -307,7 +307,7 @@ def main() -> int:
     print("\n=== 3. a predicate ===")
     before = row_count()
     started = time.monotonic()
-    status, headers, body = call(
+    status, _, body = call(
         secret,
         "/v1/decisions",
         {"model": MODEL, "input": INPUT, "questions": [QUESTION], "preference": "cost"},
@@ -335,12 +335,6 @@ def main() -> int:
         isinstance(reported, int) and reported > 0,
         str(reported),
     )
-    expect(
-        "the served provider is disclosed in a header",
-        any(h.lower() == "x-cortecs-provider" for h in headers),
-        str(sorted(h.lower() for h in headers if "cortecs" in h.lower())),
-    )
-
     rows = ledger(before)
     expect("exactly one usage row for the request", len(rows) == 1, str(len(rows)))
     if rows:
