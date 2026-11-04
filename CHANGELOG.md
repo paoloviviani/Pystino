@@ -4,6 +4,8 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- Console: **Your providers and models** now opens by naming the feature ("Bring your own key").
+
 ## v0.24.0 — 2026-11-03
 
 Pairs with Cerea 0.39.0, whose deploy kit pins it (tested with the released Cerea 0.38.1). Images: `ghcr.io/paoloviviani/pystino-gateway:0.24.0`, `ghcr.io/paoloviviani/pystino-redaction:0.24.0-pattern`.

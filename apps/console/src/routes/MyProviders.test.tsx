@@ -225,7 +225,7 @@ describe("MyProviders", () => {
 
     expect(
       await screen.findByText(
-        "Models you add here use your own key. Only you can see or use them. Their usage is shown to you only and doesn't count against your group's limits.",
+        "Bring your own key: models you add here run on your own API key. Only you can see or use them. Their usage is shown to you only and doesn't count against your group's limits.",
       ),
     ).toBeInTheDocument();
     expect(await screen.findByText("my-vllm")).toBeInTheDocument();
