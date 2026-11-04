@@ -58,8 +58,9 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
-  # The Development page is CONTRIBUTING.md, included from the repository
-  # root; check_paths fails the strict build if the file is missing.
+  # The Development page is CONTRIBUTING.md and the Changelog page is
+  # CHANGELOG.md, included from the repository
+  # root; check_paths fails the strict build if a file is missing.
   - pymdownx.snippets:
       base_path: .
       check_paths: true
@@ -93,6 +94,7 @@ nav:
       - operations.md
       - "Measured performance": performance.md
   - Development: development.md
+  - Changelog: changelog.md
   - Identity:
       - identity.md
       - "Bundled accounts": bundled-accounts.md

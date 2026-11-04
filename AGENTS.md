@@ -215,7 +215,7 @@ Two repositories, released separately, shipped together by Cerea's deploy kit.
    required in the schema, as they are on the wire; a request model stays a
    plain `BaseModel`.
 
-   If you touched `docs/`, `mkdocs.yml`, `CONTRIBUTING.md` or a README the
+   If you touched `docs/`, `mkdocs.yml`, `CHANGELOG.md`, `CONTRIBUTING.md` or a README the
    site includes:
 
    ```bash
@@ -230,7 +230,9 @@ Two repositories, released separately, shipped together by Cerea's deploy kit.
    SQL (below). They are the only place PostgreSQL and Valkey are exercised.
 7. **Update the docs in the same branch.** The page that describes the
    behaviour must match the code when the branch lands; check each name,
-   flag, route and default you write against the code.
+   flag, route and default you write against the code. A change visible to
+   operators (behaviour, settings, the console, the API, deploy files) also
+   adds a line under `## Unreleased` in `CHANGELOG.md`, in the same PR.
 8. **Commit** with a plain message that says why (rule 1 on attribution), and
    push the branch: `git push -u origin <branch>`. Do not merge it unless the
    owner asked. When asked:
@@ -334,6 +336,9 @@ and report it with its output. Derived from `.github/workflows/images.yml`,
    the one commit that goes there without a branch, as every 0.3.x release
    did), named `release: Pystino X.Y.Z, paired with Cerea A.B.C`. It changes
    exactly:
+   - `CHANGELOG.md`: `## Unreleased` becomes `## vX.Y.Z — YYYY-MM-DD` (the
+     release date), with "Paired with Cerea A.B.C" under the heading, and a
+     new empty `## Unreleased` goes above it;
    - `apps/gateway/pyproject.toml`: `version = "X.Y.Z"`;
    - `uv.lock`: run `uv lock`, which moves the `gateway` package's version;
    - `deploy/compose.yaml`: both `${PYSTINO_VERSION:-…}` defaults (the gateway
@@ -351,7 +356,7 @@ and report it with its output. Derived from `.github/workflows/images.yml`,
    uv run --package gateway pystino release-pin          # rewrites release.env digests; needs docker buildx
    uv run --package gateway pystino release-pin --check  # prints nothing, exits 0
    uv run pytest apps/gateway/tests/test_deploy_pystino_only.py apps/gateway/tests/test_deploy_release.py -q
-   git diff                                              # only the four files above
+   git diff                                              # only the five files above
    ```
 
    The first test fails if `release.env` and `compose.yaml` disagree on the
@@ -395,8 +400,12 @@ and report it with its output. Derived from `.github/workflows/images.yml`,
 6. **`stack` green for the tag**: `gh run list --workflow stack.yml --limit 1`
    shows success on `vX.Y.Z`.
 
-   No GitHub "release" object is created for Pystino tags (the last one is
-   v0.2.0); the tag and the images are the release.
+   Then **create the GitHub release** from the `CHANGELOG.md` section of this
+   version (the text under its `## vX.Y.Z` heading, saved to a file):
+
+   ```bash
+   gh release create vX.Y.Z --verify-tag --title vX.Y.Z --notes-file <section> --latest
+   ```
 
 7. **Ship it through Cerea.** In the Cerea repository, following its
    `AGENTS.md` "Releasing" (authoritative there):
