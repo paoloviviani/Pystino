@@ -173,3 +173,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and, for vulnerabilities,
 licensed under the [Apache-2.0](LICENSE); attributions are in
 [NOTICE](NOTICE). How this code was written is disclosed in
 [AI-DISCLOSURE.md](AI-DISCLOSURE.md).
+
+## Acknowledgments
+
+This work is supported by [LINKS Foundation](https://linksfoundation.com/en/).
