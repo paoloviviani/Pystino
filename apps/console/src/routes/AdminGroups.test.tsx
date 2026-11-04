@@ -83,6 +83,7 @@ function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual", chatEnab
         api_keys_allowed?: boolean;
         local_connectors_allowed?: boolean;
         byok_allowed?: boolean;
+        console_allowed?: boolean;
       };
       return jsonResponse({
         id: "g2",
@@ -94,6 +95,7 @@ function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual", chatEnab
         api_keys_allowed: payload.api_keys_allowed ?? true,
         local_connectors_allowed: payload.local_connectors_allowed ?? true,
         byok_allowed: payload.byok_allowed ?? false,
+        console_allowed: payload.console_allowed ?? true,
         member_count: 1,
         models: [],
             aliases: [],
@@ -103,7 +105,7 @@ function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual", chatEnab
     if (url.includes("/api/admin/groups"))
       return jsonResponse({
         items: [
-          { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, code_agents_allowed: false, api_keys_allowed: true, local_connectors_allowed: true, byok_allowed: false, member_count: 1, models: [],
+          { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, code_agents_allowed: false, api_keys_allowed: true, local_connectors_allowed: true, byok_allowed: false, console_allowed: true, member_count: 1, models: [],
             aliases: [], search_backend: null },
         ],
         total: 1,
@@ -353,6 +355,50 @@ describe("AdminGroups — capability flags (ADR 0096)", () => {
         byok_allowed: true,
       });
     });
+  });
+
+  it("toggles console access per group and says administrators always have it", async () => {
+    const fetchMock = routes([], "manual", false);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderScreen();
+    const toggle = await screen.findByRole("checkbox", { name: "engineering: console access" });
+    expect(toggle).toBeChecked();
+    expect(screen.getByText("Administrators always have the console.")).toBeInTheDocument();
+    await user.click(toggle);
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          String(url).includes("/api/admin/groups/g2") && (init as RequestInit).method === "PATCH",
+      );
+      expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+        console_allowed: false,
+      });
+    });
+  });
+
+  it("warns when a group has bring your own key but no console access", async () => {
+    const base = routes([], "manual", false);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/api/admin/groups") && !url.includes("/seen") && (init?.method ?? "GET") === "GET")
+          return jsonResponse({
+            items: [
+              { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, code_agents_allowed: false, api_keys_allowed: true, local_connectors_allowed: true, byok_allowed: true, console_allowed: false, member_count: 1, models: [], aliases: [], search_backend: null },
+            ],
+            total: 1,
+            limit: 50,
+            offset: 0,
+          });
+        return base(input, init);
+      }),
+    );
+    renderScreen();
+    expect(
+      await screen.findByText(/Bring your own key is managed in the console/),
+    ).toBeInTheDocument();
   });
 
   it("hides the agents and local connectors toggles when the gateway has no chat", async () => {

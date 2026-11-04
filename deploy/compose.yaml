@@ -122,6 +122,7 @@ services:
       # Bring your own key: the default new groups get (off), and the switch that
       # lets private providers point at private networks (off).
       GATEWAY_ACCESS__BYOK: ${ACCESS_BYOK:-off}
+      GATEWAY_ACCESS__CONSOLE: ${ACCESS_CONSOLE:-on}
       GATEWAY_ACCESS__BYOK_PRIVATE_NETWORKS: ${ACCESS_BYOK_PRIVATE_NETWORKS:-false}
       GATEWAY_OIDC__MACHINE_CLIENT_ID: ${OIDC_MACHINE_CLIENT_ID:-opencode-enrollment}
     depends_on:
@@ -208,6 +209,7 @@ services:
       # Bring your own key: the default new groups get (off), and the switch that
       # lets private providers point at private networks (off).
       GATEWAY_ACCESS__BYOK: ${ACCESS_BYOK:-off}
+      GATEWAY_ACCESS__CONSOLE: ${ACCESS_CONSOLE:-on}
       GATEWAY_ACCESS__BYOK_PRIVATE_NETWORKS: ${ACCESS_BYOK_PRIVATE_NETWORKS:-false}
       GATEWAY_OIDC__MACHINE_CLIENT_ID: ${OIDC_MACHINE_CLIENT_ID:-opencode-enrollment}
       # The group everyone joins once, so a new account can bill; `-`, not

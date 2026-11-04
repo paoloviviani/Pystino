@@ -3,8 +3,9 @@
 A capability is only a per-group flag: a person holds ``code_agents`` (the
 /code panel and the machine links that serve it), ``api_keys`` (minting
 and using ``gwk_`` keys), ``local_connectors`` (a connectors-only machine
-serving the person's own MCP servers) or ``byok`` (their own providers and
-models, with their own API key) as an administrator, or through an active
+serving the person's own MCP servers), ``byok`` (their own providers and
+models, with their own API key; it needs ``console``) or ``console`` (the
+gateway's web console) as an administrator, or through an active
 membership in an active group with the flag on. There is no mode that gates
 access anymore — the deployment setting is the default new groups are
 created with (see :func:`default_flags`).
@@ -43,6 +44,9 @@ class Capabilities:
     local_connectors: bool = False
     #: Bring your own key. Off unless a group (or being an administrator) says so.
     byok: bool = False
+    #: The gateway's web console. On unless a group (or being an administrator)
+    #: says otherwise; ``byok`` is only ever true together with it.
+    console: bool = True
 
 
 def effective_capabilities(user: User) -> Capabilities:
@@ -51,8 +55,20 @@ def effective_capabilities(user: User) -> Capabilities:
         code_agents=_holds(user, "code_agents"),
         api_keys=_holds(user, "api_keys"),
         local_connectors=_holds(user, "local_connectors"),
-        byok=_holds(user, "byok"),
+        byok=holds_byok(user),
+        console=_holds(user, "console"),
     )
+
+
+def holds_console(user: User) -> bool:
+    """Whether this person may use the web console (`/api/me/*`).
+
+    Administrators always do: they administer through it. Everyone else
+    needs an active membership in an active group with ``console_allowed``.
+    Pure, so the cookie path pays no query: ``get_management_user`` already
+    loaded the memberships.
+    """
+    return _holds(user, "console")
 
 
 def holds_byok(user: User) -> bool:
@@ -61,9 +77,11 @@ def holds_byok(user: User) -> bool:
     One flag read rather than the whole capability set: the request path asks
     it for every `/v1` call, and it is the predicate that makes a private
     model unusable-but-kept while the capability is gone and usable again the
-    moment it returns.
+    moment it returns. BYOK is managed in the console, so it needs console
+    access as well: without it the capability is off however the group's
+    ``byok_allowed`` reads (the models are kept, as for any other loss).
     """
-    return _holds(user, "byok")
+    return _holds(user, "byok") and _holds(user, "console")
 
 
 def reported_flags(user: User, settings: Settings) -> CapabilityFlags:
@@ -75,12 +93,13 @@ def reported_flags(user: User, settings: Settings) -> CapabilityFlags:
     """
     flags = effective_capabilities(user)
     if not settings.chat.enabled:
-        return CapabilityFlags(api_keys=flags.api_keys, byok=flags.byok)
+        return CapabilityFlags(api_keys=flags.api_keys, byok=flags.byok, console=flags.console)
     return CapabilityFlags(
         code_agents=flags.code_agents,
         api_keys=flags.api_keys,
         local_connectors=flags.local_connectors,
         byok=flags.byok,
+        console=flags.console,
     )
 
 
@@ -96,12 +115,13 @@ def default_flags(policy: OIDCPolicy | None) -> Capabilities:
     its meaning.
     """
     if policy is None:
-        return Capabilities(code_agents=True, api_keys=True, local_connectors=True)
+        return Capabilities(code_agents=True, api_keys=True, local_connectors=True, console=True)
     return Capabilities(
         code_agents=_default_on(policy.code_agents_mode),
         api_keys=_default_on(policy.api_keys_mode),
         local_connectors=_default_on(policy.local_connectors_mode),
         byok=_default_on(policy.byok_mode),
+        console=_default_on(policy.console_mode),
     )
 
 
@@ -126,6 +146,7 @@ def new_group_flags(defaults: Capabilities) -> dict[str, bool]:
         "api_keys_allowed": defaults.api_keys,
         "local_connectors_allowed": defaults.local_connectors,
         "byok_allowed": defaults.byok,
+        "console_allowed": defaults.console,
     }
 
 
@@ -165,4 +186,6 @@ def _group_flag(group: Group, flag_name: str) -> bool:
         return group.local_connectors_allowed
     if flag_name == "byok":
         return group.byok_allowed
+    if flag_name == "console":
+        return group.console_allowed
     return group.api_keys_allowed

@@ -161,6 +161,7 @@ class TestStandaloneWithoutChat:
             "api_keys": True,
             "local_connectors": None,
             "byok": False,
+            "console": True,
         }
         assert (await client.get("/v1/models", headers=machine)).status_code == 200
 

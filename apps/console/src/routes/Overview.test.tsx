@@ -23,8 +23,9 @@ const ME: Me = {
   default_billing_group: { id: "g1", name: "research", description: null },
   issuer: "local",
   has_password: true,
-  capabilities: { code_agents: true, api_keys: true, local_connectors: true, byok: false },
+  capabilities: { code_agents: true, api_keys: true, local_connectors: true, byok: false, console: true },
   chat_enabled: true,
+  chat_url: "",
 };
 
 function report(overrides: Partial<UsageReport> = {}): UsageReport {
@@ -371,7 +372,7 @@ describe("Overview", () => {
       // so there is no 403 to catch — the refusal is stated where Create
       // would have been.
       vi.stubGlobal("fetch", keyRoutes([]));
-      renderScreen(<Overview me={{ ...ME, capabilities: { code_agents: true, api_keys: false, local_connectors: true, byok: false } }} />);
+      renderScreen(<Overview me={{ ...ME, capabilities: { code_agents: true, api_keys: false, local_connectors: true, byok: false, console: true } }} />);
 
       await waitFor(() =>
         expect(screen.getByText(/may not use API keys/i)).toBeInTheDocument(),

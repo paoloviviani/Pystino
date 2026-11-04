@@ -50,6 +50,7 @@ function user(index: number, overrides: Partial<AdminUser> = {}): AdminUser {
     api_keys_allowed: true,
     local_connectors_allowed: true,
     byok_allowed: false,
+    console_allowed: true,
     ...overrides,
   };
 }

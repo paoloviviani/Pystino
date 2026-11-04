@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import httpx
 from conftest import Seeded, bearer_auth, make_token
-from gateway.capabilities import Capabilities, default_flags, effective_capabilities
+from gateway.capabilities import Capabilities, default_flags, effective_capabilities, holds_byok
 from gateway.models import (
     Group,
     IdentityEvent,
@@ -61,10 +61,14 @@ def _group(
     code_agents: bool = False,
     api_keys: bool = False,
     local_connectors: bool = False,
+    byok: bool = False,
+    console: bool = True,
 ) -> Group:
     return Group(
         name=name,
         is_active=active,
+        byok_allowed=byok,
+        console_allowed=console,
         code_agents_allowed=code_agents,
         api_keys_allowed=api_keys,
         local_connectors_allowed=local_connectors,
@@ -76,10 +80,18 @@ def _membership(group: Group, source: MembershipSource = MembershipSource.MANUAL
 
 
 def _caps(
-    code_agents: bool, api_keys: bool, local_connectors: bool = False, byok: bool = False
+    code_agents: bool,
+    api_keys: bool,
+    local_connectors: bool = False,
+    byok: bool = False,
+    console: bool = True,
 ) -> Capabilities:
     return Capabilities(
-        code_agents=code_agents, api_keys=api_keys, local_connectors=local_connectors, byok=byok
+        code_agents=code_agents,
+        api_keys=api_keys,
+        local_connectors=local_connectors,
+        byok=byok,
+        console=console,
     )
 
 
@@ -98,7 +110,7 @@ class TestEffectiveCapabilities:
     def test_no_group_grants_neither(self) -> None:
         # The ADR edge: a person in no group has neither capability. In
         # practice the default group covers everyone at first sign-in.
-        assert effective_capabilities(_user()) == _caps(False, False)
+        assert effective_capabilities(_user()) == _caps(False, False, console=False)
 
     def test_local_connectors_is_its_own_flag(self) -> None:
         only = _user(memberships=[_membership(_group("lc", local_connectors=True))])
@@ -113,13 +125,13 @@ class TestEffectiveCapabilities:
     def test_disabled_group_does_not_grant(self) -> None:
         disabled = _group("agents", active=False, code_agents=True, api_keys=True)
         assert effective_capabilities(_user(memberships=[_membership(disabled)])) == _caps(
-            False, False
+            False, False, console=False
         )
 
     def test_inactive_user_does_not_grant(self) -> None:
         flagged = _group("agents", code_agents=True, api_keys=True)
         member = _user(is_active=False, memberships=[_membership(flagged)])
-        assert effective_capabilities(member) == _caps(False, False)
+        assert effective_capabilities(member) == _caps(False, False, console=False)
 
     def test_any_source_counts(self) -> None:
         flagged = _group("agents", code_agents=True, api_keys=True)
@@ -127,9 +139,63 @@ class TestEffectiveCapabilities:
         assert effective_capabilities(oidc) == _caps(True, True)
 
 
+class TestConsoleCapability:
+    def test_admin_holds_console_with_no_groups(self) -> None:
+        assert effective_capabilities(_user(is_admin=True)).console is True
+
+    def test_a_group_without_the_flag_withholds_it(self) -> None:
+        member = _user(memberships=[_membership(_group("chat", api_keys=True, console=False))])
+        assert effective_capabilities(member) == _caps(False, True, console=False)
+
+    def test_any_flagged_active_group_grants_it(self) -> None:
+        member = _user(
+            memberships=[
+                _membership(_group("chat", console=False)),
+                _membership(_group("ops", console=True)),
+            ]
+        )
+        assert effective_capabilities(member).console is True
+
+    def test_a_disabled_group_or_inactive_person_does_not_grant_it(self) -> None:
+        off = _group("ops", active=False, console=True)
+        assert effective_capabilities(_user(memberships=[_membership(off)])).console is False
+        on = _group("ops", console=True)
+        assert effective_capabilities(_user(is_active=False, memberships=[_membership(on)])) == (
+            _caps(False, False, console=False)
+        )
+
+    def test_byok_needs_console(self) -> None:
+        both = _user(memberships=[_membership(_group("g", byok=True, console=True))])
+        assert effective_capabilities(both).byok is True
+        no_console = _user(memberships=[_membership(_group("g", byok=True, console=False))])
+        flags = effective_capabilities(no_console)
+        assert (flags.byok, flags.console) == (False, False)
+        assert holds_byok(no_console) is False and holds_byok(both) is True
+
+    def test_byok_and_console_may_come_from_different_groups(self) -> None:
+        member = _user(
+            memberships=[
+                _membership(_group("keys", byok=True, console=False)),
+                _membership(_group("ui", console=True)),
+            ]
+        )
+        assert effective_capabilities(member).byok is True
+
+    def test_an_administrator_keeps_both_whatever_their_groups_say(self) -> None:
+        admin = _user(
+            is_admin=True, memberships=[_membership(_group("g", byok=False, console=False))]
+        )
+        flags = effective_capabilities(admin)
+        assert (flags.byok, flags.console) == (True, True)
+
+
 class TestDefaultFlags:
     def test_no_policy_means_on(self) -> None:
         assert default_flags(None) == _caps(True, True, True)
+
+    def test_console_defaults_on_and_follows_its_own_mode(self) -> None:
+        assert default_flags(OIDCPolicy()).console is True
+        assert default_flags(OIDCPolicy(console_mode="off")).console is False
 
     def test_on_off_follow_the_folded_default(self) -> None:
         assert default_flags(OIDCPolicy(code_agents_mode="on", api_keys_mode="off")) == _caps(
@@ -182,6 +248,7 @@ class TestV1MeReportsCapabilities:
             "api_keys": True,
             "local_connectors": True,
             "byok": False,
+            "console": True,
         }
 
     async def test_a_person_in_no_group_holds_neither(
@@ -200,6 +267,7 @@ class TestV1MeReportsCapabilities:
             "api_keys": False,
             "local_connectors": False,
             "byok": False,
+            "console": False,
         }
 
     async def test_reflects_the_persons_flags(
@@ -223,6 +291,7 @@ class TestV1MeReportsCapabilities:
             "api_keys": False,
             "local_connectors": True,
             "byok": False,
+            "console": True,
         }
 
 

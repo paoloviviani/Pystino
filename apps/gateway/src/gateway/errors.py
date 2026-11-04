@@ -147,6 +147,19 @@ class ByokNotAllowedError(GatewayError):
     code = "byok_not_allowed"
 
 
+class ConsoleNotAllowedError(GatewayError):
+    """The caller is signed in to the console but holds no console access.
+
+    Their groups do not carry the ``console`` capability (administrators
+    always do). Only the cookie-backed management API answers this; the
+    person's ``/v1`` bearer access is a separate door and unaffected.
+    """
+
+    status_code = status.HTTP_403_FORBIDDEN
+    error_type = "invalid_request_error"
+    code = "console_not_allowed"
+
+
 class ContentBlockedError(GatewayError):
     """A redaction policy refused the request before any provider saw it.
 

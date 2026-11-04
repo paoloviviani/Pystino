@@ -395,6 +395,12 @@ class Group(Base):
     #: (their own API key) and use them privately. Off unless an administrator
     #: switches it on, like the other flags.
     byok_allowed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    #: Console access: members may sign in to the gateway's web console. On for
+    #: every group that existed when the flag arrived and by default for new
+    #: ones; administrators hold it regardless. BYOK needs it as well.
+    console_allowed: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
+    )
 
     # The one search backend this group searches through on the unified
     # ``POST /v1/search`` route. Null means no policy: the group cannot use
@@ -2614,6 +2620,9 @@ class OIDCPolicyConfig(Base):
     #: Bring your own key: the default new groups are created with (`on`/`off`),
     #: null deferring to ``GATEWAY_ACCESS__BYOK`` and then to off.
     byok_mode: Mapped[str | None] = mapped_column(String(16), default=None)
+    #: Console access: the default new groups are created with (`on`/`off`),
+    #: null deferring to ``GATEWAY_ACCESS__CONSOLE`` and then to on.
+    console_mode: Mapped[str | None] = mapped_column(String(16), default=None)
     #: Lifts the network guard on private providers' base URLs (loopback,
     #: RFC 1918 and so on). Null = ``GATEWAY_ACCESS__BYOK_PRIVATE_NETWORKS``,
     #: then off.

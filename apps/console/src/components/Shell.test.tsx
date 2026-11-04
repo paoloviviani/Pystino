@@ -30,8 +30,9 @@ function me(overrides: Partial<Me> = {}): Me {
     default_billing_group: { id: "g1", name: "platform-admins", description: null },
     issuer: "local",
     has_password: true,
-    capabilities: { code_agents: true, api_keys: true, local_connectors: true, byok: false },
+    capabilities: { code_agents: true, api_keys: true, local_connectors: true, byok: false, console: true },
     chat_enabled: true,
+    chat_url: "",
     ...overrides,
   };
 }
@@ -80,7 +81,7 @@ function stubNavigation() {
 
 describe("Shell: bring your own key", () => {
   it("offers the page only to a user who holds the capability", () => {
-    renderShell(me({ is_admin: false, capabilities: { code_agents: true, api_keys: true, local_connectors: true, byok: true } }));
+    renderShell(me({ is_admin: false, capabilities: { code_agents: true, api_keys: true, local_connectors: true, byok: true, console: true } }));
     expect(screen.getByRole("link", { name: "Your providers and models" })).toHaveAttribute(
       "href",
       "/me/providers",
