@@ -5,6 +5,7 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 ## Unreleased
 
 - **Group capability: console access.** A new `console` capability, per group (console **Groups** and **Settings**, `ACCESS_CONSOLE`), lets you give users the chat and nothing else: without it a user's console visit is redirected to the chat and `/api/me/*` answers 403 `console_not_allowed`, while their `/v1` access is untouched. **On for every existing group and by default for new ones** (migration 0078), so nothing changes until you turn it off; administrators always have the console. Bring your own key needs it: `capabilities.byok` reads false without it. `/v1/me` and `/api/me` report `capabilities.console`. Opening the console without it redirects to the chat's usage page (`GATEWAY_CHAT__URL`, which the Cerea kit sets to `<PUBLIC_ORIGIN>/chat`); with no chat URL a plain "managed through the chat" page is shown instead. Details: [Identity](https://paoloviviani.github.io/Pystino/identity/#console-access).
+- **Decision models: discovery and live check.** Importing from Cortecs with the tag `Decision` lists `clef-flash` and `laya` as kind **Decision**, priced from the catalogue. `scripts/test_decisions_live.py` checks the routes, the reported micro-EUR cost, quota settlement and the refusals against a real Cortecs key. (ADR 0100)
 
 ## v0.25.0 — 2026-11-04
 

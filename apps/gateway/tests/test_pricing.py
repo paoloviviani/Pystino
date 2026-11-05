@@ -684,3 +684,30 @@ class TestOcrCatalogueEntries:
         prices, _ = parse_catalogue({"data": [entry]})
         assert prices[0].kind is ModelKind.EMBEDDING
         assert prices[0].per_page is None
+
+
+class TestDecisionCatalogueEntries:
+    """Cortecs' decision models, as `GET /v1/models?tag=Decision` returns them
+    (read 2026-11-04: `clef-flash` and `laya`). They report text in and text out
+    like a chat model, so the tag is the only thing that sets them apart."""
+
+    @staticmethod
+    def entry() -> dict:
+        return {
+            "id": "clef-flash",
+            "owned_by": "Cloudflare",
+            "pricing": {"currency": "EUR", "input_token": 0.042, "output_token": 0.0},
+            "context_size": 66000,
+            "tags": ["Decision"],
+            "input_modalities": ["text"],
+            "output_modalities": ["text"],
+            "supported_features": [],
+        }
+
+    def test_the_decision_tag_decides_the_kind_and_the_token_rates_import(self) -> None:
+        prices, unparsable = parse_catalogue({"data": [self.entry()]})
+        assert unparsable == []
+        assert prices[0].kind is ModelKind.DECISION
+        assert prices[0].input_per_mtok == Decimal("0.042")
+        assert prices[0].output_per_mtok == Decimal(0)
+        assert prices[0].context_window == 66000

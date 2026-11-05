@@ -16,17 +16,21 @@ plugin ([below](#providers)).
 1. Have a provider of a type that supports decisions. In the console's provider
    form the type list says which do; Cortecs does, the generic OpenAI-compatible
    type does not.
-2. Create the model by hand under **Models**, with kind **Decision**, the
-   provider's model id as the upstream name (`laya`, `clef-flash`) and its price
-   per million input and output tokens. Cortecs does not list its decision models
-   in `GET /models`, so discovery will not find them. Creating a decision model
-   on a provider type with no decision support is refused with a message saying
-   so.
+2. Add the model under **Models**. On Cortecs, **Import from the provider**
+   with the tag **Decision** lists them (`clef-flash`, `laya`; the default
+   listing does not, since Cortecs's `/models` answers `tag=Instruct` unless asked
+   otherwise): the tag sets the kind to **Decision** and imports the input price,
+   the output price being zero. Or create the model by hand, with kind
+   **Decision**, the provider's model id as the upstream name and its price per
+   million input and output tokens. Creating a decision model on a provider type
+   with no decision support is refused with a message saying so.
 3. Grant it to a group, or make it public, as for any model. An
    [alias](model-aliases.md) works too, and a routing policy applies to it.
 
 `GET /v1/models` lists it with `"kind": "decision"`. A chat client's picker
-should filter on `kind`, as it already does for embedding and OCR models. A
+should filter on `kind`, as it already does for embedding and OCR models.
+Cerea's administrator picks the reviewer for its coding agent's permission
+requests among the models of this kind (see the Cerea documentation). A
 decision model is refused on the chat, embeddings and other routes, and a chat
 model is refused on these two.
 
@@ -40,7 +44,7 @@ model is refused on these two.
 The **`input` form**: `model`, `input` (a string, or messages whose content is a
 string or `input_text` parts) and `questions`, an array of `predicate`, `choice`
 and `score` questions. The answer's `answers` is an array, with `probability`
-for a predicate, `choice` and `score` with `confidence` and `probabilities` for
+for a predicate (and no `confidence`: only choice and score answers carry one), `choice` and `score` with `confidence` and `probabilities` for
 the others, and possibly a `refusal`.
 
 The **System One form**: `model`, `state` (a string, object or array) and
@@ -120,7 +124,8 @@ A provider plugin declares decision support (`DecisionSupport` in
 its routing fields. A plugin that does not declare it cannot serve a `decision`
 model. The Cortecs plugin declares `/decisions` and `/systemone`, and reads
 `usage.cost`, an integer in **micro-EUR rounded up per request**: 143 input
-tokens at 0.042 EUR per million is 6.006 micro-EUR, reported as 7. The reported
+tokens at 0.042 EUR per million is 6.006 micro-EUR, reported as 7 (and 314
+tokens, 13.188, reported as 14). The reported
 figure is therefore at most a micro-EUR above the table's, which is not a
 mismatch. Another provider's plugin owns its own unit (OpenRouter reports a
 decimal credit figure, for example), path and routing vocabulary.

@@ -661,9 +661,9 @@ def _kind_of(entry: dict[str, Any]) -> ModelKind:
         if lowered_tags & _TRANSCRIPTION_TAGS:
             return ModelKind.TRANSCRIPTION
         # A decision model reports text in and text out like a chat model, so
-        # only the tag tells them apart (ADR 0100). Cortecs's own /models does
-        # not list them today (checked 2026-10-22), so in practice they are
-        # created by hand; this keeps a catalogue that does list them right.
+        # only the tag tells them apart (ADR 0100). Cortecs lists them under
+        # `GET /models?tag=Decision` (`clef-flash`, `laya`; checked 2026-11-04),
+        # not in its default `Instruct` listing.
         if "decision" in lowered_tags:
             return ModelKind.DECISION
         # The same trap, one step worse: a search backend's tiers report text
