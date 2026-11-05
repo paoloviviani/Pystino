@@ -1297,15 +1297,9 @@ class TestDiscoverWithTheTranscriptionType:
             )
         ).json()["id"]
 
-        body = (
-            await client.get(
-                f"/api/admin/models/discover?provider_id={provider_id}&tag=Transcription"
-            )
-        ).json()
-        # The chosen tag is what is fetched; the only other request is the
-        # existing whole-catalogue drift check (`tag=all`), as before.
-        assert asked[0].endswith("tag=Transcription")
-        assert all(url.endswith(("tag=Transcription", "tag=all")) for url in asked)
+        body = (await client.get(f"/api/admin/models/discover?provider_id={provider_id}")).json()
+        # One request, for the whole catalogue.
+        assert len(asked) == 1 and asked[0].endswith("tag=all")
         rows = {r["upstream_model"]: r for r in body["available"]}
         assert len(rows) == 6
         assert {r["kind"] for r in rows.values()} == {"transcription"}
@@ -1329,7 +1323,7 @@ class TestDiscoverWithTheTranscriptionType:
         assert {kind for _, kind, _ in stored} == {ModelKind.TRANSCRIPTION}
         assert all(minute is not None and minute > 0 for _, _, minute in stored)
 
-    async def test_an_untagged_discover_is_one_unchanged_request(
+    async def test_discover_is_one_whole_catalogue_request(
         self,
         app: FastAPI,
         client: httpx.AsyncClient,
@@ -1352,4 +1346,4 @@ class TestDiscoverWithTheTranscriptionType:
             )
         ).json()["id"]
         await client.get(f"/api/admin/models/discover?provider_id={provider_id}")
-        assert len(asked) == 1 and "tag=" not in asked[0]
+        assert len(asked) == 1 and asked[0].endswith("tag=all")

@@ -1102,38 +1102,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/admin/models/tags": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Catalogue Tags
-         * @description The tags this provider slices its catalogue by, for a dropdown.
-         *
-         *     Ask the counterparty live rather than compile a list here: the vocabulary
-         *     is theirs, and whoever compiles owns the staleness — the whole reason the
-         *     discovery dialog's tag field is per-provider at all. The fetch is an
-         *     ``everything`` request named by the plugin (``catalogue_tag_all``), because
-         *     the spelling of "everything" is measured counterparty knowledge: Cortecs
-         *     answers ``tag=all`` with its whole catalogue and ``tag=All`` with an empty
-         *     one, so a guessed spelling would report a vocabulary of none.
-         *
-         *     ``supported: false`` for a provider whose plugin names no such fetch. The
-         *     console keeps free text for those — a dropdown of one default option would
-         *     be a worse version of the box it replaced.
-         */
-        get: operations["list_catalogue_tags_api_admin_models_tags_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/admin/models/{model_id}": {
         parameters: {
             query?: never;
@@ -2463,38 +2431,6 @@ export interface paths {
          *     without needing to remember which checkbox was ticked (ADR 0053).
          */
         post: operations["import_models_api_me_models_import_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/me/models/tags": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Catalogue Tags
-         * @description The tags this provider slices its catalogue by, for a dropdown.
-         *
-         *     Ask the counterparty live rather than compile a list here: the vocabulary
-         *     is theirs, and whoever compiles owns the staleness — the whole reason the
-         *     discovery dialog's tag field is per-provider at all. The fetch is an
-         *     ``everything`` request named by the plugin (``catalogue_tag_all``), because
-         *     the spelling of "everything" is measured counterparty knowledge: Cortecs
-         *     answers ``tag=all`` with its whole catalogue and ``tag=All`` with an empty
-         *     one, so a guessed spelling would report a vocabulary of none.
-         *
-         *     ``supported: false`` for a provider whose plugin names no such fetch. The
-         *     console keeps free text for those — a dropdown of one default option would
-         *     be a worse version of the box it replaced.
-         */
-        get: operations["list_catalogue_tags_api_me_models_tags_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4323,25 +4259,6 @@ export interface components {
             retrieved: string;
             /** Url */
             url: string;
-        };
-        /**
-         * CatalogueTagsResponse
-         * @description The tag vocabulary a provider slices its catalogue by.
-         *
-         *     Feeds the discovery dialog's dropdown, read live from the counterparty so
-         *     the list is theirs rather than one compiled here that goes stale. A
-         *     provider whose plugin knows no way to ask for the whole catalogue reports
-         *     ``supported: false`` with an empty list — the dialog keeps free text for
-         *     those rather than offering a dropdown of one default option and pretending
-         *     it is the vocabulary.
-         */
-        CatalogueTagsResponse: {
-            /** Provider Url */
-            provider_url: string;
-            /** Supported */
-            supported: boolean;
-            /** Tags */
-            tags: string[];
         };
         /**
          * ChatCompletionRequest
@@ -9268,7 +9185,6 @@ export interface operations {
                 provider_id: string;
                 url?: string | null;
                 fill_missing_prices?: boolean;
-                tag?: string | null;
             };
             header?: never;
             path?: never;
@@ -9302,7 +9218,6 @@ export interface operations {
                 provider_id: string;
                 url?: string | null;
                 fill_missing_prices?: boolean;
-                tag?: string | null;
             };
             header?: never;
             path?: never;
@@ -9321,37 +9236,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelImportResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_catalogue_tags_api_admin_models_tags_get: {
-        parameters: {
-            query: {
-                provider_id: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CatalogueTagsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -11157,7 +11041,6 @@ export interface operations {
                 provider_id: string;
                 url?: string | null;
                 fill_missing_prices?: boolean;
-                tag?: string | null;
             };
             header?: never;
             path?: never;
@@ -11191,7 +11074,6 @@ export interface operations {
                 provider_id: string;
                 url?: string | null;
                 fill_missing_prices?: boolean;
-                tag?: string | null;
             };
             header?: never;
             path?: never;
@@ -11210,37 +11092,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelImportResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_catalogue_tags_api_me_models_tags_get: {
-        parameters: {
-            query: {
-                provider_id: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CatalogueTagsResponse"];
                 };
             };
             /** @description Validation Error */

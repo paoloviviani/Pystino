@@ -4,6 +4,8 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **Model discovery always reads the provider's whole catalogue.** The console's "Catalogue tag" box is gone, and so are `GET /api/admin/models/tags`, `GET /api/me/models/tags` and the `tag` parameter of `models/discover` and `models/import`. A provider whose plugin names an "everything" spelling (Cortecs: `tag=all`) is fetched with it, so the listing covers every category and models served here under another Cortecs tag (decision, audio, image, embedding, OCR) are no longer reported as "no longer offered upstream".
+
 ## v0.26.0 — 2026-11-05
 
 Paired with Cerea 0.40.1.

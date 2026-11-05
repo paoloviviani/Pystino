@@ -336,14 +336,14 @@ class TestImport:
         )
         as_user(app, await make_admin(session_factory, seeded))
         base = "provider_id=" + str(seeded.provider.id)
-        found = (await client.get(f"/api/admin/models/discover?{base}&tag=Image-Gen")).json()
+        found = (await client.get(f"/api/admin/models/discover?{base}")).json()
         rows = {row["upstream_model"]: row for row in found["available"]}
         assert rows["flux-2-klein-4b"]["per_image"] == "0.013"
         assert rows["flux-2-klein-4b"]["per_extra_megapixel"] == "0.001"
         assert rows["flux-2-klein-4b"]["kind"] == "image"
 
         imported = await client.post(
-            f"/api/admin/models/import?{base}&tag=Image-Gen",
+            f"/api/admin/models/import?{base}",
             json={"models": [{"upstream_model": "flux-2-klein-4b"}]},
         )
         assert imported.status_code == 201, imported.text

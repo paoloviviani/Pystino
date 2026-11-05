@@ -18,7 +18,6 @@ import type {
   BundledUserCreateInput,
   BundledUserCreated,
   CatalogueDiscovery,
-  CatalogueTags,
   DeletePreview,
   DeleteUserResult,
   IdentityEvent,
@@ -94,7 +93,6 @@ function makeKeys(root: string) {
     aliases: [root, "models", "aliases"] as const,
     alias: (aliasId: string) => [root, "models", "aliases", aliasId] as const,
     discovery: [root, "models", "discover"] as const,
-    tags: [root, "models", "tags"] as const,
     groups: [root, "groups"] as const,
     groupMembers: (groupId: string) =>
       [root, "groups", groupId, "members"] as const,
@@ -556,46 +554,21 @@ export function useGroups(query: PageQuery = { limit: MAX_LIMIT }) {
 export function useDiscovery(
   providerId: string | null,
   fillMissingPrices = false,
-  tag = "",
 ) {
   const { base, keys } = useScope();
   return useQuery({
-    // Both refinements are part of the key: the same provider answers
-    // differently with the fill on or a different tag asked for, and a cached
-    // answer shown under changed controls is a screen that contradicts itself.
-    queryKey: [...keys.discovery, providerId, fillMissingPrices, tag],
+    // The fill is part of the key: the same provider answers differently with
+    // it on, and a cached answer shown under changed controls is a screen that
+    // contradicts itself.
+    queryKey: [...keys.discovery, providerId, fillMissingPrices],
     queryFn: () =>
       request<CatalogueDiscovery>(
         `${base}/models/discover?provider_id=${encodeURIComponent(providerId ?? "")}` +
-          `&fill_missing_prices=${fillMissingPrices}` +
-          (tag ? `&tag=${encodeURIComponent(tag)}` : ""),
+          `&fill_missing_prices=${fillMissingPrices}`,
       ),
     enabled: providerId !== null,
     retry: false,
     staleTime: 60_000,
-  });
-}
-
-/**
- * The tag vocabulary a provider slices its catalogue by — the discovery
- * dialog's dropdown options.
- *
- * Also not fetched on mount, for the same reason discovery is not: it calls
- * the provider over the network. Cached longer than discovery, because the
- * vocabulary changes when the counterparty changes their catalogue, not when
- * the operator picks a different slice of it.
- */
-export function useCatalogueTags(providerId: string | null) {
-  const { base, keys } = useScope();
-  return useQuery({
-    queryKey: [...keys.tags, providerId],
-    queryFn: () =>
-      request<CatalogueTags>(
-        `${base}/models/tags?provider_id=${encodeURIComponent(providerId ?? "")}`,
-      ),
-    enabled: providerId !== null,
-    retry: false,
-    staleTime: 300_000,
   });
 }
 
@@ -657,22 +630,18 @@ export function useImportModels() {
       providerId,
       models,
       fillMissingPrices = false,
-      tag = "",
     }: {
       providerId: string;
       // One entry per ticked row: the upstream id, and — for a row the
       // provider listed and nobody prices — the price typed on the row itself.
       models: ModelImportItem[];
-      // Both must match what discovery was shown with, or the prices written
-      // would not be the prices reviewed — and with the wrong tag the model
-      // would not be in the catalogue the import reads at all.
+      // Must match what discovery was shown with, or the prices written
+      // would not be the prices reviewed.
       fillMissingPrices?: boolean;
-      tag?: string;
     }) =>
       request<ModelImportResponse>(
         `${base}/models/import?provider_id=${encodeURIComponent(providerId)}` +
-          `&fill_missing_prices=${fillMissingPrices}` +
-          (tag ? `&tag=${encodeURIComponent(tag)}` : ""),
+          `&fill_missing_prices=${fillMissingPrices}`,
         {
           method: "POST",
           body: {

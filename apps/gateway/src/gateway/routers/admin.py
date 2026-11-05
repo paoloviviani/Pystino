@@ -197,7 +197,6 @@ from gateway.pricing import (
     parse_catalogue,
     parse_litellm_catalogue,
     parse_openrouter_catalogue,
-    tags_in_payload,
 )
 from gateway.pricing import (
     # Aliased: the two routes below take a `fill_missing_prices` query parameter,
@@ -233,7 +232,6 @@ from gateway.schemas import (
     CataloguePriceHintResponse,
     CatalogueRetentionResponse,
     CatalogueSourceResponse,
-    CatalogueTagsResponse,
     ChatSharedResource,
     DeletePreviewResponse,
     DeleteUserRequest,
@@ -1578,7 +1576,6 @@ async def _catalogue_source(
     secrets: SecretBox,
     provider_id: uuid.UUID,
     url: str | None,
-    tag: str | None = None,
     scope: CatalogueScope | None = None,
 ) -> tuple[Provider, str, str | None]:
     """Where to fetch a catalogue from, and with which credential.
@@ -1605,15 +1602,16 @@ async def _catalogue_source(
             code="byok_catalogue_url",
         )
     catalogue_url = url or f"{provider.base_url}/models"
-    if tag:
-        # Cortecs' catalogue **defaults to `tag=Instruct`**, so an unfiltered
-        # request is a filtered one — which is how eleven embedding models and
-        # three OCR models sat in that endpoint while this gateway reported
-        # that it offered none. Passed through rather than interpreted: the
-        # vocabulary is the counterparty's, and a fixed list here would go
-        # stale the first time they add one.
+    # Always the whole catalogue. Cortecs defaults to `tag=Instruct`, so a plain
+    # request is a filtered one and every other category (decision, audio,
+    # image, embedding, OCR) looked "no longer offered upstream" while served
+    # here. A plugin that names its "everything" spelling gets it; any other
+    # provider is fetched plain.
+    catalogue_tag_all = getattr(plugin_registry.resolve(provider.plugin), "catalogue_tag_all", None)
+    sentinel = catalogue_tag_all() if callable(catalogue_tag_all) else None
+    if sentinel:
         joiner = "&" if "?" in catalogue_url else "?"
-        catalogue_url = f"{catalogue_url}{joiner}tag={quote(tag)}"
+        catalogue_url = f"{catalogue_url}{joiner}tag={quote(sentinel)}"
     api_key: str | None = None
     if provider.api_key_encrypted:
         try:
@@ -1792,7 +1790,6 @@ async def discover_models(
     provider_id: uuid.UUID,
     url: str | None = None,
     fill_missing_prices: bool = False,
-    tag: str | None = None,
 ) -> CatalogueDiscoveryResponse:
     """Compare the provider's catalogue with ours.
 
@@ -1811,7 +1808,7 @@ async def discover_models(
     that before clicking Import, not afterwards.
     """
     provider, catalogue_url, api_key = await _catalogue_source(
-        session, secrets, provider_id, url, tag, scope
+        session, secrets, provider_id, url, scope
     )
     # A private provider's catalogue is read through the guarded client, after
     # the network guard has judged its host: the URL is the member's.
@@ -1931,39 +1928,10 @@ async def discover_models(
     # serves but has stopped pricing is not "no longer offered", and calling it
     # that would send someone hunting for a withdrawal that never happened.
     #
-    # Drift is a whole-catalogue question even when `available` above is
-    # scoped to a tag: `tag=Instruct` narrows what is *importable*, not what
-    # the provider still serves, so judging "missing" against the tag-scoped
-    # fetch reported every embedding and OCR model this gateway serves as
-    # withdrawn the moment an operator picked a tag that was not theirs — they
-    # had not gone anywhere, they were filed under a tag nobody asked for.
+    # The fetch above is already the whole catalogue (`_catalogue_source`), so
+    # "offered" is exactly what it listed.
     plugin = plugin_registry.resolve(provider.plugin)
-    catalogue_tag_all = getattr(plugin, "catalogue_tag_all", None)
-    sentinel = catalogue_tag_all() if callable(catalogue_tag_all) else None
-
-    offered: set[str] | None
-    if tag is None or tag == sentinel or plugin.builtin_catalogue() is not None:
-        # No tag was asked for, the operator already asked for "everything"
-        # directly, or the plugin answers from itself (which has no tags to
-        # slice by at all): the fetch already made above is the whole
-        # catalogue, so asking again would be the same request twice.
-        offered = set(by_upstream) | (set(unpriced) - ANONYMOUS_UNPARSABLE)
-    elif sentinel is None:
-        # A free-text-tag provider: a tag-scoped fetch cannot tell "withdrawn"
-        # from "filed under a tag it does not name here", so guessing would
-        # only trade one false report (everything missing) for another (a
-        # genuine withdrawal hidden while a tag is set). Reporting no drift
-        # under a partial view is the honest answer — clearing the tag still
-        # catches a real withdrawal.
-        offered = None
-    else:
-        base_catalogue_url = url or f"{provider.base_url}/models"
-        joiner = "&" if "?" in base_catalogue_url else "?"
-        full_catalogue_url = f"{base_catalogue_url}{joiner}tag={quote(sentinel)}"
-        full_by_upstream, full_unpriced, _, _, _ = await _catalogue_with_prices(
-            http, provider, full_catalogue_url, api_key, fill_missing=False
-        )
-        offered = set(full_by_upstream) | (set(full_unpriced) - ANONYMOUS_UNPARSABLE)
+    offered = set(by_upstream) | (set(unpriced) - ANONYMOUS_UNPARSABLE)
 
     catalogued: list[CatalogueDriftRow] = []
     missing: list[CatalogueDriftRow] = []
@@ -1974,10 +1942,7 @@ async def discover_models(
             upstream_model=model.upstream_model,
             is_active=model.is_active,
         )
-        # `offered is None` is "cannot judge", not "cannot find" — see above;
-        # it is not a missing-upstream row, it is a row this discovery run is
-        # simply silent about.
-        if offered is None or model.upstream_model in offered:
+        if model.upstream_model in offered:
             catalogued.append(row)
         else:
             missing.append(row)
@@ -1989,81 +1954,13 @@ async def discover_models(
         provider_url=(
             catalogue_url if plugin.builtin_catalogue() is None else f"built in ({provider.plugin})"
         ),
-        # The size of whichever set the drift judgement above was actually
-        # checked against — the provider's whole catalogue when a tag is
-        # active and `catalogue_tag_all` answered it, otherwise the same
-        # tag-scoped fetch `available` was built from. Never the tag-scoped
-        # count while claiming a whole-catalogue judgement was made.
-        provider_model_count=(
-            len(offered)
-            if offered is not None
-            else len(set(by_upstream) | (set(unpriced) - ANONYMOUS_UNPARSABLE))
-        ),
+        provider_model_count=len(offered),
         available=available,
         catalogued=catalogued,
         missing_upstream=missing,
         # Only the entries with no id at all remain genuinely unparsable; the
         # rest are now reported as rows an operator can see and act on.
         unparsable=[entry for entry in unpriced if entry in ANONYMOUS_UNPARSABLE],
-    )
-
-
-@router.get("/models/tags", response_model=CatalogueTagsResponse)
-@me_router.get("/models/tags", response_model=CatalogueTagsResponse)
-async def list_catalogue_tags(
-    scope: CatalogueScopeDep,
-    session: SessionDep,
-    secrets: SecretsDep,
-    control_http: ControlHttpDep,
-    byok_http: ByokHttpDep,
-    providers: ProvidersDep,
-    provider_id: uuid.UUID,
-) -> CatalogueTagsResponse:
-    """The tags this provider slices its catalogue by, for a dropdown.
-
-    Ask the counterparty live rather than compile a list here: the vocabulary
-    is theirs, and whoever compiles owns the staleness — the whole reason the
-    discovery dialog's tag field is per-provider at all. The fetch is an
-    ``everything`` request named by the plugin (``catalogue_tag_all``), because
-    the spelling of "everything" is measured counterparty knowledge: Cortecs
-    answers ``tag=all`` with its whole catalogue and ``tag=All`` with an empty
-    one, so a guessed spelling would report a vocabulary of none.
-
-    ``supported: false`` for a provider whose plugin names no such fetch. The
-    console keeps free text for those — a dropdown of one default option would
-    be a worse version of the box it replaced.
-    """
-    provider = await _load_provider(session, provider_id, scope)
-    http = await _catalogue_http(scope, provider, providers, control_http, byok_http)
-    plugin = plugin_registry.resolve(provider.plugin)
-    catalogue_url = f"{provider.base_url}/models"
-
-    catalogue_tag_all = getattr(plugin, "catalogue_tag_all", None)
-    sentinel = catalogue_tag_all() if callable(catalogue_tag_all) else None
-    if sentinel is None:
-        return CatalogueTagsResponse(provider_url=catalogue_url, supported=False, tags=[])
-
-    catalogue_url = f"{catalogue_url}?tag={quote(sentinel)}"
-    api_key: str | None = None
-    if provider.api_key_encrypted:
-        try:
-            api_key = secrets.decrypt(provider.api_key_encrypted)
-        except Exception as exc:
-            raise BadRequestError(
-                f"provider {provider.name!r}: {exc}", code="provider_key_unreadable"
-            ) from exc
-
-    # Same order as `_catalogue_with_prices`: a plugin that *is* the thing
-    # being served answers from itself, and asking the network would mean
-    # asking a service with no such endpoint.
-    payload = plugin.builtin_catalogue()
-    if payload is None:
-        try:
-            payload = await fetch_catalogue(http, catalogue_url, api_key)
-        except CatalogueUnavailable as exc:
-            raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
-    return CatalogueTagsResponse(
-        provider_url=catalogue_url, supported=True, tags=tags_in_payload(payload)
     )
 
 
@@ -2200,7 +2097,6 @@ async def import_models(
     provider_id: uuid.UUID,
     url: str | None = None,
     fill_missing_prices: bool = False,
-    tag: str | None = None,
 ) -> ModelImportResponse:
     """Adopt selected upstream models, with their published prices.
 
@@ -2234,7 +2130,7 @@ async def import_models(
     without needing to remember which checkbox was ticked (ADR 0053).
     """
     provider, catalogue_url, api_key = await _catalogue_source(
-        session, secrets, provider_id, url, tag, scope
+        session, secrets, provider_id, url, scope
     )
     http = await _catalogue_http(scope, provider, providers, control_http, byok_http)
     by_upstream, unpriced, filled, kinds, limits = await _catalogue_with_prices(

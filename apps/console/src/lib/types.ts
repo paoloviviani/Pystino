@@ -291,7 +291,6 @@ export type CatalogueDiscovery = Narrow<
   }
 >;
 
-export type CatalogueTags = Schemas["CatalogueTagsResponse"];
 
 /**
  * A price typed by an administrator on an unpriced discovery row, sent with

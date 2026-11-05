@@ -17,7 +17,7 @@ only a real provider can show, and what this checks:
   spent; `preference` passes;
 * an unknown model, at the gateway and at the provider, is a clean error and is
   never charged;
-* Cortecs's `/models?tag=Decision` is importable through the discovery dialog
+* Cortecs's `/models?tag=Decision` models are importable through the discovery dialog
   and the entries come back as kind `decision`;
 * `/v1/models` lists the model with `kind: "decision"` and the chat route
   refuses it.
@@ -219,7 +219,7 @@ def main() -> int:
 
     status, discovery = api(
         admin,
-        f"/api/admin/models/discover?provider_id={provider['id']}&tag=Decision",
+        f"/api/admin/models/discover?provider_id={provider['id']}",
     )
     found = (
         {m["upstream_model"]: m for m in (discovery.get("available") or [])}
@@ -227,7 +227,7 @@ def main() -> int:
         else {}
     )
     expect(
-        "discovery with tag=Decision finds clef-flash and laya, as kind decision",
+        "discovery finds clef-flash and laya, as kind decision",
         status == 200
         and {"clef-flash", "laya"} <= set(found)
         and all(found[k]["kind"] == "decision" for k in ("clef-flash", "laya")),
@@ -239,14 +239,6 @@ def main() -> int:
             "and its input price is the catalogue's",
             Decimal(str(found[UPSTREAM]["input_per_mtok"])) == Decimal(INPUT_PER_MTOK),
             str(found[UPSTREAM]["input_per_mtok"]),
-        )
-
-    status, tags = api(admin, f"/api/admin/models/tags?provider_id={provider['id']}")
-    if status == 200 and isinstance(tags, dict):
-        expect(
-            "the discovery tag list offers Decision",
-            "Decision" in tags.get("tags", []),
-            str(tags.get("tags")),
         )
 
     models: dict[str, dict[str, Any]] = {}

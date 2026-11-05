@@ -391,7 +391,6 @@ class TestIsolation:
                 {"input_per_mtok": "1", "output_per_mtok": "1"},
             ),
             ("GET", f"/api/me/models/discover?provider_id={pid}", None),
-            ("GET", f"/api/me/models/tags?provider_id={pid}", None),
             (
                 "POST",
                 f"/api/me/models/import?provider_id={pid}",

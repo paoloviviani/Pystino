@@ -2099,33 +2099,6 @@
         "title": "CatalogueSourceResponse",
         "type": "object"
       },
-      "CatalogueTagsResponse": {
-        "description": "The tag vocabulary a provider slices its catalogue by.\n\nFeeds the discovery dialog's dropdown, read live from the counterparty so\nthe list is theirs rather than one compiled here that goes stale. A\nprovider whose plugin knows no way to ask for the whole catalogue reports\n``supported: false`` with an empty list — the dialog keeps free text for\nthose rather than offering a dropdown of one default option and pretending\nit is the vocabulary.",
-        "properties": {
-          "provider_url": {
-            "title": "Provider Url",
-            "type": "string"
-          },
-          "supported": {
-            "title": "Supported",
-            "type": "boolean"
-          },
-          "tags": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Tags",
-            "type": "array"
-          }
-        },
-        "required": [
-          "provider_url",
-          "supported",
-          "tags"
-        ],
-        "title": "CatalogueTagsResponse",
-        "type": "object"
-      },
       "ChatCompletionRequest": {
         "additionalProperties": true,
         "description": "Only the fields the gateway itself reasons about; the rest passes through.",
@@ -13100,22 +13073,6 @@
               "title": "Fill Missing Prices",
               "type": "boolean"
             }
-          },
-          {
-            "in": "query",
-            "name": "tag",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Tag"
-            }
           }
         ],
         "responses": {
@@ -13186,22 +13143,6 @@
               "title": "Fill Missing Prices",
               "type": "boolean"
             }
-          },
-          {
-            "in": "query",
-            "name": "tag",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Tag"
-            }
           }
         ],
         "requestBody": {
@@ -13237,50 +13178,6 @@
           }
         },
         "summary": "Import Models",
-        "tags": [
-          "administration"
-        ]
-      }
-    },
-    "/api/admin/models/tags": {
-      "get": {
-        "description": "The tags this provider slices its catalogue by, for a dropdown.\n\nAsk the counterparty live rather than compile a list here: the vocabulary\nis theirs, and whoever compiles owns the staleness — the whole reason the\ndiscovery dialog's tag field is per-provider at all. The fetch is an\n``everything`` request named by the plugin (``catalogue_tag_all``), because\nthe spelling of \"everything\" is measured counterparty knowledge: Cortecs\nanswers ``tag=all`` with its whole catalogue and ``tag=All`` with an empty\none, so a guessed spelling would report a vocabulary of none.\n\n``supported: false`` for a provider whose plugin names no such fetch. The\nconsole keeps free text for those — a dropdown of one default option would\nbe a worse version of the box it replaced.",
-        "operationId": "list_catalogue_tags_api_admin_models_tags_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "provider_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Provider Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CatalogueTagsResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Catalogue Tags",
         "tags": [
           "administration"
         ]
@@ -16635,22 +16532,6 @@
               "title": "Fill Missing Prices",
               "type": "boolean"
             }
-          },
-          {
-            "in": "query",
-            "name": "tag",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Tag"
-            }
           }
         ],
         "responses": {
@@ -16721,22 +16602,6 @@
               "title": "Fill Missing Prices",
               "type": "boolean"
             }
-          },
-          {
-            "in": "query",
-            "name": "tag",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Tag"
-            }
           }
         ],
         "requestBody": {
@@ -16772,50 +16637,6 @@
           }
         },
         "summary": "Import Models",
-        "tags": [
-          "bring-your-own-key"
-        ]
-      }
-    },
-    "/api/me/models/tags": {
-      "get": {
-        "description": "The tags this provider slices its catalogue by, for a dropdown.\n\nAsk the counterparty live rather than compile a list here: the vocabulary\nis theirs, and whoever compiles owns the staleness — the whole reason the\ndiscovery dialog's tag field is per-provider at all. The fetch is an\n``everything`` request named by the plugin (``catalogue_tag_all``), because\nthe spelling of \"everything\" is measured counterparty knowledge: Cortecs\nanswers ``tag=all`` with its whole catalogue and ``tag=All`` with an empty\none, so a guessed spelling would report a vocabulary of none.\n\n``supported: false`` for a provider whose plugin names no such fetch. The\nconsole keeps free text for those — a dropdown of one default option would\nbe a worse version of the box it replaced.",
-        "operationId": "list_catalogue_tags_api_me_models_tags_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "provider_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Provider Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CatalogueTagsResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Catalogue Tags",
         "tags": [
           "bring-your-own-key"
         ]
