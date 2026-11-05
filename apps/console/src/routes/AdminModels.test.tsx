@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AdminModel, CatalogueDiscovery, CatalogueTags } from "../lib/types";
+import type { AdminModel, CatalogueDiscovery } from "../lib/types";
 import { jsonResponse } from "../test-helpers";
 import { AdminModels } from "./AdminModels";
 
@@ -166,30 +166,16 @@ const DISCOVERY_FILLED: CatalogueDiscovery = {
   ],
 };
 
-/** What `/models/tags` answers for a provider whose plugin knows the fetch.
- *
- * The counterparty's spelling is kept — the values go back as `tag=…`.
- */
-const TAGS: CatalogueTags = {
-  provider_url: "https://cortecs.test/v1/models?tag=all",
-  supported: true,
-  tags: ["Embedding", "Instruct", "OCR"],
-};
-
 function routes(
   models: AdminModel[],
   calls: {
     imported?: string[];
     discoverUrls?: string[];
     importUrls?: string[];
-    tagUrls?: string[];
     /** The import bodies as they were sent, for tests that assert the payload. */
     importBodies?: { models: { upstream_model: string; manual_price?: unknown }[] }[];
   } = {},
   captured: { bodies: unknown[] } = { bodies: [] },
-  /** What `/models/tags` answers. Null means the provider reports no known
-   * vocabulary, which is every provider in the older tests. */
-  tags: CatalogueTags | null = null,
 ) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -244,12 +230,6 @@ function routes(
                 : "provider",
         })),
       };
-    } else if (url.includes("/models/tags")) {
-      (calls.tagUrls ??= []).push(url);
-      // Checked before the bare `/api/admin/models` branch: the tags URL
-      // contains that prefix too, and an array is not an answer a
-      // `CatalogueTags` reader can look at.
-      payload = tags ?? { provider_url: "", supported: false, tags: [] };
     } else if (url.includes("/api/admin/models")) payload = models;
     else if (url.includes("/api/admin/users")) payload = [];
     else if (url.includes("/api/admin/groups")) {
@@ -650,17 +630,11 @@ describe("AdminModels", () => {
     expect(await screen.findByText("inactive")).toBeInTheDocument();
   });
 
-  it("does not flag a model as withdrawn just because a different tag is selected", async () => {
-    // The gateway bug this pins: `missing_upstream` used to be judged against
-    // the tag-scoped fetch, so an embedding model this deployment serves
-    // turned into a false "no longer offered upstream" the moment an operator
-    // picked `tag=Instruct`. The fix moved that judgement to the whole
-    // catalogue; this only re-checks that the console renders whichever split
-    // the server sends rather than deriving its own from `available` (which
-    // stays tag-scoped) — a model reported `catalogued` must never show here,
-    // even while a tag other than its own is selected.
+  it("does not flag a served model of another category as withdrawn", async () => {
+    // The gateway lists the whole catalogue now, so a model it reports
+    // `catalogued` (an embedding model, say) must never show as withdrawn.
     const user = userEvent.setup();
-    const discoveryUnderATag: CatalogueDiscovery = {
+    const discoveryAcrossCategories: CatalogueDiscovery = {
       ...DISCOVERY,
       catalogued: [
         {
@@ -676,8 +650,7 @@ describe("AdminModels", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
-        if (url.includes("/models/tags")) return jsonResponse(TAGS);
-        if (url.includes("/models/discover")) return jsonResponse(discoveryUnderATag);
+        if (url.includes("/models/discover")) return jsonResponse(discoveryAcrossCategories);
         if (url.includes("/api/admin/providers"))
           return jsonResponse([
             {
@@ -702,10 +675,6 @@ describe("AdminModels", () => {
 
     await user.click(screen.getByRole("button", { name: "Discover" }));
     await openCatalogue(user);
-    await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Catalogue tag" }),
-      "Instruct",
-    );
 
     await waitFor(() => expect(screen.getByText("new-1")).toBeInTheDocument());
     expect(screen.queryByText(/no longer offered upstream/i)).not.toBeInTheDocument();
@@ -771,65 +740,25 @@ describe("AdminModels", () => {
     );
   });
 
-  it("offers the provider's tag words as a dropdown, read live from them", async () => {
-    // The vocabulary is the counterparty's, and free text assumed the operator
-    // already knew it — the same blindness that hid the embedding and OCR
-    // models behind Cortecs' Instruct default. Whatever the provider answers
-    // an "everything" fetch with is what the dropdown offers.
+  it("offers no catalogue tag control: discovery always covers the whole catalogue", async () => {
     const user = userEvent.setup();
-    const calls: { discoverUrls?: string[]; tagUrls?: string[] } = {};
-    vi.stubGlobal("fetch", routes([model()], calls, undefined, TAGS));
+    const calls: { discoverUrls?: string[]; importUrls?: string[] } = {};
+    vi.stubGlobal("fetch", routes([model()], calls));
     renderScreen(<AdminModels />);
 
     await user.click(screen.getByRole("button", { name: "Discover" }));
     await openCatalogue(user);
-
-    const tagSelect = await screen.findByRole("combobox", { name: "Catalogue tag" });
-    expect(
-      within(tagSelect)
-        .getAllByRole("option")
-        .map((option) => option.textContent),
-    ).toEqual(["Provider default", "Embedding", "Instruct", "OCR"]);
-    expect(calls.tagUrls?.[0]).toContain("provider_id=pr1");
-
-    // Asking for a slice re-asks the provider with that slice named.
-    await user.selectOptions(tagSelect, "Embedding");
-    await waitFor(() =>
-      expect(calls.discoverUrls?.some((url) => url.includes("tag=Embedding"))).toBe(true),
-    );
-  });
-
-  it("imports under the tag the candidates were read with", async () => {
-    // With the wrong tag the model would not be in the catalogue the import
-    // reads at all — the same question, so the same answer travels with it.
-    const user = userEvent.setup();
-    const calls: { importUrls?: string[] } = {};
-    vi.stubGlobal("fetch", routes([model()], calls, undefined, TAGS));
-    renderScreen(<AdminModels />);
-
-    await user.click(screen.getByRole("button", { name: "Discover" }));
-    await openCatalogue(user);
-    await user.selectOptions(await screen.findByRole("combobox", { name: "Catalogue tag" }), "OCR");
     await user.click(await screen.findByLabelText("Import new-1"));
+
+    expect(screen.queryByLabelText("Catalogue tag")).not.toBeInTheDocument();
+    expect(screen.queryByText(/filters its catalogue by tag/i)).not.toBeInTheDocument();
+    expect(calls.discoverUrls?.every((url) => !url.includes("tag="))).toBe(true);
+
     await user.click(
       within(await screen.findByRole("dialog")).getByRole("button", { name: /^Import/ }),
     );
-
-    await waitFor(() => expect(calls.importUrls?.[0]).toContain("tag=OCR"));
-  });
-
-  it("keeps free text for a provider with no known tag vocabulary", async () => {
-    // A dropdown of one default option would be a worse version of the box it
-    // replaced, and pretend the vocabulary it does not have. The default mock
-    // answers unsupported, which is every generic endpoint's case.
-    const user = userEvent.setup();
-    vi.stubGlobal("fetch", routes([model()]));
-    renderScreen(<AdminModels />);
-
-    await user.click(screen.getByRole("button", { name: "Discover" }));
-    await openCatalogue(user);
-
-    expect(await screen.findByRole("textbox", { name: "Catalogue tag" })).toBeInTheDocument();
+    await waitFor(() => expect(calls.importUrls?.length).toBe(1));
+    expect(calls.importUrls?.[0]).not.toContain("tag=");
   });
 
   it("asks for the provider before anything else when adding a model by hand", async () => {    // Position, not existence: a model is routed through one endpoint

@@ -160,8 +160,6 @@ function gateway(seen: Seen, createFails = false) {
     if (url.includes("/provider-plugins")) return plain(PLUGINS);
     if (url.includes("/provider-catalogue")) return plain([]);
     if (url.includes("/models/discover")) return jsonResponse(DISCOVERY);
-    if (url.includes("/models/tags"))
-      return jsonResponse({ provider_url: "", supported: false, tags: [] });
     if (url.includes("/models/import") && method === "POST")
       return jsonResponse({
         results: [

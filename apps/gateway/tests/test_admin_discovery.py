@@ -1083,95 +1083,13 @@ def catalogue_by_tag(app: object) -> None:
     )
 
 
-class TestTagVocabulary:
-    """The discovery dialog's tag dropdown is fed from a live fetch.
+class TestDiscoveryIsWholeCatalogue:
+    """Discovery fetches the provider's whole catalogue, never a tag slice.
 
-    Never from a list compiled here: the vocabulary is the counterparty's, and
-    whoever compiles one owns its staleness — free text was only ever the
-    answer to "nobody here knows the words". What these tests pin is that the
-    gateway reads the words from the counterparty's own "everything" answer,
-    and admits rather than hides when its plugin knows no such fetch.
-    """
-
-    async def _cortecs_provider(self, client: httpx.AsyncClient) -> str:
-        response = await client.post(
-            "/api/admin/providers", json={"name": "cortecs-live", "plugin": "cortecs"}
-        )
-        assert response.status_code == 201, response.text
-        return response.json()["id"]
-
-    async def test_the_vocabulary_is_read_from_an_everything_fetch(
-        self,
-        app: object,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        catalogue_by_tag: None,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        as_user(app, await make_admin(session_factory, seeded))
-        provider_id = await self._cortecs_provider(client)
-        body = (await client.get("/api/admin/models/tags?provider_id=" + provider_id)).json()
-
-        assert body["supported"] is True
-        # The answer says where it came from, and the fetch named the sentinel
-        # the plugin measured — not a spelling a reviewer "corrected".
-        assert body["provider_url"] == "https://api.cortecs.ai/v1/models?tag=all"
-        # Sorted, deduplicated across entries, casing kept: these strings go
-        # back as `tag=…`, and the live API matches `all` while returning
-        # nothing for `All`.
-        assert body["tags"] == ["Embedding", "Instruct", "OCR", "Tools"]
-
-    async def test_a_provider_without_a_measured_sentinel_is_unsupported(
-        self,
-        app: object,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        """The generic plugin names no "everything" spelling — so unsupported,
-        not a fetch. Guessing a sentinel against a live API is exactly how
-        `tag=All` returns an empty catalogue: an unmeasured vocabulary would
-        be a dropdown of one option presented as the whole story. (No catalogue
-        fixture here: reaching the network at all fails this test.)"""
-        as_user(app, await make_admin(session_factory, seeded))
-        body = (
-            await client.get("/api/admin/models/tags?provider_id=" + str(seeded.provider.id))
-        ).json()
-
-        assert body == {
-            "provider_url": f"{seeded.provider.base_url}/models",
-            "supported": False,
-            "tags": [],
-        }
-
-    async def test_an_unreachable_provider_is_502_not_500(
-        self,
-        app: object,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        as_user(app, await make_admin(session_factory, seeded))
-        provider_id = await self._cortecs_provider(client)
-
-        def broken(request: httpx.Request) -> httpx.Response:
-            raise httpx.ConnectError("no route to host")
-
-        app.state.control_http = httpx.AsyncClient(  # type: ignore[attr-defined]
-            transport=httpx.MockTransport(broken)
-        )
-        response = await client.get("/api/admin/models/tags?provider_id=" + provider_id)
-        assert response.status_code == 502
-
-
-class TestDiscoveryAcrossTags:
-    """`tag` scopes `available`, never the drift judgement.
-
-    Cortecs slices its catalogue by tag; picking one to see what's importable
-    used to also become the universe "missing_upstream" was checked against,
-    so every model this gateway served under a different tag — an embedding
-    or OCR model while `tag=Instruct` was selected — was reported withdrawn.
-    It was never gone, only filed under a tag nobody asked for.
+    Cortecs defaults to `tag=Instruct`, so a plain fetch listed one category
+    and called every served model of another one (decision, audio, image,
+    embedding, OCR) "no longer offered upstream". A plugin that names its
+    "everything" spelling gets it for the fetch itself.
     """
 
     async def _cortecs_provider(self, client: httpx.AsyncClient) -> str:
@@ -1201,12 +1119,12 @@ class TestDiscoveryAcrossTags:
             )
             await session.commit()
 
-        body = (
-            await client.get(f"/api/admin/models/discover?provider_id={provider_id}&tag=Instruct")
-        ).json()
+        body = (await client.get(f"/api/admin/models/discover?provider_id={provider_id}")).json()
 
         assert body["missing_upstream"] == []
         assert [m["name"] for m in body["catalogued"]] == ["our-embedder"]
+        assert body["provider_url"] == "https://api.cortecs.ai/v1/models?tag=all"
+        assert body["provider_model_count"] == len(TAGGED_CATALOGUE["data"])
 
     async def test_a_model_genuinely_absent_is_still_reported_missing(
         self,
@@ -1216,9 +1134,6 @@ class TestDiscoveryAcrossTags:
         catalogue_by_tag: None,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """The fix above must not cost the drift signal itself: a model
-        dropped from the whole catalogue, not just the selected tag, is a
-        real withdrawal and has to keep failing this check."""
         as_user(app, await make_admin(session_factory, seeded))
         provider_id = await self._cortecs_provider(client)
         async with session_factory() as session:
@@ -1231,36 +1146,32 @@ class TestDiscoveryAcrossTags:
             )
             await session.commit()
 
-        body = (
-            await client.get(f"/api/admin/models/discover?provider_id={provider_id}&tag=Instruct")
-        ).json()
+        body = (await client.get(f"/api/admin/models/discover?provider_id={provider_id}")).json()
 
         assert [m["name"] for m in body["missing_upstream"]] == ["retired"]
 
-    async def test_available_stays_scoped_to_the_selected_tag(
+    async def test_a_plugin_without_a_sentinel_is_fetched_plain(
         self,
         app: object,
         client: httpx.AsyncClient,
         seeded: Seeded,
-        catalogue_by_tag: None,
+        catalogue: None,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """The refetch above is for the drift judgement alone — what an
-        operator can *import* stays whatever the selected tag actually
-        offers, never the whole catalogue fetched to judge missing rows."""
+        asked: list[str] = []
+        inner = app.state.control_http._transport  # type: ignore[attr-defined]
+
+        def spy(request: httpx.Request) -> httpx.Response:
+            asked.append(str(request.url))
+            return inner.handle_request(request)
+
+        app.state.control_http = httpx.AsyncClient(  # type: ignore[attr-defined]
+            transport=httpx.MockTransport(spy)
+        )
         as_user(app, await make_admin(session_factory, seeded))
-        provider_id = await self._cortecs_provider(client)
-
-        body = (
-            await client.get(f"/api/admin/models/discover?provider_id={provider_id}&tag=Instruct")
-        ).json()
-
-        # `catalogue_by_tag` answers an unmeasured tag like "Instruct" with an
-        # empty catalogue (only its lower-case "everything" sentinel and no
-        # tag at all return real data) — so nothing is importable under it,
-        # even though the full catalogue behind the drift check is not empty.
-        assert body["available"] == []
-        assert body["provider_model_count"] == len(TAGGED_CATALOGUE["data"])
+        response = await client.get(f"/api/admin/models/discover?provider_id={seeded.provider.id}")
+        assert response.status_code == 200, response.text
+        assert len(asked) == 1 and "tag=" not in asked[0]
 
 
 class TestImport:

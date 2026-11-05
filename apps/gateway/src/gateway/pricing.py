@@ -754,29 +754,6 @@ def facts_by_id(payload: Any) -> dict[str, dict[str, Any]]:
     return facts
 
 
-def tags_in_payload(payload: Any) -> list[str]:
-    """Every distinct tag the entries declare, sorted.
-
-    The vocabulary a counterparty slices its catalogue by, read from the same
-    payload the prices come out of: an entry the pricing code skips still says
-    what slices exist, and the discovery dialog's dropdown wants the whole
-    vocabulary rather than a list compiled by hand — a compiled list goes stale
-    the first time the counterparty adds one.
-
-    Case is preserved where ``_string_list`` lower-cases, and on purpose: these
-    strings go back to the counterparty as a ``tag=`` filter, and the live API
-    matches case-sensitively — ``tag=all`` returns every model while ``tag=All``
-    returns none (measured 2026-09-14,
-    ``scripts/check_cortecs_catalogue_tags.py``). A normalisation here would
-    turn a working filter into an empty catalogue.
-    """
-    tags: set[str] = set()
-    for entry in _catalogue_entries(payload):
-        if isinstance(entry, dict) and isinstance(entry.get("tags"), list):
-            tags.update(str(tag).strip() for tag in entry["tags"] if str(tag).strip())
-    return sorted(tags)
-
-
 def kinds_by_id(payload: Any) -> dict[str, ModelKind]:
     """What kind each entry in a catalogue declares, whether or not it is priced.
 

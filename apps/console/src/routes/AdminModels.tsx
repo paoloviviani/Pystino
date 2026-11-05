@@ -28,7 +28,6 @@ import { formatNumber } from "../lib/format";
 import { Message } from "../components/Message";
 import { m } from "../paraglide/messages.js";
 import {
-  useCatalogueTags,
   useCreateModel,
   useDeleteModel,
   useDiscovery,
@@ -1107,21 +1106,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
   // sources for a provider they had not named yet — and the wrong choice
   // returned an empty screen rather than an explanation.
   const [fillMissing, setFillMissing] = useState(false);
-  // Which slice of the provider's catalogue to ask for.
-  //
-  // Not cosmetic, and the reason it exists is a genuine surprise: Cortecs'
-  // `/v1/models` **defaults to `tag=Instruct`**, so a request that looks
-  // unfiltered is filtered. Eleven embedding models and three OCR models sat in
-  // that endpoint while this console reported the provider offered none of
-  // either. Free text rather than a fixed list, because the vocabulary is the
-  // counterparty's and one compiled here would go stale the first time they
-  // add to it.
-  const [tag, setTag] = useState("");
-  const discovery = useDiscovery(open && providerId ? providerId : null, fillMissing, tag);
-  // The words the dropdown offers, read live from the provider when its plugin
-  // knows how to ask for the whole catalogue (`supported`); free text stays
-  // for the providers that do not.
-  const tags = useCatalogueTags(open && providerId ? providerId : null);
+  const discovery = useDiscovery(open && providerId ? providerId : null, fillMissing);
   const importModels = useImportModels();
   const toast = useOptionalToast();
   const [selected, setSelected] = useState<string[]>([]);
@@ -1332,7 +1317,6 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
                     return manual_price ? { upstream_model, manual_price } : { upstream_model };
                   }),
                   fillMissingPrices: fillMissing,
-                  tag,
                 },
                 {
                   onSuccess: () => {
@@ -1363,11 +1347,6 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           value={providerId}
           onChange={(event) => {
             setProviderId(event.target.value);
-            // A tag is the counterparty's vocabulary — the one that meant
-            // something to the endpoint just left. Carrying it here would ask
-            // this provider for a slice it may not have, and read as an
-            // empty catalogue rather than the mismatch it is.
-            setTag("");
             setSelected([]);
             forgetManualPrices();
           }}
@@ -1379,42 +1358,6 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
             </option>
           ))}
         </Select>
-
-        {tags.data?.supported ? (
-          <Select
-            label={m["admin_models.discover.tag"]()}
-            value={tag}
-            onChange={(event) => {
-              setTag(event.target.value);
-              setSelected([]);
-              forgetManualPrices();
-            }}
-            hint={m["admin_models.discover.tag_hint_live"]()}
-          >
-            {/* The empty choice is not "no tag": it is the provider's own
-                default slice, which for Cortecs is Instruct without saying
-                so. Naming it "default" rather than "none" kept the dropdown
-                honest about what an untagged fetch actually returns. */}
-            <option value="">{m["admin_models.discover.tag_default"]()}</option>
-            {tags.data.tags.map((choice) => (
-              <option key={choice} value={choice}>
-                {choice}
-              </option>
-            ))}
-          </Select>
-        ) : (
-          <Input
-            label={m["admin_models.discover.tag"]()}
-            value={tag}
-            onChange={(event) => {
-              setTag(event.target.value);
-              setSelected([]);
-              forgetManualPrices();
-            }}
-            placeholder={m["admin_models.discover.tag_placeholder"]()}
-            hint={m["admin_models.discover.tag_hint_free"]()}
-          />
-        )}
 
         {/* Off by default: a provider's own catalogue is the authority where one
             exists, and this is only needed for the APIs that publish nothing.

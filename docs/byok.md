@@ -194,8 +194,7 @@ Same operations and payloads as the administrators' (`ProviderCreateRequest`,
 | `GET` / `PATCH` / `DELETE /api/me/models/{id}` | read, change, remove (prices go with it; the ledger keeps its rows) |
 | `GET /api/me/models/{id}/prices` | price history, newest first |
 | `POST /api/me/models/{id}/prices` | append a price row (never edited). Cost is computed at these rows; none means no cost |
-| `GET /api/me/models/discover?provider_id=` | compare the provider's own `/models` with the caller's models; `fill_missing_prices`, `tag` as for administrators; **no `url`** |
-| `GET /api/me/models/tags?provider_id=` | the provider's catalogue tags, where it has any |
+| `GET /api/me/models/discover?provider_id=` | compare the provider's own `/models` with the caller's models; `fill_missing_prices` as for administrators; always the provider's whole catalogue; **no `url`** |
 | `POST /api/me/models/import?provider_id=` | adopt selected models (with the listed price or a `manual_price`); only the allowed kinds import |
 
 Credentials: `ProviderResponse` carries `has_api_key` and a masked
