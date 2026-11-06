@@ -17,11 +17,10 @@ from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.models import UsageRecord, UsageStatus
-from gateway.schemas import TagRequestRow, TagUsageRow
+from gateway.schemas import TagUsageRow
 
-#: Most labels one call may ask about, and most request rows one call returns.
+#: Most labels one call may ask about.
 MAX_TAGS = 100
-MAX_REQUEST_ROWS = 1000
 
 
 def _conditions(
@@ -83,45 +82,3 @@ async def usage_by_tag(
             )
         )
     return out
-
-
-async def requests_by_tag(
-    session: AsyncSession,
-    *,
-    user_id: uuid.UUID,
-    tag: str,
-    currency: str,
-    since: datetime | None = None,
-    until: datetime | None = None,
-    limit: int = MAX_REQUEST_ROWS,
-) -> list[TagRequestRow]:
-    """The newest ``limit`` requests under one tag: when, how many tokens, what cost.
-
-    Enough for a client to bucket a session into turns by its own timestamps.
-    No prompt or completion text, no error message, no request id.
-    """
-    stmt = (
-        select(
-            UsageRecord.created_at,
-            UsageRecord.model_name,
-            UsageRecord.prompt_tokens,
-            UsageRecord.completion_tokens,
-            UsageRecord.cached_prompt_tokens,
-            UsageRecord.cost,
-        )
-        .where(UsageRecord.tag == tag, *_conditions(user_id, since, until))
-        .order_by(UsageRecord.created_at.desc(), UsageRecord.id.desc())
-        .limit(min(limit, MAX_REQUEST_ROWS))
-    )
-    return [
-        TagRequestRow(
-            at=r[0],
-            model=r[1],
-            prompt_tokens=r[2],
-            completion_tokens=r[3],
-            cached_prompt_tokens=r[4],
-            cost=Decimal(str(r[5])),
-            currency=currency,
-        )
-        for r in (await session.execute(stmt)).all()
-    ]

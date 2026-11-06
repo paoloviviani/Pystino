@@ -32,8 +32,8 @@ from gateway.caller_usage import caller_group_usage, caller_limits, caller_usage
 from gateway.deps import PrincipalDep, QuotaDep, SessionDep, SettingsDep
 from gateway.errors import BadRequestError
 from gateway.routers._metered import clean_tag
-from gateway.schemas import PystinoUsageResponse, TagRequestsResponse, TagUsageResponse
-from gateway.tag_usage import MAX_REQUEST_ROWS, MAX_TAGS, requests_by_tag, usage_by_tag
+from gateway.schemas import PystinoUsageResponse, TagUsageResponse
+from gateway.tag_usage import MAX_TAGS, usage_by_tag
 
 router = APIRouter(prefix="/v1/pystino", tags=["pystino"])
 
@@ -100,28 +100,3 @@ async def pystino_usage_by_tag(
         until=until,
     )
     return TagUsageResponse(tags=rows)
-
-
-@router.get("/usage/tags/requests", response_model=TagRequestsResponse)
-async def pystino_requests_by_tag(
-    principal: PrincipalDep,
-    session: SessionDep,
-    settings: SettingsDep,
-    tag: str,
-    since: datetime | None = None,
-    until: datetime | None = None,
-    limit: int = MAX_REQUEST_ROWS,
-) -> TagRequestsResponse:
-    """The caller's newest requests under one tag, for bucketing into turns."""
-    if not 1 <= limit <= MAX_REQUEST_ROWS:
-        raise BadRequestError(f"limit must be between 1 and {MAX_REQUEST_ROWS}.")
-    rows = await requests_by_tag(
-        session,
-        user_id=principal.user.id,
-        tag=_valid_tags([tag])[0],
-        currency=settings.billing_currency,
-        since=since,
-        until=until,
-        limit=limit,
-    )
-    return TagRequestsResponse(requests=rows)

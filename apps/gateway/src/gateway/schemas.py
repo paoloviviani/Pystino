@@ -938,24 +938,6 @@ class TagUsageResponse(ResponseModel):
     tags: list[TagUsageRow]
 
 
-class TagRequestRow(ResponseModel):
-    """One tagged request, metadata only (no text, no request id)."""
-
-    at: datetime
-    model: str
-    prompt_tokens: int
-    completion_tokens: int
-    cached_prompt_tokens: int
-    cost: Money
-    currency: str
-
-
-class TagRequestsResponse(ResponseModel):
-    """``GET /v1/pystino/usage/tags/requests``: newest first, at most 1000."""
-
-    requests: list[TagRequestRow]
-
-
 class MyNotificationThresholdsRequest(BaseModel):
     """Replace the caller's thresholds for one rule. Percentages 1-100."""
 

@@ -130,11 +130,6 @@ class TestTotals:
         ]
         assert len(rows) == 1 and Decimal(rows[0]["cost"]) == Decimal(1)
 
-        listing = await client.get(
-            f"{TAGS}/requests", params={"tag": "shared-name"}, headers=seeded.auth
-        )
-        assert [Decimal(r["cost"]) for r in listing.json()["requests"]] == [Decimal(1)]
-
     async def test_byok_and_in_flight_rows_are_left_out(
         self, client: Any, seeded: Seeded, session: AsyncSession
     ) -> None:
@@ -171,34 +166,3 @@ class TestTotals:
     ) -> None:
         response = await client.get(TAGS, params=params, headers=seeded.auth)
         assert response.status_code in (400, 422)
-
-
-class TestRequests:
-    async def test_it_lists_newest_first_without_text(
-        self, client: Any, seeded: Seeded, session: AsyncSession
-    ) -> None:
-        now = datetime.now(UTC)
-        uid = seeded.user.id
-        await tagged(session, uid, "s", cost="1", at=now - timedelta(minutes=2))
-        await tagged(session, uid, "s", cost="2", at=now - timedelta(minutes=1))
-        response = await client.get(
-            f"{TAGS}/requests", params={"tag": "s", "limit": 1}, headers=seeded.auth
-        )
-        assert response.status_code == 200, response.text
-        rows = response.json()["requests"]
-        assert len(rows) == 1 and Decimal(rows[0]["cost"]) == Decimal(2)
-        assert set(rows[0]) == {
-            "at",
-            "model",
-            "prompt_tokens",
-            "completion_tokens",
-            "cached_prompt_tokens",
-            "cost",
-            "currency",
-        }
-
-    async def test_an_out_of_range_limit_is_refused(self, client: Any, seeded: Seeded) -> None:
-        response = await client.get(
-            f"{TAGS}/requests", params={"tag": "s", "limit": 5000}, headers=seeded.auth
-        )
-        assert response.status_code == 400
