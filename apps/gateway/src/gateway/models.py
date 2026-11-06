@@ -1604,6 +1604,7 @@ class UsageRecord(Base):
         Index("ix_usage_key_created", "api_key_id", "created_at"),
         Index("ix_usage_created", "created_at"),
         Index("ix_usage_status", "status"),
+        Index("ix_usage_user_tag_created", "user_id", "tag", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -1649,6 +1650,13 @@ class UsageRecord(Base):
     route_attempt: Mapped[int | None] = mapped_column(Integer, default=None)
 
     streamed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    #: A label the caller put on the request (``x-pystino-tag``), so it can ask
+    #: for its own usage by label later (a coding agent tags a session). Opaque
+    #: to the gateway: stored as sent (printable ASCII, 128 characters at most),
+    #: never used to authorise anything, and only ever read back under the
+    #: owner's own ``user_id``.
+    tag: Mapped[str | None] = mapped_column(String(128), default=None)
 
     #: Served by the caller's own provider and key (BYOK). Recorded for the
     #: caller's information only: such a row is never counted by a quota, and

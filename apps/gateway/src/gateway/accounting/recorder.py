@@ -164,6 +164,9 @@ class RequestContext:
     #: and nothing else: no quota counts it and no group or administrator
     #: report adds it up (see `UsageRecord.byok`).
     byok: bool = False
+    #: The caller's own label for the request (`x-pystino-tag`), already
+    #: validated by `clean_tag`.
+    tag: str | None = None
 
 
 if TYPE_CHECKING:
@@ -270,6 +273,7 @@ class RequestAccounting:
             requested_model=self._ctx.requested_model,
             route_attempt=self._ctx.route_attempt,
             byok=self._ctx.byok,
+            tag=self._ctx.tag,
             streamed=self._ctx.streamed,
             api_surface=self._ctx.surface,
             currency=self._ctx.currency,

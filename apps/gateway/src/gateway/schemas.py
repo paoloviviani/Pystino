@@ -918,6 +918,26 @@ class PystinoUsageResponse(ResponseModel):
     groups: dict[str, UsageSummaryResponse]
 
 
+class TagUsageRow(ResponseModel):
+    """One label's total: what the gateway metered for the caller's tagged requests."""
+
+    tag: str
+    requests: int
+    prompt_tokens: int
+    completion_tokens: int
+    cached_prompt_tokens: int
+    cost: Money
+    currency: str
+    first_at: datetime
+    last_at: datetime
+
+
+class TagUsageResponse(ResponseModel):
+    """``GET /v1/pystino/usage/tags``: one row per asked-for tag that has usage."""
+
+    tags: list[TagUsageRow]
+
+
 class MyNotificationThresholdsRequest(BaseModel):
     """Replace the caller's thresholds for one rule. Percentages 1-100."""
 

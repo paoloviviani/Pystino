@@ -9395,6 +9395,79 @@
         "title": "SyncRequest",
         "type": "object"
       },
+      "TagUsageResponse": {
+        "description": "``GET /v1/pystino/usage/tags``: one row per asked-for tag that has usage.",
+        "properties": {
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagUsageRow"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tags"
+        ],
+        "title": "TagUsageResponse",
+        "type": "object"
+      },
+      "TagUsageRow": {
+        "description": "One label's total: what the gateway metered for the caller's tagged requests.",
+        "properties": {
+          "cached_prompt_tokens": {
+            "title": "Cached Prompt Tokens",
+            "type": "integer"
+          },
+          "completion_tokens": {
+            "title": "Completion Tokens",
+            "type": "integer"
+          },
+          "cost": {
+            "title": "Cost",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "first_at": {
+            "format": "date-time",
+            "title": "First At",
+            "type": "string"
+          },
+          "last_at": {
+            "format": "date-time",
+            "title": "Last At",
+            "type": "string"
+          },
+          "prompt_tokens": {
+            "title": "Prompt Tokens",
+            "type": "integer"
+          },
+          "requests": {
+            "title": "Requests",
+            "type": "integer"
+          },
+          "tag": {
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag",
+          "requests",
+          "prompt_tokens",
+          "completion_tokens",
+          "cached_prompt_tokens",
+          "cost",
+          "currency",
+          "first_at",
+          "last_at"
+        ],
+        "title": "TagUsageRow",
+        "type": "object"
+      },
       "UsageReport": {
         "properties": {
           "currency": {
@@ -19207,6 +19280,86 @@
           }
         },
         "summary": "Pystino Usage",
+        "tags": [
+          "pystino"
+        ]
+      }
+    },
+    "/v1/pystino/usage/tags": {
+      "get": {
+        "description": "What the gateway metered for the caller's requests that carried these tags.\n\nA tag is the ``x-pystino-tag`` header a client put on its requests. Only the\ncaller's own requests are ever read: the filter on the user is not a\nparameter, so another user's tag of the same name returns nothing. Gateway\nusage only (bring-your-own-key rows and requests still running are left\nout), the figure a quota counts.",
+        "operationId": "pystino_usage_by_tag_v1_pystino_usage_tags_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tag",
+            "required": true,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Tag",
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagUsageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pystino Usage By Tag",
         "tags": [
           "pystino"
         ]

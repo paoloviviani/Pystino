@@ -3362,6 +3362,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/pystino/usage/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pystino Usage By Tag
+         * @description What the gateway metered for the caller's requests that carried these tags.
+         *
+         *     A tag is the ``x-pystino-tag`` header a client put on its requests. Only the
+         *     caller's own requests are ever read: the filter on the user is not a
+         *     parameter, so another user's tag of the same name returns nothing. Gateway
+         *     usage only (bring-your-own-key rows and requests still running are left
+         *     out), the figure a quota counts.
+         */
+        get: operations["pystino_usage_by_tag_v1_pystino_usage_tags_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/responses": {
         parameters: {
             query?: never;
@@ -7209,6 +7235,44 @@ export interface components {
              * @default false
              */
             force?: boolean;
+        };
+        /**
+         * TagUsageResponse
+         * @description ``GET /v1/pystino/usage/tags``: one row per asked-for tag that has usage.
+         */
+        TagUsageResponse: {
+            /** Tags */
+            tags: components["schemas"]["TagUsageRow"][];
+        };
+        /**
+         * TagUsageRow
+         * @description One label's total: what the gateway metered for the caller's tagged requests.
+         */
+        TagUsageRow: {
+            /** Cached Prompt Tokens */
+            cached_prompt_tokens: number;
+            /** Completion Tokens */
+            completion_tokens: number;
+            /** Cost */
+            cost: string;
+            /** Currency */
+            currency: string;
+            /**
+             * First At
+             * Format: date-time
+             */
+            first_at: string;
+            /**
+             * Last At
+             * Format: date-time
+             */
+            last_at: string;
+            /** Prompt Tokens */
+            prompt_tokens: number;
+            /** Requests */
+            requests: number;
+            /** Tag */
+            tag: string;
         };
         /** UsageReport */
         UsageReport: {
@@ -12675,6 +12739,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PystinoUsageResponse"];
+                };
+            };
+        };
+    };
+    pystino_usage_by_tag_v1_pystino_usage_tags_get: {
+        parameters: {
+            query: {
+                tag: string[];
+                since?: string | null;
+                until?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TagUsageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

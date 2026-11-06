@@ -944,6 +944,7 @@ async def begin(
     search_backend: str | None = None,
     outcome: RedactionOutcome | None = None,
     streamed: bool = False,
+    tag: str | None = None,
 ) -> Metered | JSONResponse:
     """Reserve the worst case, then open the usage row. In that order.
 
@@ -1012,6 +1013,7 @@ async def begin(
             plugin=resolved.provider.plugin,
             billing_mode=resolved.provider.billing_mode.value,
             byok=model.is_private,
+            tag=tag,
         ),
         session_factory=session_factory,
         settings=settings,
@@ -1111,6 +1113,30 @@ async def redact_or_block(
         )
         await session.commit()
         raise
+
+
+#: The header a caller labels a request with, and the longest label kept.
+TAG_HEADER = "x-pystino-tag"
+MAX_TAG_LENGTH = 128
+
+
+def clean_tag(raw: str | None) -> str | None:
+    """A caller's label, or None when it is absent or not a plain label.
+
+    Printable ASCII only, trimmed. A label that is too long or carries anything
+    else is dropped rather than truncated or rejected: a label is bookkeeping
+    for the caller, and a request must never fail because of one.
+    """
+    if raw is None:
+        return None
+    tag = raw.strip()
+    if not tag or len(tag) > MAX_TAG_LENGTH or not all(" " <= c <= "~" for c in tag):
+        return None
+    return tag
+
+
+def tag_for(request: Request) -> str | None:
+    return clean_tag(request.headers.get(TAG_HEADER))
 
 
 def request_id_for(request: Request, settings: Settings) -> str:
