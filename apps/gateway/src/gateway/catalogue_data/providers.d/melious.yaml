@@ -1,0 +1,43 @@
+# Built-in facts, read from the provider's own pages on 2026-11-06 (see sources). Only what
+# the provider states is recorded; where it does not say, the value is left null
+# or marked not published, never guessed. Re-verify before relying on it.
+providers:
+  - id: melious
+    name: Melious
+    plugin: melious
+    base_url: https://api.melious.ai/v1
+    region: eu
+    region_note: >-
+      Melious says every inference request runs on a provider inside the EU,
+      that the request and response never leave it, and that there is no
+      non-EU fallback when capacity is tight. It is a network of inference
+      providers (observed in responses: OVHcloud in France, Melious itself in
+      Finland); which one serves a request is Melious's choice. The company is
+      Melious AI GmbH, Saarbruecken, Germany. A narrower guarantee (for
+      example Germany only) is available on request.
+    retention:
+      status: published
+      zero_data_retention_available: false
+      trains_on_customer_data: false
+      note: >-
+        Melious says it does not log the content of prompts or responses, only
+        operational metadata (request id, token counts, model, provider, energy
+        and cost). A provider on its network may keep short-lived operational
+        logs for stability monitoring; none retains content to train on, and
+        none of it leaves the EU. Files uploaded to its Files API are stored
+        encrypted until deleted (the gateway does not use that API). No
+        retention period is published. For GDPR specifics Melious points to
+        its DPA.
+    sources:
+      - url: https://melious.ai/docs/concepts/privacy
+        retrieved: 2026-11-06
+        covers: location, retention, training
+      - url: https://melious.ai/docs/concepts/pricing
+        retrieved: 2026-11-06
+        covers: billing currency (credits are EUR)
+      - url: https://melious.ai/docs/reference/systemone
+        retrieved: 2026-11-06
+        covers: decision models (System One)
+    # No price hints: GET /v1/models?include_meta=true lists each model's EUR price
+    # (per million tokens, per image, per minute), and discovery reads them from
+    # there (plugins/melious.py), so there is no table here to go stale.

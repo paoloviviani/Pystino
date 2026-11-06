@@ -34,7 +34,7 @@ nothing here a plugin could return that would let it price a request.
 from __future__ import annotations
 
 import enum
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -199,6 +199,22 @@ class DecisionSupport:
     #: EU-only deployment's first. A field whose value is ``null`` counts as
     #: absent and is dropped.
     routing_fields: tuple[str, ...] = ()
+    #: For a provider that serves only the System One form: how an ``input``
+    #: form request to ``/v1/decisions`` becomes one and the answer comes back
+    #: in the ``input`` form's shape, so a caller (Cerea's reviewer) needs no
+    #: second client. ``to_upstream`` takes the (already redacted) body and
+    #: returns the upstream body plus whatever ``from_upstream`` needs to map
+    #: the answer back; it raises ``BadRequestError`` for a question it cannot
+    #: express. ``None``: the ``input`` form is forwarded as it came.
+    input_form: InputFormAdapter | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class InputFormAdapter:
+    """The two halves of serving the ``input`` form from a System One provider."""
+
+    to_upstream: Callable[[dict[str, Any]], tuple[dict[str, Any], Any]]
+    from_upstream: Callable[[dict[str, Any], Any], dict[str, Any]]
 
 
 def bearer_headers(credential: str) -> dict[str, str]:

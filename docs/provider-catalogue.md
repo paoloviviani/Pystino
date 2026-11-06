@@ -187,9 +187,9 @@ residency and zero-data-retention rules are a later step.
 
 ## The built-in entries
 
-OpenAI, Anthropic, Mistral, Nebius, Tensorix, Cortecs and OpenRouter ship
-built in. They state a region only where the provider commits to one (Mistral
-and Cortecs: `eu`) and no retention claims at all: those are for you to record
+OpenAI, Anthropic, Mistral, Nebius, Melious, Tensorix, Cortecs and OpenRouter ship
+built in. They state a region only where the provider commits to one (Mistral,
+Melious and Cortecs: `eu`) and no retention claims at all: those are for you to record
 from your own contract, in an override.
 
 ## Built-in facts: what they claim
@@ -214,3 +214,31 @@ differs" and a **Use catalogue endpoint** button; or edit the provider and set
 the endpoint by hand. Region and retention, which are read through the link,
 follow the new entry at once, so check that the row's endpoint matches what the
 entry now claims.
+
+## Melious
+
+Melious (`https://api.melious.ai/v1`) is a vendor entry on the OpenAI-compatible
+protocol, like Nebius: its provider type is the protocol, and the `melious`
+plugin carries what is particular to it.
+
+- **Catalogue.** Discovery asks `GET /v1/models?include_meta=true`, where each
+  model carries its own type, modalities, context length, capabilities and EUR
+  price (per million tokens, per image, per minute). Kinds, limits and prices
+  therefore come from Melious itself and there is no price table to go stale.
+  Types the gateway has no surface for are left out: the reranker
+  (`/v1/rerank`) and any type added later until it has been measured.
+- **Decision models** (`clef`, `clef-flash`) exist upstream on `/v1/systemone`
+  only. The gateway serves both its routes: `/v1/systemone` passes through, and
+  `/v1/decisions` with the `input` form (predicate, choice and score questions)
+  is translated to System One and the answer translated back, so a client
+  written for the Cortecs shape (Cerea's reviewer) works unchanged. A predicate
+  is a `noul` question; `choices` and `levels` become `criteria`. Only
+  `model`, the text and the questions are sent (`preference` has no Melious
+  counterpart), and a question type outside predicate, choice and score is a
+  400 on `/v1/decisions` naming it.
+- **Billing.** The gateway bills from the configured prices. Melious reports
+  euro credits beside `usage` in `billing_cost`; the gateway does not read it.
+- **Region.** `eu`: Melious says every request is processed inside the EU, with
+  no fallback outside it, and that it does not log prompt or response content or
+  train on traffic. `scripts/check_melious_live.py` re-checks each kind, and the
+  translation, against a real key.
