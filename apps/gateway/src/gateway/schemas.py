@@ -131,6 +131,23 @@ class EmbeddingRequest(BaseModel):
         return [self.input] if isinstance(self.input, str) else list(self.input)
 
 
+class RerankRequest(BaseModel):
+    """``POST /v1/rerank``: the Cohere and Jina shape.
+
+    Only what the gateway acts on is declared; other fields pass through. The
+    documents are strings or ``{"text": ...}`` objects (both spellings are in
+    use), and are sent upstream as plain strings, which every reranker takes.
+    """
+
+    model_config = ConfigDict(extra="allow", protected_namespaces=())
+
+    model: str
+    query: str
+    documents: list[str | dict[str, Any]]
+    top_n: int | None = None
+    return_documents: bool | None = None
+
+
 class DecisionsRequest(BaseModel):
     """``POST /v1/decisions`` and ``POST /v1/systemone`` (ADR 0100).
 
@@ -1288,9 +1305,9 @@ class ModelCreateRequest(BaseModel):
     # Which endpoint serves it. Required: a model with no provider cannot be
     # routed, and defaulting one would guess at spending money (ADR 0027).
     provider_id: uuid.UUID
-    kind: Literal["chat", "embedding", "image", "ocr", "transcription", "search", "decision"] = (
-        "chat"
-    )
+    kind: Literal[
+        "chat", "embedding", "image", "ocr", "transcription", "search", "decision", "rerank"
+    ] = "chat"
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
@@ -1323,7 +1340,10 @@ class ModelUpdateRequest(BaseModel):
     # it. Historical usage rows record the surface they actually went through,
     # so correcting this does not make past spend unreadable (ADR 0030).
     kind: (
-        Literal["chat", "embedding", "image", "ocr", "transcription", "search", "decision"] | None
+        Literal[
+            "chat", "embedding", "image", "ocr", "transcription", "search", "decision", "rerank"
+        ]
+        | None
     ) = None
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None

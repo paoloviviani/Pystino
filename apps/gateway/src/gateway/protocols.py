@@ -1071,6 +1071,9 @@ _READERS: dict[ApiSurface, SurfaceProtocol] = {
     ApiSurface.TRANSCRIPTION: TranscriptionReader(),
     ApiSurface.SEARCH: SearchReader(),
     ApiSurface.DECISIONS: DecisionsReader(),
+    # The route normalises the reply's usage to the Chat Completions spelling
+    # (`rerank.py`), so the embeddings reader reads it.
+    ApiSurface.RERANK: ChatCompletionsReader(),
 }
 
 

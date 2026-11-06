@@ -484,6 +484,7 @@ function Describe({ model }: { model: AdminModel }) {
           <option value="embedding">
             {m["model_detail.kind.embedding"]()}
           </option>
+          <option value="rerank">{m["model_detail.kind.rerank"]()}</option>
           <option value="image">{m["model_detail.kind.image"]()}</option>
           <option value="transcription">
             {m["model_detail.kind.transcription"]()}

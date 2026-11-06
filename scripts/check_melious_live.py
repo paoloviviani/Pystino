@@ -74,6 +74,7 @@ async def main() -> None:
             "flux-2-klein-4b": ModelKind.IMAGE,
             "whisper-large-v3-turbo": ModelKind.TRANSCRIPTION,
             "clef-flash": ModelKind.DECISION,
+            "qwen3-reranker-4b": ModelKind.RERANK,
             "mistral-small-3.2-24b-instruct": ModelKind.CHAT,
         }.items():
             check(f"{model} is {want.value}", kinds.get(model) is want, str(kinds.get(model)))
@@ -82,7 +83,7 @@ async def main() -> None:
         check("image priced per image", (prices["flux-2-klein-4b"].per_image or 0) > 0)
         check("whisper priced per minute", (prices["whisper-large-v3-turbo"].per_minute or 0) > 0)
         check("decision model priced", prices["clef-flash"].input_per_mtok > 0)
-        check("the reranker is left out", not any("rerank" in m for m in kinds))
+        check("reranker priced per input token", prices["qwen3-reranker-4b"].input_per_mtok > 0)
         check(
             "every listed model is classified or deliberately left out",
             len(kinds) >= len(listed) - 2,
@@ -132,11 +133,28 @@ async def main() -> None:
         print("embeddings, rerank, images, audio")
         r = await post("/embeddings", json={"model": "bge-m3", "input": "hello"})
         check("embeddings", r.status_code == 200 and bool(r.json()["data"][0]["embedding"]))
+        docs = ["Paris is the capital of France.", "Berlin is in Germany.", "Bananas are yellow."]
         r = await post(
             "/rerank",
-            json={"model": "qwen3-reranker-4b", "query": "a", "documents": ["a", "b"]},
+            json={"model": "qwen3-reranker-4b", "query": "capital of France?", "documents": docs},
         )
-        check("rerank at /v1/rerank (no gateway surface)", r.status_code == 200, str(r.status_code))
+        check("rerank at /v1/rerank", r.status_code == 200, str(r.status_code))
+        if r.status_code == 200:
+            from gateway import rerank as shape
+
+            upstream = r.json()
+            check("usage is null; tokens come from meta", upstream.get("usage") is None)
+            check("meta reports tokens", (shape.reported_prompt_tokens(upstream) or 0) > 0)
+            reply = shape.reply(
+                upstream,
+                texts=docs,
+                top_n=2,
+                return_documents=False,
+                model="qwen3-reranker-4b",
+                prompt_tokens=0,
+            )
+            check("normalised: best first, no documents", reply["results"][0]["index"] == 0)
+            check("normalised: top_n and no echo", len(reply["results"]) == 2)
         r = await post(
             "/images/generations",
             json={"model": "flux-2-klein-4b", "prompt": "a red dot", "size": "512x512"},

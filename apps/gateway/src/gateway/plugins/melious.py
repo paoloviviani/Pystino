@@ -19,9 +19,10 @@ Three findings drive the code:
   of predicate, choice and score questions), so the plugin translates it
   (``DecisionSupport.input_form``) and translates the answer back; a System One
   caller passes through untouched on either route.
-* **Reranking is ``POST /v1/rerank``**, which this gateway has no surface for, so
-  the reranker is left out of discovery rather than offered as a ``chat`` model
-  that cannot work.
+* **Reranking is ``POST /v1/rerank``** and is discovered as kind ``rerank``
+  (``type: "reranker"``, priced ``input_cost_per_million_eur``). Its reply
+  carries ``usage: null`` and the token count in ``meta.billed_units`` /
+  ``meta.tokens``; ``gateway.rerank`` reads it from there.
 
 Chat, streaming (usage on the last frame without asking), tool calls, reasoning
 (``reasoning_content``), embeddings, images (base64 only) and
@@ -44,15 +45,15 @@ from gateway.plugins.generic import GenericOpenAIPlugin
 if TYPE_CHECKING:
     import httpx
 
-#: Melious's ``_meta.type`` to what the catalogue parser reads. ``reranker`` is
-#: absent on purpose (see the module docstring); so is anything it adds later,
-#: which stays out until someone has measured what it is.
-_TEXT, _EMBED, _IMAGE = ["text"], ["embeddings"], ["image"]
+#: Melious's ``_meta.type`` to what the catalogue parser reads. Anything it
+#: adds later stays out until someone has measured what it is.
+_TEXT, _EMBED, _IMAGE, _RERANK = ["text"], ["embeddings"], ["image"], ["rerank"]
 _OUTPUT_BY_TYPE: dict[str, list[str]] = {
     "chat": _TEXT,
     "guardrail": _TEXT,  # answers on /chat/completions ("Safety: Safe")
     "embeddings": _EMBED,
     "image": _IMAGE,
+    "reranker": _RERANK,
 }
 _TAGS_BY_TYPE = {"audio": ["Transcription"], "decision": ["Decision"]}
 

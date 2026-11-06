@@ -225,8 +225,12 @@ plugin carries what is particular to it.
   model carries its own type, modalities, context length, capabilities and EUR
   price (per million tokens, per image, per minute). Kinds, limits and prices
   therefore come from Melious itself and there is no price table to go stale.
-  Types the gateway has no surface for are left out: the reranker
-  (`/v1/rerank`) and any type added later until it has been measured.
+  The reranker (`type: "reranker"`, priced per million input tokens) is kind
+  **rerank**; a type added later is left out until it has been measured.
+- **Reranking** is `POST /v1/rerank` on both sides, and the gateway normalises
+  the replies ([Reranking](gateway.md#reranking-v1rerank)): Melious reports
+  `usage: null` with the token count in `meta.billed_units`, and returns the
+  documents unless told not to.
 - **Decision models** (`clef`, `clef-flash`) exist upstream on `/v1/systemone`
   only. The gateway serves both its routes: `/v1/systemone` passes through, and
   `/v1/decisions` with the `input` form (predicate, choice and score questions)
@@ -236,7 +240,8 @@ plugin carries what is particular to it.
   `model`, the text and the questions are sent (`preference` has no Melious
   counterpart), and a question type outside predicate, choice and score is a
   400 on `/v1/decisions` naming it.
-- **Billing.** The gateway bills from the configured prices. Melious reports
+- **Billing.** The gateway bills from the configured prices (a reranker by the
+  tokens in `meta`). Melious reports
   euro credits beside `usage` in `billing_cost`; the gateway does not read it.
 - **Region.** `eu`: Melious says every request is processed inside the EU, with
   no fallback outside it, and that it does not log prompt or response content or

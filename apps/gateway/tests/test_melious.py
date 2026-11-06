@@ -128,8 +128,9 @@ class TestDiscovery:
             "flux-2-dev": ModelKind.IMAGE,
             "whisper-large-v3": ModelKind.TRANSCRIPTION,
             "clef-flash": ModelKind.DECISION,
+            "qwen3-reranker-4b": ModelKind.RERANK,
         }
-        # The reranker (no surface here) and a type nobody has measured stay out.
+        # A type nobody has measured stays out.
 
     async def test_prices_limits_and_features_come_with_each_model(self) -> None:
         payload, _ = await discovered()
@@ -147,6 +148,9 @@ class TestDiscovery:
         assert by_id["whisper-large-v3"].per_minute == Decimal("0.003")
         assert by_id["clef-flash"].input_per_mtok == Decimal("0.03")
         assert facts_by_id(payload)["clef-flash"]["kind"] is ModelKind.DECISION
+        reranker = by_id["qwen3-reranker-4b"]
+        assert reranker.input_per_mtok == Decimal("0.15") and reranker.output_per_mtok == 0
+        assert facts_by_id(payload)["qwen3-reranker-4b"]["kind"] is ModelKind.RERANK
 
 
 # -- /v1/decisions on System One ---------------------------------------------------

@@ -11,6 +11,7 @@ per-group model availability and a pluggable redaction layer.
 | `POST /v1/responses` | key or bearer | OpenAI's Responses API. Server-side conversation state (`previous_response_id`, `store`) is refused |
 | `POST /v1/messages` | key or bearer | Anthropic's Messages API, over the same chat models |
 | `POST /v1/embeddings` | key or bearer | Embeddings, metered and redacted like a completion |
+| `POST /v1/rerank` | key or bearer | [Reranking](#reranking-v1rerank): score documents against a query (Cohere and Jina's shape), metered per input token, query and documents redacted like embedding input |
 | `POST /v1/decisions`, `POST /v1/systemone` | key or bearer | [Decision models](decision-models.md): typed questions about a text, answered with calibrated probabilities. Metered per token, redacted, the request and the answer passed through in the format they arrived in |
 | `POST /v1/images/generations` | key or bearer | Image generation, billed per picture or per token depending on the model |
 | `POST /v1/ocr` | key or bearer | Document extraction, metered per page. Two backends: an upstream OCR model, or this deployment's own extractor |
@@ -33,8 +34,8 @@ per-group model availability and a pluggable redaction layer.
 
 Every metered `/v1` route shares one metering path — `routers/_metered.py` — so
 resolve → reserve → record → settle cannot drift between surfaces.
-Nine routers import it today: chat, responses, messages, embeddings, images,
-ocr, transcription, search and decisions.
+Ten routers import it today: chat, responses, messages, embeddings, rerank,
+images, ocr, transcription, search and decisions.
 `_metered.begin` takes `fx` and `session_factory` rather than a `Request`, so
 code with no request can bill through the same path: a second copy of the money
 code would make that spend invisible to every report. Knowledge-base ingestion
@@ -175,7 +176,7 @@ same amounts and money-as-string shape the model page's price form posts
 OCR model, `per_image` and `per_extra_megapixel` for an image model, and an optional `currency` that defaults to the gateway's billing
 currency and is refused in any other, never converted). The price must carry
 the rates the kind is metered on — a chat model an input and an output rate, an
-embedding model an input rate, a decision model an input and an output rate (zero is accepted, absent is not), an OCR model a page rate, a transcription model a rate per minute of audio (`per_minute`), an image model a `per_image` or an input rate; a search tier takes no
+embedding or rerank model an input rate, a decision model an input and an output rate (zero is accepted, absent is not), an OCR model a page rate, a transcription model a rate per minute of audio (`per_minute`), an image model a `per_image` or an input rate; a search tier takes no
 model price at all: a search backend is priced per request on the Web search screen instead. Each kind's missing rate is
 refused per item, so one bad price does not lose the rest of the batch.
 
@@ -313,6 +314,56 @@ Sonnet 4.5):
 ```bash
 ANTHROPIC_API_KEY=... uv run pytest apps/gateway/tests/test_anthropic_chat_live.py -s
 ```
+
+## Reranking: `/v1/rerank`
+
+A model of kind **rerank** is served by `POST /v1/rerank`, in the shape Cohere
+and Jina made the standard. A model of another kind is refused with a 400 naming
+the route that serves it, and a rerank model is refused on the other routes.
+
+```json
+{"model": "qwen3-reranker-4b", "query": "capital of France?",
+ "documents": ["Paris is the capital of France.", {"text": "Berlin is in Germany."}],
+ "top_n": 1, "return_documents": true}
+```
+
+```json
+{"id": "score-1", "model": "qwen3-reranker-4b",
+ "results": [{"index": 0, "relevance_score": 0.96, "document": {"text": "Paris is the capital of France."}}],
+ "usage": {"prompt_tokens": 251, "total_tokens": 251}}
+```
+
+| Field | Meaning |
+|---|---|
+| `query` | Required, non-empty |
+| `documents` | Required, 1 to `GATEWAY_RERANK__MAX_DOCUMENTS` (1000) strings or `{"text": ...}` objects, none empty; the query and documents together at most `GATEWAY_RERANK__MAX_TOTAL_BYTES` (2 MiB of UTF-8). Over a limit, or malformed: 400, naming the field or index |
+| `top_n` | Optional, at least 1; the results are cut to it (more than the document count is the document count) |
+| `return_documents` | Optional, default `false`: each result carries `document: {"text": ...}`, taken from **your** documents by `index` |
+| other fields | Passed to the provider as sent |
+
+`results` are ordered by descending `relevance_score`; `index` is the position
+of the document in the request. The gateway normalises what providers disagree
+on: documents always go upstream as plain strings (Cortecs refuses objects),
+`return_documents` is applied here whatever the provider does with it (Melious
+honours it, Cortecs ignores it), and the reply's `usage` is read from wherever
+the provider puts it (Cortecs: `usage`; Melious: `usage: null` and
+`meta.billed_units.total_tokens`).
+
+**Metering and pricing.** Per input token, at the model's input rate (a rerank
+model needs no output rate; scores are not text). The settled figure is the
+provider's reported count; when it reports none, the estimate is used and
+recorded as such, as for embeddings. The reservation counts the query once per
+document, because the provider scores each pair. No provider seen prices per
+search, so there is no per-search rate. `kind` is discovered from Cortecs
+(`Rerank` tag, `output_modalities: ["rerank"]`) and Melious (`type: "reranker"`),
+listed by `GET /v1/models` (`kind: "rerank"`; `?include=rerank` for just these)
+and addable by hand in the console (Models, kind Rerank) and, for a private
+provider, by a user.
+
+**Redaction** applies to the query and every document, as to embedding input:
+the redacted text is what leaves, placeholders are deterministic so a query and
+the documents it names agree, and the reply's `document` is your own text, not
+the provider's.
 
 ## Speech to text: `/v1/audio/transcriptions`
 

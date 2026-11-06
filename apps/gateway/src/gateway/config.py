@@ -1004,6 +1004,22 @@ class TranscriptionSettings(BaseModel):
     allowed_under_redaction: bool = True
 
 
+class RerankSettings(BaseModel):
+    """Reranking (`POST /v1/rerank`): the bounds on one call.
+
+    A reranker scores every document against the query, so cost and latency
+    grow with what is sent; these keep one request from monopolising an
+    upstream. Both are refused with a 400 naming the limit.
+    """
+
+    #: Most documents per call (``GATEWAY_RERANK__MAX_DOCUMENTS``). 1000 is
+    #: Cohere's ceiling, which is what clients are written against.
+    max_documents: int = Field(default=1000, gt=0)
+    #: Most text per call, query and documents together, in UTF-8 bytes
+    #: (``GATEWAY_RERANK__MAX_TOTAL_BYTES``). 2 MiB by default.
+    max_total_bytes: int = Field(default=2 * 1024 * 1024, gt=0)
+
+
 class RedactionSettings(BaseModel):
     """Redaction/guardrail layer.
 
@@ -1281,6 +1297,7 @@ class Settings(BaseSettings):
     redaction: RedactionSettings = Field(default_factory=RedactionSettings)
     extractor: ExtractorSettings = Field(default_factory=ExtractorSettings)
     transcription: TranscriptionSettings = Field(default_factory=TranscriptionSettings)
+    rerank: RerankSettings = Field(default_factory=RerankSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
     accounting: AccountingSettings = Field(default_factory=AccountingSettings)
     anthropic: AnthropicSettings = Field(default_factory=AnthropicSettings)

@@ -64,6 +64,7 @@ from gateway.routers import (
     models,
     ocr,
     pystino,
+    rerank,
     scim,
     search,
     transcription,
@@ -456,6 +457,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(chat.router)
     app.include_router(decisions.router)
     app.include_router(embeddings.router)
+    app.include_router(rerank.router)
     app.include_router(responses_router.router)
     app.include_router(messages.router)
     app.include_router(images.router)
