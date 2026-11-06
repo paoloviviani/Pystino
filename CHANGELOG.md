@@ -4,6 +4,8 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **Label requests, read back your own usage by label.** A `/v1` request (chat completions, responses, messages) may carry an `x-pystino-tag` header (printable ASCII, at most 128 characters; an invalid one is ignored); the usage row stores it (migration 0079). `GET /v1/pystino/usage/tags?tag=…` returns the caller's own totals per tag and `GET /v1/pystino/usage/tags/requests?tag=…` the newest requests under one tag (time, tokens, cost), optionally between `since` and `until`. Only the caller's own requests are ever read; bring-your-own-key and in-flight requests are left out. Cerea's coding agent uses it to show a session's and a turn's cost as metered by the gateway.
+
 ## v0.27.0 — 2026-11-05
 
 Paired with Cerea 0.41.0.

@@ -273,6 +273,7 @@ async def chat_completions(
             resolved=resolved,
             surface=SURFACE,
             request_id=request_id,
+            tag=_metered.tag_for(request),
             worst_case=worst_case,
             outcome=outcome,
             streamed=body.stream,

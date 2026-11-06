@@ -23,11 +23,17 @@ numbers.
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from datetime import datetime
+from typing import Annotated
+
+from fastapi import APIRouter, Query
 
 from gateway.caller_usage import caller_group_usage, caller_limits, caller_usage
 from gateway.deps import PrincipalDep, QuotaDep, SessionDep, SettingsDep
-from gateway.schemas import PystinoUsageResponse
+from gateway.errors import BadRequestError
+from gateway.routers._metered import clean_tag
+from gateway.schemas import PystinoUsageResponse, TagRequestsResponse, TagUsageResponse
+from gateway.tag_usage import MAX_REQUEST_ROWS, MAX_TAGS, requests_by_tag, usage_by_tag
 
 router = APIRouter(prefix="/v1/pystino", tags=["pystino"])
 
@@ -59,3 +65,63 @@ async def pystino_usage(
     usage = await caller_usage(session, user_id=user.id, settings=settings)
     groups = await caller_group_usage(session, group_ids=group_ids, settings=settings)
     return PystinoUsageResponse(limits=limits, usage=usage, groups=groups)
+
+
+def _valid_tags(tags: list[str]) -> list[str]:
+    cleaned = [clean_tag(t) for t in tags]
+    if not tags or len(tags) > MAX_TAGS or any(t is None for t in cleaned):
+        raise BadRequestError(f"Give between 1 and {MAX_TAGS} valid tags.")
+    return [t for t in cleaned if t is not None]
+
+
+@router.get("/usage/tags", response_model=TagUsageResponse)
+async def pystino_usage_by_tag(
+    principal: PrincipalDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    tag: Annotated[list[str], Query()],
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> TagUsageResponse:
+    """What the gateway metered for the caller's requests that carried these tags.
+
+    A tag is the ``x-pystino-tag`` header a client put on its requests. Only the
+    caller's own requests are ever read: the filter on the user is not a
+    parameter, so another user's tag of the same name returns nothing. Gateway
+    usage only (bring-your-own-key rows and requests still running are left
+    out), the figure a quota counts.
+    """
+    rows = await usage_by_tag(
+        session,
+        user_id=principal.user.id,
+        tags=_valid_tags(tag),
+        currency=settings.billing_currency,
+        since=since,
+        until=until,
+    )
+    return TagUsageResponse(tags=rows)
+
+
+@router.get("/usage/tags/requests", response_model=TagRequestsResponse)
+async def pystino_requests_by_tag(
+    principal: PrincipalDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    tag: str,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    limit: int = MAX_REQUEST_ROWS,
+) -> TagRequestsResponse:
+    """The caller's newest requests under one tag, for bucketing into turns."""
+    if not 1 <= limit <= MAX_REQUEST_ROWS:
+        raise BadRequestError(f"limit must be between 1 and {MAX_REQUEST_ROWS}.")
+    rows = await requests_by_tag(
+        session,
+        user_id=principal.user.id,
+        tag=_valid_tags([tag])[0],
+        currency=settings.billing_currency,
+        since=since,
+        until=until,
+        limit=limit,
+    )
+    return TagRequestsResponse(requests=rows)
