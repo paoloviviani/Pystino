@@ -4531,6 +4531,13 @@
             "title": "Created",
             "type": "integer"
           },
+          "decision_forms": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Decision Forms",
+            "type": "array"
+          },
           "description": {
             "anyOf": [
               {
@@ -4636,6 +4643,7 @@
           "output_modalities",
           "supported_features",
           "kind",
+          "decision_forms",
           "local",
           "byok"
         ],

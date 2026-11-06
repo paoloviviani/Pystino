@@ -55,11 +55,16 @@ from gateway.capabilities import holds_byok
 from gateway.deps import OptionalPrincipalDep, PrincipalDep, SessionDep
 from gateway.errors import BadRequestError
 from gateway.models import ModelDef, ModelKind, ModelRouteTarget, Provider, ProviderKind
-from gateway.schemas import ModelCard, ModelList
 
 #: The `?include=` vocabulary. Search is the odd one out — its tiers answer
 #: /v1/search and stay out of the default list for the reason in the docstring
 #: above.
+from gateway.plugins.base import DIALECT_DECISIONS, DIALECT_SYSTEMONE
+from gateway.schemas import ModelCard, ModelList
+
+#: Both forms, for every decision model: the gateway translates whichever the provider lacks.
+DECISION_FORMS = (DIALECT_DECISIONS, DIALECT_SYSTEMONE)
+
 _KINDS: dict[str, ModelKind] = {kind.value: kind for kind in ModelKind}
 
 #: Models behind this kind of provider are plumbing, not catalogue entries:
@@ -193,6 +198,11 @@ def _with_alias_target(statement: Select[Any]) -> Select[Any]:
     )
 
 
+def _forms(model: ModelDef) -> list[str]:
+    """The decision request forms a model accepts (both: the gateway translates)."""
+    return list(DECISION_FORMS) if model.kind is ModelKind.DECISION else []
+
+
 def _card(
     model: ModelDef, target: ModelDef | None, target_provider: Provider | None
 ) -> ModelCard | None:
@@ -226,6 +236,7 @@ def _card(
             display_name=model.display_name,
             description=model.description,
             kind=model.kind.value,
+            decision_forms=_forms(model),
             input_modalities=list(model.input_modalities or []),
             output_modalities=list(model.output_modalities or []),
             supported_features=list(model.supported_features or []),
@@ -250,6 +261,7 @@ def _card(
         display_name=model.display_name,
         description=model.description,
         kind=target.kind.value,
+        decision_forms=_forms(target),
         input_modalities=list(target.input_modalities or []),
         output_modalities=list(target.output_modalities or []),
         supported_features=list(target.supported_features or []),

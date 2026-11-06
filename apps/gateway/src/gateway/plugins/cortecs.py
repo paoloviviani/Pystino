@@ -41,6 +41,8 @@ from typing import TYPE_CHECKING, Any
 from gateway.accounting.cost import TokenCounts
 from gateway.models import ApiSurface
 from gateway.plugins.base import (
+    DIALECT_DECISIONS,
+    DIALECT_SYSTEMONE,
     DecisionSupport,
     ProbeResult,
     ProviderKind,
@@ -91,13 +93,13 @@ class CortecsRouterPlugin:
     # One documented host, so the console offers no endpoint choice.
     base_url_options: tuple[tuple[str, str], ...] = ()
     #: The Decisions API (beta; ADR 0100), measured against the live service
-    #: on 2026-10-22: `/v1/decisions` takes the `input` + array form and the
-    #: System One form and answers in kind, `/v1/systemone` takes only the
-    #: second. The routing fields are the ones its schema documents; the
+    #: on 2026-10-22: it speaks both dialects natively (`/decisions` takes the
+    #: `input` form, `/systemone` the System One form; both re-verified live 2026-11-06).
+    #: The routing fields are the ones its schema documents; the
     #: deployment's provider settings own them, so they are refused rather
     #: than forwarded. `preference` (speed, cost, balanced) is not among them.
     decisions = DecisionSupport(
-        paths={"decisions": "/decisions", "systemone": "/systemone"},
+        paths={DIALECT_DECISIONS: "/decisions", DIALECT_SYSTEMONE: "/systemone"},
         routing_fields=(
             "allowed_providers",
             "eu_native",

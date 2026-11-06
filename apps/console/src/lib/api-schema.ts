@@ -5342,6 +5342,8 @@ export interface components {
             context_window: number | null;
             /** Created */
             created: number;
+            /** Decision Forms */
+            decision_forms: string[];
             /** Description */
             description: string | null;
             /** Display Name */
