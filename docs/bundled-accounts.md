@@ -2,11 +2,11 @@
 
 !!! info "For administrators"
 
-    Running the bundled Authelia and its people from the console's Users page; with an external provider, accounts live there instead ([Identity: the OIDC provider](oidc-generic-provider.md)).
+    Running the bundled Authelia and its users from the console's Users page; with an external provider, accounts live there instead ([Identity: the OIDC provider](oidc-generic-provider.md)).
 
 With the `authelia` profile on, Authelia runs beside the gateway, from the
 stock image, with the configuration in `deploy/authelia/configuration.yml`.
-Its people are not edited in a file or on Authelia's side: they are managed
+Its users are not edited in a file or on Authelia's side: they are managed
 from the console's **Users** page, which writes the login and the gateway
 account together.
 
@@ -91,7 +91,7 @@ everywhere, chat included (see [Merging and deleting accounts](identity.md#mergi
 
 Passwords belong to the identity provider. **With SMTP configured** (the
 `SMTP_*` variables in `.env`) on the full stack (the deploy kit), the bundled
-Authelia enables self-service reset: people reset their own password from the
+Authelia enables self-service reset: users reset their own password from the
 sign-in page, and the same setting sends quota notices. Without SMTP, and in
 this repository's own Pystino-only `deploy/` (whose Authelia configuration keeps
 password reset switched off), only an administrator can, by issuing a one-time
@@ -99,7 +99,7 @@ password from the edit panel.
 
 ### With an external provider
 
-The Users page still lists the people and still disables and enables them on
+The Users page still lists the users and still disables and enables them on
 the gateway side. It cannot reset a password — that is the provider's — and
 **Create sign-in** and **Reset password** appear only while the enabled
 provider is the bundled Authelia. What it *can* do is **Invite** (ADR 0095):

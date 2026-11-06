@@ -86,7 +86,7 @@ while it was on. It never needs setting for providers on the public internet.
 Language-model providers only: a plugin of kind `provider` or `router` speaking
 the OpenAI or Anthropic protocol. Not a search backend, not the document
 extractor, not a decision provider. Models of kind `chat`, `embedding`, `image`
-and `transcription`; not `ocr`, `decision` or `search`. Never public, never
+and `transcription`; not `ocr`, `decision`, `rerank` or `search`. Never public, never
 granted to a group, never the target of an alias or a route. A member may hold
 at most 25 providers and 500 models. Their credential is encrypted exactly like
 a deployment provider's and **never returned**, by any endpoint, to anyone.

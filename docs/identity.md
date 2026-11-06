@@ -1,4 +1,4 @@
-# Identity: who people are and who administers
+# Identity: who users are and who administers
 
 !!! info "For operators"
 
@@ -17,7 +17,7 @@ One provider at a time, named by the `OIDC_*` variables of the deployment's
 rewrites its provider row to match, so the console shows the provider
 read-only. What the console edits is the rest of identity: the identity
 policy (who may join, which claim names their groups, what an IdP group
-means here) and the people themselves (the **Users** page).
+means here) and the users themselves (the **Users** page).
 
 If you need several sources of users, federate them in your own IdP
 (Keycloak, Authentik and the like, deployed separately) and point the stack at it. **If you need
@@ -109,7 +109,7 @@ re-enables the earlier row with everyone's identities intact.
 
 ### Removing a previous provider nobody used
 
-A disabled previous row stays on the Settings screen so people who signed in
+A disabled previous row stays on the Settings screen so users who signed in
 there can be linked back. When nobody ever did (a provider you tried and
 abandoned), **Remove** on the row clears it; the row's directory entries and
 sync history go with it, and the removal is audited (`idp.remove`). The console
@@ -118,7 +118,7 @@ API (`DELETE /api/admin/identity-providers/<id>`) answers `409` for anything
 else:
 
 - an enabled row, which is the environment's and can never be removed here;
-- a row with people: any account keyed on its issuer, or any linked identity at
+- a row with users: any account keyed on its issuer, or any linked identity at
   it, even a disabled one, so they can still be linked back;
 - a row whose directory logins are bound to accounts.
 
@@ -148,7 +148,7 @@ within the ten seconds a saved policy takes to reach every worker):
 
 Cross-cutting, the same in every mode:
 
-- **Pre-invited people always get in.** An invitation (`Users` → **Invite**)
+- **Pre-invited users always get in.** An invitation (`Users` → **Invite**)
   creates a pending account with no login; the person's first sign-in claims
   it by *verified* email, keeping the groups the administrator pre-assigned,
   and the claim consumes the invitation — the account stops reading as
@@ -199,12 +199,12 @@ for nothing by itself. `OIDC_GROUP_IMPORT` keeps its two modes (below).
 the chat at `/chat` when one is deployed, else the console at `/console`.
 A satellite whose chat runs on a different host than its gateway will hand
 invitees the gateway's address; sign in there once and the invitation is
-claimed regardless. (Known limit; re-issue the text and point people at the
+claimed regardless. (Known limit; re-issue the text and point users at the
 right host by hand for now.)
 
 ## Chat-only people
 
-A deployment may want some people to use the chat and nothing else — no
+A deployment may want some users to use the chat and nothing else — no
 coding agents, no API keys, no console — while others keep everything. The
 capabilities (ADR 0096, amended) answer that, and each is **only a per-group flag**: a
 person holds one when they are an administrator, or hold an active
@@ -284,7 +284,7 @@ exactly as usable as its existing ones were.
 
 **Settings** also holds the bulk levers, one pair per capability: **Turn on
 for all groups** and **Turn off for all groups**. Each first shows a confirm
-with the preview — how many active, non-admin people gain or lose the
+with the preview — how many active, non-admin users gain or lose the
 capability — and then applies to every group in one transaction, audited once
 as `group.capability_bulk` with the capability, the value and the count. On
 **Groups**, each group's two capability checkboxes are always live and show
@@ -299,7 +299,7 @@ holding neither as **Chat only**.
 Cross-cutting, the same as the join gate:
 
 - **Administrators are exempt from both capabilities**, so a wrong flag
-  cannot lock the people who fix it out of the surfaces that fix it.
+  cannot lock the users who fix it out of the surfaces that fix it.
 - **A lost capability is refused dynamically, never disabled and never
   deleted.** A machine-client token (matched on `azp`/`client_id` against
   `OIDC_MACHINE_CLIENT_ID`, `opencode-enrollment` by default) from a person
@@ -359,11 +359,11 @@ does at a sign-in:
 
 - **`manual`** (the default): nothing is created. The name is recorded per
   provider, and the console's **Groups** page lists it under *Groups from
-  your identity provider*, searchable, with how many people carry it and when
+  your identity provider*, searchable, with how many users carry it and when
   it was last seen. One decision per row: **Map** — the dialog asks whether
   the name means a **new group with the same name**, a **new group under
   another name**, or an **existing group** — and the mapping is a new row on
-  the identity policy's history. The people recorded as carrying the name get
+  the identity policy's history. The users recorded as carrying the name get
   the group straight away when the provider's `group_sync` is `every_login`;
   otherwise at their next sign-in, and the console says which. Unmapping goes
   at each person's next sign-in. **Ignore** stops listing it (*Show
@@ -436,7 +436,7 @@ provenance: `env` when a rule granted it, `manual` when an administrator's
 decision in the console, `pystino admin grant`, the bootstrap or break-glass
 did. A rule match never converts a manual administrator into a rule one, and a
 rule mismatch never revokes a manual one. Removing an address from
-`OIDC_ADMIN_EMAIL` takes admin away from the people **that rule granted** at
+`OIDC_ADMIN_EMAIL` takes admin away from the users **that rule granted** at
 their next sign-in, and at the next gateway start a sweep drops the
 email-rule grants whose address is no longer on the list. The sweep never
 touches the claim rule's grants: with no fresh claims at startup there is
@@ -500,7 +500,7 @@ backup taken before it.
 gateway's rows, the bundled login, and the chat's records (conversations,
 files, projects, assistants, knowledge bases, memories, skills, connectors,
 settings, sessions and machine links). The preview names what is removed and
-what is shared with other people, whose confirmation tick acknowledges it.
+what is shared with other users, whose confirmation tick acknowledges it.
 Spend history stays in the ledger, anonymised. If the chat cannot be
 reached, the erasure is recorded as pending and retried with a backoff
 (from 30 seconds up to an hour) until it confirms; `pystino erasure list` and

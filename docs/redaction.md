@@ -175,7 +175,7 @@ the model sees and what the person gets back:
 | `off` | the real value | the real value |
 | `anonymise_restore` | `<PERSON_xxxx>`, stable | the real value, restored |
 | `anonymise` | `<PERSON_xxxx>`, stable | the placeholder |
-| `redact` | `<PERSON>` — lossy, two people collapse into one label | the label |
+| `redact` | `<PERSON>` — lossy, two users collapse into one label | the label |
 | `block` | nothing — the request is refused | an error saying which kind of value was blocked and by which rule, never the value itself (HTTP 403) |
 
 `block` exists for values whose *presence* is the incident — a pasted API key —

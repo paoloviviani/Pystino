@@ -35,6 +35,12 @@ together they are the intended setup (see [the rest of the stack](#the-rest-of-t
   the streaming traps.
 - [Accounting and quotas](accounting-and-quotas.md): the three cost figures,
   the two prompt conventions, and what money looks like end to end.
+- [Model aliases](model-aliases.md), [Billing groups](billing-groups.md) and
+  [Bring your own key](byok.md): one name over several providers, who pays,
+  and users' own providers.
+- [Provider catalogue](provider-catalogue.md) and [Decision models](decision-models.md):
+  the providers Pystino knows (including Melious), the model kinds (chat,
+  embedding, rerank, decision and the rest) and the typed-question models.
 - [Redaction](redaction.md): the engine, the policy model, and why a scope can
   only tighten.
 - [Deployment](deployment.md): the Pystino-only compose deployment, TLS,
@@ -44,9 +50,10 @@ together they are the intended setup (see [the rest of the stack](#the-rest-of-t
   is the Users page; [the OIDC provider](oidc-generic-provider.md) is
   registering your own issuer.
 - [Coding agents](coding-agents.md): what the gateway provides to agents on
-  people's own machines.
+  users' own machines.
 - [The console](console.md): a map of the admin screens, and which page
   explains each.
+- [Changelog](changelog.md): what changed in each release and which Cerea it pairs with.
 - [Operations](operations.md) and [Measured performance](performance.md):
   verifying a change, the live checks, and what the gateway costs.
 - [Development](development.md): toolchains, git hooks, every test layer, CI,
@@ -56,7 +63,7 @@ together they are the intended setup (see [the rest of the stack](#the-rest-of-t
 
 Pystino is one of two repositories, each solving a different problem: Pystino
 governs model calls (access, cost, quotas, redaction), and
-**[Cerea](https://github.com/paoloviviani/Cerea)** is the chat people use, with its own [documentation](https://paoloviviani.github.io/Cerea/)
+**[Cerea](https://github.com/paoloviviani/Cerea)** is the chat users use, with its own [documentation](https://paoloviviani.github.io/Cerea/)
 (using it, the agent machines, configuration). Its `kit/` directory is the **deploy
 kit**, the deployment that runs both, with
 [its README](https://github.com/paoloviviani/Cerea/blob/stable/kit/README.md)

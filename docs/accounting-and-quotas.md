@@ -274,6 +274,20 @@ unpriced.
   model priced in anything else is **refused rather than converted**: a silent
   exchange rate produces invoices that look right and are wrong.
 
+## Usage tags: a session's own cost
+
+A client may label its `/v1` requests (chat completions, responses, messages)
+with an `x-pystino-tag` header: printable ASCII, at most 128 characters; an
+invalid label is ignored, never an error. The gateway stores it on the usage row.
+`GET /v1/pystino/usage/tags?tag=a&tag=b` (1 to 100 tags, optionally between
+`since` and `until`) then returns, per tag that has usage, the number of
+requests, prompt, completion and cached prompt tokens, the cost with its
+currency, and the first and last time. It reads **only the caller's own
+requests** (another user's tag of the same name returns nothing) and only
+gateway usage: bring-your-own-key rows and requests still running are left out,
+which is the figure a quota counts. Cerea's agent proxy tags every request with
+the coding session so the chat can show a session's and a turn's cost.
+
 ## Quotas
 
 The quota engine is reserve-then-settle over stacked,
@@ -291,6 +305,13 @@ must not raise a ceiling someone else set.
   reserved before anyone knew); the **next** one gets a 429. There is no
   mid-stream cutoff via `max_tokens` clamping — that is a deliberate choice,
   not a gap.
+- **A spent quota and a rate limit are different 429s.** A request the quota
+  refuses answers `429` with `type: insufficient_quota`, `code: quota_exceeded`
+  and a `retry-after` header holding the seconds until the window resets; a
+  plain rate limit answers `429` with `type: rate_limit_error`, `code:
+  rate_limited`. A client that must tell them apart (waiting helps for one, and
+  for the other only the reset or a larger quota does) reads the `code`. The
+  Cerea chat does, and says the quota is used up instead of asking the user to wait.
 - **Billing periods are calendar-based** (monthly, etc.) and are *not* rolling
   windows; a rolling window and a billing period answer different questions and
   the model keeps them apart.

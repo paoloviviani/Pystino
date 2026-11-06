@@ -16,21 +16,23 @@ plugin ([below](#providers)).
 1. Have a provider of a type that supports decisions. In the console's provider
    form the type list says which do; Cortecs does, the generic OpenAI-compatible
    type does not.
-2. Add the model under **Models**. On Cortecs, **Import from the provider**
-   with the tag **Decision** lists them (`clef-flash`, `laya`; the default
-   listing does not, since Cortecs's `/models` answers `tag=Instruct` unless asked
-   otherwise): the tag sets the kind to **Decision** and imports the input price,
-   the output price being zero. Or create the model by hand, with kind
-   **Decision**, the provider's model id as the upstream name and its price per
-   million input and output tokens. Creating a decision model on a provider type
-   with no decision support is refused with a message saying so.
+2. Add the model under **Models**. **Import from the provider** reads the
+   provider's whole catalogue (there is no tag to choose), so a Cortecs decision
+   model (`clef-flash`, `laya`) is offered with kind **Decision** and its input
+   price, the output price being zero; Melious's are offered too. Or create the
+   model by hand, with kind **Decision**, the provider's model id as the upstream
+   name and its price per million input and output tokens. Creating a decision
+   model on a provider type with no decision support is refused with a message
+   saying so.
 3. Grant it to a group, or make it public, as for any model. An
    [alias](model-aliases.md) works too, and a routing policy applies to it.
 
 `GET /v1/models` lists it with `"kind": "decision"`. A chat client's picker
 should filter on `kind`, as it already does for embedding and OCR models.
-Cerea's administrator picks the reviewer for its coding agent's permission
-requests among the models of this kind (see the Cerea documentation). A
+In Cerea, each user picks the reviewer for their coding agent's permission
+requests among the models of this kind they may use (the administrator only
+enables the feature; see the Cerea documentation), and the calls are billed to
+that user's own group and quota. A
 decision model is refused on the chat, embeddings and other routes, and a chat
 model is refused on these two.
 

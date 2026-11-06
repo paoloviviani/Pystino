@@ -108,7 +108,7 @@ requests. The React console at `/console` is the human surface.
 
 `/v1` is for programs and uses revocable API keys that carry a billing group;
 `/api` is for humans and uses OIDC sessions. There is no password sign-in:
-people sign in through an OpenID Connect provider, the bundled Authelia or
+users sign in through an OpenID Connect provider, the bundled Authelia or
 your own.
 
 - **API keys** are `gwk_...` secrets, shown once, stored as SHA-256 hashes —
