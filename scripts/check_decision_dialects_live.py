@@ -2,7 +2,7 @@
 """The decision dialect translation against both real vendors' APIs.
 
 Direct to the vendors, no stack needed. For each vendor, one predicate is sent
-in the *other* vendor's dialect: the request goes through
+in each dialect it does not speak natively, or natively: the request goes through
 ``gateway.translate.decisions.translate_request`` to the vendor's native dialect
 and path (``DecisionSupport``), and the vendor's answer is translated back.
 That is the gateway's translated path (``/v1/systemone`` to Cortecs,
@@ -31,10 +31,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "apps" / "gatewa
 from gateway.plugins.registry import resolve
 from gateway.translate.decisions import translate_request, translate_response
 
-VENDORS = {
-    "cortecs": ("https://api.cortecs.ai/v1", "CORTECS_API_KEY_FILE", "systemone"),
-    "melious": ("https://api.melious.ai/v1", "MELIOUS_API_KEY_FILE", "decisions"),
-}
+#: (vendor, base, key file variable, the caller's dialect). Cortecs speaks both
+#: dialects natively (a passthrough either way); Melious only System One, so a
+#: decisions-form caller is translated.
+CASES = [
+    ("cortecs", "https://api.cortecs.ai/v1", "CORTECS_API_KEY_FILE", "systemone"),
+    ("cortecs", "https://api.cortecs.ai/v1", "CORTECS_API_KEY_FILE", "decisions"),
+    ("melious", "https://api.melious.ai/v1", "MELIOUS_API_KEY_FILE", "decisions"),
+]
 BODIES: dict[str, dict[str, Any]] = {
     "systemone": {
         "model": "clef-flash",
@@ -60,13 +64,17 @@ def check(label: str, ok: bool, detail: str = "") -> None:
 
 async def main() -> None:
     async with httpx.AsyncClient(timeout=120) as http:
-        for vendor, (base, key_env, caller) in VENDORS.items():
+        for vendor, base, key_env, caller in CASES:
             support = resolve(vendor).decisions  # type: ignore[attr-defined]
-            print(f"{vendor}: speaks {support.dialect}; caller sends {caller} (translated)")
-            wire, plan = translate_request(BODIES[caller], source=caller, target=support.dialect)
+            target = caller if caller in support.paths else next(iter(support.paths))
+            how = "passthrough" if target == caller else f"translated to {target}"
+            print(f"{vendor}: caller sends {caller} ({how})")
+            wire, plan = translate_request(BODIES[caller], source=caller, target=target)
             secret = Path(os.environ[key_env]).read_text().strip()
             r = await http.post(
-                f"{base}{support.path}", json=wire, headers={"authorization": f"Bearer {secret}"}
+                f"{base}{support.paths[target]}",
+                json=wire,
+                headers={"authorization": f"Bearer {secret}"},
             )
             check("vendor accepts the translated body", r.status_code == 200, f"{r.status_code}")
             if r.status_code != 200:

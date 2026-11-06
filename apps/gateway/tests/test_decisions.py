@@ -323,6 +323,37 @@ class TestPassThrough:
         assert fake_upstream.last_body["input"] == "hi"
         assert response.json()["answers"][0]["name"] is None
 
+    async def test_the_system_one_format_goes_to_systemone(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        decider: ModelDef,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        fake_upstream.set_json(STATE_ANSWER, headers=SERVED_HEADERS)
+        response = await client.post("/v1/systemone", json=state_body(), headers=seeded.auth)
+
+        assert response.status_code == 200, response.text
+        assert upstream_path(fake_upstream).endswith("/systemone")
+        assert fake_upstream.last_body["questions"] == STATE_QUESTIONS
+        expected = copy.deepcopy(STATE_ANSWER)
+        expected["model"] = "decider"
+        assert response.json() == expected
+
+    async def test_decisions_also_takes_the_system_one_format(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        decider: ModelDef,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """Cortecs speaks System One natively, so it goes to its /systemone."""
+        fake_upstream.set_json(STATE_ANSWER)
+        response = await client.post("/v1/decisions", json=state_body(), headers=seeded.auth)
+        assert response.status_code == 200
+        assert upstream_path(fake_upstream).endswith("/systemone")
+        assert set(response.json()["answers"]) == {"inspect", "team", "urg"}
+
     async def test_a_null_model_in_a_system_one_answer_stays_null(
         self,
         client: httpx.AsyncClient,
@@ -952,10 +983,7 @@ class TestRedaction:
         response = await client.post("/v1/systemone", json=body, headers=seeded.auth)
 
         assert response.status_code == 200
-        # Cortecs speaks the decisions dialect: the state travels as JSON text.
-        import json
-
-        sent = json.loads(fake_upstream.last_body["input"])
+        sent = fake_upstream.last_body["state"]
         assert IBAN not in str(sent)
         assert set(sent) == {"ticket", "history", "count"}
         assert sent["count"] == 3

@@ -14,7 +14,7 @@ dialects exist and the caller picks: the ``input`` form (``input`` a string
 or messages, ``questions`` an array) and the System One form (``state``,
 ``questions`` an object keyed by the caller's ids). ``/v1/decisions`` takes
 both; ``/v1/systemone`` takes only the second. The provider speaks one of them
-(``DecisionSupport.dialect``): when it is the caller's the body and the answer
+(``DecisionSupport.paths``): when it is among them the body and the answer
 pass through unread, so a new question type works without a release; when not,
 ``gateway.translate.decisions`` translates both ways (and a question with no
 counterpart is a 400).
@@ -237,14 +237,14 @@ async def _decide(
         redacted = iter(str(message.get("content") or "") for message in outcome.messages)
         payload[text_field] = _rebuild(payload[text_field], redacted)
 
-        # The caller's dialect is its request form; the provider speaks
-        # support.dialect. Translated before anything is reserved, so a question
-        # the provider cannot express is a 400 that leaves no row.
-        wire, plan_back = translate_request(
-            payload,
-            source=DIALECT_DECISIONS if fmt == "input" else DIALECT_SYSTEMONE,
-            target=support.dialect,
-        )
+        # The caller's dialect is its request form. A provider that speaks it
+        # natively gets the body as sent, at that dialect's path; otherwise it is
+        # translated to the provider's first dialect, before anything is
+        # reserved, so a question it cannot express is a 400 that leaves no row.
+        caller = DIALECT_DECISIONS if fmt == "input" else DIALECT_SYSTEMONE
+        target = caller if caller in support.paths else next(iter(support.paths))
+        path = support.paths[target]
+        wire, plan_back = translate_request(payload, source=caller, target=target)
 
         # -- reservation --------------------------------------------------------
         # The provider tokenises the questions as well as the text (a 3-question
@@ -279,7 +279,7 @@ async def _decide(
         wire = metered.shape_payload(wire, surface=SURFACE)
 
         try:
-            response = await upstream.decisions(wire, path=support.path, request_id=request_id)
+            response = await upstream.decisions(wire, path=path, request_id=request_id)
         except UpstreamError as exc:
             raise await metered.upstream_unreachable(exc) from exc
 

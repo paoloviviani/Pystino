@@ -43,7 +43,7 @@ model is refused on these two.
 
 Either route works against **any** decision model: the gateway
 [translates](#dialects-and-the-translation) to the dialect the model's provider
-speaks and back.
+speaks, when it does not speak yours, and back.
 
 The **`input` form**: `model`, `input` (a string, or messages whose content is a
 string or `input_text` parts) and `questions`, an array of `predicate`, `choice`
@@ -80,13 +80,13 @@ curl https://gateway.example/v1/decisions \
 
 ## Dialects and the translation
 
-A provider speaks one of two **dialects**, the way a chat provider speaks the
-OpenAI or the Anthropic protocol: `decisions` (Cortecs: `input` and a `questions`
-array) or `systemone` (Melious: `state` and a `questions` object). The
-dialect is declared by the provider's plugin as data (`DecisionSupport.dialect`
-and `path`); the translation lives in `gateway/translate/decisions.py`, outside
-every vendor plugin. A request in the provider's own dialect is forwarded
-untouched, so a question type new to the provider works at once; any other is
+There are two **dialects**, the way chat has the OpenAI and the Anthropic
+protocol: `decisions` (`input` and a `questions` array) and `systemone` (`state`
+and a `questions` object). A provider speaks one or both natively, declared by
+its plugin as data with a path for each (`DecisionSupport.paths`): Cortecs both,
+Melious `systemone` only. The translation lives in `gateway/translate/decisions.py`, outside
+every vendor plugin. A request in a dialect the provider speaks is forwarded
+untouched to that dialect's path, so a question type new to the provider works at once; any other is
 translated, and the answer is translated back into the form you sent. The
 `model` in the answer is always the name you sent, and usage and cost are read
 from the provider's own answer, so metering is per provider whatever the form.
@@ -161,17 +161,17 @@ surface `decisions` for both routes.
 ## Providers
 
 A provider plugin declares decision support (`DecisionSupport` in
-`gateway/plugins/base.py`): the dialect it speaks, the upstream path for it and the
+`gateway/plugins/base.py`): the dialects it speaks, the upstream path for each and the
 names of its routing fields. A plugin that does not declare it cannot serve a
-`decision` model. The Cortecs plugin declares the `decisions` dialect at
-`/decisions`, and reads
+`decision` model. The Cortecs plugin declares both dialects (`/decisions` and
+`/systemone`), and reads
 `usage.cost`, an integer in **micro-EUR rounded up per request**: 143 input
 tokens at 0.042 EUR per million is 6.006 micro-EUR, reported as 7 (and 314
 tokens, 13.188, reported as 14). The reported
 figure is therefore at most a micro-EUR above the table's, which is not a
 mismatch. Another provider's plugin owns its own unit (OpenRouter reports a
 decimal credit figure, for example), path and routing vocabulary. The Melious
-plugin declares the `systemone` dialect at `/systemone` (its `/decisions` is a
+plugin declares only `systemone`, at `/systemone` (its `/decisions` is a
 404) and nothing else: the translation is the gateway's.
 
 The two request forms are the contract with callers and do not change with the

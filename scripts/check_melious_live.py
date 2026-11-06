@@ -195,7 +195,7 @@ async def main() -> None:
         wire, plan = translate_request(
             {"model": "clef-flash", "input": "The agent runs `npm test`.", "questions": questions},
             source="decisions",
-            target=resolve("melious").decisions.dialect,  # type: ignore[attr-defined]
+            target=next(iter(resolve("melious").decisions.paths)),  # type: ignore[attr-defined]
         )
         r = await post("/systemone", json=wire)
         check("System One accepts the translated body", r.status_code == 200, r.text[:200])

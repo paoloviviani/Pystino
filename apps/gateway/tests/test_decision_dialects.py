@@ -86,8 +86,8 @@ def to_dec(body: dict[str, Any]) -> tuple[dict[str, Any], Any]:
 class TestDialectsAreDeclared:
     def test_each_plugin_declares_its_native_dialect_as_data(self) -> None:
         cortecs, melious = resolve("cortecs").decisions, resolve("melious").decisions  # type: ignore[attr-defined]
-        assert (cortecs.dialect, cortecs.path) == (D, "/decisions")
-        assert (melious.dialect, melious.path) == (S, "/systemone")
+        assert dict(cortecs.paths) == {D: "/decisions", S: "/systemone"}
+        assert dict(melious.paths) == {S: "/systemone"}
 
     def test_matching_dialects_are_forwarded_untouched(self) -> None:
         body = {"model": "m", "input": "x", "questions": QUESTIONS, "preference": "cost"}
@@ -351,35 +351,6 @@ class TestSystemOneToDecisions:
 
 # -- the four combinations -------------------------------------------------------
 
-DECISIONS_ANSWER_FOR_STATE: dict[str, Any] = {
-    "model": "laya",
-    "answers": [
-        {"type": "predicate", "name": "inspect", "probability": 0.0323},
-        {
-            "type": "choice",
-            "name": "team",
-            "choice": "facilities",
-            "probabilities": [
-                {"value": "facilities", "probability": 0.9905},
-                {"value": "billing", "probability": 0.0095},
-            ],
-            "confidence": 0.981,
-        },
-        {
-            "type": "score",
-            "name": "urg",
-            "score": 1.3,
-            "probabilities": [
-                {"value": 0, "label": "low", "probability": 0.0679},
-                {"value": 1, "label": "medium", "probability": 0.5594},
-                {"value": 2, "label": "high", "probability": 0.3727},
-            ],
-            "confidence": 0.34,
-        },
-    ],
-    "usage": {"input_tokens": 124, "output_tokens": 0, "cost": 6},
-}
-
 
 @pytest.fixture
 async def cortecs_decider(session: AsyncSession, seeded: Seeded) -> ModelDef:
@@ -446,39 +417,35 @@ class TestTheFourCombinations:
         assert fake_upstream.last_body["questions"] == STATE_QUESTIONS
         assert response.json()["answers"] == STATE_ANSWER["answers"]
 
-    async def test_systemone_to_cortecs_is_translated(
+    async def test_systemone_to_cortecs_is_a_passthrough_to_its_systemone_path(
         self,
         client: httpx.AsyncClient,
         seeded: Seeded,
         cortecs_decider: ModelDef,
         fake_upstream: FakeUpstream,
     ) -> None:
-        fake_upstream.set_json(copy.deepcopy(DECISIONS_ANSWER_FOR_STATE))
+        fake_upstream.set_json(copy.deepcopy(STATE_ANSWER))
         response = await client.post("/v1/systemone", json=state_body(), headers=seeded.auth)
         assert response.status_code == 200, response.text
-        assert upstream_path(fake_upstream).endswith("/decisions")
-        sent = fake_upstream.last_body
-        assert isinstance(sent["questions"], list) and "state" not in sent
-        assert sent["input"] == state_body()["state"]
-        body = response.json()
-        assert body["model"] == "decider"
-        assert body["answers"]["inspect"] == {"type": "noul", "noul": 0.0323}
-        assert body["answers"]["team"]["probabilities"] == {"facilities": 0.9905, "billing": 0.0095}
-        assert body["answers"]["urg"]["legend"] == {"0": "low", "1": "medium", "2": "high"}
+        assert upstream_path(fake_upstream).endswith("/systemone")
+        assert fake_upstream.last_body["questions"] == STATE_QUESTIONS
+        expected = copy.deepcopy(STATE_ANSWER) | {"model": "decider"}
+        assert response.json() == expected
 
-    async def test_the_state_form_on_the_decisions_route_is_translated_too(
+    async def test_the_state_form_on_the_decisions_route_goes_to_cortecs_systemone(
         self,
         client: httpx.AsyncClient,
         seeded: Seeded,
         cortecs_decider: ModelDef,
         fake_upstream: FakeUpstream,
     ) -> None:
-        fake_upstream.set_json(copy.deepcopy(DECISIONS_ANSWER_FOR_STATE))
+        fake_upstream.set_json(copy.deepcopy(STATE_ANSWER))
         response = await client.post("/v1/decisions", json=state_body(), headers=seeded.auth)
         assert response.status_code == 200, response.text
+        assert upstream_path(fake_upstream).endswith("/systemone")
         assert set(response.json()["answers"]) == {"inspect", "team", "urg"}
 
-    async def test_a_question_with_no_counterpart_is_a_400_and_nothing_is_called(
+    async def test_a_systemone_only_type_reaches_cortecs_untouched(
         self,
         client: httpx.AsyncClient,
         seeded: Seeded,
@@ -487,7 +454,21 @@ class TestTheFourCombinations:
     ) -> None:
         body = state_body()
         body["questions"] = {"b": {"type": "box", "instructions": "?"}}
+        fake_upstream.set_json({"model": "laya", "answers": {"b": {"type": "box"}}})
         response = await client.post("/v1/systemone", json=body, headers=seeded.auth)
+        assert response.status_code == 200, response.text
+        assert fake_upstream.last_body["questions"] == body["questions"]
+
+    async def test_a_question_with_no_counterpart_is_a_400_and_nothing_is_called(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        melious_decider: ModelDef,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        body = input_body()
+        body["questions"] = [{"type": "box", "name": "b", "instructions": "?"}]
+        response = await client.post("/v1/decisions", json=body, headers=seeded.auth)
         assert response.status_code == 400
         assert "'box'" in response.json()["error"]["message"]
         assert not fake_upstream.urls
@@ -517,7 +498,7 @@ class TestMeteringPerProvider:
     ) -> None:
         await make_cortecs(session, seeded, mode=BillingMode.PROVIDER_REPORTED)
         await add_decision_model(session, seeded)
-        fake_upstream.set_json(copy.deepcopy(DECISIONS_ANSWER_FOR_STATE))
+        fake_upstream.set_json(copy.deepcopy(STATE_ANSWER))
         response = await client.post("/v1/systemone", json=state_body(), headers=seeded.auth)
         assert response.status_code == 200, response.text
         record = await latest_record(session)

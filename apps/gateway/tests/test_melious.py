@@ -104,7 +104,7 @@ class TestEntry:
 
     def test_it_speaks_the_systemone_dialect(self) -> None:
         support = resolve("melious").decisions  # type: ignore[attr-defined]
-        assert (support.dialect, support.path) == ("systemone", "/systemone")
+        assert dict(support.paths) == {"systemone": "/systemone"}
 
     def test_the_entry_ships_no_price_table(self) -> None:
         assert not load_catalogue(override_dir=None).entries["melious"].prices

@@ -114,10 +114,10 @@ class MeliousPlugin(GenericOpenAIPlugin):
     )
     default_base_url: str | None = "https://api.melious.ai/v1"
     #: System One only upstream (``/decisions`` is a 404 on Melious): it speaks
-    #: the ``systemone`` dialect, and the gateway translates a ``decisions``
+    #: only the ``systemone`` dialect, and the gateway translates a ``decisions``
     #: request to it and back. Melious documents no routing fields (its routing
     #: is its own), so none are refused.
-    decisions = DecisionSupport(dialect=DIALECT_SYSTEMONE, path="/systemone")
+    decisions = DecisionSupport(paths={DIALECT_SYSTEMONE: "/systemone"})
 
     async def fetch_catalogue(
         self, http: httpx.AsyncClient, url: str, api_key: str | None

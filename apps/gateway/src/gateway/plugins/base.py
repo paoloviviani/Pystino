@@ -189,19 +189,17 @@ class DecisionSupport:
     existed must keep satisfying the protocol.
 
     The core knows the two dialects and translates between them; what is
-    the plugin's is which one the provider speaks, where, and which of the
+    the plugin's is which ones the provider speaks, where, and which of the
     body's fields are the provider's own routing settings.
     """
 
-    #: The decision dialect this provider speaks natively, and the whole of
-    #: what its decision *type* is (as ``protocol`` is for chat): ``"decisions"``
-    #: (``input`` + a ``questions`` array) or ``"systemone"`` (``state`` + a
-    #: ``questions`` object). A caller may send either form to either route; the
-    #: gateway translates to this dialect and back (``gateway.translate.decisions``)
-    #: and forwards unchanged when they already match.
-    dialect: str = DIALECT_DECISIONS
-    #: The provider's upstream path for its dialect (``/decisions``, ``/systemone``).
-    path: str = "/decisions"
+    #: The decision dialects this provider speaks natively, each with its
+    #: upstream path (``{"decisions": "/decisions"}``): ``"decisions"`` is
+    #: ``input`` + a ``questions`` array, ``"systemone"`` is ``state`` + a
+    #: ``questions`` object. A request in one of them is forwarded unchanged to
+    #: its path; any other is translated to the first listed and back
+    #: (``gateway.translate.decisions``).
+    paths: Mapping[str, str]
     #: Body fields that choose providers, regions, quantisations or fallbacks.
     #: They are the deployment's settings (the provider row), as for chat, so a
     #: caller sending one is refused with a 400 naming the field instead of
