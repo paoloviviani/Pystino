@@ -192,6 +192,7 @@ class TestUnauthenticatedListing:
             "display_name",
             "description",
             "kind",
+            "decision_forms",
             "input_modalities",
             "output_modalities",
             "supported_features",

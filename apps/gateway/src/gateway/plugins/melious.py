@@ -16,9 +16,9 @@ Three findings drive the code:
   form (``state`` and a ``questions`` object whose choice and score questions
   carry ``criteria``). ``POST /v1/decisions`` is a 404 there. Callers such as
   Cerea's reviewer send the ``input`` form (``input`` and a ``questions`` array
-  of predicate, choice and score questions), so the plugin translates it
-  (``DecisionSupport.input_form``) and translates the answer back; a System One
-  caller passes through untouched on either route.
+  of predicate, choice and score questions); the plugin only declares the
+  ``systemone`` dialect, and ``gateway.translate.decisions`` translates the
+  ``input`` form to it and the answer back.
 * **Reranking is ``POST /v1/rerank``**, which this gateway has no surface for, so
   the reranker is left out of discovery rather than offered as a ``chat`` model
   that cannot work.
@@ -34,11 +34,9 @@ read: the gateway bills from the configured prices, and the figure sits outside
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Any
 
-from gateway.errors import BadRequestError
-from gateway.plugins.base import DecisionSupport, InputFormAdapter
+from gateway.plugins.base import DIALECT_SYSTEMONE, DecisionSupport
 from gateway.plugins.generic import GenericOpenAIPlugin
 
 if TYPE_CHECKING:
@@ -105,161 +103,6 @@ def _catalogue_entry(model: dict[str, Any]) -> dict[str, Any] | None:
     return entry
 
 
-# -- /v1/decisions on System One ----------------------------------------------
-
-_NAME = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
-
-
-def _refuse(message: str) -> BadRequestError:
-    return BadRequestError(message, code="invalid_decisions_request")
-
-
-def _label(item: Any, *, keys: tuple[str, ...], fallback: str) -> Any:
-    if isinstance(item, dict):
-        for key in keys:
-            if item.get(key) not in (None, ""):
-                return item[key]
-    elif item is not None:
-        return item
-    return fallback
-
-
-def _state_of(value: Any) -> Any:
-    """The ``input`` form's text as System One's ``state``: a string.
-
-    A bare string stays. Messages (content a string or ``input_text`` parts)
-    are joined: one message is its text, several are ``role: text`` lines, so a
-    conversation keeps who said what.
-    """
-    if not isinstance(value, list):
-        return value
-    lines: list[tuple[str, str]] = []
-    for message in value:
-        content = message.get("content") if isinstance(message, dict) else message
-        if isinstance(content, list):
-            content = "\n".join(
-                str(part.get("text", "")) if isinstance(part, dict) else str(part)
-                for part in content
-            )
-        lines.append(
-            (
-                str(message.get("role", "user")) if isinstance(message, dict) else "user",
-                str(content),
-            )
-        )
-    if len(lines) == 1:
-        return lines[0][1]
-    return "\n".join(f"{role}: {text}" for role, text in lines)
-
-
-def _to_system_one(body: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """The ``input`` form as System One, plus what the answer needs to come back.
-
-    Melious documents only the System One form. A predicate is its ``noul``
-    question (one number in [0, 1], the probability of yes); a choice's
-    ``choices`` become ``criteria`` keyed by their values, and a score's
-    ``levels`` an ordered ``criteria`` array. Only ``model``, the text and the
-    questions are sent: ``preference`` is a Cortecs routing hint with no
-    counterpart here.
-    """
-    questions = body.get("questions")
-    if not isinstance(questions, list) or not questions:
-        raise _refuse("'questions' must be a non-empty array when 'input' is used.")
-    wire: dict[str, Any] = {}
-    plan: list[dict[str, Any]] = []
-    for index, question in enumerate(questions):
-        if not isinstance(question, dict):
-            raise _refuse(f"questions[{index}] must be an object.")
-        kind = question.get("type")
-        name = question.get("name")
-        key = name if isinstance(name, str) and _NAME.match(name) and name not in wire else None
-        key = key or f"q{index}"
-        while key in wire:
-            key += "_"
-        rest = {k: v for k, v in question.items() if k not in ("type", "name", "choices", "levels")}
-        item: dict[str, Any] = {"index": index, "key": key, "name": name, "type": kind}
-        if kind == "predicate":
-            wire[key] = {"type": "noul", **rest}
-        elif kind == "choice":
-            choices = question.get("choices")
-            if not isinstance(choices, list) or len(choices) < 2:
-                raise _refuse(f"questions[{index}]: a choice needs at least two 'choices'.")
-            criteria: dict[str, Any] = {}
-            values: dict[str, Any] = {}
-            for choice in choices:
-                value = choice.get("value") if isinstance(choice, dict) else choice
-                label = str(value)
-                criteria[label] = _label(choice, keys=("description", "label"), fallback=label)
-                values[label] = value
-            item["values"] = values
-            wire[key] = {"type": "choice", **rest, "criteria": criteria}
-        elif kind == "score":
-            levels = question.get("levels")
-            if not isinstance(levels, list) or len(levels) < 2:
-                raise _refuse(f"questions[{index}]: a score needs at least two 'levels'.")
-            labels = [
-                _label(level, keys=("label", "description", "value"), fallback=str(position))
-                for position, level in enumerate(levels)
-            ]
-            item["labels"] = labels
-            wire[key] = {"type": "score", **rest, "criteria": labels}
-        else:
-            raise _refuse(
-                f"questions[{index}]: type {kind!r} is not served for this provider "
-                "through /v1/decisions (predicate, choice and score are); "
-                "send the System One form to /v1/systemone for its own types."
-            )
-        plan.append(item)
-    out: dict[str, Any] = {
-        "model": body["model"],
-        "state": _state_of(body["input"]),
-        "questions": wire,
-    }
-    if body.get("images") is not None:
-        out["images"] = body["images"]
-    return out, plan
-
-
-def _from_system_one(payload: dict[str, Any], plan: list[dict[str, Any]]) -> dict[str, Any]:
-    """System One's keyed answers as the ``input`` form's array, in question order."""
-    answers = payload.get("answers")
-    answers = answers if isinstance(answers, dict) else {}
-    out: list[dict[str, Any]] = []
-    for item in plan:
-        raw = answers.get(item["key"])
-        if not isinstance(raw, dict):
-            continue
-        answer: dict[str, Any] = {"type": item["type"], "name": item["name"]}
-        if raw.get("type") == "refusal" or "refusal" in raw:
-            answer = {**raw, "name": item["name"]}
-        elif item["type"] == "predicate":
-            answer["probability"] = raw.get("noul")
-        elif item["type"] == "choice":
-            chosen = raw.get("choice")
-            answer["choice"] = item["values"].get(chosen, chosen)
-            answer["probabilities"] = [
-                {"value": item["values"].get(label, label), "probability": probability}
-                for label, probability in (raw.get("probabilities") or {}).items()
-            ]
-            answer["confidence"] = raw.get("confidence")
-        else:
-            answer["score"] = raw.get("score")
-            labels = item["labels"]
-            answer["probabilities"] = [
-                {
-                    "value": int(position),
-                    "label": labels[int(position)] if int(position) < len(labels) else None,
-                    "probability": probability,
-                }
-                for position, probability in sorted(
-                    (raw.get("probabilities") or {}).items(), key=lambda pair: int(pair[0])
-                )
-            ]
-            answer["confidence"] = raw.get("confidence")
-        out.append(answer)
-    return {**{k: v for k, v in payload.items() if k != "answers"}, "answers": out}
-
-
 class MeliousPlugin(GenericOpenAIPlugin):
     """Melious: OpenAI-compatible, EU-only, priced from the configured prices."""
 
@@ -270,13 +113,11 @@ class MeliousPlugin(GenericOpenAIPlugin):
         "configured prices, which discovery reads from its catalogue."
     )
     default_base_url: str | None = "https://api.melious.ai/v1"
-    #: System One only upstream (``/decisions`` is a 404 on Melious). Both routes
-    #: land on ``/systemone``; the ``input`` form is translated. Melious
-    #: documents no routing fields (its routing is its own), so none are refused.
-    decisions = DecisionSupport(
-        paths={"decisions": "/systemone", "systemone": "/systemone"},
-        input_form=InputFormAdapter(to_upstream=_to_system_one, from_upstream=_from_system_one),
-    )
+    #: System One only upstream (``/decisions`` is a 404 on Melious): it speaks
+    #: only the ``systemone`` dialect, and the gateway translates a ``decisions``
+    #: request to it and back. Melious documents no routing fields (its routing
+    #: is its own), so none are refused.
+    decisions = DecisionSupport(paths={DIALECT_SYSTEMONE: "/systemone"})
 
     async def fetch_catalogue(
         self, http: httpx.AsyncClient, url: str, api_key: str | None

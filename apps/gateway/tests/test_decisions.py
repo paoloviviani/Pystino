@@ -347,11 +347,11 @@ class TestPassThrough:
         decider: ModelDef,
         fake_upstream: FakeUpstream,
     ) -> None:
-        """Cortecs answers it in kind, so the gateway forwards it to /decisions."""
+        """Cortecs speaks System One natively, so it goes to its /systemone."""
         fake_upstream.set_json(STATE_ANSWER)
         response = await client.post("/v1/decisions", json=state_body(), headers=seeded.auth)
         assert response.status_code == 200
-        assert upstream_path(fake_upstream).endswith("/decisions")
+        assert upstream_path(fake_upstream).endswith("/systemone")
         assert set(response.json()["answers"]) == {"inspect", "team", "urg"}
 
     async def test_a_null_model_in_a_system_one_answer_stays_null(
