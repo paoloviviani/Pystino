@@ -242,6 +242,14 @@ async def _decide(
         redacted = iter(str(message.get("content") or "") for message in outcome.messages)
         payload[text_field] = _rebuild(payload[text_field], redacted)
 
+        # A provider with only the System One form serves the `input` form by
+        # translation (DecisionSupport.input_form). Done before anything is
+        # reserved, so a question it cannot express is a 400 that leaves no row.
+        adapter = support.input_form if route == "decisions" and fmt == "input" else None
+        wire, adapter_context = payload, None
+        if adapter is not None:
+            wire, adapter_context = adapter.to_upstream(payload)
+
         # -- reservation --------------------------------------------------------
         # The provider tokenises the questions as well as the text (a 3-question
         # request about a one-line text measured 143 input tokens), so both are
@@ -271,11 +279,11 @@ async def _decide(
         if isinstance(metered, JSONResponse):
             return metered
 
-        payload["model"] = resolved.upstream_model
-        payload = metered.shape_payload(payload, surface=SURFACE)
+        wire["model"] = resolved.upstream_model
+        wire = metered.shape_payload(wire, surface=SURFACE)
 
         try:
-            response = await upstream.decisions(payload, path=path, request_id=request_id)
+            response = await upstream.decisions(wire, path=path, request_id=request_id)
         except UpstreamError as exc:
             raise await metered.upstream_unreachable(exc) from exc
 
@@ -292,6 +300,8 @@ async def _decide(
             metered.accounting.observe_payload(response.payload, headers=response.headers)
 
         body_out = dict(response.payload or {})
+        if adapter is not None:
+            body_out = adapter.from_upstream(body_out, adapter_context)
         # Our name for the model, as every route does: the upstream's is in the
         # ledger. A System One response may carry none (null), which stays.
         if isinstance(body_out.get("model"), str):

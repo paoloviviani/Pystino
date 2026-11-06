@@ -221,23 +221,24 @@ Melious (`https://api.melious.ai/v1`) is a vendor entry on the OpenAI-compatible
 protocol, like Nebius: its provider type is the protocol, and the `melious`
 plugin carries what is particular to it.
 
-- **Kinds.** Its `/v1/models` lists ids only, chat and every other kind mixed
-  together, so discovery reads the kind from the id: embeddings (`bge-*`,
-  `*e5-*`, `*embedding*`, `*mpnet*`), images (`flux-*`), transcription
-  (`whisper-*`), decision (`clef*`), everything else chat. The reranker
-  (`/v1/rerank`) is left out because the gateway has no rerank surface.
-- **Decision models** are served on `/v1/systemone` only (the System One form,
-  `noul` questions); `/v1/decisions` is refused with a 400 for a Melious model.
-- **Prices.** Melious publishes no price API. Discovery fills every listed model
-  from the entry's dated hints (EUR per million tokens, from its Hub pages, read
-  2026-11-06) without the "fill missing prices" tick. The Hub rounds to two
-  decimals. The image and speech-to-text models have no published per-image or
-  per-minute rate, and a model newer than the hints, so they import unpriced and
-  are refused until you type a price. Melious bills in euro credits and reports
-  them beside `usage` in `billing_cost`; the gateway bills from the configured
-  prices and does not read that figure.
+- **Catalogue.** Discovery asks `GET /v1/models?include_meta=true`, where each
+  model carries its own type, modalities, context length, capabilities and EUR
+  price (per million tokens, per image, per minute). Kinds, limits and prices
+  therefore come from Melious itself and there is no price table to go stale.
+  Types the gateway has no surface for are left out: the reranker
+  (`/v1/rerank`) and any type added later until it has been measured.
+- **Decision models** (`clef`, `clef-flash`) exist upstream on `/v1/systemone`
+  only. The gateway serves both its routes: `/v1/systemone` passes through, and
+  `/v1/decisions` with the `input` form (predicate, choice and score questions)
+  is translated to System One and the answer translated back, so a client
+  written for the Cortecs shape (Cerea's reviewer) works unchanged. A predicate
+  is a `noul` question; `choices` and `levels` become `criteria`. Only
+  `model`, the text and the questions are sent (`preference` has no Melious
+  counterpart), and a question type outside predicate, choice and score is a
+  400 on `/v1/decisions` naming it.
+- **Billing.** The gateway bills from the configured prices. Melious reports
+  euro credits beside `usage` in `billing_cost`; the gateway does not read it.
 - **Region.** `eu`: Melious says every request is processed inside the EU, with
   no fallback outside it, and that it does not log prompt or response content or
-  train on traffic. `scripts/check_melious_live.py` re-checks each kind against
-  a real key.
-
+  train on traffic. `scripts/check_melious_live.py` re-checks each kind, and the
+  translation, against a real key.

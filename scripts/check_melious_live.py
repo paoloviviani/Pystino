@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "apps" / "gatewa
 
 from gateway.models import ModelKind
 from gateway.plugins.registry import resolve
-from gateway.pricing import kinds_by_id
+from gateway.pricing import kinds_by_id, parse_catalogue
 
 BASE = os.environ.get("MELIOUS_BASE_URL", "https://api.melious.ai/v1")
 FAILURES: list[str] = []
@@ -64,7 +64,7 @@ async def main() -> None:
         async def post(path: str, **kwargs: object) -> httpx.Response:
             return await http.post(f"{BASE}{path}", **kwargs)  # type: ignore[arg-type]
 
-        print("catalogue: the plugin reads kinds from ids")
+        print("catalogue: kinds and prices come from /models?include_meta=true")
         payload = await resolve("melious").fetch_catalogue(http, f"{BASE}/models", secret)  # type: ignore[attr-defined]
         kinds = kinds_by_id(payload)
         listed = {m["id"] for m in (await http.get(f"{BASE}/models")).json()["data"]}
@@ -77,6 +77,11 @@ async def main() -> None:
             "mistral-small-3.2-24b-instruct": ModelKind.CHAT,
         }.items():
             check(f"{model} is {want.value}", kinds.get(model) is want, str(kinds.get(model)))
+        prices = {p.model_id: p for p in parse_catalogue(payload)[0]}
+        check("chat model priced", prices["mistral-small-3.2-24b-instruct"].input_per_mtok > 0)
+        check("image priced per image", (prices["flux-2-klein-4b"].per_image or 0) > 0)
+        check("whisper priced per minute", (prices["whisper-large-v3-turbo"].per_minute or 0) > 0)
+        check("decision model priced", prices["clef-flash"].input_per_mtok > 0)
         check("the reranker is left out", not any("rerank" in m for m in kinds))
         check(
             "every listed model is classified or deliberately left out",
@@ -84,7 +89,7 @@ async def main() -> None:
         )
 
         print("chat: streaming usage, tools, reasoning")
-        chat = {"model": "qwen3.6-27b", "max_tokens": 400}
+        chat = {"model": "qwen3.6-27b", "max_tokens": 2000}
         tool = {
             "type": "function",
             "function": {
@@ -164,7 +169,44 @@ async def main() -> None:
                 "questions": [{"type": "predicate", "name": "q", "instructions": "x?"}],
             },
         )
-        check("/decisions is a 404 (not advertised)", r.status_code == 404, str(r.status_code))
+        check("/decisions is a 404 upstream", r.status_code == 404, str(r.status_code))
+
+        print("/v1/decisions input form, translated to System One")
+        adapter = resolve("melious").decisions.input_form  # type: ignore[attr-defined]
+        questions = [
+            {
+                "type": "predicate",
+                "name": "safe",
+                "instructions": "Is the action routine and safe?",
+            },
+            {
+                "type": "choice",
+                "name": "team",
+                "instructions": "Which team?",
+                "choices": [{"value": "ops", "description": "operations"}, {"value": "dev"}],
+            },
+            {
+                "type": "score",
+                "name": "risk",
+                "instructions": "How risky?",
+                "levels": [{"label": "low"}, {"label": "medium"}, {"label": "high"}],
+            },
+        ]
+        wire, plan = adapter.to_upstream(
+            {"model": "clef-flash", "input": "The agent runs `npm test`.", "questions": questions}
+        )
+        r = await post("/systemone", json=wire)
+        check("System One accepts the translated body", r.status_code == 200, r.text[:200])
+        if r.status_code == 200:
+            answers = adapter.from_upstream(r.json(), plan)["answers"]
+            check(
+                "three answers, in order", [a["name"] for a in answers] == ["safe", "team", "risk"]
+            )
+            check("predicate probability in [0, 1]", 0 <= answers[0]["probability"] <= 1)
+            check("choice is one of ours", answers[1]["choice"] in ("ops", "dev"))
+            check(
+                "score has labelled probabilities", answers[2]["probabilities"][0]["label"] == "low"
+            )
 
 
 asyncio.run(main())
