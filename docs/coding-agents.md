@@ -10,8 +10,8 @@ provide.
 The machine side lives in the chat repository. galopin, the Cerea machine agent, is
 its `agent/` directory. It enrols with the IdP, runs a local refreshing shim in front
 of `/v1`, supervises opencode, and dials out to the chat's `/code` panel. Its
-installation and operation are documented in the chat repository's
-`docs/agent-machines.md` and `agent/PROTOCOL.md`. The stack side is one switch,
+installation and operation are documented in the chat's
+[agent machines pages](https://paoloviviani.github.io/Cerea/agent-machines/). The stack side is one switch,
 `CODE_AGENTS_ENABLED=true` in `.env` (the full stack's; a Pystino-only
 deployment has no chat, so no `/code` panel to dial into).
 
@@ -163,6 +163,11 @@ unchanged, which Caddy does by default.
   re-enrolling; [Billing groups](billing-groups.md) is the whole rule, and
   `GET /v1/pystino/usage` returns the caller's own spend and quotas to
   anything holding the same token.
+- `x-pystino-tag`, on the requests galopin's local proxy forwards: the coding
+  session they belong to (a subagent counts toward its parent). It lets the
+  chat read a session's and a turn's cost back with
+  `GET /v1/pystino/usage/tags` ([Usage tags](accounting-and-quotas.md#usage-tags-a-sessions-own-cost)),
+  as the gateway metered it, from the signed-in person's own token.
 - `x-session-id` (or `x-session-affinity`), when the client sends one: the
   session key a [routed alias](model-aliases.md#2-session-stickiness) uses to keep
   a conversation on the target that served it. Without one the gateway falls

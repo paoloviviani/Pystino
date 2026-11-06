@@ -13,7 +13,7 @@ moving to it later is: copy this `.env` and the compose project name over,
 
 A central Pystino can serve chat deployments that live elsewhere: each one
 (the `satellite` preset in the deploy kit) runs only the chat, pointed here
-with `OPENAI_BASE_URL` at this gateway's public `/v1`, signing people in
+with `OPENAI_BASE_URL` at this gateway's public `/v1`, signing users in
 against this gateway's identity provider, and reading this gateway's
 ledger with each person's own token. Quotas, accounting and model access
 stay central, administered here.

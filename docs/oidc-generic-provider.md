@@ -93,7 +93,7 @@ invite mode, warns when it is absent.
 When the answer is "no", or the claim stays `false`, the first sign-in of an
 invited person is refused with the invite-mode text and the pending account
 waits; nothing is provisioned twice. SCIM and the directory pull do not need
-the claim — they key people by `externalId`/`oid`, not by email.
+the claim — they key users by `externalId`/`oid`, not by email.
 
 ## Turning on provisioning per provider
 
@@ -144,7 +144,7 @@ does not list, and `./configure --oidc-scopes 'openid profile email'` (or
 Without the scope, group-based features (group sync, quotas and billing by
 group, an admin claim rule on `groups`) work only if the provider puts a groups
 claim in its tokens regardless. `pystino idp check --device` prints the claim.
-With no groups claim, people sign in with no group memberships, and an admin
+With no groups claim, users sign in with no group memberships, and an admin
 rule by email still works.
 
 The machine client follows the same rule: galopin asks for `offline_access`
@@ -191,16 +191,16 @@ reads the same value. For the bundled Authelia it is
 sign-in whether or not you set it up. **User sync…** on the provider's card in
 the console (it does not appear for the bundled Authelia, whose accounts the
 [Users page](bundled-accounts.md) manages directly) keeps the user list in step
-with the provider: people exist, with their groups and pre-assigned access,
+with the provider: users exist, with their groups and pre-assigned access,
 before their first sign-in, and are deactivated when removed there. A
 directory never deletes anyone, grants and revokes only what it granted, and
 never deactivates half the deployment because it returned an empty list.
 
 The dialog offers the adapters the provider kind can support:
 
-| Adapter | How the directory tells the gateway about people |
+| Adapter | How the directory tells the gateway about users |
 |---|---|
-| Off (default) | people appear at their first sign-in |
+| Off (default) | users appear at their first sign-in |
 | SCIM 2.0 | the provider pushes changes to `/scim/v2/<provider>` |
 | Authelia users file | not needed: the Users page manages bundled accounts |
 
@@ -320,10 +320,10 @@ What to know about GitLab:
   sight: one operator's first sign-in created 67 groups. With
   `OIDC_GROUP_IMPORT=manual`, the default, a sign-in creates none. The names
   appear on the console's **Groups** page under *Groups from your identity
-  provider*, with how many people carry each and when it was last seen;
+  provider*, with how many users carry each and when it was last seen;
   **Map** the few that should mean something here (the dialog asks what the
   name means: a new group of the same name, a new group under another name,
-  or an existing group; under `every_login` the people who carry it get it at
+  or an existing group; under `every_login` the users who carry it get it at
   once) and **Ignore** the rest. **Map full paths** — a subgroup under your
   organisation, `acme/staff`, not the bare `staff` a user could create
   top-level on their own account. Meanwhile everyone is in `users`
