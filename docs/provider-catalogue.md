@@ -187,9 +187,9 @@ residency and zero-data-retention rules are a later step.
 
 ## The built-in entries
 
-OpenAI, Anthropic, Mistral, Nebius, Tensorix, Cortecs and OpenRouter ship
-built in. They state a region only where the provider commits to one (Mistral
-and Cortecs: `eu`) and no retention claims at all: those are for you to record
+OpenAI, Anthropic, Mistral, Nebius, Melious, Tensorix, Cortecs and OpenRouter ship
+built in. They state a region only where the provider commits to one (Mistral,
+Melious and Cortecs: `eu`) and no retention claims at all: those are for you to record
 from your own contract, in an override.
 
 ## Built-in facts: what they claim
@@ -214,3 +214,30 @@ differs" and a **Use catalogue endpoint** button; or edit the provider and set
 the endpoint by hand. Region and retention, which are read through the link,
 follow the new entry at once, so check that the row's endpoint matches what the
 entry now claims.
+
+## Melious
+
+Melious (`https://api.melious.ai/v1`) is a vendor entry on the OpenAI-compatible
+protocol, like Nebius: its provider type is the protocol, and the `melious`
+plugin carries what is particular to it.
+
+- **Kinds.** Its `/v1/models` lists ids only, chat and every other kind mixed
+  together, so discovery reads the kind from the id: embeddings (`bge-*`,
+  `*e5-*`, `*embedding*`, `*mpnet*`), images (`flux-*`), transcription
+  (`whisper-*`), decision (`clef*`), everything else chat. The reranker
+  (`/v1/rerank`) is left out because the gateway has no rerank surface.
+- **Decision models** are served on `/v1/systemone` only (the System One form,
+  `noul` questions); `/v1/decisions` is refused with a 400 for a Melious model.
+- **Prices.** Melious publishes no price API. Discovery fills every listed model
+  from the entry's dated hints (EUR per million tokens, from its Hub pages, read
+  2026-11-06) without the "fill missing prices" tick. The Hub rounds to two
+  decimals. The image and speech-to-text models have no published per-image or
+  per-minute rate, and a model newer than the hints, so they import unpriced and
+  are refused until you type a price. Melious bills in euro credits and reports
+  them beside `usage` in `billing_cost`; the gateway bills from the configured
+  prices and does not read that figure.
+- **Region.** `eu`: Melious says every request is processed inside the EU, with
+  no fallback outside it, and that it does not log prompt or response content or
+  train on traffic. `scripts/check_melious_live.py` re-checks each kind against
+  a real key.
+

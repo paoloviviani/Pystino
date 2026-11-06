@@ -73,7 +73,7 @@ def overrides(tmp_path: Path) -> Path:
 class TestShippedCatalogue:
     def test_the_built_in_layer_loads_and_uses_installed_plugins(self) -> None:
         catalogue = load_catalogue(override_dir=None)
-        assert {"openai", "mistral", "cortecs", "nebius"} <= set(catalogue.entries)
+        assert {"openai", "mistral", "cortecs", "nebius", "melious"} <= set(catalogue.entries)
         assert all(e.origins["name"].layer == BUILTIN for e in catalogue.ordered())
         assert BUILTIN_DIR.is_dir()
 

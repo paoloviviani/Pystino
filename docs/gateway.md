@@ -132,7 +132,7 @@ that carries its
 vendor knowledge: which header names it wants, what unit it reports cost in,
 whether it is a provider or a router.
 In-tree plugins cover the generic OpenAI-compatible case (`generic`), OpenAI,
-Anthropic (chat completions are served over its native Messages API, see below), Mistral, Nebius, OpenRouter, Cortecs and Tensorix, this
+Anthropic (chat completions are served over its native Messages API, see below), Mistral, Nebius, Melious, OpenRouter, Cortecs and Tensorix, this
 deployment's own extractor, and the search backends DuckDuckGo, Exa, Jina and
 Linkup. More can install via the `llmp.providers` entry point.
 

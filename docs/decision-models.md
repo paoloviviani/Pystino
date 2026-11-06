@@ -128,7 +128,9 @@ tokens at 0.042 EUR per million is 6.006 micro-EUR, reported as 7 (and 314
 tokens, 13.188, reported as 14). The reported
 figure is therefore at most a micro-EUR above the table's, which is not a
 mismatch. Another provider's plugin owns its own unit (OpenRouter reports a
-decimal credit figure, for example), path and routing vocabulary.
+decimal credit figure, for example), path and routing vocabulary. The Melious
+plugin declares `/systemone` only (its `/decisions` is a 404), so a Melious
+model serves `/v1/systemone` and a `/v1/decisions` call is refused with a 400.
 
 The two request forms and the pass-through of everything else are the contract
 with callers and do not change with the provider.

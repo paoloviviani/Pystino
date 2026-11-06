@@ -33,6 +33,7 @@ from gateway.plugins.extractor import LocalExtractorPlugin
 from gateway.plugins.generic import GenericOpenAIPlugin
 from gateway.plugins.jina import JinaSearchPlugin
 from gateway.plugins.linkup import LinkupSearchPlugin
+from gateway.plugins.melious import MeliousPlugin
 from gateway.plugins.mistral import MistralPlugin
 from gateway.plugins.nebius import NebiusPlugin
 from gateway.plugins.openai import OpenAIPlugin
@@ -59,6 +60,7 @@ _BUILTIN: dict[str, PluginFactory] = {
     "anthropic": AnthropicPlugin,
     "mistral": MistralPlugin,
     "nebius": NebiusPlugin,
+    "melious": MeliousPlugin,
     "tensorix": TensorixPlugin,
     "cortecs": CortecsRouterPlugin,
     "openrouter": OpenRouterPlugin,

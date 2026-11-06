@@ -4,6 +4,8 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **Melious as a provider.** A built-in catalogue entry (`https://api.melious.ai/v1`, region EU, no training, no content logging) and a small `melious` plugin on the OpenAI-compatible protocol. Discovery classifies its mixed model list by id (chat, embedding, image, transcription, decision; the `/v1/rerank` reranker is left out, the gateway has no rerank surface), fills EUR prices from dated hints because Melious has no price API (image and speech-to-text models stay unpriced until you type a rate), and serves its decision models (`clef`, `clef-flash`) on `/v1/systemone`, the only decision route Melious has. `scripts/check_melious_live.py` re-checks each kind against a real key.
+
 ## v0.28.0 — 2026-11-06
 
 Paired with Cerea 0.42.2.

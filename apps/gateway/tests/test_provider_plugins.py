@@ -47,6 +47,7 @@ class TestRegistry:
             "openai",
             "mistral",
             "nebius",
+            "melious",
             "tensorix",
             "openrouter",
         } <= set(available())
@@ -347,6 +348,7 @@ class TestNewBuiltins:
             ("openai", "https://api.openai.com/v1"),
             ("mistral", "https://api.mistral.ai/v1"),
             ("nebius", "https://api.tokenfactory.nebius.com/v1"),
+            ("melious", "https://api.melious.ai/v1"),
         ],
     )
     def test_known_endpoints_are_pre_filled(self, name: str, base_url: str) -> None:

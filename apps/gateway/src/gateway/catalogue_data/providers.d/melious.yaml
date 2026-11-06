@@ -1,0 +1,212 @@
+# Built-in facts, read from the provider's own pages on 2026-11-06 (see sources). Only what
+# the provider states is recorded; where it does not say, the value is left null
+# or marked not published, never guessed. Re-verify before relying on it.
+providers:
+  - id: melious
+    name: Melious
+    plugin: melious
+    base_url: https://api.melious.ai/v1
+    region: eu
+    region_note: >-
+      Melious says every inference request runs on a provider inside the EU,
+      that the request and response never leave it, and that there is no
+      non-EU fallback when capacity is tight. It is a network of inference
+      providers (observed in responses: OVHcloud in France, Melious itself in
+      Finland); which one serves a request is Melious's choice. The company is
+      Melious AI GmbH, Saarbruecken, Germany. A narrower guarantee (for
+      example Germany only) is available on request.
+    retention:
+      status: published
+      zero_data_retention_available: false
+      trains_on_customer_data: false
+      note: >-
+        Melious says it does not log the content of prompts or responses, only
+        operational metadata (request id, token counts, model, provider, energy
+        and cost). A provider on its network may keep short-lived operational
+        logs for stability monitoring; none retains content to train on, and
+        none of it leaves the EU. Files uploaded to its Files API are stored
+        encrypted until deleted (the gateway does not use that API). No
+        retention period is published. For GDPR specifics Melious points to
+        its DPA.
+    sources:
+      - url: https://melious.ai/docs/concepts/privacy
+        retrieved: 2026-11-06
+        covers: location, retention, training
+      - url: https://melious.ai/docs/concepts/pricing
+        retrieved: 2026-11-06
+        covers: billing currency (credits are EUR)
+      - url: https://melious.ai/pricing
+        retrieved: 2026-11-06
+        covers: per-model prices
+    # Prices: EUR per million tokens, as Melious's Hub pages and pricing page
+    # list them (https://melious.ai/hub/models/<id>), read 2026-11-06. Melious
+    # publishes no price API: GET /v1/models carries ids only. So discovery
+    # fills every model it lists from these hints without the operator ticking
+    # "fill missing prices" (plugins/melious.py, price_hints_always).
+    #
+    # Hub pages round to two decimals: the embedding rates (EUR 0.01, 0.03)
+    # may be rounded from smaller figures. Re-check on the Hub before relying
+    # on them.
+    #
+    # NOT LISTED HERE, so imported unpriced and refused until a price is typed:
+    #  * the image models (flux-2-*) and speech-to-text models (whisper-large-v3*):
+    #    the Hub shows EUR 0.00 per token and no per-image or per-minute rate.
+    #  * qwen3guard-gen-8b: it has no Hub page.
+    # Embedding and decision models are billed per input token only, so their output rate is 0.
+    prices:
+      bge-m3:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.01"
+          output_per_mtok: "0"
+          currency: EUR
+      bge-multilingual-gemma2:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.01"
+          output_per_mtok: "0"
+          currency: EUR
+      deepseek-v4-flash-0731:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.10"
+          output_per_mtok: "0.25"
+          cache_read_per_mtok: "0.02"
+          currency: EUR
+      deepseek-v4.1-flash:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.20"
+          output_per_mtok: "1.00"
+          cache_read_per_mtok: "0.01"
+          currency: EUR
+      deepseek-v4.1-flash-1017:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.30"
+          output_per_mtok: "1.20"
+          cache_read_per_mtok: "0.03"
+          currency: EUR
+      gemma-4-26b-a4b:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.25"
+          output_per_mtok: "0.50"
+          currency: EUR
+      gemma-4-31b:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.10"
+          output_per_mtok: "0.30"
+          cache_read_per_mtok: "0.02"
+          currency: EUR
+      multilingual-e5-large:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.03"
+          output_per_mtok: "0"
+          currency: EUR
+      multilingual-e5-large-instruct:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.03"
+          output_per_mtok: "0"
+          currency: EUR
+      llama-3.3-70b-instruct:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.65"
+          output_per_mtok: "0.65"
+          currency: EUR
+      mistral-small-3.2-24b-instruct:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.10"
+          output_per_mtok: "0.30"
+          currency: EUR
+      kimi-k2.6:
+        - effective_from: 2026-11-06
+          input_per_mtok: "1.15"
+          output_per_mtok: "3.55"
+          cache_read_per_mtok: "0.45"
+          currency: EUR
+      kimi-k2.7-code:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.60"
+          output_per_mtok: "3.60"
+          cache_read_per_mtok: "0.16"
+          currency: EUR
+      kimi-k3:
+        - effective_from: 2026-11-06
+          input_per_mtok: "2.85"
+          output_per_mtok: "14.25"
+          cache_read_per_mtok: "0.75"
+          currency: EUR
+      gpt-oss-120b:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.09"
+          output_per_mtok: "0.45"
+          currency: EUR
+      gpt-oss-20b:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.05"
+          output_per_mtok: "0.17"
+          currency: EUR
+      qwen3-235b-a22b-instruct:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.75"
+          output_per_mtok: "2.25"
+          currency: EUR
+      qwen3-coder-next:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.15"
+          output_per_mtok: "0.80"
+          currency: EUR
+      qwen3-embedding-8b:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.01"
+          output_per_mtok: "0"
+          currency: EUR
+      qwen3.5-397b-a17b:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.60"
+          output_per_mtok: "3.60"
+          currency: EUR
+      qwen3.6-27b:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.45"
+          output_per_mtok: "3.15"
+          currency: EUR
+      qwen3.6-35b-a3b:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.25"
+          output_per_mtok: "1.50"
+          currency: EUR
+      qwen3.8-27b:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.40"
+          output_per_mtok: "2.40"
+          cache_read_per_mtok: "0.10"
+          currency: EUR
+      qwen3.8-max:
+        - effective_from: 2026-11-06
+          input_per_mtok: "2.40"
+          output_per_mtok: "5.65"
+          cache_read_per_mtok: "0.60"
+          currency: EUR
+      paraphrase-multilingual-mpnet:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.01"
+          output_per_mtok: "0"
+          currency: EUR
+      glm-5.3:
+        - effective_from: 2026-11-06
+          input_per_mtok: "1.00"
+          output_per_mtok: "3.00"
+          cache_read_per_mtok: "0.20"
+          currency: EUR
+      glm-5.3-flash:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.10"
+          output_per_mtok: "0.40"
+          cache_read_per_mtok: "0.02"
+          currency: EUR
+      clef:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.20"
+          output_per_mtok: "0"
+          currency: EUR
+      clef-flash:
+        - effective_from: 2026-11-06
+          input_per_mtok: "0.03"
+          output_per_mtok: "0"
+          currency: EUR
