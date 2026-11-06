@@ -16,7 +16,6 @@ import httpx
 import pytest
 from conftest import FakeUpstream, Seeded
 from gateway.catalogue import load_catalogue
-from gateway.errors import BadRequestError
 from gateway.models import ModelKind, Provider
 from gateway.plugins.base import ProviderKind
 from gateway.plugins.registry import resolve
@@ -103,10 +102,9 @@ class TestEntry:
         assert plugin.protocol == "openai"  # type: ignore[attr-defined]
         assert plugin.reports_authoritative_cost is False
 
-    def test_both_decision_routes_land_on_systemone(self) -> None:
+    def test_it_speaks_the_systemone_dialect(self) -> None:
         support = resolve("melious").decisions  # type: ignore[attr-defined]
-        assert dict(support.paths) == {"decisions": "/systemone", "systemone": "/systemone"}
-        assert support.input_form is not None
+        assert (support.dialect, support.path) == ("systemone", "/systemone")
 
     def test_the_entry_ships_no_price_table(self) -> None:
         assert not load_catalogue(override_dir=None).entries["melious"].prices
@@ -187,77 +185,6 @@ SYSTEM_ONE_ANSWER: dict[str, Any] = {
     },
     "usage": {"input_tokens": 124, "output_tokens": 0},
 }
-
-
-class TestInputFormTranslation:
-    def test_questions_become_system_one_questions(self) -> None:
-        adapter = resolve("melious").decisions.input_form  # type: ignore[attr-defined]
-        body = {"model": "m", "input": "hello", "questions": QUESTIONS, "preference": "cost"}
-        wire, _ = adapter.to_upstream(body)
-        assert wire == {
-            "model": "m",
-            "state": "hello",
-            "questions": {
-                "route": {
-                    "type": "choice",
-                    "instructions": "Which team?",
-                    "criteria": {"facilities": "building", "billing": "billing"},
-                },
-                "urgency": {
-                    "type": "score",
-                    "instructions": "How urgent?",
-                    "criteria": ["low", "medium", "high"],
-                },
-                "inspect": {"type": "noul", "instructions": "Needs inspection?"},
-            },
-        }
-
-    def test_messages_become_one_text(self) -> None:
-        adapter = resolve("melious").decisions.input_form  # type: ignore[attr-defined]
-        q = [{"type": "predicate", "name": "p", "instructions": "x?"}]
-        one = [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
-        two = [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]
-        assert adapter.to_upstream({"model": "m", "input": one, "questions": q})[0]["state"] == "hi"
-        got = adapter.to_upstream({"model": "m", "input": two, "questions": q})[0]["state"]
-        assert got == "user: a\nassistant: b"
-
-    def test_an_answer_comes_back_in_the_input_forms_shape(self) -> None:
-        adapter = resolve("melious").decisions.input_form  # type: ignore[attr-defined]
-        _, plan = adapter.to_upstream({"model": "m", "input": "x", "questions": QUESTIONS})
-        out = adapter.from_upstream(copy.deepcopy(SYSTEM_ONE_ANSWER), plan)
-        assert out["usage"] == {"input_tokens": 124, "output_tokens": 0}
-        route, urgency, inspect = out["answers"]
-        assert route == {
-            "type": "choice",
-            "name": "route",
-            "choice": "facilities",
-            "probabilities": [
-                {"value": "facilities", "probability": 0.75},
-                {"value": "billing", "probability": 0.25},
-            ],
-            "confidence": 0.5,
-        }
-        assert urgency["score"] == 0.9 and urgency["confidence"] == 0.6
-        assert urgency["probabilities"][1] == {"value": 1, "label": "medium", "probability": 0.7}
-        assert inspect == {"type": "predicate", "name": "inspect", "probability": 0.0915}
-
-    def test_unnamed_and_unsafe_names_get_keys_and_come_back_as_sent(self) -> None:
-        adapter = resolve("melious").decisions.input_form  # type: ignore[attr-defined]
-        q = [
-            {"type": "predicate", "instructions": "a?"},
-            {"type": "predicate", "name": "has space", "instructions": "b?"},
-        ]
-        wire, plan = adapter.to_upstream({"model": "m", "input": "x", "questions": q})
-        assert list(wire["questions"]) == ["q0", "q1"]
-        answer = {"answers": {k: {"type": "noul", "noul": 0.5} for k in wire["questions"]}}
-        names = [a["name"] for a in adapter.from_upstream(answer, plan)["answers"]]
-        assert names == [None, "has space"]
-
-    def test_a_question_it_cannot_express_is_refused_by_type(self) -> None:
-        adapter = resolve("melious").decisions.input_form  # type: ignore[attr-defined]
-        q = [{"type": "box", "name": "b", "instructions": "?"}]
-        with pytest.raises(BadRequestError, match="'box'"):
-            adapter.to_upstream({"model": "m", "input": "x", "questions": q})
 
 
 @pytest.fixture

@@ -34,7 +34,7 @@ nothing here a plugin could return that would let it price a request.
 from __future__ import annotations
 
 import enum
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -170,6 +170,13 @@ class ProbeResult:
     sample: tuple[str, ...] = ()
 
 
+#: The two decision dialects (the decision counterpart of the two chat
+#: protocols below): Cortecs's ``input`` + ``questions`` array, and System One's
+#: ``state`` + ``questions`` object.
+DIALECT_DECISIONS = "decisions"
+DIALECT_SYSTEMONE = "systemone"
+
+
 @dataclass(frozen=True, slots=True)
 class DecisionSupport:
     """What a plugin knows about serving decision models (ADR 0100).
@@ -181,17 +188,20 @@ class DecisionSupport:
     ``base_url_options`` is not: an installed plugin written before this
     existed must keep satisfying the protocol.
 
-    Everything here is vendor knowledge that would otherwise be a literal in a
-    router. The core knows the two *request formats* (the ``input`` + array
-    form and the System One ``state`` + keyed form), because those are the
-    caller's contract; where a provider serves them and which of the body's
-    fields are the provider's own routing settings is the plugin's.
+    The core knows the two dialects and translates between them; what is
+    the plugin's is which one the provider speaks, where, and which of the
+    body's fields are the provider's own routing settings.
     """
 
-    #: Upstream path per route the caller used: ``"decisions"`` for
-    #: ``/v1/decisions`` and ``"systemone"`` for ``/v1/systemone``. A route
-    #: with no entry is not served by this provider (a 400 naming the route).
-    paths: Mapping[str, str]
+    #: The decision dialect this provider speaks natively, and the whole of
+    #: what its decision *type* is (as ``protocol`` is for chat): ``"decisions"``
+    #: (``input`` + a ``questions`` array) or ``"systemone"`` (``state`` + a
+    #: ``questions`` object). A caller may send either form to either route; the
+    #: gateway translates to this dialect and back (``gateway.translate.decisions``)
+    #: and forwards unchanged when they already match.
+    dialect: str = DIALECT_DECISIONS
+    #: The provider's upstream path for its dialect (``/decisions``, ``/systemone``).
+    path: str = "/decisions"
     #: Body fields that choose providers, regions, quantisations or fallbacks.
     #: They are the deployment's settings (the provider row), as for chat, so a
     #: caller sending one is refused with a 400 naming the field instead of
@@ -199,22 +209,6 @@ class DecisionSupport:
     #: EU-only deployment's first. A field whose value is ``null`` counts as
     #: absent and is dropped.
     routing_fields: tuple[str, ...] = ()
-    #: For a provider that serves only the System One form: how an ``input``
-    #: form request to ``/v1/decisions`` becomes one and the answer comes back
-    #: in the ``input`` form's shape, so a caller (Cerea's reviewer) needs no
-    #: second client. ``to_upstream`` takes the (already redacted) body and
-    #: returns the upstream body plus whatever ``from_upstream`` needs to map
-    #: the answer back; it raises ``BadRequestError`` for a question it cannot
-    #: express. ``None``: the ``input`` form is forwarded as it came.
-    input_form: InputFormAdapter | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class InputFormAdapter:
-    """The two halves of serving the ``input`` form from a System One provider."""
-
-    to_upstream: Callable[[dict[str, Any]], tuple[dict[str, Any], Any]]
-    from_upstream: Callable[[dict[str, Any], Any], dict[str, Any]]
 
 
 def bearer_headers(credential: str) -> dict[str, str]:

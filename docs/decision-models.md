@@ -38,8 +38,12 @@ model is refused on these two.
 
 | Route | Takes | Answers |
 |---|---|---|
-| `POST /v1/decisions` | the `input` form, or the System One form | in the format it was sent |
+| `POST /v1/decisions` | the `input` form, or the System One form | in the form it was sent |
 | `POST /v1/systemone` | the System One form only | System One |
+
+Either route works against **any** decision model: the gateway
+[translates](#dialects-and-the-translation) to the dialect the model's provider
+speaks and back.
 
 The **`input` form**: `model`, `input` (a string, or messages whose content is a
 string or `input_text` parts) and `questions`, an array of `predicate`, `choice`
@@ -53,8 +57,8 @@ questions. The answer's `answers` is an object keyed by the same ids.
 
 Send one form per request, with a non-empty `questions` of the matching type
 (array for `input`, object for `state`); anything else is a 400 before any
-accounting. Beyond that the gateway does not read the questions or the answers.
-Question bodies, option lists and any field it does not know go to the provider
+accounting. When the provider speaks the dialect you sent, the gateway does not read the
+questions or the answers: question bodies, option lists and any field it does not know go to the provider
 as sent and the answer comes back as the provider wrote it, so a new question
 type the provider adds works without a gateway release. The `model` in the answer
 is the name you sent.
@@ -73,6 +77,43 @@ curl https://gateway.example/v1/decisions \
     "preference": "cost"
   }'
 ```
+
+## Dialects and the translation
+
+A provider speaks one of two **dialects**, the way a chat provider speaks the
+OpenAI or the Anthropic protocol: `decisions` (Cortecs: `input` and a `questions`
+array) or `systemone` (Melious: `state` and a `questions` object). The
+dialect is declared by the provider's plugin as data (`DecisionSupport.dialect`
+and `path`); the translation lives in `gateway/translate/decisions.py`, outside
+every vendor plugin. A request in the provider's own dialect is forwarded
+untouched, so a question type new to the provider works at once; any other is
+translated, and the answer is translated back into the form you sent. The
+`model` in the answer is always the name you sent, and usage and cost are read
+from the provider's own answer, so metering is per provider whatever the form.
+
+| `decisions` form | `systemone` form |
+|---|---|
+| `input`: a string | `state`: the string |
+| `input`: messages | `state`: one message's text, or `role: text` lines |
+| `predicate` | `noul`; answer `probability` is `noul` |
+| `choice` with `choices` (`value`, optional `description`) | `choice` with `criteria`: `{value: description}`; the answer's `probabilities` list is an object keyed by value |
+| `score` with ordered `levels` (`label`) | `score` with `criteria`: the ordered labels; the answer's `probabilities` are keyed by position, with a `legend` |
+| `questions[].name` | the question id; a name System One cannot use as an id (or a repeat, or none) becomes `q<index>` and is restored in the answer |
+| `answers`: an array in question order | `answers`: an object keyed by id |
+| `preference` | no counterpart: **400** naming it |
+| any other question type | no counterpart: **400** naming the type |
+
+Going the other way, a non-string `state` (an object or array) is sent as its
+JSON text, `noul` becomes `predicate`, a choice's `criteria` (an object, or a
+list of values) become `choices`, and a score's `criteria` must be an ordered
+array. Question fields other than these (`instructions`, anything the provider
+adds) travel as written, and `images` pass through. A refusal answer keeps its
+fields. Each refusal happens before anything is reserved, so a request refused
+for a question without a counterpart leaves no usage row.
+
+`GET /v1/models` lists `decision_forms` on each decision model (`["decisions",
+"systemone"]`: both are accepted whichever the provider speaks), and an empty
+list on any other kind.
 
 ## Routing belongs to the deployment
 
@@ -120,17 +161,18 @@ surface `decisions` for both routes.
 ## Providers
 
 A provider plugin declares decision support (`DecisionSupport` in
-`gateway/plugins/base.py`): the upstream path for each route and the names of
-its routing fields. A plugin that does not declare it cannot serve a `decision`
-model. The Cortecs plugin declares `/decisions` and `/systemone`, and reads
+`gateway/plugins/base.py`): the dialect it speaks, the upstream path for it and the
+names of its routing fields. A plugin that does not declare it cannot serve a
+`decision` model. The Cortecs plugin declares the `decisions` dialect at
+`/decisions`, and reads
 `usage.cost`, an integer in **micro-EUR rounded up per request**: 143 input
 tokens at 0.042 EUR per million is 6.006 micro-EUR, reported as 7 (and 314
 tokens, 13.188, reported as 14). The reported
 figure is therefore at most a micro-EUR above the table's, which is not a
 mismatch. Another provider's plugin owns its own unit (OpenRouter reports a
 decimal credit figure, for example), path and routing vocabulary. The Melious
-plugin has System One only upstream, so it declares `/systemone` for both routes and
-translates the `input` form to it and back (`DecisionSupport.input_form`).
+plugin declares the `systemone` dialect at `/systemone` (its `/decisions` is a
+404) and nothing else: the translation is the gateway's.
 
-The two request forms and the pass-through of everything else are the contract
-with callers and do not change with the provider.
+The two request forms are the contract with callers and do not change with the
+provider.

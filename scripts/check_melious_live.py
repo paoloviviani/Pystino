@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "apps" / "gatewa
 from gateway.models import ModelKind
 from gateway.plugins.registry import resolve
 from gateway.pricing import kinds_by_id, parse_catalogue
+from gateway.translate.decisions import translate_request, translate_response
 
 BASE = os.environ.get("MELIOUS_BASE_URL", "https://api.melious.ai/v1")
 FAILURES: list[str] = []
@@ -172,7 +173,6 @@ async def main() -> None:
         check("/decisions is a 404 upstream", r.status_code == 404, str(r.status_code))
 
         print("/v1/decisions input form, translated to System One")
-        adapter = resolve("melious").decisions.input_form  # type: ignore[attr-defined]
         questions = [
             {
                 "type": "predicate",
@@ -192,13 +192,15 @@ async def main() -> None:
                 "levels": [{"label": "low"}, {"label": "medium"}, {"label": "high"}],
             },
         ]
-        wire, plan = adapter.to_upstream(
-            {"model": "clef-flash", "input": "The agent runs `npm test`.", "questions": questions}
+        wire, plan = translate_request(
+            {"model": "clef-flash", "input": "The agent runs `npm test`.", "questions": questions},
+            source="decisions",
+            target=resolve("melious").decisions.dialect,  # type: ignore[attr-defined]
         )
         r = await post("/systemone", json=wire)
         check("System One accepts the translated body", r.status_code == 200, r.text[:200])
         if r.status_code == 200:
-            answers = adapter.from_upstream(r.json(), plan)["answers"]
+            answers = translate_response(r.json(), plan)["answers"]
             check(
                 "three answers, in order", [a["name"] for a in answers] == ["safe", "team", "risk"]
             )

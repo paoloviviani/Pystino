@@ -9,15 +9,15 @@ and reports as everything else.
 The pipeline is the embeddings one (resolve, check access, redact, reserve,
 call, record, settle), and the differences are the shape of the operation:
 
-**The request and the response pass through in the format they arrived in.**
-Two formats exist and the caller picks: the ``input`` form (``input`` a string
+**The answer comes back in the dialect the request was sent in.** Two
+dialects exist and the caller picks: the ``input`` form (``input`` a string
 or messages, ``questions`` an array) and the System One form (``state``,
 ``questions`` an object keyed by the caller's ids). ``/v1/decisions`` takes
-both and answers in kind; ``/v1/systemone`` takes only the second. The gateway
-reads neither the questions nor the answers: it validates which format this
-is, and that is all, because it is a beta schema and a gateway that
-re-validated it would refuse valid requests each time the provider added a
-question type.
+both; ``/v1/systemone`` takes only the second. The provider speaks one of them
+(``DecisionSupport.dialect``): when it is the caller's the body and the answer
+pass through unread, so a new question type works without a release; when not,
+``gateway.translate.decisions`` translates both ways (and a question with no
+counterpart is a 400).
 
 **Routing belongs to the deployment.** The body fields that choose providers,
 regions, quantisations or fallbacks (the provider plugin names them) are
@@ -62,10 +62,11 @@ from gateway.deps import (
 from gateway.errors import BadRequestError
 from gateway.models import ApiSurface, ModelDef, Provider
 from gateway.plugins import registry
-from gateway.plugins.base import DecisionSupport
+from gateway.plugins.base import DIALECT_DECISIONS, DIALECT_SYSTEMONE, DecisionSupport
 from gateway.routers import _metered
 from gateway.routing import affinity_key
 from gateway.schemas import DecisionsRequest
+from gateway.translate.decisions import translate_request, translate_response
 from gateway.upstream import UpstreamError
 
 logger = logging.getLogger(__name__)
@@ -215,12 +216,6 @@ async def _decide(
         # in-progress behind: a provider that cannot serve decisions, and a
         # body that carries the deployment's routing settings.
         support = require_decision_support(model.provider, model.name)
-        path = support.paths.get(route)
-        if path is None:
-            raise BadRequestError(
-                f"The provider behind model {model.name!r} does not serve /v1/{route}.",
-                code="provider_no_decision_support",
-            )
         payload: dict[str, Any] = body.model_dump(exclude_unset=True)
         _refuse_routing_fields(payload, support, model)
         upstream = await _metered.resolve_upstream(providers, resolved)
@@ -242,13 +237,14 @@ async def _decide(
         redacted = iter(str(message.get("content") or "") for message in outcome.messages)
         payload[text_field] = _rebuild(payload[text_field], redacted)
 
-        # A provider with only the System One form serves the `input` form by
-        # translation (DecisionSupport.input_form). Done before anything is
-        # reserved, so a question it cannot express is a 400 that leaves no row.
-        adapter = support.input_form if route == "decisions" and fmt == "input" else None
-        wire, adapter_context = payload, None
-        if adapter is not None:
-            wire, adapter_context = adapter.to_upstream(payload)
+        # The caller's dialect is its request form; the provider speaks
+        # support.dialect. Translated before anything is reserved, so a question
+        # the provider cannot express is a 400 that leaves no row.
+        wire, plan_back = translate_request(
+            payload,
+            source=DIALECT_DECISIONS if fmt == "input" else DIALECT_SYSTEMONE,
+            target=support.dialect,
+        )
 
         # -- reservation --------------------------------------------------------
         # The provider tokenises the questions as well as the text (a 3-question
@@ -283,7 +279,7 @@ async def _decide(
         wire = metered.shape_payload(wire, surface=SURFACE)
 
         try:
-            response = await upstream.decisions(wire, path=path, request_id=request_id)
+            response = await upstream.decisions(wire, path=support.path, request_id=request_id)
         except UpstreamError as exc:
             raise await metered.upstream_unreachable(exc) from exc
 
@@ -300,8 +296,7 @@ async def _decide(
             metered.accounting.observe_payload(response.payload, headers=response.headers)
 
         body_out = dict(response.payload or {})
-        if adapter is not None:
-            body_out = adapter.from_upstream(body_out, adapter_context)
+        body_out = translate_response(body_out, plan_back)
         # Our name for the model, as every route does: the upstream's is in the
         # ledger. A System One response may carry none (null), which stays.
         if isinstance(body_out.get("model"), str):

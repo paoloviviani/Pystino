@@ -343,7 +343,7 @@ class OpenAICompatibleUpstream:
     ) -> UpstreamResponse:
         """Ask a decision model typed questions. Never streams.
 
-        The *path* is the plugin's to name (``DecisionSupport.paths``): the
+        The *path* is the plugin's to name (``DecisionSupport.path``): the
         reference router serves ``/decisions`` and ``/systemone``, and another
         counterparty may put them elsewhere, which is a plugin's knowledge and
         not a branch here (ADR 0032).

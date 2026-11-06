@@ -577,6 +577,9 @@ class ModelCard(ResponseModel):
     # one listing covers chat, embedding and image models, and without this a
     # client has to guess and get a 400 to find out (ADR 0030).
     kind: str = "chat"
+    # For a decision model: the request forms it accepts, each served by
+    # translation when the provider speaks the other dialect. Empty otherwise.
+    decision_forms: list[str] = Field(default_factory=list)
     # True for a model behind a provider of kind `internal` — this deployment's
     # own extractor is the case today. Never true in the default listing, which
     # hides every internal-provider model outright; appears only on the ones
