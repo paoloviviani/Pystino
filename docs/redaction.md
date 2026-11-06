@@ -131,6 +131,14 @@ including the compensation for phone numbers described in
 sit permanently under the gateway's default threshold while the entity was
 still advertised.
 
+## Rerank input
+
+`POST /v1/rerank` redacts the query and every document before they leave, as
+embeddings redact their input: the document is the sensitive half, so a rerank
+route that forwarded raw text would bypass the policy. The reply echoes the
+caller's own document text by index (never the provider's copy), so there is
+nothing to restore.
+
 ## Audio is not screened
 
 `POST /v1/audio/transcriptions` and `/v1/audio/translations` send the caller's

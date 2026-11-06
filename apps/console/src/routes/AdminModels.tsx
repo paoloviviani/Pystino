@@ -84,6 +84,11 @@ const KIND_SECTIONS: {
     description: m["admin_models.section.embedding_description"],
   },
   {
+    kind: "rerank",
+    title: m["admin_models.section.rerank"],
+    description: m["admin_models.section.rerank_description"],
+  },
+  {
     kind: "ocr",
     title: m["admin_models.section.ocr"],
     description: m["admin_models.section.ocr_description"],
@@ -701,6 +706,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
         >
           <option value="chat">{m["admin_models.kind.chat"]()}</option>
           <option value="embedding">{m["admin_models.kind.embedding"]()}</option>
+          <option value="rerank">{m["admin_models.kind.rerank"]()}</option>
           <option value="image">{m["admin_models.kind.image"]()}</option>
           <option value="transcription">{m["admin_models.kind.transcription"]()}</option>
           {/* A decision model is the deployment's own machinery; the gateway
@@ -823,6 +829,8 @@ const RATE_FIELDS: Record<
 > = {
   chat: ["input", "output"],
   embedding: ["input"],
+  // Scores, not text: input tokens only, like an embedding.
+  rerank: ["input"],
   // Per picture, as Cortecs and most image providers quote it; the optional
   // per-extra-megapixel rate is asked beside it (`takesExtraMegapixel`).
   // (OpenAI's newer image models are priced per token instead: the token

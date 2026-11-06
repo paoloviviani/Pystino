@@ -342,6 +342,15 @@ describe("AdminModels", () => {
     expect(screen.getByText(/\/v1\/audio\/transcriptions/)).toBeInTheDocument();
   });
 
+  it("gives rerank models their own section, with the route that serves them", async () => {
+    vi.stubGlobal("fetch", routes([model(), model({ id: "m5", name: "ranker", kind: "rerank" })]));
+    renderScreen(<AdminModels />);
+
+    await waitFor(() => expect(screen.getByText("ranker")).toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: /^Rerank/ })).toBeInTheDocument();
+    expect(screen.getByText(/^\/v1\/rerank\./)).toBeInTheDocument();
+  });
+
   it("gives decision models their own section, with the routes that serve them", async () => {
     vi.stubGlobal("fetch", routes([model(), model({ id: "m4", name: "triage", kind: "decision" })]));
     renderScreen(<AdminModels />);
@@ -367,7 +376,7 @@ describe("AdminModels", () => {
     // that exists but renders nowhere is worse than one under a raw heading.
     vi.stubGlobal(
       "fetch",
-      routes([model({ id: "m9", name: "future-thing", kind: "rerank" as never })]),
+      routes([model({ id: "m9", name: "future-thing", kind: "hologram" as never })]),
     );
     renderScreen(<AdminModels />);
 

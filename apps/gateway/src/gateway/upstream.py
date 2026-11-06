@@ -250,6 +250,12 @@ class OpenAICompatibleUpstream:
         """Create embeddings. Never streams — the response is one JSON body."""
         return await self.post_json("/embeddings", payload, request_id=request_id)
 
+    async def rerank(
+        self, payload: Mapping[str, Any], *, request_id: str | None = None
+    ) -> UpstreamResponse:
+        """Score documents against a query. Never streams: one JSON body."""
+        return await self.post_json("/rerank", payload, request_id=request_id)
+
     async def images(
         self, payload: Mapping[str, Any], *, request_id: str | None = None
     ) -> UpstreamResponse:

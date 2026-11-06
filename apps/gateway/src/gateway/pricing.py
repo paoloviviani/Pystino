@@ -360,7 +360,9 @@ def parse_litellm_catalogue(
         # refused instead, because guessing an image model into existence is
         # how a route starts serving the wrong kind of endpoint.
         mode = str(entry.get("mode", "chat")).lower()
-        kind = ModelKind.EMBEDDING if mode == "embedding" else ModelKind.CHAT
+        kind = {"embedding": ModelKind.EMBEDDING, "rerank": ModelKind.RERANK}.get(
+            mode, ModelKind.CHAT
+        )
 
         prices.append(
             CataloguePrice(
@@ -666,6 +668,10 @@ def _kind_of(entry: dict[str, Any]) -> ModelKind:
         # not in its default `Instruct` listing.
         if "decision" in lowered_tags:
             return ModelKind.DECISION
+        # A reranker reports text in, and Cortecs tags it `Rerank` with
+        # `output_modalities: ["rerank"]` (checked live 2026-11-06).
+        if lowered_tags & {"rerank", "reranker", "reranking"}:
+            return ModelKind.RERANK
         # The same trap, one step worse: a search backend's tiers report text
         # in and text out, so nothing about their modalities distinguishes one
         # from a chat model. The tag is written by a search plugin's own
@@ -699,6 +705,8 @@ def _kind_of(entry: dict[str, Any]) -> ModelKind:
     modalities = entry.get("output_modalities")
     if isinstance(modalities, list):
         lowered = [str(item).lower() for item in modalities]
+        if any(item.startswith("rerank") for item in lowered):
+            return ModelKind.RERANK
         if any(item.startswith("embed") for item in lowered):
             return ModelKind.EMBEDDING
         if any(item.startswith("image") for item in lowered):

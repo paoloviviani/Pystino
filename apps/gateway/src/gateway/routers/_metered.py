@@ -110,6 +110,7 @@ _SURFACE_KINDS: dict[ApiSurface, tuple[ModelKind, ...]] = {
     ApiSurface.TRANSCRIPTION: (ModelKind.TRANSCRIPTION,),
     ApiSurface.SEARCH: (ModelKind.SEARCH,),
     ApiSurface.DECISIONS: (ModelKind.DECISION,),
+    ApiSurface.RERANK: (ModelKind.RERANK,),
 }
 
 _KIND_ROUTES: dict[ModelKind, str] = {
@@ -120,6 +121,7 @@ _KIND_ROUTES: dict[ModelKind, str] = {
     ModelKind.TRANSCRIPTION: "/v1/audio/transcriptions",
     ModelKind.SEARCH: "/v1/search",
     ModelKind.DECISION: "/v1/decisions or /v1/systemone",
+    ModelKind.RERANK: "/v1/rerank",
 }
 
 

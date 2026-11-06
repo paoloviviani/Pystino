@@ -2008,6 +2008,8 @@ _KIND_RATES: dict[ModelKind, tuple[str, ...]] = {
     # on every decision model seen), so both are required: a rate of zero is
     # accepted, an absent one is not (ADR 0100).
     ModelKind.DECISION: ("input_per_mtok", "output_per_mtok"),
+    # Input tokens only: a reranker emits scores, not text.
+    ModelKind.RERANK: ("input_per_mtok",),
 }
 
 _RATE_PHRASES: dict[str, str] = {

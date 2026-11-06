@@ -57,7 +57,13 @@ MAX_PRIVATE_MODELS = 500
 #: extractor and per-page models), `decision` and `search` are deployment
 #: features.
 MODEL_KINDS: frozenset[ModelKind] = frozenset(
-    {ModelKind.CHAT, ModelKind.EMBEDDING, ModelKind.IMAGE, ModelKind.TRANSCRIPTION}
+    {
+        ModelKind.CHAT,
+        ModelKind.EMBEDDING,
+        ModelKind.RERANK,
+        ModelKind.IMAGE,
+        ModelKind.TRANSCRIPTION,
+    }
 )
 
 #: Headers a private provider's ``extra_headers`` may not set: they would

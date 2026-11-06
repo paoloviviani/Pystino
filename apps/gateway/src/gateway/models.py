@@ -274,6 +274,9 @@ class ApiSurface(enum.StrEnum):
     #: probabilities. One surface for both routes, because they differ in the
     #: shape of the body and not in what is metered.
     DECISIONS = "decisions"
+    #: `POST /v1/rerank`: a query and candidate documents in, the documents'
+    #: relevance scores out. Metered by input token like an embedding.
+    RERANK = "rerank"
 
 
 class BillingMode(enum.StrEnum):
@@ -976,6 +979,11 @@ class ModelKind(enum.StrEnum):
     #: model (the provider may quote an output rate; it is usually zero), and
     #: refused on every other route.
     DECISION = "decision"
+    #: A reranking model: it scores candidate documents against a query and
+    #: returns them ordered. `POST /v1/rerank`, priced per input token like an
+    #: embedding model (a reranker emits scores, not text, so there is no
+    #: output rate), and refused on every other route.
+    RERANK = "rerank"
 
 
 class Provider(Base):

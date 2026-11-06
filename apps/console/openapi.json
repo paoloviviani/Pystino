@@ -4713,7 +4713,8 @@
               "ocr",
               "transcription",
               "search",
-              "decision"
+              "decision",
+              "rerank"
             ],
             "title": "Kind",
             "type": "string"
@@ -5017,7 +5018,8 @@
                   "ocr",
                   "transcription",
                   "search",
-                  "decision"
+                  "decision",
+                  "rerank"
                 ],
                 "type": "string"
               },
@@ -8799,6 +8801,64 @@
           "source"
         ],
         "title": "RequestLogRow",
+        "type": "object"
+      },
+      "RerankRequest": {
+        "additionalProperties": true,
+        "description": "``POST /v1/rerank``: the Cohere and Jina shape.\n\nOnly what the gateway acts on is declared; other fields pass through. The\ndocuments are strings or ``{\"text\": ...}`` objects (both spellings are in\nuse), and are sent upstream as plain strings, which every reranker takes.",
+        "properties": {
+          "documents": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              ]
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "return_documents": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Documents"
+          },
+          "top_n": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top N"
+          }
+        },
+        "required": [
+          "model",
+          "query",
+          "documents"
+        ],
+        "title": "RerankRequest",
         "type": "object"
       },
       "ResponsesRequest": {
@@ -19370,6 +19430,45 @@
         "summary": "Pystino Usage By Tag",
         "tags": [
           "pystino"
+        ]
+      }
+    },
+    "/v1/rerank": {
+      "post": {
+        "operationId": "create_rerank_v1_rerank_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RerankRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Rerank",
+        "tags": [
+          "openai"
         ]
       }
     },

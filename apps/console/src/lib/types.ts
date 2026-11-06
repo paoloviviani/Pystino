@@ -74,7 +74,8 @@ export type ModelKind =
   | "ocr"
   | "transcription"
   | "search"
-  | "decision";
+  | "decision"
+  | "rerank";
 
 export type Price = Schemas["PriceResponse"];
 

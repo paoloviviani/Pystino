@@ -3388,6 +3388,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/rerank": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Rerank */
+        post: operations["create_rerank_v1_rerank_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/responses": {
         parameters: {
             query?: never;
@@ -5390,7 +5407,7 @@ export interface components {
              * @default chat
              * @enum {string}
              */
-            kind?: "chat" | "embedding" | "image" | "ocr" | "transcription" | "search" | "decision";
+            kind?: "chat" | "embedding" | "image" | "ocr" | "transcription" | "search" | "decision" | "rerank";
             /** Max Input Tokens */
             max_input_tokens?: number | null;
             /** Max Output Tokens */
@@ -5474,7 +5491,7 @@ export interface components {
             /** Is Public */
             is_public?: boolean | null;
             /** Kind */
-            kind?: ("chat" | "embedding" | "image" | "ocr" | "transcription" | "search" | "decision") | null;
+            kind?: ("chat" | "embedding" | "image" | "ocr" | "transcription" | "search" | "decision" | "rerank") | null;
             /** Max Input Tokens */
             max_input_tokens?: number | null;
             /** Max Output Tokens */
@@ -6922,6 +6939,30 @@ export interface components {
             user_id: string | null;
             /** User Label */
             user_label: string | null;
+        };
+        /**
+         * RerankRequest
+         * @description ``POST /v1/rerank``: the Cohere and Jina shape.
+         *
+         *     Only what the gateway acts on is declared; other fields pass through. The
+         *     documents are strings or ``{"text": ...}`` objects (both spellings are in
+         *     use), and are sent upstream as plain strings, which every reranker takes.
+         */
+        RerankRequest: {
+            /** Documents */
+            documents: (string | {
+                [key: string]: unknown;
+            })[];
+            /** Model */
+            model: string;
+            /** Query */
+            query: string;
+            /** Return Documents */
+            return_documents?: boolean | null;
+            /** Top N */
+            top_n?: number | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * ResponsesRequest
@@ -12765,6 +12806,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TagUsageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_rerank_v1_rerank_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RerankRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
