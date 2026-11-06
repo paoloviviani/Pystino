@@ -21,6 +21,7 @@ from gateway.models import (
     ModelKind,
     ModelPrice,
     PriceSource,
+    Provider,
 )
 from gateway.types import utcnow
 from sqlalchemy import select
@@ -1293,6 +1294,85 @@ class TestImport:
         result = response.json()["results"][0]
         assert result["imported"] is False
         assert result["reason"] == "already in the catalogue"
+
+    async def test_the_same_upstream_id_imports_under_a_second_provider(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue: None,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A model is (provider, upstream id): two providers may serve one id."""
+        as_user(app, await make_admin(session_factory, seeded))
+        async with session_factory() as session:
+            other = Provider(
+                name="other",
+                base_url="http://other.example/v1",
+                api_key_encrypted=seeded.provider.api_key_encrypted,
+                api_key_hint=seeded.provider.api_key_hint,
+                prefix="other-",
+            )
+            session.add(other)
+            await session.commit()
+            other_id = other.id
+
+        url = "/api/admin/models/import?provider_id="
+        # Discovery for the second provider still offers the id the first has.
+        found = (await client.get("/api/admin/models/discover?provider_id=" + str(other_id))).json()
+        assert "upstream/test-model" in {row["upstream_model"] for row in found["available"]}
+
+        imported = await client.post(
+            url + str(other_id),
+            json={"models": [{"upstream_model": "upstream/test-model", "name": "other-tm"}]},
+        )
+        result = imported.json()["results"][0]
+        assert result["imported"] is True, result
+        assert result["priced"] is True
+
+        # The same provider twice is still refused, and so is a clashing name.
+        again = await client.post(
+            url + str(other_id),
+            json={"models": [{"upstream_model": "upstream/test-model", "name": "other-tm-2"}]},
+        )
+        assert again.json()["results"][0]["reason"] == "already in the catalogue"
+        clash = await client.post(
+            url + str(other_id),
+            json={"models": [{"upstream_model": "vendor/new-small", "name": "other-tm"}]},
+        )
+        assert "already taken" in clash.json()["results"][0]["reason"]
+
+        async with session_factory() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(ModelDef).where(ModelDef.upstream_model == "upstream/test-model")
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert {(m.provider_id, m.name) for m in rows} == {
+                (seeded.provider.id, "test-model"),
+                (other_id, "other-tm"),
+            }
+            prices = (
+                (
+                    await session.execute(
+                        select(ModelPrice).where(ModelPrice.model_id.in_([m.id for m in rows]))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len({p.model_id for p in prices}) == 2
+
+        # Drift is per provider: each lists its own row as catalogued.
+        for pid, name in ((seeded.provider.id, "test-model"), (other_id, "other-tm")):
+            body = (await client.get("/api/admin/models/discover?provider_id=" + str(pid))).json()
+            assert [r["name"] for r in body["catalogued"]] == [name]
+            assert body["missing_upstream"] == []
+            assert "upstream/test-model" not in {r["upstream_model"] for r in body["available"]}
 
     async def test_a_name_collision_is_reported_per_item(
         self,
