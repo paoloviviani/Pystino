@@ -4,6 +4,8 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **The same upstream id at two providers imports.** A model is identified upstream by (provider, upstream id), but the import's "already in the catalogue" check was deployment-wide, so importing `clef-flash`, `qwen3-embedding-8b` or `whisper-large-v3` from Melious was refused when Cortecs already had it, even with a prefix. The check is now per provider (this provider already has that id); the name check stays global. Discovery, drift ("no longer offered"), prices and routing already key on the provider or the model row, and no database constraint spans providers, so no migration.
+
 ## v0.29.0 — 2026-11-06
 
 Paired with Cerea 0.43.0.

@@ -2165,7 +2165,9 @@ async def import_models(
     # Upstream ids do not: an alias has none, and collecting the nulls here
     # would put a `None` key in a set that is tested against strings. Filtered
     # rather than filtered-by-handling-None, so the set means one thing.
-    taken_upstream = {model.upstream_model for model in existing if not model.is_alias}
+    taken_upstream = {
+        (model.provider_id, model.upstream_model) for model in existing if not model.is_alias
+    }
 
     results: list[ModelImportResult] = []
     for item in payload.models:
@@ -2178,10 +2180,11 @@ async def import_models(
         # database's constraint instead of these reports was a 500 where the
         # response owed the operator a per-item reason. The upstream check
         # comes first (it names the resource rather than a clashing label),
-        # and it is global: a priced model's upstream id is what the drift
-        # reports key on. The name check is universal and last.
+        # and it is per provider: a model is identified upstream by
+        # (provider, upstream id), and two providers may serve one id. The name
+        # check is universal and last.
         price = by_upstream.get(item.upstream_model)
-        if item.upstream_model in taken_upstream:
+        if (provider.id, item.upstream_model) in taken_upstream:
             results.append(
                 ModelImportResult(
                     upstream_model=item.upstream_model,
@@ -2387,7 +2390,7 @@ async def import_models(
             after=price_view(imported_price),
         )
         taken_names.add(name)
-        taken_upstream.add(item.upstream_model)
+        taken_upstream.add((provider.id, item.upstream_model))
         results.append(
             ModelImportResult(
                 upstream_model=item.upstream_model,
