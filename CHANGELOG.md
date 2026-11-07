@@ -4,6 +4,8 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **Docs: current screenshots.** The README screenshot (light and dark) and the docs pages for providers, models, usage, the request log and quotas show the current console, taken on a test deployment with fictional users and illustrative figures.
+
 ## v0.29.2 — 2026-11-07
 
 Paired with Cerea 0.44.0.

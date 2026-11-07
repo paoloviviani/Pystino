@@ -13,7 +13,10 @@ against quotas, redacted, metered and written to a ledger you can report on.
 > every last detail. Which is what an accounting gateway is for.
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="Screenshot" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.webp" />
+    <img src="docs/screenshot.webp" alt="The Pystino console overview: spend, requests and quotas" />
+  </picture>
 </p>
 
 
