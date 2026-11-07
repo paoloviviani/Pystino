@@ -161,6 +161,12 @@ export function AdminSearch() {
                 markup={{ code: (children) => <code>{children}</code> }}
               />
             </p>
+            <p>
+              <Message
+                message={m["admin_search.policy_how"]}
+                markup={{ code: (children) => <code>{children}</code> }}
+              />
+            </p>
           </AboutServer>
         </div>
       </Notice>
@@ -281,10 +287,7 @@ export function AdminSearch() {
         <div className="p-4">
           <h2 className="text-heading font-semibold">{m["admin_search.policy_heading"]()}</h2>
           <p className={`${MUTED} mt-1 text-body`}>
-            <Message
-              message={m["admin_search.policy_body"]}
-              markup={{ code: (children) => <code>{children}</code> }}
-            />
+            {m["admin_search.policy_body"]()}
           </p>
         </div>
         {setPolicy.error ? (

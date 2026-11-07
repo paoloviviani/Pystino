@@ -319,6 +319,15 @@ describe("AdminSearch group policy", () => {
     ]);
   });
 
+  it("keeps the endpoint name inside the folded How it works section", async () => {
+    vi.stubGlobal("fetch", searchRoutes());
+    renderScreen(<AdminSearch />);
+    await screen.findByLabelText("Search backend for cerea");
+    const hits = screen.getAllByText((_, el) => el?.tagName === "CODE" && el.textContent === "POST /v1/search");
+    expect(hits.length).toBeGreaterThan(0);
+    for (const hit of hits) expect(hit.closest("details")).not.toBeNull();
+  });
+
   it("sends the chosen backend id to the policy endpoint", async () => {
     const calls: PolicyCalls = { set: [] };
     vi.stubGlobal("fetch", searchRoutes(calls));

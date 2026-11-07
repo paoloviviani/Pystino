@@ -16,6 +16,7 @@
  */
 
 import { Button, Card, Notice, Select, Spinner } from "@llmp/ui";
+import { AboutServer } from "../components/AboutServer";
 import { useEffect, useState } from "react";
 import {
   useGroups,
@@ -248,8 +249,11 @@ export function ProvisioningPolicySection() {
           ))}
         </div>
         <p className="mt-1 text-small text-ink-faint">
-          {m["admin_identity.join_mode_note"]({ source: sourceOf("join_mode") })}
+          {m["admin_identity.join_mode_note"]()}
         </p>
+        <AboutServer>
+          <p>{m["admin_identity.join_mode_source"]({ source: sourceOf("join_mode") })}</p>
+        </AboutServer>
       </fieldset>
 
       {joinMode === "group" ? (
@@ -301,9 +305,16 @@ export function ProvisioningPolicySection() {
             {(groups.data?.items ?? []).length === 0 ? (
               <p className="text-small text-ink-faint">{m["admin_identity.group.none"]()}</p>
             ) : (
-              <p className="text-small text-ink-faint">
-                {m["admin_identity.group.local_note"]({ source: sourceOf("required_groups") })}
-              </p>
+              <>
+                <p className="text-small text-ink-faint">
+                  {m["admin_identity.group.local_note"]()}
+                </p>
+                <AboutServer>
+                  <p>
+                    {m["admin_identity.group.source"]({ source: sourceOf("required_groups") })}
+                  </p>
+                </AboutServer>
+              </>
             )}
             {/* Saving is explicit for the set: no intermediate gate is ever
                 stored, and the preview sees the whole choice. */}
