@@ -133,7 +133,11 @@ async def big_server() -> AsyncIterator[int]:
 
 
 def _client(cap: int, port: int) -> httpx.AsyncClient:
-    from test_netguard import ToLocal, lan_dns
+    from test_netguard import ToLocal
+
+    async def lan_dns(host: str, port: int) -> list[str]:
+        # Not 10.1.2.3: a CI runner's own interfaces may sit on that range.
+        return ["10.213.87.4"]
 
     return build_guarded_client(
         UpstreamSettings(base_url="http://x/v1", byok_max_response_bytes=cap),
