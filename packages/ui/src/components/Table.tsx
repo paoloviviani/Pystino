@@ -66,7 +66,7 @@ const STACK_ROW =
   "max-sm:block max-sm:border-b max-sm:border-line-quiet max-sm:px-4 max-sm:py-3 max-sm:last:border-b-0";
 const STACK_CELL =
   "max-sm:block max-sm:border-0! max-sm:px-0! max-sm:py-1! max-sm:text-left " +
-  "max-sm:before:mb-0.5 max-sm:before:block max-sm:before:text-xs max-sm:before:font-medium max-sm:before:text-ink-muted max-sm:before:content-[attr(data-label)]";
+  "max-sm:before:mb-0.5 max-sm:before:block max-sm:before:text-small max-sm:before:font-medium max-sm:before:text-ink-muted max-sm:before:content-[attr(data-label)]";
 /** Between `sm` and the column's own breakpoint: hidden only where a table row is narrow but not stacked. */
 const STACK_HIDE_BELOW = {
   sm: "",
