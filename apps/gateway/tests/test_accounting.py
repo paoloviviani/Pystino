@@ -442,6 +442,38 @@ class TestAccumulation:
             "I cannot help with that."
         )
 
+    async def test_streamed_reasoning_is_counted_when_a_stream_is_abandoned(
+        self,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        settings: Settings,
+        seeded: Seeded,
+    ) -> None:
+        """Audit M8: a caller who hangs up before the usage frame is billed on
+        an estimate, and the estimate must include the reasoning already sent.
+
+        The design (estimate, our price table) is unchanged; reasoning deltas
+        were simply invisible to it, so a reasoning model's abandoned stream
+        cost almost nothing.
+        """
+        model = await load_model(session, seeded.model.id)
+        accounting = accounting_for(
+            session_factory=session_factory, settings=settings, seeded=seeded, model=model
+        )
+        record_id = await accounting.begin()
+        for field in ("reasoning_content", "reasoning", "reasoning_text"):
+            accounting.observe_payload(
+                {"choices": [{"index": 0, "delta": {field: "think " * 100}}]}
+            )
+        accounting.observe_payload({"choices": [{"index": 0, "delta": {"content": "ok"}}]})
+        await accounting.finalise(status=UsageStatus.CLIENT_DISCONNECTED)
+
+        row = await fetch(session_factory, record_id)
+        assert row.usage_source is UsageSource.ESTIMATED
+        assert row.completion_tokens >= 3 * DEFAULT_ESTIMATOR.count_text("think " * 100)
+        # Reasoning is billed output, not transcript text.
+        assert row.assistant_text == "ok"
+
     async def test_done_and_keepalive_frames_are_ignored(
         self,
         session: AsyncSession,

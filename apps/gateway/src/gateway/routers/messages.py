@@ -107,7 +107,9 @@ async def create_message(
             request_id=request_id,
         )
 
-        prompt_tokens = estimator.count_messages(outcome.messages)
+        prompt_tokens = estimator.count_messages(outcome.messages) + estimator.count_tools(
+            (body.model_extra or {}).get("tools")
+        )
         _metered.enforce_input_limit(model, prompt_tokens)
         # Server-side web search is charged per search on top of tokens, and
         # nothing in the request bounds it unless the caller said so (ADR 0058).

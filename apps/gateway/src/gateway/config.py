@@ -1004,6 +1004,21 @@ class TranscriptionSettings(BaseModel):
     allowed_under_redaction: bool = True
 
 
+class RequestLimitSettings(BaseModel):
+    """How large a request body may be, refused with 413 before it is parsed.
+
+    Enforced ahead of authentication, so these also bound what a caller with no
+    valid credentials can make a worker buffer (audit 2026-11, M9).
+    """
+
+    #: ``/v1`` JSON routes (``GATEWAY_REQUEST_LIMITS__MAX_V1_BODY_BYTES``). Chat
+    #: and embeddings carry base64 images and long documents, so this is large.
+    max_v1_body_bytes: int = Field(default=64 * 1024 * 1024, gt=0)
+    #: ``/api``, ``/auth`` and ``/scim`` (``GATEWAY_REQUEST_LIMITS__MAX_API_BODY_BYTES``):
+    #: management calls, whose biggest body is a group import.
+    max_api_body_bytes: int = Field(default=4 * 1024 * 1024, gt=0)
+
+
 class RerankSettings(BaseModel):
     """Reranking (`POST /v1/rerank`): the bounds on one call.
 
@@ -1297,6 +1312,7 @@ class Settings(BaseSettings):
     redaction: RedactionSettings = Field(default_factory=RedactionSettings)
     extractor: ExtractorSettings = Field(default_factory=ExtractorSettings)
     transcription: TranscriptionSettings = Field(default_factory=TranscriptionSettings)
+    request_limits: RequestLimitSettings = Field(default_factory=RequestLimitSettings)
     rerank: RerankSettings = Field(default_factory=RerankSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
     accounting: AccountingSettings = Field(default_factory=AccountingSettings)

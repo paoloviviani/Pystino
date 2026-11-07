@@ -31,6 +31,7 @@ from typing import Any, Literal
 from sqlalchemy import ColumnElement, Select, case, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gateway.csv_safe import csv_text
 from gateway.errors import BadRequestError
 from gateway.models import (
     ApiKey,
@@ -790,11 +791,11 @@ def report_to_csv(report: UsageReport) -> str:
                 period.end.isoformat(),
                 period.timezone,
                 report.group_by,
-                row.key or "",
-                row.label,
+                csv_text(row.key),
+                csv_text(row.label),
                 report.split_by or "",
-                row.split_key or "",
-                row.split_label or "",
+                csv_text(row.split_key),
+                csv_text(row.split_label),
                 row.requests,
                 row.prompt_tokens,
                 row.completion_tokens,

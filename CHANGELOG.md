@@ -4,6 +4,11 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **Security: usage exports neutralise spreadsheet formulas.** In the usage report and request log CSVs every text cell (names, labels, tags, models) that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is written as text; numbers stay numbers.
+- **Security: an abandoned stream is estimated from everything the caller sent and received.** The estimate behind a stream the client dropped before the usage frame now counts image parts, tool definitions and streamed reasoning. Estimates are still billed from our price table, as before.
+- **Security: oversized request bodies are refused before parsing.** `/v1` bodies over 64 MB and `/api`, `/auth` and `/scim` bodies over 4 MB get a 413 before authentication or parsing (`GATEWAY_REQUEST_LIMITS__MAX_V1_BODY_BYTES`, `GATEWAY_REQUEST_LIMITS__MAX_API_BODY_BYTES`).
+- **Security: `no-store` and HSTS headers.** `/api`, `/auth`, `/scim` and `/v1/me` responses carry `Cache-Control: no-store` unless the route sets its own, and responses over HTTPS carry `Strict-Transport-Security`.
+- **An over-long or malformed `x-request-id` is replaced, not a 500.** A caller's id longer than 64 characters or with non-printable characters is swapped for a generated one.
 - **Docs: current screenshots.** The README screenshot (light and dark) and the docs pages for providers, models, usage, the request log and quotas show the current console, taken on a test deployment with fictional users and illustrative figures.
 
 ## v0.29.2 — 2026-11-07

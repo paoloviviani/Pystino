@@ -49,7 +49,7 @@ from gateway.models import (
     UsageSource,
     UsageStatus,
 )
-from gateway.protocols import reader_for
+from gateway.protocols import REASONING_FIELDS, reader_for
 from gateway.quota import QuotaAmounts
 from gateway.sse.events import SSEEvent
 from gateway.types import utcnow
@@ -82,6 +82,10 @@ class ChoiceAccumulator:
     # Tool call arguments arrive as fragments keyed by index, exactly like text.
     tool_calls: dict[int, dict[str, Any]] = field(default_factory=dict)
     finish_reason: str | None = None
+    # Reasoning the model streamed. Kept apart from `content` because it is not
+    # transcript text, but it is output the provider bills, so an estimate that
+    # leaves it out under-counts an abandoned stream of a reasoning model.
+    reasoning: list[str] = field(default_factory=list)
 
     def text(self) -> str:
         return "".join(self.content)
@@ -89,6 +93,9 @@ class ChoiceAccumulator:
     def observe_delta(self, delta: dict[str, Any]) -> None:
         if (piece := delta.get("content")) and isinstance(piece, str):
             self.content.append(piece)
+        for reasoning_field in REASONING_FIELDS:
+            if (thought := delta.get(reasoning_field)) and isinstance(thought, str):
+                self.reasoning.append(thought)
         # Some providers use `refusal` for safety declines; it is still output.
         if (refusal := delta.get("refusal")) and isinstance(refusal, str):
             self.content.append(refusal)
@@ -574,6 +581,8 @@ class RequestAccounting:
         # No usable usage frame. Estimate rather than record zero.
         completion_text = "".join(part for slot in self._choices.values() for part in slot.content)
         completion = self._estimator.count_text(completion_text)
+        for slot in self._choices.values():
+            completion += self._estimator.count_text("".join(slot.reasoning))
         for slot in self._choices.values():
             for call in slot.tool_calls.values():
                 completion += self._estimator.count_text(str(call.get("arguments") or ""))
