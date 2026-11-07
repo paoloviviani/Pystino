@@ -381,6 +381,7 @@ export function AdminProviders() {
               />
             </div>
             <Table
+              stack
               columns={columns}
               rows={items}
               rowKey={(provider) => provider.id}

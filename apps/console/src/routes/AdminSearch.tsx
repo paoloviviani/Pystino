@@ -39,6 +39,7 @@ import {
   shortHint,
 } from "../lib/layout";
 import { formatNumber } from "../lib/format";
+import { AboutServer } from "../components/AboutServer";
 import { Message } from "../components/Message";
 import { m } from "../paraglide/messages.js";
 
@@ -151,10 +152,17 @@ export function AdminSearch() {
       <PageHeader title={m["admin_search.title"]()} />
 
       <Notice tone="info">
-        <Message
-          message={m["admin_search.intro"]}
-          markup={{ code: (children) => <code>{children}</code> }}
-        />
+        {m["admin_search.intro"]()}
+        <div className="mt-2">
+          <AboutServer title={m["admin_search.how_title"]()}>
+            <p>
+              <Message
+                message={m["admin_search.how_body"]}
+                markup={{ code: (children) => <code>{children}</code> }}
+              />
+            </p>
+          </AboutServer>
+        </div>
       </Notice>
 
       {/* -- backends ------------------------------------------------ */}

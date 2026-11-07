@@ -209,6 +209,7 @@ export function AdminAudit() {
         ) : (
           <>
             <Table
+              stack
               columns={columns}
               rows={page?.items ?? []}
               rowKey={(row) => row.id}
