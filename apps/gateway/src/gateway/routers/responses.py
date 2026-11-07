@@ -118,7 +118,9 @@ async def create_response(
             request_id=request_id,
         )
 
-        prompt_tokens = estimator.count_messages(outcome.messages)
+        prompt_tokens = estimator.count_messages(outcome.messages) + estimator.count_tools(
+            (body.model_extra or {}).get("tools")
+        )
         # `instructions` is already in `outcome.messages`, as a system message.
         _metered.enforce_input_limit(model, prompt_tokens)
         max_output = body.max_output_tokens or settings.quota.default_max_output_tokens

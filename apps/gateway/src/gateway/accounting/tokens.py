@@ -21,6 +21,7 @@ numbers rather than obviously approximate ones.
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from typing import Any, Protocol
@@ -45,11 +46,21 @@ _REPLY_PRIMING_OVERHEAD = 3
 
 _CHARS_PER_TOKEN = 4
 
+# What one image part is estimated at. Real cost depends on resolution and
+# detail, which a URL does not reveal; this is about what a large "high detail"
+# picture costs on the OpenAI-compatible providers. Counting nothing, as this
+# once did, let a caller who abandons a stream pay only for the words around the
+# pictures (audit 2026-11, M8). The row is labelled an estimate either way.
+_IMAGE_PART_TOKENS = 1100
+_IMAGE_PART_TYPES = frozenset({"image_url", "image", "input_image"})
+
 
 class TokenEstimator(Protocol):
     def count_text(self, text: str) -> int: ...
 
     def count_messages(self, messages: list[dict[str, Any]]) -> int: ...
+
+    def count_tools(self, tools: Any) -> int: ...
 
 
 class HeuristicTokenEstimator:
@@ -81,6 +92,15 @@ class HeuristicTokenEstimator:
                 total += self.count_text(str(name))
         return total
 
+    def count_tools(self, tools: Any) -> int:
+        """Tool definitions are sent to the model as prompt text, schema and all."""
+        if not isinstance(tools, list) or not tools:
+            return 0
+        try:
+            return self.count_text(json.dumps(tools, default=str, separators=(",", ":")))
+        except (TypeError, ValueError):
+            return 0
+
     def _count_content(self, content: Any) -> int:
         """Handle both plain strings and the multimodal parts array."""
         if content is None:
@@ -92,11 +112,14 @@ class HeuristicTokenEstimator:
             for part in content:
                 if isinstance(part, str):
                     total += self.count_text(part)
-                elif isinstance(part, dict) and (text := part.get("text")):
-                    total += self.count_text(str(text))
+                elif isinstance(part, dict):
+                    if text := part.get("text"):
+                        total += self.count_text(str(text))
                     # Images cost tokens as a function of resolution, which we
-                    # cannot see from a URL. Left uncounted, and the row is
-                    # already labelled as an estimate.
+                    # cannot see from a URL: a flat estimate, on a row that is
+                    # already labelled as one.
+                    if part.get("type") in _IMAGE_PART_TYPES:
+                        total += _IMAGE_PART_TOKENS
             return total
         return self.count_text(str(content))
 

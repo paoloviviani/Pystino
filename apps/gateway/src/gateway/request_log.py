@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gateway.csv_safe import csv_text
 from gateway.errors import BadRequestError
 from gateway.models import Group, UsageRecord, UsageStatus, User
 from gateway.pagination import Page, PageParams, count_of
@@ -159,18 +160,6 @@ async def list_requests(
     return page.page([_row(r) for r in rows], total)
 
 
-def _text(value: str | None) -> str:
-    """A text cell safe to open in a spreadsheet.
-
-    A cell that begins with ``=``, ``+``, ``-`` or ``@`` is a formula to Excel,
-    and a display name or email is attacker-influenced. A leading apostrophe
-    makes it text.
-    """
-    if not value:
-        return ""
-    return "'" + value if value[0] in "=+-@\t\r" else value
-
-
 async def requests_to_csv(session: AsyncSession, f: RequestLogFilter) -> str:
     total = await count_of(session, _count_query(f))
     if total > MAX_EXPORT_ROWS:
@@ -188,12 +177,12 @@ async def requests_to_csv(session: AsyncSession, f: RequestLogFilter) -> str:
         writer.writerow(
             [
                 r.created_at.isoformat(),
-                _text(r.request_id),
-                _text(r.user_label),
-                _text(r.group_name),
-                _text(r.requested_model),
-                _text(r.model),
-                _text(r.upstream_model),
+                csv_text(r.request_id),
+                csv_text(r.user_label),
+                csv_text(r.group_name),
+                csv_text(r.requested_model),
+                csv_text(r.model),
+                csv_text(r.upstream_model),
                 "true" if r.streamed else "false",
                 r.prompt_tokens,
                 r.completion_tokens,

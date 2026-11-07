@@ -243,7 +243,9 @@ async def chat_completions(
         )
 
         # -- local counting and reservation estimate (steps 3-4) ----------------
-        prompt_tokens = estimator.count_messages(outcome.messages)
+        prompt_tokens = estimator.count_messages(outcome.messages) + estimator.count_tools(
+            (body.model_extra or {}).get("tools")
+        )
         _metered.enforce_input_limit(model, prompt_tokens)
         max_output = (
             body.requested_max_output_tokens(settings.quota.default_max_output_tokens)
