@@ -4,6 +4,11 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **Security: `/docs` and `/openapi.json` are closed by default.** Unauthenticated callers no longer get the API schema. `GATEWAY_DOCS_ENABLED=true` serves them again, for development; `scripts/export_openapi.py` and the console's generated types are unaffected.
+- **Security: bring-your-own-key provider replies are bounded.** A private provider's reply is cut off at 64 MiB (`GATEWAY_UPSTREAM__BYOK_MAX_RESPONSE_BYTES`) and the gateway waits at most 300 s between reads (`GATEWAY_UPSTREAM__BYOK_READ_TIMEOUT_SECONDS`), so one member's host cannot hold a worker.
+- **Security: callers cannot set a router's routing fields.** `models`, `provider` and `route` in a request body are dropped before it goes to a router-type provider such as OpenRouter.
+- **Docs: two known limits written down.** Redaction does not cover tool definitions, `response_format` schemas, `metadata`, `user` or image URLs; an abandoned stream is billed from an estimate that omits reasoning the provider never streamed.
+- **Valkey down at startup no longer means silent per-process counters.** With `GATEWAY_VALKEY_URL` set and Valkey unreachable at boot, the gateway logs `COUNTER STORE DOWN`, `/readyz` reports `degraded`, and quotas are answered from the ledger (or refused, per `GATEWAY_QUOTA__FALLBACK_TO_DATABASE` and `FAIL_OPEN`) until a restart with Valkey up. An empty `GATEWAY_VALKEY_URL` still means single-process.
 - **Security: usage exports neutralise spreadsheet formulas.** In the usage report and request log CSVs every text cell (names, labels, tags, models) that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is written as text; numbers stay numbers.
 - **Security: an abandoned stream is estimated from everything the caller sent and received.** The estimate behind a stream the client dropped before the usage frame now counts image parts, tool definitions and streamed reasoning. Estimates are still billed from our price table, as before.
 - **Security: oversized request bodies are refused before parsing.** `/v1` bodies over 64 MB and `/api`, `/auth` and `/scim` bodies over 4 MB get a 413 before authentication or parsing (`GATEWAY_REQUEST_LIMITS__MAX_V1_BODY_BYTES`, `GATEWAY_REQUEST_LIMITS__MAX_API_BODY_BYTES`).

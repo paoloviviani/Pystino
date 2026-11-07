@@ -99,10 +99,13 @@ Every management listing answers with `{items, total, limit, offset}` and takes
 models and groups also take `?q=` for case-insensitive substring search.
 Reports are aggregations, not listings, and return every row they summed.
 
-There is **no HTML admin panel built by hand**: `/docs` is the operator API
-console — Swagger, generated from the same schemas the endpoints validate
-against. Sign in at `/auth/login` first so the session cookie travels with the
-requests. The React console at `/console` is the human surface.
+There is **no HTML admin panel built by hand**. The management API's schema is
+generated from the same models the endpoints validate against, and is committed as
+`apps/console/openapi.json`. `/docs` (Swagger) and `/openapi.json` are **off by
+default**, because the schema lists every management route to anyone who can reach
+the gateway; set `GATEWAY_DOCS_ENABLED=true` on a development gateway to serve them
+(sign in at `/auth/login` first so the session cookie travels with the requests).
+The React console at `/console` is the human surface.
 
 ## Two authentication schemes, on purpose
 
@@ -389,6 +392,14 @@ provider, from the declared length where the client sent one and from the bytes
 otherwise. `GATEWAY_TRANSCRIPTION__TIMEOUT_SECONDS` (default 300) bounds how
 long the provider may take; the shared upstream client has no read timeout, as
 streams idle.
+
+## Router providers and routing fields
+
+A router (OpenRouter's shape) lets the request body choose its sub-providers, regions
+and fallbacks. A caller's `models`, `provider` and `route` fields are dropped before
+the request is sent to a router, so a caller cannot route around the deployment's
+policy; the provider row owns routing. A plugin that wants callers to set one lists it
+in `caller_routing_fields`.
 
 ## Request size limits
 
@@ -695,6 +706,15 @@ Stated plainly, so none of them is a surprise later.
 - **The redaction HMAC key must be backed up with the transcripts it
   labelled.** Losing or rotating it breaks cross-turn placeholder consistency
   for existing conversations.
+- **Valkey unreachable at startup is loud, and refuses to under-count.** With
+  `GATEWAY_VALKEY_URL` set but Valkey down at boot, the gateway logs an error
+  (`COUNTER STORE DOWN`), `/readyz` answers `degraded` with the reason, and quotas
+  are answered from the database ledger (or refused, with
+  `GATEWAY_QUOTA__FALLBACK_TO_DATABASE=false`; admitted only if you set
+  `GATEWAY_QUOTA__FAIL_OPEN=true`). It does not switch to a per-process counter, which
+  would count only one worker's traffic. It stays on the ledger until the gateway is
+  restarted with Valkey reachable. A deliberately empty `GATEWAY_VALKEY_URL` is the
+  single-process development setup and still uses the in-process store.
 - **Counters rebuild from the ledger only at startup.** If Valkey is wiped
   while the gateway keeps running, the cache reports zero and quotas are
   briefly too permissive until the gateway restarts. An empty cache is not a

@@ -257,6 +257,14 @@ model's `per_search` rate, ADR 0058).
 cost of 0 and a null price reference, and reports continue to count them as
 unpriced.
 
+## Abandoned streams
+
+When a client disconnects mid-stream, the gateway stops reading from the provider and
+bills an estimate from what it saw. Reasoning that the provider never streamed is
+therefore not counted for those requests, so the ledger can show less than the
+provider charges. This is deliberate: reading on would make the provider finish an
+answer nobody reads.
+
 ## Money is a string, end to end
 
 - The column type is `Numeric(24,12)` through a `Money` TypeDecorator; in

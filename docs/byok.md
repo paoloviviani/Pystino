@@ -70,6 +70,13 @@ provider client, and `HTTP_PROXY` in the environment is ignored for these calls
 so a proxy cannot route around the guard. A catalogue URL override
 (`?url=`) is refused for a private provider.
 
+A private provider's replies are bounded too, since the host is a member's
+choice: a reply may carry at most `GATEWAY_UPSTREAM__BYOK_MAX_RESPONSE_BYTES`
+(default 64 MiB; larger, declared or counted as it streams, fails the request),
+and the gateway waits at most `GATEWAY_UPSTREAM__BYOK_READ_TIMEOUT_SECONDS`
+(default 300) for the next bytes. Deployment providers keep no read timeout, so
+long streams are unaffected.
+
 **`byok_private_networks`** (`ACCESS_BYOK_PRIVATE_NETWORKS` /
 `GATEWAY_ACCESS__BYOK_PRIVATE_NETWORKS`, or **Settings**; default **off**) lifts
 the guard for private providers, for a deployment whose members legitimately run

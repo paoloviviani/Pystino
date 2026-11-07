@@ -36,6 +36,7 @@ from gateway.quota import (
     DatabaseCounterStore,
     InMemoryCounterStore,
     QuotaEngine,
+    UnavailableCounterStore,
     ValkeyCounterStore,
 )
 from gateway.quota.notifications import QuotaNotifier
@@ -78,12 +79,18 @@ logger = logging.getLogger(__name__)
 
 
 async def _build_counter_store(app: FastAPI, settings: Settings) -> Any:
-    """Connect to Valkey, or fall back to a process-local store.
+    """Connect to Valkey, or use the store the configuration asks for.
 
-    An unreachable Valkey at startup is not fatal: the quota engine's database
-    fallback keeps limits correct, so the gateway comes up degraded rather than
-    not at all.
+    ``valkey_url`` empty is the deliberate single-process setup (development,
+    the smoke test): a process-local store, with a warning. A ``valkey_url``
+    that is set but unreachable is not that, and is not fatal either, but it
+    must not quietly become process-local (every worker would count only its
+    own traffic): the store becomes one that refuses, so the quota engine
+    answers from the ledger, or refuses admission, per its own settings. See
+    :class:`UnavailableCounterStore`. ``app.state.counter_store_error`` names
+    the reason for ``/readyz``.
     """
+    app.state.counter_store_error = None
     if not settings.valkey_url:
         logger.warning(
             "no valkey_url configured; using a process-local counter store. "
@@ -96,13 +103,18 @@ async def _build_counter_store(app: FastAPI, settings: Settings) -> Any:
 
         client = redis_asyncio.from_url(settings.valkey_url, decode_responses=True)
         await client.ping()
-    except Exception:
-        logger.warning(
-            "could not reach the counter store at startup; quotas will use the "
-            "database fallback until it recovers",
+    except Exception as exc:
+        reason = f"valkey unreachable at startup ({type(exc).__name__})"
+        app.state.counter_store_error = reason
+        logger.error(
+            "COUNTER STORE DOWN: could not reach valkey at startup. Quotas are answered from "
+            "the database ledger (fallback_to_database=%s, fail_open=%s) until the gateway is "
+            "restarted with valkey reachable; /readyz reports it as degraded.",
+            settings.quota.fallback_to_database,
+            settings.quota.fail_open,
             exc_info=True,
         )
-        return InMemoryCounterStore()
+        return UnavailableCounterStore(reason)
 
     app.state.valkey = client
     return ValkeyCounterStore(client)
@@ -444,9 +456,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version="0.1.0",
         summary="OpenAI-compatible gateway with per-group accounting, quotas and policy",
         lifespan=lifespan,
-        # The management API is documented; the /v1 surface is OpenAI's.
-        docs_url="/docs",
-        openapi_url="/openapi.json",
+        # The schema lists every management route to anyone who can reach the
+        # gateway, so the docs routes are off unless the operator turns them on
+        # (audit 2026-11). `app.openapi()` still works with them off, which is
+        # all scripts/export_openapi.py and the console's types need.
+        docs_url="/docs" if resolved.docs_enabled else None,
+        redoc_url=None,
+        openapi_url="/openapi.json" if resolved.docs_enabled else None,
     )
     app.state.settings = resolved
     # Added last = outermost: the size limit runs before anything else sees the body.

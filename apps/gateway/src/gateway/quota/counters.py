@@ -813,6 +813,54 @@ class DatabaseCounterStore:
         return totals
 
 
+class UnavailableCounterStore:
+    """A counter store that is known to be down: every call raises.
+
+    Stands in when Valkey is configured but unreachable at startup. The
+    process-local store it replaced answered every read with a confident
+    figure that counted only this process, so quotas under-counted silently,
+    per worker. Raising instead sends the quota engine down its own ladder:
+    the database fallback (exact against the ledger), then ``fail_open`` (the
+    operator's explicit choice), else a refusal. It never recovers by itself,
+    on purpose: a Valkey that comes back empty would answer zero, and the
+    counters are only rebuilt from the ledger at startup, so the way back is a
+    restart.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+    def _down(self) -> Exception:
+        return ConnectionError(f"counter store unavailable: {self.reason}")
+
+    async def totals(self, queries: Sequence[WindowQuery], *, now: float) -> list[WindowTotal]:
+        raise self._down()
+
+    async def apply(self, deltas: Sequence[CounterDelta], *, now: float) -> None:
+        raise self._down()
+
+    async def apply_and_total(
+        self,
+        deltas: Sequence[CounterDelta],
+        queries: Sequence[WindowQuery],
+        *,
+        now: float,
+    ) -> list[WindowTotal]:
+        raise self._down()
+
+    async def replace(self, values: Sequence[CounterDelta], *, now: float) -> None:
+        raise self._down()
+
+    async def claim_once(self, key: str, *, ttl_seconds: int) -> bool:
+        raise self._down()
+
+    async def key_ttl(self, key: str) -> int | None:
+        raise self._down()
+
+    async def ttls(self, queries: Sequence[WindowQuery], *, now: float) -> list[int | None]:
+        raise self._down()
+
+
 class InMemoryCounterStore:
     """Reference implementation with the same bucket semantics as Valkey.
 
