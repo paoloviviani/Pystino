@@ -1141,8 +1141,25 @@ def tag_for(request: Request) -> str | None:
     return clean_tag(request.headers.get(TAG_HEADER))
 
 
+#: The usage row's ``request_id`` column is ``String(64)``.
+MAX_REQUEST_ID_LENGTH = 64
+
+
 def request_id_for(request: Request, settings: Settings) -> str:
-    return request.headers.get(settings.request_id_header) or uuid.uuid4().hex
+    """The caller's id when it is usable, else a fresh one.
+
+    An id the column cannot hold, or one with control characters, is replaced
+    rather than refused: a caller's tracing header must never turn into a 500
+    before the upstream call (audit 2026-11, L8), and the id is forwarded.
+    """
+    supplied = request.headers.get(settings.request_id_header)
+    if (
+        supplied
+        and len(supplied) <= MAX_REQUEST_ID_LENGTH
+        and all(" " <= c <= "~" for c in supplied)
+    ):
+        return supplied
+    return uuid.uuid4().hex
 
 
 def error_text(payload: Any) -> str | None:

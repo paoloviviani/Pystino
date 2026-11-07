@@ -26,6 +26,7 @@ from gateway.identity_registry import (
     active_bundled_provider,
     reseed_from_env,
 )
+from gateway.limits import BodyLimitMiddleware, SecurityHeadersMiddleware
 from gateway.logging_config import configure_logging
 from gateway.netguard import build_guarded_client
 from gateway.oidc import sweep_env_admin_email_rule
@@ -448,6 +449,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url="/openapi.json",
     )
     app.state.settings = resolved
+    # Added last = outermost: the size limit runs before anything else sees the body.
+    app.add_middleware(BodyLimitMiddleware, settings=resolved)
+    app.add_middleware(SecurityHeadersMiddleware)
 
     app.add_exception_handler(GatewayError, gateway_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)

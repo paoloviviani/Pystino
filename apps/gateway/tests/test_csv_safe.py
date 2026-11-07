@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-
 from gateway.csv_safe import csv_text
 from gateway.reporting import report_to_csv
 from gateway.schemas import PeriodResponse, UsageReport, UsageReportRow

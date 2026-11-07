@@ -390,6 +390,18 @@ otherwise. `GATEWAY_TRANSCRIPTION__TIMEOUT_SECONDS` (default 300) bounds how
 long the provider may take; the shared upstream client has no read timeout, as
 streams idle.
 
+## Request size limits
+
+A request body over the cap for its route is refused with a 413 (`request_too_large`)
+before it is parsed and before authentication, so a caller without a valid key cannot
+make a worker buffer an unbounded body. The count is made on the bytes as they arrive,
+not only on the declared length. The caps are `GATEWAY_REQUEST_LIMITS__MAX_V1_BODY_BYTES`
+(default 64 MB, for the `/v1` routes: chat and embeddings carry images and long
+documents) and `GATEWAY_REQUEST_LIMITS__MAX_API_BODY_BYTES` (default 4 MB, for `/api`,
+`/auth` and `/scim`). Transcription keeps its own cap, above. These are gateway
+settings; the bundled `compose.yaml` does not pass them through, so changing them in a
+compose deployment needs an added `environment:` line.
+
 **Pricing is per minute, metered per second.** The price row carries
 `per_minute` (the console's **Per minute of audio** field); the ledger records
 `audio_seconds` and the cost is `seconds / 60 × per_minute`, so a 90-second clip

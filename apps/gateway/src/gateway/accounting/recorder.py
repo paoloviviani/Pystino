@@ -93,8 +93,8 @@ class ChoiceAccumulator:
     def observe_delta(self, delta: dict[str, Any]) -> None:
         if (piece := delta.get("content")) and isinstance(piece, str):
             self.content.append(piece)
-        for name in REASONING_FIELDS:
-            if (thought := delta.get(name)) and isinstance(thought, str):
+        for reasoning_field in REASONING_FIELDS:
+            if (thought := delta.get(reasoning_field)) and isinstance(thought, str):
                 self.reasoning.append(thought)
         # Some providers use `refusal` for safety declines; it is still output.
         if (refusal := delta.get("refusal")) and isinstance(refusal, str):
