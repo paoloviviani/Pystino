@@ -18,7 +18,7 @@ how to run it, and what it does not do.
   authenticates all of them and takes either an API key or an OIDC access
   token.
 - `/api/me` and `/api/admin` — the management API, session cookie only.
-  `/docs` is the generated Swagger over the same schemas; the human surface is
+  `/docs` (Swagger, off unless `GATEWAY_DOCS_ENABLED=true`) is generated from the same schemas; the human surface is
   the React console at `/console`.
 - `/auth/*` — the OIDC sign-in, `/scim/v2/<provider>` — SCIM pushes from an
   external directory, `/opencode/install.sh` — the opencode setup script.

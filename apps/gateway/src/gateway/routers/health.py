@@ -36,7 +36,14 @@ async def readyz(request: Request, response: Response) -> dict[str, Any]:
         ready = False
 
     valkey = getattr(request.app.state, "valkey", None)
-    if valkey is None:
+    startup_error = getattr(request.app.state, "counter_store_error", None)
+    degraded = False
+    if startup_error:
+        # Valkey is configured and was down at startup: the quota engine is on
+        # the database fallback, and only a restart brings it back.
+        checks["valkey"] = f"error: {startup_error}; restart the gateway once it is reachable"
+        degraded = True
+    elif valkey is None:
         # Not configured; quotas fall back to the database, which is degraded but
         # serviceable, so this does not fail readiness.
         checks["valkey"] = "not configured"
@@ -46,7 +53,8 @@ async def readyz(request: Request, response: Response) -> dict[str, Any]:
             checks["valkey"] = "ok"
         except Exception as exc:
             checks["valkey"] = f"error: {type(exc).__name__}"
+            degraded = True
 
     if not ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    return {"status": "ok" if ready else "degraded", "checks": checks}
+    return {"status": "ok" if ready and not degraded else "degraded", "checks": checks}

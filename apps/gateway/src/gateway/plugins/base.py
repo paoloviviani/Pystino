@@ -177,6 +177,14 @@ DIALECT_DECISIONS = "decisions"
 DIALECT_SYSTEMONE = "systemone"
 
 
+#: The body fields a router (OpenRouter's shape) reads to choose who serves a
+#: request: a model list for fallback, provider preferences, a route mode. They
+#: are the deployment's policy, so a caller's are dropped before the request
+#: leaves unless the plugin lists them in ``caller_routing_fields`` (optional on
+#: a plugin, read with ``getattr``, like ``decisions``; empty means none).
+ROUTER_ROUTING_FIELDS: tuple[str, ...] = ("models", "provider", "route")
+
+
 @dataclass(frozen=True, slots=True)
 class DecisionSupport:
     """What a plugin knows about serving decision models (ADR 0100).

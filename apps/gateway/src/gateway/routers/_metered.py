@@ -68,6 +68,8 @@ from gateway.models import (
     UsageSource,
     UsageStatus,
 )
+from gateway.plugins.base import ROUTER_ROUTING_FIELDS
+from gateway.plugins.base import ProviderKind as PluginKind
 from gateway.providers import ProviderConfigurationError, ProviderRegistry
 from gateway.quota import (
     QuotaAmounts,
@@ -633,7 +635,18 @@ class Metered:
         Reuses the plugin the recorder already resolved, so a request cannot
         shape its body with one plugin and read its usage with another.
         """
-        return self.accounting.plugin.prepare_payload(payload, surface=surface)
+        plugin = self.accounting.plugin
+        if plugin.kind is PluginKind.ROUTER:
+            # A router lets the body choose its sub-providers, regions and
+            # fallbacks: a caller could route around the deployment's policy
+            # (an EU-only or zero-retention one) with `provider` or `models`.
+            # `extra="allow"` carries them through, so drop them here unless
+            # the plugin declares that callers may send them.
+            allowed = getattr(plugin, "caller_routing_fields", ())
+            for name in ROUTER_ROUTING_FIELDS:
+                if name not in allowed:
+                    payload.pop(name, None)
+        return plugin.prepare_payload(payload, surface=surface)
 
     async def upstream_unreachable(
         self, exc: Exception, *, message: str | None = None

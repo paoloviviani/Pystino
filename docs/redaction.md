@@ -131,6 +131,14 @@ including the compensation for phone numbers described in
 sit permanently under the gateway's default threshold while the entity was
 still advertised.
 
+## What redaction covers
+
+Redaction applies to message text and tool results. It does not apply to tool
+definitions (`tools`: names, descriptions and parameter schemas), `response_format`
+schemas, `metadata`, `user`, or image URLs. Masking inside a schema could break a
+tool name or an enum value that must round-trip exactly, so those fields are sent as
+the caller wrote them. Do not put personal data in tool definitions.
+
 ## Rerank input
 
 `POST /v1/rerank` redacts the query and every document before they leave, as

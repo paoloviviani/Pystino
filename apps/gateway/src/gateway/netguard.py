@@ -60,7 +60,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -434,6 +434,54 @@ class GuardedBackend(httpcore.AsyncNetworkBackend):
         await self._inner.sleep(seconds)
 
 
+class ResponseTooLarge(httpx.ReadError):
+    """A private provider's reply grew past ``byok_max_response_bytes``."""
+
+
+class _CappedStream(httpx.AsyncByteStream):
+    """Passes a response body through, and stops it at ``limit`` bytes."""
+
+    def __init__(self, inner: httpx.AsyncByteStream, limit: int) -> None:
+        self._inner = inner
+        self._limit = limit
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        seen = 0
+        async for chunk in self._inner:
+            seen += len(chunk)
+            if seen > self._limit:
+                raise ResponseTooLarge(f"upstream response is larger than {self._limit} bytes")
+            yield chunk
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
+class _CappedTransport(httpx.AsyncHTTPTransport):
+    """An httpx transport whose responses are limited in size.
+
+    The cap is on the body as it arrives, so it holds for a streamed reply and
+    for a non-streamed one read whole alike; a declared ``content-length`` over
+    the cap is refused before a byte is read.
+    """
+
+    def __init__(self, *, max_response_bytes: int, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._max_response_bytes = max_response_bytes
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        response = await super().handle_async_request(request)
+        declared = response.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > self._max_response_bytes:
+            await response.aclose()
+            raise ResponseTooLarge(
+                f"upstream response is larger than {self._max_response_bytes} bytes"
+            )
+        assert isinstance(response.stream, httpx.AsyncByteStream)
+        response.stream = _CappedStream(response.stream, self._max_response_bytes)
+        return response
+
+
 def build_guarded_client(
     settings: UpstreamSettings,
     *,
@@ -444,8 +492,11 @@ def build_guarded_client(
 ) -> httpx.AsyncClient:
     """The HTTP client for a private provider's traffic.
 
-    Same timeouts as ``build_http_client`` (no read timeout, for streams) with
-    the guarded backend underneath, no redirects, and ``trust_env=False`` so an
+    Same connect, write and pool timeouts as ``build_http_client``, but a
+    finite read timeout (``byok_read_timeout_seconds`` unless the caller gives
+    one: a member's host must not hold a worker silent forever) and a cap on
+    the reply's size (``byok_max_response_bytes``). The guarded backend sits
+    underneath, redirects are off, and ``trust_env=False`` so an
     ``HTTP_PROXY`` in the environment cannot route the connection around the
     guard (a proxy would resolve the name itself).
 
@@ -456,7 +507,7 @@ def build_guarded_client(
     """
     timeout = httpx.Timeout(
         connect=settings.connect_timeout_seconds,
-        read=read_timeout,
+        read=read_timeout if read_timeout is not None else settings.byok_read_timeout_seconds,
         write=settings.write_timeout_seconds,
         pool=settings.pool_timeout_seconds,
     )
@@ -464,7 +515,9 @@ def build_guarded_client(
         max_connections=settings.max_connections,
         max_keepalive_connections=settings.max_keepalive_connections,
     )
-    transport = httpx.AsyncHTTPTransport(limits=limits, trust_env=False)
+    transport = _CappedTransport(
+        max_response_bytes=settings.byok_max_response_bytes, limits=limits, trust_env=False
+    )
     guarded = httpcore.AsyncConnectionPool(
         ssl_context=httpx.create_ssl_context(trust_env=False),
         max_connections=limits.max_connections,

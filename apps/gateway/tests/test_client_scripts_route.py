@@ -6,6 +6,7 @@ import subprocess
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from gateway.routers.client_scripts import _ORIGIN_LINE
 
 
@@ -22,10 +23,10 @@ async def test_served_script_carries_the_requests_origin(client: httpx.AsyncClie
 
 
 async def test_it_needs_no_credential_and_is_not_in_the_api_schema(
-    client: httpx.AsyncClient,
+    client: httpx.AsyncClient, app: FastAPI
 ) -> None:
     assert (await client.get("/opencode/install.sh")).status_code == 200
-    schema = (await client.get("/openapi.json")).json()
+    schema = app.openapi()
     assert "/opencode/install.sh" not in schema["paths"]
 
 

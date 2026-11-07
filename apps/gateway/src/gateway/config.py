@@ -64,6 +64,13 @@ class UpstreamSettings(BaseModel):
     pool_timeout_seconds: float = 10.0
     max_connections: int = 200
     max_keepalive_connections: int = 50
+    # A private (bring-your-own-key) provider is a host a member chose, so its
+    # replies are bounded, which a deployment provider's are not (audit
+    # 2026-11): the longest silence tolerated between reads, and the most
+    # bytes one reply may carry (64 MiB, the /v1 body limit: a base64 image
+    # reply is the large case).
+    byok_read_timeout_seconds: float = Field(default=300.0, gt=0)
+    byok_max_response_bytes: int = Field(default=64 * 1024 * 1024, gt=0)
 
     @field_validator("base_url")
     @classmethod
@@ -1233,6 +1240,10 @@ class Settings(BaseSettings):
     # that is set must exist, so a typo in the mount stops the gateway rather
     # than quietly serving the built-in catalogue. Read once at startup.
     providers_dir: str = ""
+
+    # Serve `/docs` and `/openapi.json` (``GATEWAY_DOCS_ENABLED``). Off: the
+    # schema names every management route and would be public. For development.
+    docs_enabled: bool = False
 
     database_url: str = "postgresql+asyncpg://gateway:gateway@localhost:5432/gateway"
     database_pool_size: int = 10

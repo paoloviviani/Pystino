@@ -4,7 +4,7 @@ Every route here requires ``is_admin``. Until these existed the only ways to
 change any of it were ``gateway seed``, the pricing importer, or SQL — which is
 fine for a demo and not fine for an operator.
 
-There is no HTML admin panel; ``/docs`` is the console. That is a deliberate stop
+There is no HTML admin panel; the React console is the UI. That is a deliberate stop
 short of Phase 2: the frontend owns presentation, and shipping a second UI here
 would be a thing to migrate away from later.
 
