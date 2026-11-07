@@ -25,6 +25,12 @@ export interface Column<Row> {
    * always one line. A long value should be clamped by the cell instead.
    */
   nowrap?: boolean;
+  /**
+   * The label a stacked row (see `TableProps.stack`) puts before this value, for a header that is
+   * not plain text. A string header is used as it is; a column with neither has no label (an
+   * action column).
+   */
+  label?: string;
   render: (row: Row) => ReactNode;
 }
 
@@ -48,6 +54,26 @@ const TABLE =
   "[&_td_button]:px-2.5 [&_td_button]:py-1 [&_td_button]:text-dense";
 const CELL_X = "px-3 first:pl-5 last:pr-5";
 
+/**
+ * Stacked rows, under `sm`: every row becomes a small card, one "Label  value" line per column.
+ * A column hidden only because the row is narrow (`hideBelow`) comes back here, since a card has the
+ * room a table row does not; the header row goes to screen readers only. Literal classes, as above.
+ */
+const STACK_TABLE = "max-sm:block";
+const STACK_HEAD = "max-sm:sr-only";
+const STACK_BODY = "max-sm:block";
+const STACK_ROW =
+  "max-sm:block max-sm:border-b max-sm:border-line-quiet max-sm:px-4 max-sm:py-3 max-sm:last:border-b-0";
+const STACK_CELL =
+  "max-sm:flex max-sm:items-baseline max-sm:justify-between max-sm:gap-3 max-sm:border-0! max-sm:px-0! max-sm:py-1! max-sm:text-right " +
+  "max-sm:before:shrink-0 max-sm:before:text-left max-sm:before:font-medium max-sm:before:text-ink-muted max-sm:before:content-[attr(data-label)]";
+/** Between `sm` and the column's own breakpoint: hidden only where a table row is narrow but not stacked. */
+const STACK_HIDE_BELOW = {
+  sm: "",
+  md: "max-md:sm:hidden",
+  lg: "max-lg:sm:hidden",
+} as const;
+
 export interface TableProps<Row> {
   columns: Column<Row>[];
   rows: Row[];
@@ -57,6 +83,12 @@ export interface TableProps<Row> {
   /** Rendered as a distinct final row. A total belongs in the table, not beside it. */
   footer?: Row;
   caption?: string;
+  /**
+   * Under `sm`, draw each row as a card (label and value per line) instead of a table that scrolls
+   * sideways with its action column off the edge. Opt in for listings whose rows carry an action
+   * column, a bar or a date that a phone would clip.
+   */
+  stack?: boolean;
 }
 
 /*
@@ -76,6 +108,7 @@ export function Table<Row>({
   empty,
   footer,
   caption,
+  stack = false,
 }: TableProps<Row>) {
   const t = useUiMessages();
   const emptyContent = empty ?? t.tableEmpty;
@@ -99,14 +132,20 @@ export function Table<Row>({
     cx(numeric && "text-right tabular-nums");
   const cellWrap = (column: Column<Row>) =>
     (column.nowrap || column.numeric) && "whitespace-nowrap";
+  const hide = (column: Column<Row>) =>
+    column.hideBelow &&
+    (stack ? STACK_HIDE_BELOW[column.hideBelow] : HIDE_BELOW[column.hideBelow]);
+  const labelOf = (column: Column<Row>) =>
+    column.label ??
+    (typeof column.header === "string" ? column.header : undefined);
 
   return (
     <div className="overflow-x-auto">
-      <table className={TABLE}>
+      <table className={cx(TABLE, stack && STACK_TABLE)}>
         {/* Announced, not shown — see the note on the caption. Omitting it
             would leave a screen reader to infer what thirty numbers are. */}
         {caption && <caption className="sr-only">{caption}</caption>}
-        <thead>
+        <thead className={cx(stack && STACK_HEAD)}>
           <tr>
             {columns.map((column) => (
               <th
@@ -116,7 +155,7 @@ export function Table<Row>({
                   "border-b border-line bg-sunken py-1.5 text-left text-dense font-semibold tracking-[0.01em] whitespace-nowrap text-ink",
                   CELL_X,
                   cellTone(column.numeric),
-                  column.hideBelow && HIDE_BELOW[column.hideBelow],
+                  hide(column),
                 )}
               >
                 {column.header}
@@ -124,22 +163,24 @@ export function Table<Row>({
             ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody className={cx(stack && STACK_BODY)}>
           {rows.map((row, index) => (
-            <tr key={rowKey(row, index)}>
+            <tr key={rowKey(row, index)} className={cx(stack && STACK_ROW)}>
               {columns.map((column) => (
                 <td
                   key={column.key}
+                  data-label={stack ? labelOf(column) : undefined}
                   className={cx(
                     CELL_X,
                     "py-2 align-baseline",
+                    stack && STACK_CELL,
                     // The quiet rule under every row *except* the last: the
                     // card's own edge closes the table, and a line above it
                     // read as a border under a border.
                     index < rows.length - 1 && "border-b border-line-quiet",
                     cellTone(column.numeric),
                     cellWrap(column),
-                    column.hideBelow && HIDE_BELOW[column.hideBelow],
+                    hide(column),
                   )}
                 >
                   {column.render(row)}
@@ -149,12 +190,14 @@ export function Table<Row>({
           ))}
         </tbody>
         {footer && (
-          <tfoot>
-            <tr>
+          <tfoot className={cx(stack && STACK_BODY)}>
+            <tr className={cx(stack && STACK_ROW)}>
               {columns.map((column) => (
                 <td
                   key={column.key}
+                  data-label={stack ? labelOf(column) : undefined}
                   className={cx(
+                    stack && STACK_CELL,
                     // The total row keeps the body's cell padding: it was born
                     // from a stylesheet that padded every `td`, and the Tailwind
                     // rewrite styled body cells and forgot it — the total sat
@@ -167,7 +210,7 @@ export function Table<Row>({
                     // Not optional. Hiding a column in the head and body but
                     // not here leaves the total row one cell wider than the
                     // rest, so every figure in it lands under the wrong header.
-                    column.hideBelow && HIDE_BELOW[column.hideBelow],
+                    hide(column),
                   )}
                 >
                   {column.render(footer)}

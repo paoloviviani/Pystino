@@ -46,6 +46,7 @@ import {
   PAGE,
   SECRET_ROW,
 } from "../lib/layout";
+import { AboutServer } from "../components/AboutServer";
 import { Message } from "../components/Message";
 import { m } from "../paraglide/messages.js";
 
@@ -62,6 +63,16 @@ export function AdminSettings() {
         <ProvisioningPolicySection />
       </Card>
       <CapabilityDefaultsCard />
+      <AboutServer>
+        <p>
+          <Message
+            message={m["admin_settings.about_body"]}
+            markup={{
+              code: (children) => <code className={CODE}>{children}</code>,
+            }}
+          />
+        </p>
+      </AboutServer>
     </div>
   );
 }

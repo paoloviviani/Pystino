@@ -15,12 +15,12 @@ import {
   } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
+import { AboutServer } from "../components/AboutServer";
 import { OpencodeSetup } from "../components/OpencodeSetup";
 import { PageHeader } from "../components/PageHeader";
 import { downloadCsv } from "../lib/api";
 import {
   CODE,
-  MUTED,
   PAGE,
   QUOTA,
   QUOTA_DETAIL,
@@ -143,9 +143,15 @@ export function Overview({ me }: OverviewProps) {
           time (Dockerfile CONSOLE_BUILD_SHA); "unknown" means built by hand
           without it, and the gateway's startup log still says which files are
           actually served. */}
-      <p className={`${MUTED} -mt-2 text-dense`}>
-        {m["overview.build"]({ sha: import.meta.env.VITE_CONSOLE_BUILD_SHA ?? "unknown" })}
-      </p>
+      <div className="-mt-2">
+        <AboutServer>
+          <p>
+            {m["overview.build"]({
+              sha: import.meta.env.VITE_CONSOLE_BUILD_SHA ?? "unknown",
+            })}
+          </p>
+        </AboutServer>
+      </div>
 
       <Card>
         {report.isPending && <Spinner label={m["overview.loading"]()} />}

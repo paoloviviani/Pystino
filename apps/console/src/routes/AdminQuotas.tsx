@@ -222,6 +222,7 @@ export function AdminQuotas() {
               />
             </div>
             <Table
+              stack
               columns={columns}
               rows={limits.data?.items ?? []}
               rowKey={(rule) => rule.id}
@@ -371,6 +372,7 @@ function QuotaHealthPanel() {
         </Notice>
       ) : (
         <Table
+          stack
           columns={columns}
           rows={rows}
           rowKey={(row) => `${row.rule_id}:${row.member_id ?? "-"}:${row.window_id}`}
@@ -691,6 +693,7 @@ function HistoryDialog({ rule, onClose }: { rule: LimitRule | null; onClose: () 
       ) : (
         <>
         <Table
+          stack
           columns={[
             {
               key: "when",

@@ -475,6 +475,7 @@ export function AdminUsers() {
         ) : (
           <>
             <Table
+              stack
               columns={columns}
               rows={rows}
               rowKey={(user) => user.id}

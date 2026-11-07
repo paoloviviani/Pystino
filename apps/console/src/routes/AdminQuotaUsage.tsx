@@ -131,6 +131,7 @@ function UserList() {
         ) : (
           <>
             <Table
+              stack
               columns={columns}
               rows={page?.items ?? []}
               rowKey={(row) => row.user_id}
@@ -311,6 +312,7 @@ function UserDetail({ userId }: { userId: string }) {
           </Notice>
         ) : (
           <Table
+            stack
             columns={columns}
             rows={usage.data?.entries ?? []}
             rowKey={(entry) => entry.rule_id}
@@ -486,6 +488,7 @@ function SharedQuotas() {
   return (
     <Card title={m["quota_usage.shared_list.title"]()} description={m["quota_usage.shared_list.hint"]()} flush>
       <Table
+        stack
         columns={columns}
         rows={shared}
         rowKey={(rule) => rule.id}
