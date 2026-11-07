@@ -6,6 +6,7 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 - **Console tables stack on a phone.** Providers, quotas, quota usage, users and the audit log draw each row as a labelled card under 640 px instead of clipping the action column, the usage bar or the dates.
 - **Developer detail is folded away.** The console build hash, `.env` and `./configure` notes and the search backend's endpoint (with its ADR number) moved into collapsed **About this server** and **How it works** disclosures on Overview, Settings and Search; the card descriptions read in plain words.
+- **More developer detail folded away.** "Join mode set in .env" and "Required groups set in .env" on the Identity page, and the `POST /v1/search` endpoint named under the search policy, moved into the folded **About this server** and **How it works** sections.
 
 ## v0.29.1 — 2026-11-06
 

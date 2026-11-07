@@ -154,6 +154,15 @@ describe("AdminIdentity", () => {
     expect(await screen.findByText(/join mode set here/i)).toBeInTheDocument();
   });
 
+  it("keeps where a setting came from inside a folded disclosure", async () => {
+    mockRoutes({ policy: policyFixture({ join_mode: "approval", sources: {} }) });
+    renderScreen(<AdminIdentity />);
+    const source = await screen.findByText(/join mode set in \.env/i);
+    // Developer detail: folded away by default, never loose on the page.
+    expect(source.closest("details")).not.toBeNull();
+    expect(source.closest("details")).not.toHaveAttribute("open");
+  });
+
   it("shows the group controls only in group mode", async () => {
     const user = userEvent.setup({ delay: null });
     mockRoutes({
