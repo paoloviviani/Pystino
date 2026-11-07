@@ -55,7 +55,7 @@ const TABLE =
 const CELL_X = "px-3 first:pl-5 last:pr-5";
 
 /**
- * Stacked rows, under `sm`: every row becomes a small card, one "Label  value" line per column.
+ * Stacked rows, under `sm`: every row becomes a small card, a small label above each value.
  * A column hidden only because the row is narrow (`hideBelow`) comes back here, since a card has the
  * room a table row does not; the header row goes to screen readers only. Literal classes, as above.
  */
@@ -65,8 +65,8 @@ const STACK_BODY = "max-sm:block";
 const STACK_ROW =
   "max-sm:block max-sm:border-b max-sm:border-line-quiet max-sm:px-4 max-sm:py-3 max-sm:last:border-b-0";
 const STACK_CELL =
-  "max-sm:flex max-sm:items-baseline max-sm:justify-between max-sm:gap-3 max-sm:border-0! max-sm:px-0! max-sm:py-1! max-sm:text-right " +
-  "max-sm:before:shrink-0 max-sm:before:text-left max-sm:before:font-medium max-sm:before:text-ink-muted max-sm:before:content-[attr(data-label)]";
+  "max-sm:block max-sm:border-0! max-sm:px-0! max-sm:py-1! max-sm:text-left " +
+  "max-sm:before:mb-0.5 max-sm:before:block max-sm:before:text-xs max-sm:before:font-medium max-sm:before:text-ink-muted max-sm:before:content-[attr(data-label)]";
 /** Between `sm` and the column's own breakpoint: hidden only where a table row is narrow but not stacked. */
 const STACK_HIDE_BELOW = {
   sm: "",
