@@ -22,6 +22,8 @@ fails in a specific, boring, expensive way.
 
 ## The ledger
 
+![The Usage page: spend, requests and a daily chart split by group.](screenshots/usage-reports.webp)
+
 Every admitted request writes one row to `usage_records` — before the upstream
 call, not after. A request the quota refuses (a `429` with `code:
 quota_exceeded`) writes none: it never reached a provider and cost nothing. The row carries the caller, the billing group (see
@@ -61,6 +63,8 @@ ledger), and no group, billing or administrator report adds it up. It shows in
 the member's own usage as a separate total.
 
 ## The request log
+
+![The Requests page: every request, newest first, with filters and CSV export.](screenshots/requests-log.webp)
 
 **Reports by provider, and the console's charts.** `GET /api/admin/reports/usage`
 (and `/api/me/reports/usage` for the caller's own) takes `group_by=provider`:
@@ -289,6 +293,8 @@ which is the figure a quota counts. Cerea's agent proxy tags every request with
 the coding session so the chat can show a session's and a turn's cost.
 
 ## Quotas
+
+![The Quotas page: each rule with its usage bar, and quota health below.](screenshots/quotas.webp)
 
 The quota engine is reserve-then-settle over stacked,
 multi-granularity rolling windows: global, group, user and API-key rules can

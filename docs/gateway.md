@@ -128,6 +128,8 @@ your own.
 
 ## Providers and plugins
 
+![The Providers page: each endpoint, its type, key and model count.](screenshots/providers.webp)
+
 A provider record holds credentials (encrypted at rest) and a **plugin**
 that carries its
 vendor knowledge: which header names it wants, what unit it reports cost in,
@@ -151,6 +153,8 @@ are described in YAML, shipped with the image and overridable from a mounted
 directory. See [Provider catalogue](provider-catalogue.md).
 
 ### Importing models from a provider's catalogue
+
+![The Models page, grouped by kind, with prices and who may use each model.](screenshots/models.webp)
 
 `GET /api/admin/models/discover` compares a provider's catalogue with what this
 deployment serves and answers with rows to adopt, rows we still serve that the
