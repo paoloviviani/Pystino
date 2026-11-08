@@ -33,16 +33,18 @@ const METHODS = (providers: string[]) =>
   );
 
 let assign: ReturnType<typeof vi.fn>;
+const originalLocation = window.location;
 
 beforeEach(() => {
   assign = vi.fn();
   Object.defineProperty(window, "location", {
     writable: true,
-    value: { ...window.location, assign },
+    value: { ...originalLocation, assign },
   });
 });
 
 afterEach(() => {
+  Object.defineProperty(window, "location", { writable: true, value: originalLocation });
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -60,7 +62,7 @@ describe("Login", () => {
     vi.stubGlobal("fetch", vi.fn(async () => METHODS(["corp", "partner"])));
     renderLogin();
     await userEvent.click(await screen.findByRole("button", { name: "Sign in with partner" }));
-    expect(assign).toHaveBeenCalledWith("/auth/login?next=%2F&provider=partner");
+    expect(assign).toHaveBeenCalledWith("/auth/login?next=%2Fconsole&provider=partner");
     expect(screen.getByRole("button", { name: "Sign in with corp" })).toBeTruthy();
   });
 
@@ -69,5 +71,59 @@ describe("Login", () => {
     renderLogin();
     expect(await screen.findByText("No identity provider is enabled")).toBeTruthy();
     expect(screen.queryByLabelText("Password")).toBeNull();
+  });
+  // The console renders this page in place of whatever route the reader opened
+  // once the session is gone, so with no ?next it returns them there. It never
+  // falls back to the origin root: on a kit "/" is the chat app.
+  const at = (pathname: string, search = "") =>
+    Object.defineProperty(window, "location", {
+      writable: true,
+      value: { ...window.location, pathname, search, assign },
+    });
+
+  it("returns to the console page the reader opened when no next is given", async () => {
+    at("/console/admin/quotas", "?tab=rules");
+    vi.stubGlobal("fetch", vi.fn(async () => METHODS(["authelia"])));
+    renderLogin("/admin/quotas?tab=rules");
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith(
+        "/auth/login?next=%2Fconsole%2Fadmin%2Fquotas%3Ftab%3Drules&provider=authelia",
+      ),
+    );
+  });
+
+  it("never returns to the origin root, which on a kit is the chat app", async () => {
+    at("/console/login");
+    vi.stubGlobal("fetch", vi.fn(async () => METHODS(["authelia"])));
+    renderLogin("/login?next=%2F");
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith("/auth/login?next=%2Fconsole&provider=authelia"),
+    );
+  });
+
+  it("ignores an unsafe next and returns to the console instead", async () => {
+    at("/console/login");
+    vi.stubGlobal("fetch", vi.fn(async () => METHODS(["authelia"])));
+    renderLogin("/login?next=%2F%2Fevil.test");
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith("/auth/login?next=%2Fconsole&provider=authelia"),
+    );
+  });
+  it("never returns to the login page or a root path with a query", async () => {
+    at("/console/login");
+    vi.stubGlobal("fetch", vi.fn(async () => METHODS(["authelia"])));
+    renderLogin("/login?next=%2Fconsole%2Flogin%3Fx%3D1");
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith("/auth/login?next=%2Fconsole&provider=authelia"),
+    );
+  });
+
+  it("treats /?x as the origin root", async () => {
+    at("/console/login");
+    vi.stubGlobal("fetch", vi.fn(async () => METHODS(["authelia"])));
+    renderLogin("/login?next=%2F%3Fx");
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith("/auth/login?next=%2Fconsole&provider=authelia"),
+    );
   });
 });
