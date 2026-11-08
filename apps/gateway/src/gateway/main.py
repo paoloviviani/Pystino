@@ -64,6 +64,7 @@ from gateway.routers import (
     identity_events,
     images,
     me,
+    me_privacy,
     me_redaction,
     messages,
     models,
@@ -506,6 +507,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(pystino.router)
     app.include_router(auth.router)
     app.include_router(me.router)
+    app.include_router(me_privacy.router)
     app.include_router(me_redaction.router)
     app.include_router(me_redaction.admin_router)
     app.include_router(admin.router)

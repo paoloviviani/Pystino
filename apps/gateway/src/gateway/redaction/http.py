@@ -938,3 +938,13 @@ def _longest_placeholder(placeholders: PlaceholderMap) -> int:
 
 def build(settings: RedactionSettings) -> HttpDetectionRedactor:
     return HttpDetectionRedactor(settings)
+
+
+def screened_texts(messages: list[dict[str, Any]]) -> list[str]:
+    """Every string redaction would screen in *messages*, one per input.
+
+    What the privacy pipelines classify (ADR 0113): the same strings redaction
+    reads, so a verdict is about the text that would otherwise leave, and each
+    input is judged on its own and in full.
+    """
+    return [target.text for message in messages for target in _message_targets(message)]

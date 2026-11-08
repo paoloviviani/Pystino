@@ -52,7 +52,6 @@ from gateway.errors import (
     BadRequestError,
     ByokNotAllowedError,
     ContentBlockedError,
-    GatewayError,
     ModelNotFoundError,
     RoutingRefusedError,
     ServiceUnavailableError,
@@ -73,6 +72,8 @@ from gateway.models import (
 from gateway.plugins.base import ROUTER_ROUTING_FIELDS
 from gateway.plugins.base import ProviderKind as PluginKind
 from gateway.privacy import attribution
+from gateway.privacy.combine import Combined, plan
+from gateway.privacy.evaluate import Facts
 from gateway.privacy.state import state_of
 from gateway.providers import ProviderConfigurationError, ProviderRegistry
 from gateway.quota import (
@@ -83,6 +84,7 @@ from gateway.quota import (
     Reservation,
 )
 from gateway.redaction import RedactionOutcome, Redactor
+from gateway.redaction.http import screened_texts
 from gateway.redaction.report import build_detail, build_summary
 from gateway.redaction.resolver import RedactionResolver
 from gateway.routing import (
@@ -473,7 +475,6 @@ async def serve_with_failover[ResponseT: Response](
     session: AsyncSession,
     plan: RoutePlan,
     serve: Callable[[ResolvedModel], Awaitable[ResponseT]],
-    served: list[ResolvedModel] | None = None,
 ) -> ResponseT:
     """Run ``serve`` against each target of the plan until one answers.
 
@@ -492,8 +493,6 @@ async def serve_with_failover[ResponseT: Response](
     """
     failure: AttemptFailed | None = None
     for resolved in plan.attempts:
-        if served is not None:
-            served.clear()
         try:
             response = await serve(resolved)
         except AttemptFailed as failed:
@@ -506,8 +505,7 @@ async def serve_with_failover[ResponseT: Response](
             failure = failed
             continue
         if response.status_code < 400:
-            # The target that served, which a routing rule may have changed.
-            await _stick(session, plan, served[-1] if served else resolved)
+            await _stick(session, plan, resolved)
         return response
     # Unreachable by construction (the last attempt never raises AttemptFailed);
     # kept so that a future change cannot turn it into a silent `None`.
@@ -1056,32 +1054,87 @@ async def begin(
     )
 
 
-def redaction_policy(
-    request: Request, *, principal: Principal, model: ModelDef | None = None
-) -> EffectivePolicy | None:
-    """The folded policy for this request, from state already in hand.
+async def plan_privacy(
+    request: Request,
+    *,
+    kind: str,
+    principal: Principal,
+    model: ModelDef,
+    texts: Sequence[str] = (),
+    requested_name: str | None = None,
+) -> tuple[Facts, Combined]:
+    """Run every pipeline of *kind* that covers this request, and combine them.
 
-    Zero queries, and that is the design rather than an optimisation: every
-    subject a rule can name — the model, its provider, the billing group, the
-    person, the key — is already loaded by the time redaction runs, and the
-    rules themselves arrive on the resolver's ten-second poll (ADR 0038). A
-    lookup here would have cost a sixth select and broken the budget
-    `test_query_counts.py` pins.
+    Judged on this request alone (ADR 0113): who is asking, where it goes, and,
+    only if some pipeline asks, what the text is, each input separately and in
+    full. Zero queries: the pipelines arrived on the poll. A worker that has
+    never loaded them refuses (503) rather than run without them.
+    """
+    privacy = state_of(request)
+    privacy.ensure_loaded()
+    facts = attribution.base_facts(
+        kind,
+        principal,
+        model,
+        requested_name=requested_name,
+        texts=tuple(texts) if privacy.uses_verdicts(kind) else (),
+    )
+    return facts, await plan(privacy.evaluator, privacy.pipelines_of(kind), facts)
 
-    None when no resolver is mounted, which is what a test harness that builds
-    the app without one does; the redactor then uses its own deployment policy.
+
+def effective_policy_of(request: Request, combined: Combined) -> EffectivePolicy | None:
+    """The folded redaction policy this request's pipelines chose.
+
+    Zero queries, and that is the design rather than an optimisation: the
+    policies and the pipelines arrive on the poll (ADR 0038, ADR 0113). None when
+    no resolver is mounted, which is what a test harness that builds the app
+    without one does; the redactor then uses its own deployment policy.
     """
     resolver: RedactionResolver | None = getattr(request.app.state, "redaction", None)
     if resolver is None:
         return None
-    effective: EffectivePolicy = resolver.policy_for(
-        provider_id=model.provider_id if model is not None else None,
-        model_id=model.id if model is not None else None,
-        group_id=principal.billing_group.id if principal.billing_group else None,
-        user_id=principal.user.id,
-        api_key_id=principal.api_key.id if principal.api_key is not None else None,
+    effective: EffectivePolicy = state_of(request).effective_policy(
+        combined.policy_uses(), resolver.policy
     )
     return effective
+
+
+def policy_names_of(request: Request, combined: Combined) -> list[str]:
+    """Names of the policies applied, for the attribution."""
+    privacy = state_of(request)
+    return [n for use in combined.policy_uses() if (n := privacy.policy_name(use.policy_id))]
+
+
+async def redaction_policy(
+    request: Request, *, principal: Principal, model: ModelDef | None = None
+) -> EffectivePolicy | None:
+    """The policy a caller's chat pipelines apply, for callers with no text to judge.
+
+    Used where only "is anything hidden for this caller" matters (the audio
+    switch). Pipelines whose conditions need text see none, so they judge an
+    empty request.
+    """
+    if model is None:
+        return None
+    _, combined = await plan_privacy(request, kind="chat", principal=principal, model=model)
+    return effective_policy_of(request, combined)
+
+
+def _routing_for(
+    request: Request,
+    facts: Facts,
+    combined: Combined,
+    *,
+    outcome: str = "default",
+    reason: str | None = None,
+) -> dict[str, Any]:
+    return attribution.build(
+        facts,
+        combined=combined,
+        outcome=outcome,
+        policies=policy_names_of(request, combined),
+        reason=reason,
+    )
 
 
 async def redact_or_block(
@@ -1095,29 +1148,62 @@ async def redact_or_block(
     settings: Settings,
     surface: ApiSurface,
     request_id: str,
-    routing: dict[str, Any] | None = None,
+    kind: str = "chat",
+    requested_name: str | None = None,
 ) -> RedactionOutcome:
-    """Redact under this request's effective policy, or refuse and record it.
+    """Run the privacy pipelines, then redact under what they chose; refuse and record on a block.
 
-    One function rather than two lines in each of five routes, because the
+    One function rather than two lines in each of the routes, because the
     recording is the part that is easy to forget: a blocked request never
     reaches ``begin``, so without this it would leave **no trace at all** — and
     "this deployment refused 400 prompts last month" is a number a
     data-protection review asks for (ADR 0038).
 
-    The row is written before the error propagates, on the request's own session,
-    and it is not a billing row: zero tokens, zero cost, ``status=blocked``. What
-    it carries is who, when, which model, and which rule decided.
+    The pipelines come first (ADR 0113): every one in scope runs, the highest
+    level on the ladder wins (a refusal is a 403 naming the rule that set it),
+    and the policies they chose fold into the one policy the redactor applies.
+    The row is written before the error propagates, on the request's own
+    session, and it is not a billing row: zero tokens, zero cost,
+    ``status=blocked``. What it carries is who, when, which model, and which
+    rule decided.
     """
-    policy = redaction_policy(request, principal=principal, model=model)
-    if routing is None:
-        routing = chat_routing(request, principal=principal, model=model, surface=surface)
+    facts, combined = await plan_privacy(
+        request,
+        kind=kind,
+        principal=principal,
+        model=model,
+        texts=screened_texts(messages),
+        requested_name=requested_name,
+    )
+    if combined.refused:
+        assert combined.winner is not None
+        await refuse_by_rule(
+            request,
+            session,
+            principal=principal,
+            model=model,
+            surface=surface,
+            settings=settings,
+            request_id=request_id,
+            routing=_routing_for(request, facts, combined, outcome="refused"),
+            rule_name=combined.winner.rule.name,
+            pipeline_name=combined.winner.pipeline.name,
+            why="this request is not allowed.",
+        )
+    policy = effective_policy_of(request, combined)
+    routing = _routing_for(
+        request,
+        facts,
+        combined,
+        outcome="rule"
+        if combined.winner is not None or policy_names_of(request, combined)
+        else "default",
+    )
     try:
         outcome = await redactor.redact_request(messages, policy=policy)
     except ContentBlockedError as exc:
         detail = build_detail(exc.findings or {}, policy, blocked=True)
-        if routing is not None:
-            detail = attribution.with_routing(detail, {**routing, "outcome": "blocked"})
+        detail = attribution.with_routing(detail, {**routing, "outcome": "blocked"})
         if wants_redaction_summary(request):
             # The 403 carries the summary too, so a caller that asked for one
             # learns what refused it. Types and counts and the deciding rule;
@@ -1141,10 +1227,9 @@ async def redact_or_block(
             policy=policy,
         )
         raise
-    if routing is not None:
-        outcome.routing = routing
-        if outcome.detail is not None or privacy_configured(request):
-            outcome.detail = attribution.with_routing(outcome.detail, routing)
+    outcome.routing = routing
+    if outcome.detail is not None or privacy_configured(request):
+        outcome.detail = attribution.with_routing(outcome.detail, routing)
     return outcome
 
 
@@ -1160,13 +1245,16 @@ async def refuse_by_rule(
     routing: dict[str, Any],
     rule_name: str,
     why: str,
+    pipeline_name: str | None = None,
 ) -> NoReturn:
-    """Refuse the request under a routing rule: a 403 naming the rule, and a row.
+    """Refuse the request under a rule: a 403 naming the rule, and a row.
 
-    The message carries the rule's name and a plain reason, never the content or
-    the file's name. The row is the same ``blocked`` row a redaction block leaves.
+    The message carries the rule's name (and its pipeline's) and a plain reason,
+    never the content or the file's name. The row is the same ``blocked`` row a
+    redaction block leaves.
     """
-    message = f"Refused by the privacy rule '{rule_name}': {why}"
+    where = f" (pipeline '{pipeline_name}')" if pipeline_name else ""
+    message = f"Refused by the privacy rule '{rule_name}'{where}: {why}"
     detail = attribution.with_routing(None, {**routing, "outcome": "refused", "reason": why})
     detail["blocked"] = True
     error = RoutingRefusedError(message)
@@ -1190,69 +1278,9 @@ async def refuse_by_rule(
     raise error
 
 
-async def reroute_to_local(
-    session: AsyncSession,
-    names: Sequence[str],
-    *,
-    principal: Principal,
-    surface: ApiSurface,
-    template: ResolvedModel,
-    preferred: str | None = None,
-    must_be_local: bool = False,
-) -> ResolvedModel | None:
-    """The first local model of *names* the caller may use, or None.
-
-    A rule saying "use a local model" cannot grant access: each candidate goes
-    through the same resolution a direct call does, so a caller without the grant
-    gets None, and the route then fails closed rather than quietly using the
-    model they named.
-    """
-    ordered = ([preferred] if preferred else []) + [n for n in names if n != preferred]
-    for name in ordered:
-        try:
-            found = await resolve_model(session, name, principal=principal, surface=surface)
-        except GatewayError:
-            continue
-        if must_be_local and not (
-            found.model.provider is not None
-            and found.model.provider.is_local
-            and not found.model.is_private
-        ):
-            # A rule that says "local" is checked against what actually resolved:
-            # a name an administrator typed, an alias, or a provider whose
-            # `is_local` has since been switched off must not pass as local.
-            logger.warning("routing: %s is not on a local provider; skipped", name)
-            continue
-        return ResolvedModel(
-            model=found.model,
-            requested_name=template.requested_name,
-            attempt=template.attempt,
-            last=template.last,
-            routed=template.routed,
-        )
-    return None
-
-
 def privacy_configured(request: Request) -> bool:
-    """Whether any routing rule is on: the condition for logging every request."""
+    """Whether any pipeline is on: the condition for logging every request."""
     return state_of(request).configured
-
-
-_CHAT_SURFACES = (ApiSurface.CHAT_COMPLETIONS, ApiSurface.RESPONSES, ApiSurface.MESSAGES)
-
-
-def chat_routing(
-    request: Request, *, principal: Principal, model: ModelDef, surface: ApiSurface
-) -> dict[str, Any] | None:
-    """The routing observation for a chat request (phase 0: nothing handles it yet).
-
-    None for a surface that is not one of the three kinds, so images, search and
-    the rest are not described as something they are not.
-    """
-    if surface not in _CHAT_SURFACES:
-        return None
-    facts = attribution.base_facts("chat", principal, model)
-    return attribution.build(facts)
 
 
 async def record_blocked(

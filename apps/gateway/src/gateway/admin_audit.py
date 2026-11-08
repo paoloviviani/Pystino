@@ -96,7 +96,6 @@ PROVIDER_FIELDS = (
     "plugin",
     "kind",
     "billing_mode",
-    "is_local",
     "prefix",
     "is_active",
     "catalogue_id",

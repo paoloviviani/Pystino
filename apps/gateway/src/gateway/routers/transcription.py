@@ -254,7 +254,7 @@ async def _serve(
     upstream = await _metered.resolve_upstream(providers, resolved)
 
     if not settings.transcription.allowed_under_redaction and redaction_in_force(
-        _metered.redaction_policy(request, principal=principal, model=model), settings
+        await _metered.redaction_policy(request, principal=principal, model=model), settings
     ):
         raise PermissionError_(
             "A redaction rule applies to this request, and audio cannot be screened "

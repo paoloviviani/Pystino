@@ -23,14 +23,18 @@ numbers.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from gateway.caller_usage import caller_group_usage, caller_limits, caller_usage
 from gateway.deps import PrincipalDep, QuotaDep, SessionDep, SettingsDep
 from gateway.errors import BadRequestError
+from gateway.privacy import service as privacy_service
+from gateway.privacy.schemas import ModelSummary, PrivacySummaryResponse
+from gateway.privacy.state import state_of
 from gateway.routers._metered import clean_tag
 from gateway.schemas import PystinoUsageResponse, TagUsageResponse
 from gateway.tag_usage import MAX_TAGS, usage_by_tag
@@ -65,6 +69,38 @@ async def pystino_usage(
     usage = await caller_usage(session, user_id=user.id, settings=settings)
     groups = await caller_group_usage(session, group_ids=group_ids, settings=settings)
     return PystinoUsageResponse(limits=limits, usage=usage, groups=groups)
+
+
+@router.get("/privacy", response_model=PrivacySummaryResponse)
+async def pystino_privacy(
+    request: Request, principal: PrincipalDep, session: SessionDep
+) -> PrivacySummaryResponse:
+    """What the privacy pipelines do for this caller, per embedding and per chat model.
+
+    ADR 0113: a client such as Cerea shows it beside the embedder choice, so the
+    choice is informed up front (there is no after-the-fact "switch and
+    reindex" prompt). Read-only, for the calling user, in short words ("refuses
+    health data", "redacts with Default"): labels and names, never a pattern, an
+    allow-list or another user's pipeline. Only the pipelines that cover this
+    caller and that model count; a pipeline scoped to one API key is left out
+    because it does not apply to every call.
+    """
+    embedding, chat = await privacy_service.summary_for(
+        session,
+        state_of(request),
+        principal.user,
+        principal.billing_group.id if principal.billing_group else None,
+    )
+
+    def shown(rows: Sequence[tuple[object, list[str], list[str]]], kind: str) -> list[ModelSummary]:
+        return [
+            ModelSummary(
+                model=str(getattr(m, "name", "")), kind=kind, summary=words, pipelines=names
+            )
+            for m, words, names in rows
+        ]
+
+    return PrivacySummaryResponse(embedding=shown(embedding, "embedding"), chat=shown(chat, "chat"))
 
 
 def _valid_tags(tags: list[str]) -> list[str]:

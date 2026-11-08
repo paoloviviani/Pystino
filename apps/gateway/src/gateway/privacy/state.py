@@ -1,66 +1,129 @@
-"""The routing rules in force on this worker, and how it learns they changed.
+"""The pipelines and policies in force on this worker, and how it learns they changed.
 
 The same shape as the redaction resolver (ADR 0033), for the same reason: the
-request path must stay query-free (``test_query_counts.py``), so rules, profiles
-and the names of local models arrive on a ten-second poll and a request reads
-attributes. A failed poll changes nothing; an admin's own write refreshes the
-worker that served it at once, and the others catch up within the interval.
+request path must stay query-free (``test_query_counts.py``), so pipelines,
+policies, profiles and the names of readers arrive on a ten-second poll and a
+request reads attributes. A failed poll changes nothing; an admin's own write
+refreshes the worker that served it at once, and the others catch up within the
+interval.
+
+One state holds both objects: **policies** (what to hide) and **pipelines**
+(when and how), because a request needs both from one consistent snapshot, and
+because a pipeline names a policy.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
+from collections.abc import Sequence
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from gateway.models import DetectorProfile, ModelDef, ModelKind, PrivacyRule, Provider
+from gateway.config import (
+    Contributor,
+    EffectivePolicy,
+    EntityMode,
+    RedactionPolicy,
+)
+from gateway.models import (
+    DetectorProfile,
+    ModelDef,
+    ModelKind,
+    PrivacyPipeline,
+    PrivacySettings,
+    Provider,
+    RedactionPolicyRecord,
+    UserPolicy,
+)
+from gateway.privacy import rules as rulelib
 from gateway.privacy.classify import VerdictCache
+from gateway.privacy.combine import PolicyUse
 from gateway.privacy.evaluate import Evaluator, Profile, profile_snapshot
-from gateway.privacy.rules import CONDITION_KEYS, Rule, condition_from_json
+from gateway.privacy.pipelines import Pipeline, pipeline_from_row
+from gateway.redaction import user_rules
+from gateway.redaction.user_rules import UserRule
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_REFRESH_SECONDS = 10.0
 
+#: Held in memory on every worker, so bounded (logged, never silently truncated).
+MAX_PIPELINES = 5000
+
 #: Engines this release can actually run for a verdict. A model engine (phase 2)
 #: is "not installed" until it advertises itself.
 RUNNABLE_ENGINES = frozenset({"presidio", "patterns"})
 
+#: The deployment's own extractor: a provider row whose plugin is this.
+LOCAL_EXTRACTOR = "extractor"
+
 
 def _schema_missing(exc: Exception) -> bool:
     text = str(exc).lower()
-    return "privacy_rules" in text and ("no such table" in text or "does not exist" in text)
+    return "privacy_pipelines" in text and ("no such table" in text or "does not exist" in text)
 
 
 def engine_available(engine: str) -> bool:
     return engine in RUNNABLE_ENGINES
 
 
-def rule_from_row(row: PrivacyRule) -> Rule:
-    keys = {k for group in CONDITION_KEYS.values() for k in group}
-    for condition in row.conditions or []:
-        if condition.get("key") not in keys or not isinstance(condition.get("values"), list):
-            raise ValueError("a condition has no known key or values")
-    if not (row.action or {}).get("type"):
-        raise ValueError("the rule has no action")
-    return Rule(
-        id=row.id,
-        kind=row.kind,
-        name=row.name,
-        enabled=row.enabled,
-        observe_only=row.observe_only,
-        position=row.position,
-        conditions=tuple(condition_from_json(c) for c in (row.conditions or [])),
-        action=dict(row.action or {}),
+@dataclass(frozen=True, slots=True)
+class PolicyRef:
+    """An administrator's policy, parsed once at load."""
+
+    id: uuid.UUID
+    name: str
+    policy: RedactionPolicy
+    profile_id: uuid.UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UserPolicyRef:
+    """A user's own policy: ordered entries the fold applies after the administrators'."""
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    name: str
+    rules: tuple[UserRule, ...]
+    profile_id: uuid.UUID | None = None
+
+
+def user_rule_of(raw: dict[str, Any], rule_id: uuid.UUID) -> UserRule:
+    """One stored entry, under the administrators' own validation. Raises ``ValueError``."""
+    mode = EntityMode(str(raw.get("mode")))
+    if mode is EntityMode.OFF:
+        raise ValueError("a user rule cannot be off")
+    kind = str(raw.get("kind"))
+    name = str(raw.get("name") or "")
+    regex = raw.get("regex")
+    if kind == "pattern":
+        if not isinstance(regex, str):
+            raise ValueError("a pattern needs a regex")
+        user_rules.validate_pattern(name, regex, mode)
+    elif kind != "mode":
+        raise ValueError("unknown kind")
+    return UserRule(
+        id=rule_id, kind=kind, name=name, regex=regex if kind == "pattern" else None, mode=mode
     )
 
 
+def user_policy_of(row: UserPolicy) -> UserPolicyRef:
+    rules = tuple(
+        user_rule_of(raw, uuid.uuid5(row.id, f"{index}:{raw.get('name')}"))
+        for index, raw in enumerate(row.rules or [])
+    )
+    return UserPolicyRef(row.id, row.user_id, row.name, rules, row.profile_id)
+
+
 class PrivacyState:
-    """Rules, profiles and local-model names for the request path."""
+    """Pipelines, policies, profiles and reader names for the request path."""
 
     def __init__(
         self,
@@ -71,69 +134,207 @@ class PrivacyState:
         self._session_factory = session_factory
         self._refresh_seconds = refresh_seconds
         self._task: asyncio.Task[None] | None = None
-        self.rules: tuple[Rule, ...] = ()
+        self.pipelines: tuple[Pipeline, ...] = ()
+        self.policies: dict[str, PolicyRef] = {}
+        self.user_policies: dict[str, UserPolicyRef] = {}
         self.profiles: dict[str, Profile] = {}
-        #: Names a caller sends, in order, of active local embedding models.
-        self.local_embedding_models: tuple[str, ...] = ()
-        #: Names of active models served by this deployment's own extractor.
-        self.local_extractor_models: tuple[str, ...] = ()
+        #: Names of active deployment models served by the built-in extractor.
+        self.builtin_readers: tuple[str, ...] = ()
+        #: Names of every active deployment OCR model: what "read with" may name.
+        self.reader_models: tuple[str, ...] = ()
+        #: Entity types users' own policies may name; None means any.
+        self.user_entity_types: tuple[str, ...] | None = None
         self.cache = VerdictCache()
         self.evaluator = Evaluator(self.profiles, self.cache)
-        #: False until the rules have been read once. A worker that has never
-        #: read them cannot say what the rules are, so requests of the kinds that
-        #: rules govern fail closed (503) rather than run with none. An app built
-        #: without a database (no session factory) has no rules to read.
+        #: The folded policies, keyed by the ids that produced them; cleared on load.
+        self._folded: dict[tuple[str, ...], RedactionPolicy] = {}
+        self._user_folded: dict[
+            tuple[str, ...], tuple[RedactionPolicy, tuple[Contributor, ...]]
+        ] = {}
+        #: False until the pipelines have been read once. A worker that has never
+        #: read them cannot say what they are, so requests of the kinds they
+        #: govern fail closed (503) rather than run with none. An app built
+        #: without a database (no session factory) has none to read.
         self.loaded = session_factory is None
         self.load_error: str | None = None
-        #: Rows that could not be turned into a rule, as "id: reason". Skipped
-        #: with an error log; the rest of the rules still load.
-        self.bad_rules: list[str] = []
+        #: Rows that could not be turned into a pipeline or policy, as
+        #: "id: reason". Skipped with an error log; the rest still load.
+        self.bad_rows: list[str] = []
 
     @property
     def configured(self) -> bool:
-        """Whether any rule is on: the condition for logging every request."""
-        return any(rule.enabled for rule in self.rules)
+        """Whether any pipeline does routing: the condition for logging every request.
 
-    def rules_of(self, kind: str) -> tuple[Rule, ...]:
-        return tuple(r for r in self.rules if r.kind == kind)
+        A pipeline that only applies a policy (no rule, a last rule that adds a
+        policy and nothing else) is redaction as it always was, and logs as it
+        always did: only a request that something was hidden in. A deployment
+        migrated from scoped redaction rules is all of those, and its log must
+        not change shape because of the migration.
+        """
+        return any(
+            p.enabled
+            and (any(r.enabled for r in p.rules) or p.otherwise.level != rulelib.base_level(p.kind))
+            for p in self.pipelines
+        )
+
+    @property
+    def bad_rules(self) -> list[str]:
+        return self.bad_rows
+
+    def pipelines_of(self, kind: str) -> tuple[Pipeline, ...]:
+        return tuple(p for p in self.pipelines if p.kind == kind and p.enabled)
 
     def uses_verdicts(self, kind: str) -> bool:
-        """Whether an enabled rule of this kind needs the request's own text read.
+        """Whether an enabled pipeline of this kind needs the request's own text read.
 
         A classifier no rule uses is never called (ADR 0113, section 4).
         """
-        return any(
-            r.enabled and any(c.key in ("verdict", "lang") for c in r.conditions)
-            for r in self.rules
-            if r.kind == kind
+        return any(p.uses_verdicts() for p in self.pipelines if p.kind == kind)
+
+    def policy_name(self, policy_id: str) -> str | None:
+        found = self.policies.get(policy_id)
+        if found is not None:
+            return found.name
+        mine = self.user_policies.get(policy_id)
+        return mine.name if mine is not None else None
+
+    # -- the fold ------------------------------------------------------------
+
+    def effective_policy(
+        self, uses: Sequence[PolicyUse], environment: RedactionPolicy
+    ) -> EffectivePolicy:
+        """The policy governing one request, from the policies its pipelines chose.
+
+        The administrators' policies fold by ``RedactionPolicy.combine``, widest
+        scope first, and are the whole answer when any applies (the
+        environment's policy, which ships filtering nothing, stands only when
+        none does: ADR 0039). The requesting user's own policies are folded in
+        last by ``user_rules.fold`` and can only tighten (ADR 0112). Zero
+        queries: everything here arrived on the poll.
+        """
+        admin_refs: list[tuple[PolicyRef, PolicyUse]] = []
+        own: list[UserPolicyRef] = []
+        for use in uses:
+            ref = self.policies.get(use.policy_id)
+            if ref is not None:
+                admin_refs.append((ref, use))
+                continue
+            mine = self.user_policies.get(use.policy_id)
+            if mine is not None and mine.user_id == use.run.pipeline.owner_id:
+                if all(mine.id != m.id for m in own):
+                    own.append(mine)
+                continue
+            logger.warning("a pipeline names policy %s, which is not loaded", use.policy_id)
+        if not admin_refs:
+            admin = EffectivePolicy(
+                policy=environment,
+                contributors=(
+                    Contributor(
+                        id=None, name="Deployment policy", owner="admin", policy=environment
+                    ),
+                ),
+            )
+        else:
+            key = tuple(str(ref.id) for ref, _ in admin_refs)
+            folded = self._folded.get(key)
+            if folded is None:
+                folded = RedactionPolicy.combine([ref.policy for ref, _ in admin_refs])
+                self._folded[key] = folded
+            narrowest_ref, narrowest_use = admin_refs[-1]
+            admin = EffectivePolicy(
+                policy=folded,
+                scope=narrowest_use.run.pipeline.scope_name,
+                rule_id=narrowest_ref.id,
+                contributors=tuple(
+                    Contributor(id=ref.id, name=ref.name, owner="admin", policy=ref.policy)
+                    for ref, _ in admin_refs
+                ),
+            )
+        rules = tuple(rule for policy in own for rule in policy.rules)
+        if not rules:
+            return admin
+        ukey = (*(str(c.id) for c in admin.contributors), "|", *(str(p.id) for p in own))
+        cached = self._user_folded.get(ukey)
+        if cached is None:
+            cached = (
+                user_rules.fold(admin.policy, rules),
+                tuple(rule.contributor() for rule in rules),
+            )
+            self._user_folded[ukey] = cached
+        policy, contributors = cached
+        return EffectivePolicy(
+            policy=policy,
+            scope=admin.scope,
+            rule_id=admin.rule_id,
+            contributors=(*admin.contributors, *contributors),
         )
+
+    # -- loading -------------------------------------------------------------
 
     def load(
         self,
-        rules: list[PrivacyRule],
-        profiles: list[DetectorProfile],
-        embedding_models: list[str],
-        extractor_models: list[str],
+        pipelines: Sequence[PrivacyPipeline],
+        policies: Sequence[RedactionPolicyRecord],
+        user_policy_rows: Sequence[UserPolicy],
+        profiles: Sequence[DetectorProfile],
+        reader_models: Sequence[str],
+        builtin_readers: Sequence[str],
+        settings: PrivacySettings | None = None,
     ) -> None:
-        good: list[Rule] = []
         bad: list[str] = []
-        for row in sorted(rules, key=lambda r: (r.kind, r.position)):
+        good: list[Pipeline] = []
+        rows = sorted(pipelines, key=lambda r: (r.kind, r.owner_id is not None, r.position))
+        if len(rows) > MAX_PIPELINES:
+            logger.error(
+                "more than %d pipelines; only the first %d are in force",
+                MAX_PIPELINES,
+                MAX_PIPELINES,
+            )
+            rows = rows[:MAX_PIPELINES]
+        for index, row in enumerate(rows):
             try:
-                good.append(rule_from_row(row))
+                good.append(pipeline_from_row(row, order=index))
             except Exception as exc:
                 bad.append(f"{row.id}: {type(exc).__name__}")
                 logger.error(
-                    "skipping privacy rule %s, which cannot be read", row.id, exc_info=True
+                    "skipping privacy pipeline %s, which cannot be read", row.id, exc_info=True
                 )
-        self.rules = tuple(good)
-        self.bad_rules = bad
+        parsed: dict[str, PolicyRef] = {}
+        for record in policies:
+            if not record.is_active:
+                continue
+            try:
+                parsed[str(record.id)] = PolicyRef(
+                    record.id,
+                    record.name or "Policy",
+                    RedactionPolicy.model_validate(record.policy or {}),
+                    record.profile_id,
+                )
+            except ValidationError:
+                bad.append(f"{record.id}: unreadable policy")
+                logger.error("redaction policy %s is unreadable; ignoring it", record.id)
+        mine: dict[str, UserPolicyRef] = {}
+        for user_row in user_policy_rows:
+            try:
+                mine[str(user_row.id)] = user_policy_of(user_row)
+            except ValueError:
+                bad.append(f"{user_row.id}: unreadable user policy")
+                logger.error("user policy %s is unreadable; ignoring it", user_row.id)
+        self.pipelines = tuple(good)
+        self.policies = parsed
+        self.user_policies = mine
+        self.bad_rows = bad
         self.loaded = True
         self.load_error = None
+        self._folded.clear()
+        self._user_folded.clear()
         self.profiles = profile_snapshot(
             profiles, {p.id: engine_available(p.engine) for p in profiles}
         )
-        self.local_embedding_models = tuple(embedding_models)
-        self.local_extractor_models = tuple(extractor_models)
+        self.reader_models = tuple(reader_models)
+        self.builtin_readers = tuple(builtin_readers)
+        types = settings.user_entity_types if settings is not None else None
+        self.user_entity_types = tuple(types) if types is not None else None
         self.evaluator = Evaluator(self.profiles, self.cache)
 
     async def refresh(self) -> bool:
@@ -142,32 +343,29 @@ class PrivacyState:
             return False
         try:
             async with self._session_factory() as session:
-                self._apply(await read_all(session))
+                self.load(*await read_all(session))
         except Exception as exc:
             if _schema_missing(exc):
-                # Migration 0081 has not run, so no rule can exist: nothing to
+                # The migration has not run, so no pipeline can exist: nothing to
                 # enforce. (Migrations run before the gateway starts in a real
                 # deployment; this is what a database without the table says.)
                 self.loaded = True
                 return False
             self.load_error = f"{type(exc).__name__}"
-            logger.warning("could not refresh the privacy routing rules", exc_info=True)
+            logger.warning("could not refresh the privacy pipelines", exc_info=True)
             return False
         return True
 
     def ensure_loaded(self) -> None:
-        """Refuse (503) when this worker has never read the rules."""
+        """Refuse (503) when this worker has never read the pipelines."""
         if not self.loaded:
             from gateway.errors import ServiceUnavailableError
 
             raise ServiceUnavailableError(
-                "Privacy routing rules have not loaded on this server yet, so the "
+                "Privacy pipelines have not loaded on this server yet, so the "
                 "request is refused rather than run without them. Try again shortly.",
                 code="privacy_rules_unavailable",
             )
-
-    def _apply(self, loaded: tuple[Any, ...]) -> None:
-        self.load(*loaded)
 
     def start(self) -> None:
         if self._task is None and self._session_factory is not None:
@@ -181,7 +379,7 @@ class PrivacyState:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.warning("the privacy routing poller raised; continuing", exc_info=True)
+                logger.warning("the privacy poller raised; continuing", exc_info=True)
 
     async def aclose(self) -> None:
         task, self._task = self._task, None
@@ -193,52 +391,61 @@ class PrivacyState:
 
 async def read_all(
     session: AsyncSession,
-) -> tuple[list[PrivacyRule], list[DetectorProfile], list[str], list[str]]:
-    rules = list(
-        (
-            await session.execute(
-                select(PrivacyRule).order_by(PrivacyRule.kind, PrivacyRule.position)
-            )
-        )
+) -> tuple[
+    list[PrivacyPipeline],
+    list[RedactionPolicyRecord],
+    list[UserPolicy],
+    list[DetectorProfile],
+    list[str],
+    list[str],
+    PrivacySettings | None,
+]:
+    pipelines = list(
+        (await session.execute(select(PrivacyPipeline).order_by(PrivacyPipeline.kind)))
         .scalars()
         .all()
     )
+    policies = list(
+        (await session.execute(select(RedactionPolicyRecord).order_by(RedactionPolicyRecord.id)))
+        .scalars()
+        .all()
+    )
+    mine = list((await session.execute(select(UserPolicy).order_by(UserPolicy.id))).scalars().all())
     profiles = list(
         (await session.execute(select(DetectorProfile).order_by(DetectorProfile.name)))
         .scalars()
         .all()
     )
-    return (
-        rules,
-        profiles,
-        await _names(session, local_embedding=True),
-        await _names(session, local_embedding=False),
-    )
-
-
-async def _names(session: AsyncSession, *, local_embedding: bool) -> list[str]:
-    stmt = (
-        select(ModelDef.name)
-        .join(Provider, Provider.id == ModelDef.provider_id)
-        .where(
-            ModelDef.is_active.is_(True),
-            ModelDef.owner_id.is_(None),
-            Provider.is_active.is_(True),
-            Provider.owner_id.is_(None),
+    settings = await session.get(PrivacySettings, 1)
+    readers = (
+        await session.execute(
+            select(ModelDef.name, Provider.plugin)
+            .join(Provider, Provider.id == ModelDef.provider_id)
+            .where(
+                ModelDef.is_active.is_(True),
+                ModelDef.owner_id.is_(None),
+                ModelDef.kind == ModelKind.OCR,
+                Provider.is_active.is_(True),
+                Provider.owner_id.is_(None),
+            )
+            .order_by(ModelDef.name)
         )
-        .order_by(ModelDef.name)
+    ).all()
+    return (
+        pipelines,
+        policies,
+        mine,
+        profiles,
+        [str(r[0]) for r in readers],
+        [str(r[0]) for r in readers if r[1] == LOCAL_EXTRACTOR],
+        settings,
     )
-    if local_embedding:
-        stmt = stmt.where(ModelDef.kind == ModelKind.EMBEDDING, Provider.is_local.is_(True))
-    else:
-        stmt = stmt.where(ModelDef.kind == ModelKind.OCR, Provider.plugin == "extractor")
-    return [str(n) for n in (await session.execute(stmt)).scalars().all()]
 
 
 _EMPTY = PrivacyState()
 
 
 def state_of(request: Any) -> PrivacyState:
-    """The worker's routing state; an empty one for an app built without it."""
+    """The worker's privacy state; an empty one for an app built without it."""
     found = getattr(request.app.state, "privacy", None)
     return found if isinstance(found, PrivacyState) else _EMPTY

@@ -1,5 +1,5 @@
-"""Privacy routing, the parts with no I/O: the quick check, rule validation and
-the save-time checks, and the evaluator (ADR 0113)."""
+"""Privacy pipelines, the parts with no I/O: the quick check, rule validation and
+the save-time checks, and the evaluator of one pipeline (ADR 0113)."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from gateway.privacy.rules import (
     filetype_of,
     glob_matches,
     shadowing,
-    validate,
+    validate_rule,
 )
 
 
@@ -41,7 +41,7 @@ def rule(
         observe_only=observe_only,
         position=position,
         conditions=conditions,
-        action=action or {"type": "refuse"},
+        action=action or {"level": "refuse"},
     )
 
 
@@ -125,98 +125,137 @@ class TestQuickCheck:
 
 
 class TestValidation:
+    def clean(self, kind: str, **raw: Any) -> dict[str, Any]:
+        return validate_rule(kind, {"name": "A rule", "action": {"level": "refuse"}, **raw})
+
     def test_a_read_rule_with_a_reader_validates(self) -> None:
-        name, conditions, action = validate(
+        out = self.clean(
             "read",
-            "  Scans stay here ",
-            [{"key": "filetype", "values": ["PDF", "scan"]}],
-            {"type": "reader", "reader": "ocr"},
+            name="  Scans stay here ",
+            conditions=[{"key": "filetype", "values": ["PDF"]}, {"key": "scan"}],
+            action={"level": "read_with", "reader": "builtin", "engine": "ocr"},
         )
-        assert name == "Scans stay here"
-        assert conditions[0].values == ("pdf", "scan")
-        assert action == {"type": "reader", "reader": "ocr"}
+        assert out["name"] == "Scans stay here"
+        assert out["conditions"][0]["values"] == ["pdf"]
+        assert out["conditions"][1] == {"key": "scan", "values": [], "negate": False}
+        assert out["action"] == {"level": "read_with", "reader": "builtin", "engine": "ocr"}
+        uuid.UUID(out["id"])
+
+    def test_a_rule_keeps_its_id_across_saves(self) -> None:
+        ident = str(uuid.uuid4())
+        assert self.clean("read", id=ident)["id"] == ident
 
     @pytest.mark.parametrize(
-        ("kind", "conditions", "action", "fragment"),
+        ("kind", "raw", "fragment"),
         [
-            ("chat", [], {"type": "refuse"}, "not available yet"),
-            ("read", [{"key": "lang", "values": ["it"]}], {"type": "refuse"}, "not a condition"),
+            ("read", {"conditions": [{"key": "lang", "values": ["it"]}]}, "not a condition"),
+            ("embed", {"conditions": [{"key": "filename", "values": ["x"]}]}, "not a condition"),
+            ("read", {"conditions": [{"key": "who", "values": ["group:a"]}]}, "not a condition"),
+            ("read", {"conditions": [{"key": "target", "values": ["cloud"]}]}, "not a condition"),
+            ("read", {"conditions": [{"key": "filetype", "values": ["floppy"]}]}, "File type"),
+            ("read", {"conditions": [{"key": "filetype", "values": ["scan"]}]}, "File type"),
+            ("read", {"conditions": [{"key": "filename", "values": ["***"]}]}, "ordinary"),
+            ("embed", {"conditions": [{"key": "lang", "values": ["italian"]}]}, "language code"),
+            ("embed", {"conditions": [{"key": "health", "values": ["x"]}]}, "no values"),
+            ("embed", {"conditions": [{"key": "lang", "values": []}]}, "at least one value"),
             (
                 "embed",
-                [{"key": "filename", "values": ["x"]}],
-                {"type": "refuse"},
-                "not a condition",
-            ),
-            ("read", [{"key": "filetype", "values": ["floppy"]}], {"type": "refuse"}, "File type"),
-            (
-                "read",
-                [{"key": "filename", "values": ["***"]}],
-                {"type": "refuse"},
-                "ordinary character",
-            ),
-            ("read", [{"key": "who", "values": ["bob"]}], {"type": "refuse"}, "'user:"),
-            ("embed", [{"key": "target", "values": ["x"]}], {"type": "refuse"}, "'local'"),
-            ("embed", [{"key": "verdict", "values": ["racism"]}], {"type": "refuse"}, "Verdict"),
-            (
-                "embed",
-                [{"key": "lang", "values": ["italian"]}],
-                {"type": "refuse"},
-                "language code",
-            ),
-            ("read", [{"key": "who", "values": []}], {"type": "refuse"}, "at least one value"),
-            (
-                "read",
-                [{"key": "who", "values": ["group:a"]}, {"key": "who", "values": ["group:b"]}],
-                {"type": "refuse"},
+                {"conditions": [{"key": "health"}, {"key": "health", "negate": True}]},
                 "twice",
             ),
-            ("read", [], {"type": "local"}, "not an action"),
-            ("embed", [], {"type": "reader", "reader": "ocr"}, "not an action"),
-            ("read", [], {"type": "reader"}, "Choose a reader"),
-            ("read", [], {"type": "reader", "reader": "tesseract"}, "Choose a reader"),
-            ("read", [], {}, "needs an action"),
+            ("read", {"action": {"level": "pass"}}, "Choose where"),
+            ("embed", {"action": {"level": "read_with"}}, "Choose where"),
+            ("embed", {"action": {"level": "local"}}, "Choose where"),
             (
                 "read",
-                [{"key": "filetype", "values": ["pdf"], "decide": "patterns"}],
-                {"type": "refuse"},
+                {"action": {"level": "read_with", "reader": "x", "engine": "ocr"}},
+                "built-in",
+            ),
+            (
+                "read",
+                {"action": {"level": "read_with", "reader": "builtin", "engine": "tesseract"}},
+                "engine",
+            ),
+            (
+                "read",
+                {"action": {"level": "refuse", "redact_with": str(uuid.uuid4())}},
+                "no policy",
+            ),
+            ("embed", {"action": {"level": "pass", "reader": "builtin"}}, "goes with"),
+            ("read", {"action": {"level": "default", "redact_with": "nope"}}, "does not exist"),
+            ("read", {"name": "  "}, "name"),
+            (
+                "read",
+                {"conditions": [{"key": "filetype", "values": ["pdf"], "decide": "patterns"}]},
                 "no 'how to decide'",
             ),
             (
                 "embed",
-                [{"key": "verdict", "values": ["health"], "decide": str(uuid.uuid4())}],
-                {"type": "refuse"},
+                {"conditions": [{"key": "health", "decide": str(uuid.uuid4())}]},
                 "does not exist",
             ),
         ],
     )
-    def test_errors_block_saving(
-        self, kind: str, conditions: list[dict[str, Any]], action: dict[str, Any], fragment: str
-    ) -> None:
+    def test_errors_block_saving(self, kind: str, raw: dict[str, Any], fragment: str) -> None:
         with pytest.raises(RuleError, match=fragment):
-            validate(kind, "A rule", conditions, action)
-
-    def test_a_blank_name_is_an_error(self) -> None:
-        with pytest.raises(RuleError, match="name"):
-            validate("read", "  ", [], {"type": "refuse"})
+            validate_rule(
+                kind,
+                {"name": "A rule", "action": {"level": "refuse"}, **raw},
+                policy_ids=set(),
+            )
 
     def test_content_conditions_default_to_the_quick_check(self) -> None:
-        _, conditions, _ = validate(
-            "embed", "Health stays", [{"key": "verdict", "values": ["health"]}], {"type": "refuse"}
-        )
-        assert conditions[0].decide == "patterns"
+        out = self.clean("embed", conditions=[{"key": "health"}])
+        assert out["conditions"][0]["decide"] == "patterns"
 
-    def test_who_and_target_are_normalised(self) -> None:
-        _, conditions, _ = validate(
+    def test_a_policy_may_be_named_when_it_exists(self) -> None:
+        pid = str(uuid.uuid4())
+        out = validate_rule(
             "embed",
-            "Who",
-            [
-                {"key": "who", "values": ["user: Ana@Example.org ", "group:Clinic"]},
-                {"key": "target", "values": ["Cloud", "provider: acme"]},
-            ],
-            {"type": "refuse"},
+            {"name": "R", "action": {"level": "pass", "redact_with": pid}},
+            policy_ids={pid},
         )
-        assert conditions[0].values == ("user:ana@example.org", "group:Clinic")
-        assert conditions[1].values == ("cloud", "provider:acme")
+        assert out["action"] == {"level": "pass", "redact_with": pid}
+
+    def test_a_reader_must_be_a_configured_one(self) -> None:
+        with pytest.raises(RuleError, match="not a configured OCR model"):
+            validate_rule(
+                "read",
+                {"name": "R", "action": {"level": "read_with", "reader": "ghost"}},
+                readers={"mistral"},
+            )
+        out = validate_rule(
+            "read",
+            {"name": "R", "action": {"level": "read_with", "reader": "mistral"}},
+            readers={"mistral"},
+        )
+        assert out["action"]["reader"] == "mistral"
+
+    def test_a_user_can_only_tighten(self) -> None:
+        # A rule of theirs that adds nothing is refused...
+        with pytest.raises(RuleError, match="add protection"):
+            validate_rule("embed", {"name": "R", "action": {"level": "pass"}}, user=True)
+        with pytest.raises(RuleError, match="add protection"):
+            validate_rule("read", {"name": "R", "action": {"level": "default"}}, user=True)
+        # ...unless it adds a policy; refusing and reading elsewhere always tighten.
+        pid = str(uuid.uuid4())
+        validate_rule(
+            "embed",
+            {"name": "R", "action": {"level": "pass", "redact_with": pid}},
+            user=True,
+            policy_ids={pid},
+        )
+        validate_rule("embed", {"name": "R", "action": {"level": "refuse"}}, user=True)
+        validate_rule("read", {"name": "R", "action": {"level": "read_with"}}, user=True)
+
+    def test_a_user_may_name_only_a_reader_they_have(self) -> None:
+        with pytest.raises(RuleError, match="not a reader you can use"):
+            validate_rule(
+                "read",
+                {"name": "R", "action": {"level": "read_with", "reader": "mistral"}},
+                readers={"docling"},
+                user=True,
+            )
 
 
 class TestGlobs:
@@ -281,11 +320,11 @@ class TestShadowing:
         assert wide.id in found and found[wide.id][0] == "partly"
 
     def test_extra_conditions_on_the_later_rule_keep_it_shadowed(self) -> None:
-        earlier = rule("Earlier", position=0, conditions=(cond("who", "group:Clinic"),))
+        earlier = rule("Earlier", position=0, conditions=(cond("filename", "referto*"),))
         later = rule(
             "Later",
             position=1,
-            conditions=(cond("who", "group:Clinic"), cond("filetype", "pdf")),
+            conditions=(cond("filename", "referto*"), cond("filetype", "pdf")),
         )
         assert shadowing([earlier, later])[later.id][0] == "never"
 
@@ -293,9 +332,9 @@ class TestShadowing:
         earlier = rule(
             "Earlier",
             position=0,
-            conditions=(cond("who", "group:Clinic"), cond("filetype", "pdf")),
+            conditions=(cond("filename", "referto*"), cond("filetype", "pdf")),
         )
-        later = rule("Later", position=1, conditions=(cond("who", "group:Clinic"),))
+        later = rule("Later", position=1, conditions=(cond("filename", "referto*"),))
         assert later.id not in shadowing([earlier, later])
 
     def test_unrelated_rules_do_not_shadow(self) -> None:
@@ -319,10 +358,8 @@ class TestShadowing:
         assert shadowing([watcher, off, later]) == {}
 
     def test_different_ways_of_deciding_are_not_assumed_equal(self) -> None:
-        a = rule(
-            "A", "embed", position=0, conditions=(cond("verdict", "health", decide="patterns"),)
-        )
-        b = rule("B", "embed", position=1, conditions=(cond("verdict", "health", decide="x"),))
+        a = rule("A", "embed", position=0, conditions=(cond("health", decide="patterns"),))
+        b = rule("B", "embed", position=1, conditions=(cond("health", decide="x"),))
         assert shadowing([a, b]) == {}
 
 
@@ -340,14 +377,15 @@ class TestChecks:
         r = rule("All")
         assert "catches_all" in [i.code for i in check([r])[r.id]]
 
-    def test_local_with_no_local_provider_warns(self) -> None:
-        r = rule("Keep", "embed", action={"type": "local"})
-        found = check([r], CheckContext(has_local_embedding=False))[r.id]
-        assert "unavailable_now" in [i.code for i in found]
+    def test_the_fixed_last_rule_is_checked_too_and_needs_no_conditions(self) -> None:
+        r = rule("By name", conditions=(cond("filename", "referto*"),))
+        last = rule("Everything else", position=99, action={"level": "default"})
+        found = check([r], last)
+        assert "catches_all" not in [i.code for i in found[last.id]]
 
     def test_an_unavailable_profile_warns_and_a_fallback_is_a_weakening(self) -> None:
         pid = uuid.uuid4()
-        r = rule("M", "embed", conditions=(cond("verdict", "health", decide=str(pid)),))
+        r = rule("M", "embed", conditions=(cond("health", decide=str(pid)),))
         ctx = CheckContext(
             profiles={
                 str(pid): ProfileInfo(
@@ -359,7 +397,7 @@ class TestChecks:
                 )
             }
         )
-        codes = [i.code for i in check([r], ctx)[r.id]]
+        codes = [i.code for i in check([r], None, ctx)[r.id]]
         assert "unavailable_now" in codes and "weakens" in codes
 
     def test_the_soft_cap_is_a_warning_not_an_error(self) -> None:
@@ -392,11 +430,6 @@ class TestEvaluation:
         assert ev.fired is first
         assert [s.result for s in ev.steps] == ["fired", "not_reached"]
 
-    async def test_a_rule_of_another_kind_is_never_consulted(self) -> None:
-        other = rule("Embedding", "embed", position=0)
-        ev = await Evaluator().evaluate([other], read_facts())
-        assert ev.fired is None and ev.steps == []
-
     async def test_a_disabled_rule_is_skipped_and_says_so(self) -> None:
         off = rule("Off", position=0, enabled=False)
         ev = await Evaluator().evaluate([off], read_facts())
@@ -428,24 +461,8 @@ class TestEvaluation:
         r = rule("Not referto", conditions=(cond("filename", "referto*", negate=True),))
         assert (await Evaluator().evaluate([r], read_facts(filename=None))).fired is r
 
-    async def test_who_matches_a_user_or_a_group(self) -> None:
-        r = rule("Clinic", conditions=(cond("who", "group:Clinic", "user:ana@example.org"),))
-        ev = Evaluator()
-        assert (await ev.evaluate([r], read_facts(groups=("Clinic",)))).fired is r
-        assert (await ev.evaluate([r], read_facts(user_email="Ana@Example.org"))).fired is r
-        assert (await ev.evaluate([r], read_facts(groups=("Other",)))).fired is None
-
-    async def test_target_conditions(self) -> None:
-        r = rule("Cloud", "embed", conditions=(cond("target", "cloud"),))
-        local = Facts(kind="embed", target_local=True)
-        cloud = Facts(kind="embed", target_local=False, target_provider="Acme", target_model="m")
-        assert (await Evaluator().evaluate([r], local)).fired is None
-        assert (await Evaluator().evaluate([r], cloud)).fired is r
-        by_provider = rule("P", "embed", conditions=(cond("target", "provider:acme"),))
-        assert (await Evaluator().evaluate([by_provider], cloud)).fired is by_provider
-
     async def test_an_unknown_scan_waits_instead_of_guessing(self) -> None:
-        scans = rule("Scans", position=0, conditions=(cond("filetype", "scan"),))
+        scans = rule("Scans", position=0, conditions=(cond("scan"),))
         later = rule("Later", position=1)
         ev = await Evaluator().evaluate([scans, later], read_facts())
         assert ev.pending == "scan" and ev.pending_rule is scans and ev.fired is None
@@ -455,7 +472,7 @@ class TestEvaluation:
         assert not_scan.fired is later
 
     async def test_content_conditions_use_the_quick_check(self) -> None:
-        r = rule("Health", "embed", conditions=(cond("verdict", "health", decide="patterns"),))
+        r = rule("Health", "embed", conditions=(cond("health", decide="patterns"),))
         yes = Facts(kind="embed", text="Il paziente ha una diagnosi di diabete.")
         no = Facts(kind="embed", text="La riunione e spostata a lunedi.")
         assert (await Evaluator().evaluate([r], yes)).fired is r
@@ -469,7 +486,7 @@ class TestEvaluation:
 
     async def test_the_classifier_is_not_called_unless_a_rule_needs_its_text(self) -> None:
         cache = VerdictCache()
-        r = rule("Group only", "embed", conditions=(cond("who", "group:x"),))
+        r = rule("Anything", "embed", conditions=())
         await Evaluator(cache=cache).evaluate([r], Facts(kind="embed", text="anything"))
         assert cache.hits + cache.misses == 0
 
@@ -479,11 +496,21 @@ class TestEvaluation:
         cache = VerdictCache()
         r = rule(
             "R",
-            "embed",
-            conditions=(cond("who", "group:x"), cond("verdict", "health", decide="patterns")),
+            "read",
+            conditions=(cond("filetype", "word"), cond("scan")),
         )
-        await Evaluator(cache=cache).evaluate([r], Facts(kind="embed", text="diagnosi"))
+        await Evaluator(cache=cache).evaluate([r], read_facts())
         assert cache.hits + cache.misses == 0
+
+    async def test_a_protective_rule_matches_a_file_whose_type_is_unknown(self) -> None:
+        r = rule("Pdf only", conditions=(cond("filetype", "pdf"),))
+        assert (await Evaluator().evaluate([r], read_facts(filetype=None))).fired is r
+        quiet = rule(
+            "Only a reader",
+            conditions=(cond("filetype", "pdf"),),
+            action={"level": "default"},
+        )
+        assert (await Evaluator().evaluate([quiet], read_facts(filetype=None))).fired is None
 
 
 class TestFailClosed:
@@ -493,7 +520,7 @@ class TestFailClosed:
         return {"m": medical, "f": fast}
 
     async def test_an_unavailable_profile_with_refuse_makes_the_rule_act(self) -> None:
-        r = rule("M", "embed", conditions=(cond("verdict", "health", decide="m"),))
+        r = rule("M", "embed", conditions=(cond("health", decide="m"),))
         facts = Facts(kind="embed", text="La riunione e spostata a lunedi.")
         ev = await Evaluator(self.profiles()).evaluate([r], facts)
         # No health data in the text, but the detector is down: the rule acts.
@@ -504,14 +531,14 @@ class TestFailClosed:
         r = rule(
             "M",
             "embed",
-            conditions=(cond("who", "group:Clinic"), cond("verdict", "health", decide="m")),
+            conditions=(cond("lang", "de", decide="patterns"), cond("health", decide="m")),
         )
-        facts = Facts(kind="embed", groups=("Other",), text="x")
+        facts = Facts(kind="embed", text="Il gatto e sul tavolo e la casa non e molto grande.")
         assert (await Evaluator(self.profiles()).evaluate([r], facts)).fired is None
 
     async def test_fall_back_uses_the_weaker_method_and_records_it(self) -> None:
         profiles = self.profiles(fallback="fallback_to", fallback_profile_id="f")
-        r = rule("M", "embed", conditions=(cond("verdict", "health", decide="m"),))
+        r = rule("M", "embed", conditions=(cond("health", decide="m"),))
         quiet = Facts(kind="embed", text="La riunione e spostata a lunedi.")
         ev = await Evaluator(profiles).evaluate([r], quiet)
         assert ev.fired is None
@@ -520,7 +547,7 @@ class TestFailClosed:
         assert (await Evaluator(profiles).evaluate([r], loud)).fired is r
 
     async def test_a_deleted_profile_fails_closed(self) -> None:
-        r = rule("M", "embed", conditions=(cond("verdict", "health", decide=str(uuid.uuid4())),))
+        r = rule("M", "embed", conditions=(cond("health", decide=str(uuid.uuid4())),))
         ev = await Evaluator({}).evaluate([r], Facts(kind="embed", text="x"))
         assert ev.fired is r
 

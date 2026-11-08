@@ -1,10 +1,11 @@
-"""Judging one request against the rules of its kind (ADR 0113).
+"""Judging one request against the rules of ONE pipeline (ADR 0113).
 
 Stateless: the outcome is a function of the facts, the rules and the
 configuration, and nothing is remembered between requests (the verdict cache
-only saves time). First match wins within a kind; an observe-only rule that
+only saves time). First match wins within a pipeline; an observe-only rule that
 matches is recorded and the search goes on. The trace says, for every rule, why
 it did or did not apply, in the words the console shows an administrator.
+Combining the pipelines of a request is ``gateway.privacy.combine``'s job.
 
 Two things are deliberately not here: any I/O (the caller supplies facts and the
 profile table) and any action (the caller carries out ``Evaluation.fired``).
@@ -58,17 +59,20 @@ class Facts:
     """What Pystino observed in one request. Never logged as a whole."""
 
     kind: str
-    user_email: str | None = None
-    groups: tuple[str, ...] = ()
+    user_id: str | None = None
+    billing_group_id: str | None = None
+    api_key_id: str | None = None
     filename: str | None = None
     mime: str | None = None
     filetype: str | None = None
     #: None until the document has been read.
     is_scan: bool | None = None
+    #: The target, as names (for attribution) and ids (for scope).
     target_alias: str | None = None
     target_model: str | None = None
     target_provider: str | None = None
-    target_local: bool | None = None
+    provider_id: str | None = None
+    model_id: str | None = None
     #: The text verdicts are computed from. Held in memory for the call only.
     text: str | None = field(default=None, repr=False)
     #: A batch (embedding): each input is judged separately and in full.
@@ -162,72 +166,33 @@ class Evaluation:
     fallbacks: list[str] = field(default_factory=list)
 
 
-_CHEAP_FIRST = ("who", "target", "filetype", "filename", "verdict", "lang")
+_CHEAP_FIRST = ("filetype", "filename", "scan", "health", "ids", "lang")
 
 
 def _ordered(conditions: Sequence[Condition]) -> list[Condition]:
     return sorted(conditions, key=lambda c: _CHEAP_FIRST.index(c.key))
 
 
-def _who(condition: Condition, facts: Facts) -> tuple[State, str]:
-    wanted = set(condition.values)
-    mine = {f"group:{g}" for g in facts.groups}
-    if facts.user_email:
-        mine.add(f"user:{facts.user_email.lower()}")
-    hit = bool(wanted & mine)
-    shown = ", ".join(v.split(":", 1)[1] for v in condition.values)
-    if condition.negate:
-        return (
-            (State.FALSE, f"The caller is {shown}.")
-            if hit
-            else (State.TRUE, f"The caller is not {shown}.")
-        )
-    return (
-        (State.TRUE, f"The caller is {shown}.")
-        if hit
-        else (State.FALSE, f"The caller is not {shown}.")
-    )
-
-
-def _target(condition: Condition, facts: Facts) -> tuple[State, str]:
-    hit = False
-    for value in condition.values:
-        if value == "local":
-            hit = hit or facts.target_local is True
-        elif value == "cloud":
-            hit = hit or facts.target_local is False
-        elif value.startswith("provider:"):
-            hit = hit or (facts.target_provider or "").lower() == value[9:].lower()
-        elif value.startswith("model:"):
-            wanted = value[6:].lower()
-            hit = hit or wanted in {
-                (facts.target_model or "").lower(),
-                (facts.target_alias or "").lower(),
-            }
-    where = facts.target_alias or facts.target_model or "the target"
-    shown = ", ".join(condition.values)
-    if hit != condition.negate:
-        return State.TRUE, f"The target ({where}) {'is not' if condition.negate else 'is'} {shown}."
-    return State.FALSE, f"The target ({where}) {'is' if condition.negate else 'is not'} {shown}."
-
-
 def _filetype(condition: Condition, facts: Facts, closed: bool) -> tuple[State, str]:
-    if closed and facts.filetype is None and "scan" not in condition.values:
+    if closed and facts.filetype is None:
         # A file whose type cannot be told (a link with no extension, no MIME
         # type sent): a protective rule must not be skipped for want of a fact.
         return State.TRUE, "The file type is not known; treated as a match."
-    wants_scan = "scan" in condition.values
-    plain = [v for v in condition.values if v != "scan"]
-    hit = facts.filetype in plain if facts.filetype else False
-    if not hit and wants_scan:
-        if facts.is_scan is None:
-            return State.UNKNOWN, "Whether the file is a scan is only known after reading it."
-        hit = facts.is_scan
+    hit = facts.filetype in condition.values if facts.filetype else False
     shown = ", ".join(condition.values)
     kind = facts.filetype or "an unknown type"
     if hit != condition.negate:
         return State.TRUE, f"The file ({kind}) {'is not' if condition.negate else 'is'} {shown}."
     return State.FALSE, f"The file ({kind}) {'is' if condition.negate else 'is not'} {shown}."
+
+
+def _scan(condition: Condition, facts: Facts) -> tuple[State, str]:
+    if facts.is_scan is None:
+        return State.UNKNOWN, "Whether the file is a scan is only known after reading it."
+    hit = facts.is_scan
+    if hit != condition.negate:
+        return State.TRUE, f"The file {'is not' if condition.negate else 'is'} a scan."
+    return State.FALSE, f"The file {'is' if condition.negate else 'is not'} a scan."
 
 
 def _filename(condition: Condition, facts: Facts, closed: bool) -> tuple[State, str]:
@@ -295,12 +260,9 @@ class Evaluator:
             message = "The text was too large to check in full; treated as a match."
             degraded.append(message)
             return State.TRUE, message
-        if condition.key == "verdict":
-            hits = [v for v in condition.values if getattr(result, v)]
-            hit = bool(hits)
-            shown = " or ".join(
-                {"health": "health data", "ids": "identifiers"}[v] for v in condition.values
-            )
+        if condition.key in ("health", "ids"):
+            hit = bool(getattr(result, condition.key))
+            shown = {"health": "health data", "ids": "identifiers"}[condition.key]
             text = f"The text {'contains' if hit else 'does not contain'} {shown}."
         else:
             # A batch is in a language if any input is.
@@ -314,8 +276,6 @@ class Evaluator:
     async def evaluate(self, rules: Sequence[Rule], facts: Facts) -> Evaluation:
         ev = Evaluation(kind=facts.kind)
         for rule in sorted(rules, key=lambda r: r.position):
-            if rule.kind != facts.kind:
-                continue
             if ev.fired is not None:
                 ev.steps.append(Step(rule, "not_reached", ["An earlier rule already applied."]))
                 continue
@@ -344,7 +304,7 @@ class Evaluator:
                     ev.pending = "scan"
                     ev.pending_rule = rule
                     for later in sorted(rules, key=lambda r: r.position):
-                        if later.position > rule.position and later.kind == facts.kind:
+                        if later.position > rule.position:
                             ev.steps.append(
                                 Step(later, "not_reached", ["Waiting for the file to be read."])
                             )
@@ -370,13 +330,11 @@ class Evaluator:
         degraded: list[str],
         rule: Rule,
     ) -> tuple[State, str]:
-        # A rule that refuses, keeps text local or chooses a reader is protective
+        # A rule that protects (refuses, reads elsewhere, redacts) is protective
         # for a file whose name or type is unknown: it matches rather than miss.
-        closed = rule.kind == "read" and rule.action_type in ("refuse", "local", "reader")
-        if condition.key == "who":
-            return _who(condition, facts)
-        if condition.key == "target":
-            return _target(condition, facts)
+        closed = rule.kind == "read" and rule.protective
+        if condition.key == "scan":
+            return _scan(condition, facts)
         if condition.key == "filetype":
             state, why = _filetype(condition, facts, closed)
             if "treated as a match" in why:

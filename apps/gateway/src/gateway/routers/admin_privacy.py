@@ -1,55 +1,79 @@
-"""``/api/admin/privacy``: routing rules, detector profiles, and the test box (ADR 0113).
+"""``/api/admin/privacy``: pipelines, redaction policies, profiles and the test box (ADR 0113).
 
-Rules are an ordered list per kind of request (read, embed; chat in phase 2).
+Two objects, one job each. A **policy** is what to hide (patterns, entity types,
+a mode for each) and has no scope. A **pipeline** is when and how: a kind (read,
+embed, chat), a scope (who, which target), an ordered list of rules where the
+first match wins, and a fixed last rule. Every pipeline in scope runs and the
+results combine (``gateway.privacy.combine``).
+
 Everything an administrator changes is audited like any other admin change, in
 the same transaction as the change. After a write the worker that served it
-reloads its rules at once; the others catch up on their next poll (ten seconds).
+reloads its state at once; the others catch up on their next poll (ten seconds).
 
 Saving never blocks on a *warning* (a rule that cannot fire, a profile that is
-down): warnings come back with the rule and from ``/rules/check`` so the console
-can say them while the rule is being written. Only an *error* (a value of the
-wrong shape, an action the kind does not have) is a 422.
+down): warnings come back with the pipeline and from ``/pipelines/check`` so the
+console can say them while the pipeline is being written. Only an *error* (a
+value of the wrong shape, an action the kind does not have, an id that does not
+exist) is a 422.
 """
 
 from __future__ import annotations
 
-import base64
-import binascii
 import logging
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from gateway import extraction
 from gateway.admin_audit import record_audit
-from gateway.deps import AdminUserDep, ControlHttpDep, SessionDep, SettingsDep
+from gateway.deps import (
+    AdminUserDep,
+    ControlHttpDep,
+    SessionDep,
+    SettingsDep,
+)
 from gateway.errors import BadRequestError, GatewayError, NotFoundError
-from gateway.models import DetectorProfile, ModelDef, ModelKind, PrivacyRule, Provider
+from gateway.models import (
+    ApiKey,
+    DetectorProfile,
+    Group,
+    ModelDef,
+    PrivacyPipeline,
+    Provider,
+    RedactionPolicyRecord,
+    User,
+    UserPolicy,
+)
 from gateway.pagination import MAX_LIMIT, Page
-from gateway.privacy import attribution
 from gateway.privacy import rules as rulelib
-from gateway.privacy.evaluate import Evaluation, Facts
+from gateway.privacy import service
+from gateway.privacy.pipelines import Pipeline, pipeline_from_row, validate_pipeline
 from gateway.privacy.schemas import (
-    ActionView,
-    ConditionView,
-    FiredRule,
+    ActionBody,
+    DryRunRequest,
+    DryRunResponse,
     IssueView,
+    ModelOption,
+    NamedId,
+    OptionsResponse,
+    PipelineCheckRequest,
+    PipelineCheckResponse,
+    PipelineCreateRequest,
+    PipelineResponse,
+    PipelineUpdateRequest,
+    PolicyCreateRequest,
+    PolicyResponse,
+    PolicyUpdateRequest,
     ProfileCreateRequest,
     ProfileResponse,
     ProfileUpdateRequest,
+    ReaderOption,
     ReorderRequest,
-    RuleCheckRequest,
-    RuleCheckResponse,
-    RuleCreateRequest,
-    RuleResponse,
-    RuleTestRequest,
-    RuleTestResponse,
-    RuleTestStep,
-    RuleUpdateRequest,
+    SettingsRequest,
+    SettingsResponse,
 )
-from gateway.privacy.state import PrivacyState, engine_available, rule_from_row, state_of
+from gateway.privacy.state import engine_available, state_of
 from gateway.rate_limit import SlidingWindowLimiter
 
 logger = logging.getLogger(__name__)
@@ -69,21 +93,593 @@ class ConflictError(GatewayError):
     code = "conflict"
 
 
-# -- views -------------------------------------------------------------------------
+async def _reload(request: Request) -> None:
+    """Make this worker see the change now; the others poll."""
+    await state_of(request).refresh()
 
-RULE_FIELDS = ("name", "kind", "enabled", "observe_only", "position", "conditions", "action")
+
+@router.get("/status")
+async def privacy_status(admin: AdminUserDep, request: Request) -> dict[str, Any]:
+    """Whether this worker has loaded the pipelines, and any row it had to skip."""
+    state = state_of(request)
+    return {
+        "loaded": state.loaded,
+        "load_error": state.load_error,
+        "pipelines": len(state.pipelines),
+        "policies": len(state.policies),
+        "unreadable": list(state.bad_rows),
+    }
 
 
-def _rule_view(row: PrivacyRule) -> dict[str, Any]:
+# -- options -----------------------------------------------------------------------
+
+
+@router.get("/options", response_model=OptionsResponse)
+async def options(admin: AdminUserDep, session: SessionDep, request: Request) -> OptionsResponse:
+    """What the editors may pick: scope subjects, targets, readers, policies, profiles."""
+    users = (
+        await session.execute(select(User.id, User.email).order_by(User.email).limit(500))
+    ).all()
+    groups = (await session.execute(select(Group.id, Group.name).order_by(Group.name))).all()
+    keys = (
+        await session.execute(select(ApiKey.id, ApiKey.name).order_by(ApiKey.name).limit(500))
+    ).all()
+    providers = (
+        await session.execute(
+            select(Provider.id, Provider.name)
+            .where(Provider.owner_id.is_(None))
+            .order_by(Provider.name)
+        )
+    ).all()
+    models = (
+        await session.execute(
+            select(ModelDef.id, ModelDef.name, ModelDef.provider_id, Provider.name, ModelDef.kind)
+            .join(Provider, Provider.id == ModelDef.provider_id, isouter=True)
+            .where(ModelDef.owner_id.is_(None), ModelDef.is_alias.is_(False))
+            .order_by(ModelDef.name)
+        )
+    ).all()
+    readers = await service.deployment_readers(session)
+    policies = [p for p in await service.policy_rows(session) if p.is_active]
+    profiles = await service.profile_rows(session)
+    settings_row = await service.settings_row(session)
+    return OptionsResponse(
+        users=[NamedId(id=i, name=n or "") for i, n in users],
+        groups=[NamedId(id=i, name=n) for i, n in groups],
+        keys=[NamedId(id=i, name=n or "(unnamed key)") for i, n in keys],
+        providers=[NamedId(id=i, name=n) for i, n in providers],
+        models=[
+            ModelOption(
+                id=i,
+                name=n,
+                provider_id=pid,
+                provider=pn,
+                kind=k.value if hasattr(k, "value") else str(k),
+            )
+            for i, n, pid, pn, k in models
+        ],
+        readers=[ReaderOption(id=rulelib.BUILTIN_READER, name="Built-in extractor", builtin=True)]
+        + [
+            ReaderOption(id=name, name=name, builtin=builtin)
+            for name, (_, builtin) in readers.items()
+        ],
+        policies=[NamedId(id=p.id, name=p.name) for p in policies],
+        own_policies=[],
+        profiles=[NamedId(id=p.id, name=p.name) for p in profiles],
+        entity_types=settings_row.user_entity_types,
+        engines=list(rulelib.ENGINES),
+    )
+
+
+# -- pipelines ---------------------------------------------------------------------
+
+
+async def _admin_rows(session: SessionDep, kind: str | None = None) -> list[PrivacyPipeline]:
+    rows = await service.pipeline_rows(session, owner=None)
+    return [r for r in rows if kind is None or r.kind == kind]
+
+
+async def _load(session: SessionDep, pipeline_id: uuid.UUID) -> PrivacyPipeline:
+    row = await session.get(PrivacyPipeline, pipeline_id)
+    if row is None or row.owner_id is not None:
+        raise NotFoundError("No such pipeline.")
+    return row
+
+
+async def _check_subjects(session: SessionDep, who: dict[str, Any], target: dict[str, Any]) -> None:
+    """Every id named in the scope must exist: a scope on nothing looks like a live one."""
+
+    async def exists(column: Any, ids: list[str], noun: str) -> None:
+        if not ids:
+            return
+        wanted = {uuid.UUID(i) for i in ids}
+        found = set(
+            (await session.execute(select(column).where(column.in_(wanted)))).scalars().all()
+        )
+        if found != wanted:
+            raise UnprocessableError(f"One of the {noun} named does not exist.")
+
+    mode = who["mode"]
+    if mode == "users":
+        await exists(User.id, who["ids"], "users")
+    elif mode == "groups":
+        await exists(Group.id, who["ids"], "groups")
+    elif mode == "keys":
+        await exists(ApiKey.id, who["ids"], "keys")
+    await exists(Provider.id, target["providers"], "providers")
+    await exists(ModelDef.id, target["models"], "models")
+
+
+async def _clean(
+    session: SessionDep,
+    *,
+    kind: str,
+    name: str,
+    who: Any,
+    target: Any,
+    rules: list[dict[str, Any]],
+    otherwise: dict[str, Any] | None,
+) -> dict[str, Any]:
+    profiles, policies, readers = await service.validation_context(session, owner=None)
+    try:
+        clean = validate_pipeline(
+            kind,
+            name,
+            who,
+            target,
+            rules,
+            otherwise,
+            profile_ids=profiles,
+            policy_ids=policies,
+            readers=readers,
+        )
+    except rulelib.RuleError as exc:
+        raise UnprocessableError(str(exc)) from exc
+    await _check_subjects(session, clean["who"], clean["target"])
+    return clean
+
+
+async def _renumber(session: SessionDep, ordered: list[PrivacyPipeline]) -> None:
+    for index, row in enumerate(ordered):
+        if row.position != index:
+            row.position = index
+    await session.flush()
+
+
+async def _response(session: SessionDep, row: PrivacyPipeline) -> PipelineResponse:
+    return (await service.views_for(session, [row]))[0]
+
+
+@router.get("/pipelines", response_model=Page[PipelineResponse])
+async def list_pipelines(
+    admin: AdminUserDep, session: SessionDep, kind: str | None = None
+) -> Page[PipelineResponse]:
+    """Every administrator pipeline, by kind and in order, each with its warnings."""
+    items = await service.views_for(session, await _admin_rows(session, kind))
+    return Page(items=items, total=len(items), limit=max(1, min(MAX_LIMIT, len(items))), offset=0)
+
+
+@router.get("/pipelines/{pipeline_id}", response_model=PipelineResponse)
+async def get_pipeline(
+    pipeline_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
+) -> PipelineResponse:
+    return await _response(session, await _load(session, pipeline_id))
+
+
+def _other_action(payload: ActionBody | None) -> dict[str, Any] | None:
+    return payload.clean() if payload is not None else None
+
+
+@router.post("/pipelines", response_model=PipelineResponse, status_code=status.HTTP_201_CREATED)
+async def create_pipeline(
+    payload: PipelineCreateRequest, admin: AdminUserDep, session: SessionDep, request: Request
+) -> PipelineResponse:
+    clean = await _clean(
+        session,
+        kind=payload.kind,
+        name=payload.name,
+        who=payload.who.model_dump(mode="json"),
+        target=payload.target.model_dump(mode="json"),
+        rules=[r.clean() for r in payload.rules],
+        otherwise=_other_action(payload.otherwise),
+    )
+    siblings = await _admin_rows(session, payload.kind)
+    if any(r.name.lower() == clean["name"].lower() for r in siblings):
+        raise ConflictError(f"A {payload.kind} pipeline named '{clean['name']}' already exists.")
+    row = PrivacyPipeline(
+        id=uuid.uuid4(),
+        owner_id=None,
+        kind=payload.kind,
+        name=clean["name"],
+        enabled=payload.enabled,
+        position=len(siblings),
+        who=clean["who"],
+        target=clean["target"],
+        rules=clean["rules"],
+        otherwise=clean["otherwise"],
+        created_by=admin.id,
+    )
+    session.add(row)
+    ordered = list(siblings)
+    index = min(payload.position, len(siblings)) if payload.position is not None else len(siblings)
+    ordered.insert(index, row)
+    await _renumber(session, ordered)
+    record_audit(
+        session,
+        admin,
+        "privacy_pipeline.create",
+        "privacy_pipeline",
+        row.id,
+        row.name,
+        after=service.pipeline_view_json(row),
+    )
+    await session.commit()
+    await _reload(request)
+    return await _response(session, row)
+
+
+@router.patch("/pipelines/{pipeline_id}", response_model=PipelineResponse)
+async def update_pipeline(
+    pipeline_id: uuid.UUID,
+    payload: PipelineUpdateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+) -> PipelineResponse:
+    row = await _load(session, pipeline_id)
+    before = service.pipeline_view_json(row)
+    fields = payload.model_fields_set
+    clean = await _clean(
+        session,
+        kind=row.kind,
+        name=payload.name if "name" in fields and payload.name else row.name,
+        who=payload.who.model_dump(mode="json") if payload.who is not None else row.who,
+        target=payload.target.model_dump(mode="json") if payload.target is not None else row.target,
+        rules=(
+            [r.clean() for r in payload.rules]
+            if payload.rules is not None
+            else [dict(r) for r in row.rules or []]
+        ),
+        otherwise=(
+            _other_action(payload.otherwise)
+            if payload.otherwise is not None
+            else dict(row.otherwise or {})
+        ),
+    )
+    if clean["name"].lower() != row.name.lower():
+        taken = [r for r in await _admin_rows(session, row.kind) if r.id != row.id]
+        if any(r.name.lower() == clean["name"].lower() for r in taken):
+            raise ConflictError(f"A {row.kind} pipeline named '{clean['name']}' already exists.")
+    row.name = clean["name"]
+    row.who = clean["who"]
+    row.target = clean["target"]
+    row.rules = clean["rules"]
+    row.otherwise = clean["otherwise"]
+    if payload.enabled is not None:
+        row.enabled = payload.enabled
+    record_audit(
+        session,
+        admin,
+        "privacy_pipeline.update",
+        "privacy_pipeline",
+        row.id,
+        row.name,
+        before=before,
+        after=service.pipeline_view_json(row),
+    )
+    await session.commit()
+    await _reload(request)
+    return await _response(session, row)
+
+
+@router.delete("/pipelines/{pipeline_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_pipeline(
+    pipeline_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, request: Request
+) -> None:
+    row = await _load(session, pipeline_id)
+    before = service.pipeline_view_json(row)
+    kind, name = row.kind, row.name
+    await session.delete(row)
+    await session.flush()
+    await _renumber(session, await _admin_rows(session, kind))
+    record_audit(
+        session,
+        admin,
+        "privacy_pipeline.delete",
+        "privacy_pipeline",
+        pipeline_id,
+        name,
+        before=before,
+    )
+    await session.commit()
+    await _reload(request)
+
+
+@router.post("/pipelines/reorder", response_model=Page[PipelineResponse])
+async def reorder_pipelines(
+    payload: ReorderRequest, admin: AdminUserDep, session: SessionDep, request: Request
+) -> Page[PipelineResponse]:
+    """Put a kind's administrator pipelines in a new order. Must name every one once."""
+    rows = await _admin_rows(session, payload.kind)
+    by_id = {r.id: r for r in rows}
+    if sorted(payload.order, key=str) != sorted(by_id, key=str):
+        raise UnprocessableError("The order must list every pipeline of this kind exactly once.")
+    before = [r.name for r in rows]
+    ordered = [by_id[i] for i in payload.order]
+    await _renumber(session, ordered)
+    record_audit(
+        session,
+        admin,
+        "privacy_pipeline.reorder",
+        "privacy_pipeline",
+        None,
+        f"{payload.kind} pipelines",
+        before={"order": before},
+        after={"order": [r.name for r in ordered]},
+    )
+    await session.commit()
+    await _reload(request)
+    return await list_pipelines(admin, session)
+
+
+@router.post("/pipelines/check", response_model=PipelineCheckResponse)
+async def check_pipeline(
+    payload: PipelineCheckRequest, admin: AdminUserDep, session: SessionDep
+) -> PipelineCheckResponse:
+    """The warnings a draft would get if saved now, for the editor to show as it is written."""
+    try:
+        clean = await _clean(
+            session,
+            kind=payload.kind,
+            name=payload.name,
+            who=payload.who.model_dump(mode="json"),
+            target=payload.target.model_dump(mode="json"),
+            rules=[r.clean() for r in payload.rules],
+            otherwise=_other_action(payload.otherwise),
+        )
+    except UnprocessableError as exc:
+        return PipelineCheckResponse(error=exc.message, issues=[], soft_cap=rulelib.SOFT_CAP)
+    draft = _draft(payload.kind, clean, payload.enabled)
+    found = service.issues_of(draft, await service.profile_rows(session))
+    issues: list[IssueView] = []
+    for rule_issues in found.values():
+        issues.extend(service.issue_views(rule_issues))
+    return PipelineCheckResponse(issues=issues, soft_cap=rulelib.SOFT_CAP)
+
+
+def _draft(kind: str, clean: dict[str, Any], enabled: bool) -> Pipeline:
+    row = PrivacyPipeline(
+        id=uuid.uuid4(),
+        owner_id=None,
+        kind=kind,
+        name=clean["name"],
+        enabled=enabled,
+        position=0,
+        who=clean["who"],
+        target=clean["target"],
+        rules=clean["rules"],
+        otherwise=clean["otherwise"],
+    )
+    return pipeline_from_row(row)
+
+
+# -- policies ----------------------------------------------------------------------
+
+
+async def _used_by(session: SessionDep) -> dict[str, list[str]]:
+    """policy id -> names of the pipelines (administrators' and users') that apply it."""
+    used: dict[str, list[str]] = {}
+    for row in (await session.execute(select(PrivacyPipeline))).scalars().all():
+        actions = [dict(r.get("action") or {}) for r in row.rules or []] + [
+            dict(row.otherwise or {})
+        ]
+        for pid in {str(a["redact_with"]) for a in actions if a.get("redact_with")}:
+            used.setdefault(pid, []).append(
+                row.name if row.owner_id is None else f"{row.name} (user)"
+            )
+    return used
+
+
+def _policy_response(
+    row: RedactionPolicyRecord,
+    used: dict[str, list[str]],
+    profiles: dict[uuid.UUID, str],
+    email: str | None,
+) -> PolicyResponse:
+    from gateway.config import RedactionPolicy
+
+    return PolicyResponse(
+        id=row.id,
+        name=row.name,
+        # A stored policy that no longer parses is not replaced with an empty one
+        # here: the listing is where an operator would find out the state is
+        # ignoring it, so it must raise rather than lie.
+        policy=RedactionPolicy.model_validate(row.policy or {}),
+        profile_id=row.profile_id,
+        profile_name=profiles.get(row.profile_id) if row.profile_id else None,
+        is_active=row.is_active,
+        reason=row.reason,
+        used_by=used.get(str(row.id), []),
+        created_by=row.created_by,
+        created_by_email=email,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+async def _policy_page(session: SessionDep) -> list[PolicyResponse]:
+    used = await _used_by(session)
+    profiles = {p.id: p.name for p in await service.profile_rows(session)}
+    rows = (
+        await session.execute(
+            select(RedactionPolicyRecord, User.email)
+            .outerjoin(User, User.id == RedactionPolicyRecord.created_by)
+            .order_by(RedactionPolicyRecord.name)
+        )
+    ).all()
+    return [_policy_response(row, used, profiles, email) for row, email in rows]
+
+
+async def _load_policy(session: SessionDep, policy_id: uuid.UUID) -> RedactionPolicyRecord:
+    row = await session.get(RedactionPolicyRecord, policy_id)
+    if row is None:
+        raise NotFoundError(f"No redaction policy with id {policy_id}.")
+    return row
+
+
+async def _check_profile(session: SessionDep, profile_id: uuid.UUID | None) -> None:
+    if profile_id is not None and await session.get(DetectorProfile, profile_id) is None:
+        raise UnprocessableError("The detector profile does not exist.")
+
+
+async def _name_free(session: SessionDep, name: str, ignore: uuid.UUID | None = None) -> None:
+    rows = (
+        (
+            await session.execute(
+                select(RedactionPolicyRecord.id).where(
+                    func.lower(RedactionPolicyRecord.name) == name.lower()
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if any(r != ignore for r in rows):
+        raise ConflictError(f"A redaction policy named '{name}' already exists.")
+
+
+def _policy_audit(row: RedactionPolicyRecord) -> dict[str, Any]:
     return {
         "name": row.name,
-        "kind": row.kind,
-        "enabled": row.enabled,
-        "observe_only": row.observe_only,
-        "position": row.position,
-        "conditions": [dict(c) for c in row.conditions or []],
-        "action": dict(row.action or {}),
+        "is_active": row.is_active,
+        "profile_id": str(row.profile_id) if row.profile_id else None,
+        "policy": dict(row.policy or {}),
     }
+
+
+@router.get("/policies", response_model=Page[PolicyResponse])
+async def list_policies(admin: AdminUserDep, session: SessionDep) -> Page[PolicyResponse]:
+    items = await _policy_page(session)
+    return Page(items=items, total=len(items), limit=max(1, min(MAX_LIMIT, len(items))), offset=0)
+
+
+@router.post("/policies", response_model=PolicyResponse, status_code=status.HTTP_201_CREATED)
+async def create_policy(
+    payload: PolicyCreateRequest, admin: AdminUserDep, session: SessionDep, request: Request
+) -> PolicyResponse:
+    name = payload.name.strip()
+    if not name:
+        raise UnprocessableError("Give the policy a name.")
+    await _name_free(session, name)
+    await _check_profile(session, payload.profile_id)
+    row = RedactionPolicyRecord(
+        id=uuid.uuid4(),
+        name=name,
+        policy=payload.policy.model_dump(mode="json"),
+        profile_id=payload.profile_id,
+        is_active=payload.is_active,
+        reason=payload.reason.strip(),
+        created_by=admin.id,
+    )
+    session.add(row)
+    record_audit(
+        session,
+        admin,
+        "redaction_policy.create",
+        "redaction_policy",
+        row.id,
+        row.name,
+        after=_policy_audit(row),
+    )
+    await session.commit()
+    await _reload(request)
+    await session.refresh(row)
+    return _policy_response(
+        row, {}, {p.id: p.name for p in await service.profile_rows(session)}, admin.email
+    )
+
+
+@router.patch("/policies/{policy_id}", response_model=PolicyResponse)
+async def update_policy(
+    policy_id: uuid.UUID,
+    payload: PolicyUpdateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+) -> PolicyResponse:
+    row = await _load_policy(session, policy_id)
+    before = _policy_audit(row)
+    fields = payload.model_fields_set
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise UnprocessableError("Give the policy a name.")
+        await _name_free(session, name, ignore=row.id)
+        row.name = name
+    if payload.policy is not None:
+        row.policy = payload.policy.model_dump(mode="json")
+    if "profile_id" in fields:
+        await _check_profile(session, payload.profile_id)
+        row.profile_id = payload.profile_id
+    if payload.is_active is not None:
+        row.is_active = payload.is_active
+    if payload.reason is not None:
+        row.reason = payload.reason.strip()
+    record_audit(
+        session,
+        admin,
+        "redaction_policy.update",
+        "redaction_policy",
+        row.id,
+        row.name,
+        before=before,
+        after=_policy_audit(row),
+    )
+    await session.commit()
+    await _reload(request)
+    await session.refresh(row)
+    used = await _used_by(session)
+    email = (
+        await session.execute(select(User.email).where(User.id == row.created_by))
+    ).scalar_one_or_none()
+    return _policy_response(
+        row, used, {p.id: p.name for p in await service.profile_rows(session)}, email
+    )
+
+
+@router.delete("/policies/{policy_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_policy(
+    policy_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, request: Request
+) -> None:
+    """Remove a policy that no pipeline applies.
+
+    Refused while one does: a pipeline that names nothing would silently stop
+    hiding what it was written to hide. Nothing in the ledger points at a policy
+    (``usage_records.redaction_rule_id`` is a stamp, not a foreign key), so
+    deleting one cannot erase the record of what it did.
+    """
+    row = await _load_policy(session, policy_id)
+    users = (await _used_by(session)).get(str(row.id), [])
+    if users:
+        raise ConflictError(
+            f"'{row.name}' is applied by: {', '.join(users)}. Change those pipelines first."
+        )
+    before = _policy_audit(row)
+    await session.delete(row)
+    record_audit(
+        session,
+        admin,
+        "redaction_policy.delete",
+        "redaction_policy",
+        policy_id,
+        row.name,
+        before=before,
+    )
+    await session.commit()
+    await _reload(request)
+
+
+# -- profiles ----------------------------------------------------------------------
 
 
 def _profile_view(row: DetectorProfile) -> dict[str, Any]:
@@ -94,382 +690,41 @@ def _profile_view(row: DetectorProfile) -> dict[str, Any]:
         "labels": list(row.labels or []),
         "fallback": row.fallback,
         "fallback_profile_id": str(row.fallback_profile_id) if row.fallback_profile_id else None,
+        "user_available": row.user_available,
     }
 
 
-async def _rules(session: SessionDep) -> list[PrivacyRule]:
-    return list(
-        (
-            await session.execute(
-                select(PrivacyRule).order_by(PrivacyRule.kind, PrivacyRule.position)
-            )
-        )
-        .scalars()
-        .all()
-    )
+def _presidio_status(request: Request) -> tuple[str, str]:
+    redactor = getattr(request.app.state, "redactor", None)
+    name = getattr(redactor, "name", "noop")
+    if name == "noop":
+        return "available", "Redaction is off; verdicts still use the quick check."
+    return "available", "The detection service is the one in use for redaction."
 
 
-async def _profiles(session: SessionDep) -> list[DetectorProfile]:
-    return list(
-        (await session.execute(select(DetectorProfile).order_by(DetectorProfile.name)))
-        .scalars()
-        .all()
-    )
-
-
-def _check_context(
-    profiles: list[DetectorProfile],
-    *,
-    has_local_embedding: bool,
-    local_models: set[str] | None = None,
-) -> rulelib.CheckContext:
-    return rulelib.CheckContext(
-        local_models=local_models,
-        profiles={
-            str(p.id): rulelib.ProfileInfo(
-                id=p.id,
-                name=p.name,
-                available=engine_available(p.engine),
-                fallback=p.fallback,
-                can_decide=engine_available(p.engine),
-            )
-            for p in profiles
-        },
-        has_local_embedding=has_local_embedding,
-    )
-
-
-async def _local_embedding_exists(request: Request) -> bool:
-    return bool(state_of(request).local_embedding_models)
-
-
-def _issues(found: list[rulelib.Issue]) -> list[IssueView]:
-    return [
-        IssueView(code=i.code, message=i.message, rule_id=i.rule_id, rule_name=i.rule_name)
-        for i in found
-    ]
-
-
-def _response(row: PrivacyRule, issues: list[rulelib.Issue]) -> RuleResponse:
-    return RuleResponse(
-        id=row.id,
-        kind=row.kind,
-        name=row.name,
-        enabled=row.enabled,
-        observe_only=row.observe_only,
-        position=row.position,
-        conditions=[ConditionView.model_validate(c) for c in row.conditions or []],
-        action=ActionView.model_validate(row.action or {}),
-        issues=_issues(issues),
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-    )
-
-
-def _validated(
-    kind: str,
-    name: str,
-    conditions: list[dict[str, Any]],
-    action: dict[str, Any],
-    profiles: list[DetectorProfile],
-) -> tuple[str, list[rulelib.Condition], dict[str, Any]]:
-    try:
-        return rulelib.validate(
-            kind, name, conditions, action, profile_ids=[str(p.id) for p in profiles]
-        )
-    except rulelib.RuleError as exc:
-        raise UnprocessableError(str(exc)) from exc
-
-
-async def _require_local_model(session: SessionDep, action: dict[str, Any]) -> None:
-    """A `local` action's named model must be a deployment model on a local provider.
-
-    Not a member's private model (`my/...`), not an alias (it could point
-    anywhere, so name the served model), and its provider must be marked
-    `is_local`. Checked again on every request against what actually resolves.
-    """
-    name = action.get("model")
-    if action.get("type") != "local" or not name:
-        return
-    if str(name).startswith("my/"):
-        raise UnprocessableError(
-            "A private model cannot be the local model. Name a deployment model."
-        )
-    row = (
+async def _profile_use(session: SessionDep) -> dict[str, int]:
+    """How many rules decide with each profile, and how many policies use it."""
+    count: dict[str, int] = {}
+    for row in (await session.execute(select(PrivacyPipeline))).scalars().all():
+        for rule in row.rules or []:
+            for c in rule.get("conditions") or []:
+                if c.get("decide") and c["decide"] != rulelib.PATTERNS:
+                    count[str(c["decide"])] = count.get(str(c["decide"]), 0) + 1
+    for pid in (
         await session.execute(
-            select(ModelDef, Provider)
-            .outerjoin(Provider, Provider.id == ModelDef.provider_id)
-            .where(ModelDef.name == name, ModelDef.owner_id.is_(None))
+            select(RedactionPolicyRecord.profile_id).where(
+                RedactionPolicyRecord.profile_id.is_not(None)
+            )
         )
-    ).first()
-    if row is None:
-        raise UnprocessableError(f"There is no deployment model named '{name}'.")
-    model, provider = row
-    if model.is_alias or provider is None:
-        raise UnprocessableError(
-            f"'{name}' is an alias. Name the embedding model that serves it, on a local provider."
+    ).scalars():
+        count[str(pid)] = count.get(str(pid), 0) + 1
+    for pid in (
+        await session.execute(
+            select(UserPolicy.profile_id).where(UserPolicy.profile_id.is_not(None))
         )
-    if provider.is_local is not True or provider.owner_id is not None:
-        raise UnprocessableError(
-            f"'{name}' is not on a local provider. Mark its provider as local first, "
-            "or name another."
-        )
-    if model.kind != ModelKind.EMBEDDING:
-        raise UnprocessableError(f"'{name}' is not an embedding model.")
-
-
-async def _renumber(session: SessionDep, kind: str, ordered: list[PrivacyRule]) -> None:
-    for index, row in enumerate(ordered):
-        if row.position != index:
-            row.position = index
-    await session.flush()
-    del kind
-
-
-async def _reload(request: Request) -> None:
-    """Make this worker see the change now; the others poll."""
-    await state_of(request).refresh()
-
-
-async def _all_issues(
-    session: SessionDep, request: Request
-) -> tuple[list[PrivacyRule], dict[uuid.UUID, list[rulelib.Issue]]]:
-    rows = await _rules(session)
-    profiles = await _profiles(session)
-    context = _check_context(
-        profiles,
-        has_local_embedding=await _local_embedding_exists(request),
-        local_models=set(state_of(request).local_embedding_models),
-    )
-    return rows, rulelib.check([rule_from_row(r) for r in rows], context)
-
-
-@router.get("/status")
-async def privacy_status(admin: AdminUserDep, request: Request) -> dict[str, Any]:
-    """Whether this worker has loaded the rules, and any row it had to skip."""
-    state = state_of(request)
-    return {
-        "loaded": state.loaded,
-        "load_error": state.load_error,
-        "rules": len(state.rules),
-        "unreadable_rules": list(state.bad_rules),
-    }
-
-
-# -- rules -------------------------------------------------------------------------
-
-
-@router.get("/rules", response_model=Page[RuleResponse])
-async def list_rules(
-    admin: AdminUserDep, session: SessionDep, request: Request, kind: str | None = None
-) -> Page[RuleResponse]:
-    """Every rule, grouped by kind and in order, each with its warnings."""
-    rows, issues = await _all_issues(session, request)
-    shown = [r for r in rows if kind is None or r.kind == kind]
-    items = [_response(r, issues.get(r.id, [])) for r in shown]
-    return Page(items=items, total=len(items), limit=max(1, min(MAX_LIMIT, len(items))), offset=0)
-
-
-@router.post("/rules", response_model=RuleResponse, status_code=status.HTTP_201_CREATED)
-async def create_rule(
-    payload: RuleCreateRequest, admin: AdminUserDep, session: SessionDep, request: Request
-) -> RuleResponse:
-    profiles = await _profiles(session)
-    name, conditions, action = _validated(
-        payload.kind,
-        payload.name,
-        [c.model_dump() for c in payload.conditions],
-        payload.action.clean(),
-        profiles,
-    )
-    await _require_local_model(session, action)
-    siblings = [r for r in await _rules(session) if r.kind == payload.kind]
-    if any(r.name.lower() == name.lower() for r in siblings):
-        raise ConflictError(f"A {payload.kind} rule named '{name}' already exists.")
-    row = PrivacyRule(
-        id=uuid.uuid4(),
-        kind=payload.kind,
-        name=name,
-        enabled=payload.enabled,
-        observe_only=payload.observe_only,
-        position=len(siblings),
-        conditions=[rulelib.condition_to_json(c) for c in conditions],
-        action=action,
-    )
-    session.add(row)
-    ordered = list(siblings)
-    index = min(payload.position, len(siblings)) if payload.position is not None else len(siblings)
-    ordered.insert(index, row)
-    await _renumber(session, payload.kind, ordered)
-    record_audit(
-        session,
-        admin,
-        "privacy_rule.create",
-        "privacy_rule",
-        row.id,
-        row.name,
-        after=_rule_view(row),
-    )
-    await session.commit()
-    await _reload(request)
-    _, issues = await _all_issues(session, request)
-    return _response(row, issues.get(row.id, []))
-
-
-async def _load_rule(session: SessionDep, rule_id: uuid.UUID) -> PrivacyRule:
-    row = await session.get(PrivacyRule, rule_id)
-    if row is None:
-        raise NotFoundError("No such rule.")
-    return row
-
-
-@router.patch("/rules/{rule_id}", response_model=RuleResponse)
-async def update_rule(
-    rule_id: uuid.UUID,
-    payload: RuleUpdateRequest,
-    admin: AdminUserDep,
-    session: SessionDep,
-    request: Request,
-) -> RuleResponse:
-    row = await _load_rule(session, rule_id)
-    before = _rule_view(row)
-    profiles = await _profiles(session)
-    fields = payload.model_fields_set
-    name, conditions, action = _validated(
-        row.kind,
-        payload.name if "name" in fields and payload.name else row.name,
-        (
-            [c.model_dump() for c in payload.conditions]
-            if "conditions" in fields and payload.conditions is not None
-            else [dict(c) for c in row.conditions or []]
-        ),
-        (
-            payload.action.clean()
-            if "action" in fields and payload.action is not None
-            else dict(row.action or {})
-        ),
-        profiles,
-    )
-    if action != dict(row.action or {}):
-        await _require_local_model(session, action)
-    if name.lower() != row.name.lower():
-        taken = [r for r in await _rules(session) if r.kind == row.kind and r.id != row.id]
-        if any(r.name.lower() == name.lower() for r in taken):
-            raise ConflictError(f"A {row.kind} rule named '{name}' already exists.")
-    row.name = name
-    row.conditions = [rulelib.condition_to_json(c) for c in conditions]
-    row.action = action
-    if payload.enabled is not None:
-        row.enabled = payload.enabled
-    if payload.observe_only is not None:
-        row.observe_only = payload.observe_only
-    record_audit(
-        session,
-        admin,
-        "privacy_rule.update",
-        "privacy_rule",
-        row.id,
-        row.name,
-        before=before,
-        after=_rule_view(row),
-    )
-    await session.commit()
-    await _reload(request)
-    _, issues = await _all_issues(session, request)
-    return _response(row, issues.get(row.id, []))
-
-
-@router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_rule(
-    rule_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, request: Request
-) -> None:
-    row = await _load_rule(session, rule_id)
-    before = _rule_view(row)
-    kind, name = row.kind, row.name
-    await session.delete(row)
-    await session.flush()
-    rest = [r for r in await _rules(session) if r.kind == kind]
-    await _renumber(session, kind, rest)
-    record_audit(
-        session, admin, "privacy_rule.delete", "privacy_rule", rule_id, name, before=before
-    )
-    await session.commit()
-    await _reload(request)
-
-
-@router.post("/rules/reorder", response_model=Page[RuleResponse])
-async def reorder_rules(
-    payload: ReorderRequest, admin: AdminUserDep, session: SessionDep, request: Request
-) -> Page[RuleResponse]:
-    """Put a kind's rules in a new order. Must name every rule of the kind once."""
-    rows = [r for r in await _rules(session) if r.kind == payload.kind]
-    by_id = {r.id: r for r in rows}
-    if sorted(payload.order, key=str) != sorted(by_id, key=str):
-        raise UnprocessableError("The order must list every rule of this kind exactly once.")
-    before = [r.name for r in rows]
-    ordered = [by_id[i] for i in payload.order]
-    await _renumber(session, payload.kind, ordered)
-    after = [r.name for r in ordered]
-    record_audit(
-        session,
-        admin,
-        "privacy_rule.reorder",
-        "privacy_rule",
-        None,
-        f"{payload.kind} rules",
-        before={"order": before},
-        after={"order": after},
-    )
-    await session.commit()
-    await _reload(request)
-    return await list_rules(admin, session, request, kind=None)
-
-
-@router.post("/rules/check", response_model=RuleCheckResponse)
-async def check_rule(
-    payload: RuleCheckRequest, admin: AdminUserDep, session: SessionDep, request: Request
-) -> RuleCheckResponse:
-    """The warnings a draft would get if saved now, for the editor to show as it is written."""
-    profiles = await _profiles(session)
-    try:
-        name, conditions, action = rulelib.validate(
-            payload.kind,
-            payload.name,
-            [c.model_dump() for c in payload.conditions],
-            payload.action.clean(),
-            profile_ids=[str(p.id) for p in profiles],
-        )
-    except rulelib.RuleError as exc:
-        return RuleCheckResponse(error=str(exc), issues=[], soft_cap=rulelib.SOFT_CAP)
-    try:
-        await _require_local_model(session, action)
-    except UnprocessableError as exc:
-        return RuleCheckResponse(error=exc.message, issues=[], soft_cap=rulelib.SOFT_CAP)
-    rows = await _rules(session)
-    same = [r for r in rows if r.kind == payload.kind]
-    others = [rule_from_row(r) for r in rows if r.id != payload.rule_id]
-    editing = next((r for r in rows if r.id == payload.rule_id), None)
-    draft_id = payload.rule_id or uuid.uuid4()
-    draft = rulelib.Rule(
-        id=draft_id,
-        kind=payload.kind,
-        name=name,
-        enabled=payload.enabled,
-        observe_only=payload.observe_only,
-        position=editing.position if editing is not None else len(same),
-        conditions=tuple(conditions),
-        action=action,
-    )
-    context = _check_context(
-        profiles,
-        has_local_embedding=await _local_embedding_exists(request),
-        local_models=set(state_of(request).local_embedding_models),
-    )
-    issues = rulelib.check([*others, draft], context)
-    return RuleCheckResponse(issues=_issues(issues.get(draft_id, [])), soft_cap=rulelib.SOFT_CAP)
-
-
-# -- profiles ----------------------------------------------------------------------
+    ).scalars():
+        count[str(pid)] = count.get(str(pid), 0) + 1
+    return count
 
 
 async def _profile_response(
@@ -494,6 +749,7 @@ async def _profile_response(
         if row.fallback_profile_id
         else None,
         is_default=row.is_default,
+        user_available=row.user_available,
         status=status_word,
         status_detail=detail,
         decides=available,
@@ -504,30 +760,13 @@ async def _profile_response(
     )
 
 
-def _presidio_status(request: Request) -> tuple[str, str]:
-    redactor = getattr(request.app.state, "redactor", None)
-    name = getattr(redactor, "name", "noop")
-    if name == "noop":
-        return "available", "Redaction is off; verdicts still use the quick check."
-    return "available", "The detection service is the one in use for redaction."
-
-
-def _usage(rows: list[PrivacyRule]) -> dict[str, int]:
-    count: dict[str, int] = {}
-    for row in rows:
-        for c in row.conditions or []:
-            if c.get("decide") and c["decide"] != rulelib.PATTERNS:
-                count[str(c["decide"])] = count.get(str(c["decide"]), 0) + 1
-    return count
-
-
 @router.get("/profiles", response_model=Page[ProfileResponse])
 async def list_profiles(
     admin: AdminUserDep, session: SessionDep, request: Request
 ) -> Page[ProfileResponse]:
-    profiles = await _profiles(session)
+    profiles = await service.profile_rows(session)
     names = {p.id: p.name for p in profiles}
-    using = _usage(await _rules(session))
+    using = await _profile_use(session)
     items = [await _profile_response(request, p, names, using) for p in profiles]
     return Page(items=items, total=len(items), limit=max(1, len(items)), offset=0)
 
@@ -564,7 +803,7 @@ async def create_profile(
     name = payload.name.strip()
     if not name:
         raise UnprocessableError("Give the profile a name.")
-    existing = await _profiles(session)
+    existing = await service.profile_rows(session)
     if any(p.name.lower() == name.lower() for p in existing):
         raise ConflictError(f"A profile named '{name}' already exists.")
     await _check_fallback(session, None, payload.fallback, payload.fallback_profile_id)
@@ -576,6 +815,7 @@ async def create_profile(
         labels=[label.strip().upper() for label in payload.labels if label.strip()],
         fallback=payload.fallback,
         fallback_profile_id=payload.fallback_profile_id,
+        user_available=payload.user_available,
     )
     session.add(row)
     record_audit(
@@ -590,7 +830,7 @@ async def create_profile(
     await session.commit()
     await _reload(request)
     names = {p.id: p.name for p in [*existing, row]}
-    return await _profile_response(request, row, names, _usage(await _rules(session)))
+    return await _profile_response(request, row, names, await _profile_use(session))
 
 
 @router.patch("/profiles/{profile_id}", response_model=ProfileResponse)
@@ -617,13 +857,18 @@ async def update_profile(
         name = payload.name.strip()
         if not name:
             raise UnprocessableError("Give the profile a name.")
-        if any(p.name.lower() == name.lower() and p.id != row.id for p in await _profiles(session)):
+        if any(
+            p.name.lower() == name.lower() and p.id != row.id
+            for p in await service.profile_rows(session)
+        ):
             raise ConflictError(f"A profile named '{name}' already exists.")
         row.name = name
     if payload.description is not None:
         row.description = payload.description.strip()
     if payload.labels is not None:
         row.labels = [label.strip().upper() for label in payload.labels if label.strip()]
+    if payload.user_available is not None:
+        row.user_available = payload.user_available
     row.fallback = fallback
     row.fallback_profile_id = target
     record_audit(
@@ -638,9 +883,9 @@ async def update_profile(
     )
     await session.commit()
     await _reload(request)
-    profiles = await _profiles(session)
+    profiles = await service.profile_rows(session)
     return await _profile_response(
-        request, row, {p.id: p.name for p in profiles}, _usage(await _rules(session))
+        request, row, {p.id: p.name for p in profiles}, await _profile_use(session)
     )
 
 
@@ -653,8 +898,8 @@ async def delete_profile(
         raise NotFoundError("No such profile.")
     if row.is_default:
         raise ConflictError("The default profile cannot be deleted.")
-    if _usage(await _rules(session)).get(str(row.id)):
-        raise ConflictError("A rule still decides with this profile. Change those rules first.")
+    if (await _profile_use(session)).get(str(row.id)):
+        raise ConflictError("A rule or policy still uses this profile. Change those first.")
     before = _profile_view(row)
     await session.delete(row)
     record_audit(
@@ -670,41 +915,59 @@ async def delete_profile(
     await _reload(request)
 
 
+# -- what users may do ---------------------------------------------------------------
+
+
+@router.get("/settings", response_model=SettingsResponse)
+async def get_settings(admin: AdminUserDep, session: SessionDep) -> SettingsResponse:
+    row = await service.settings_row(session)
+    await session.commit()
+    return SettingsResponse(user_entity_types=row.user_entity_types)
+
+
+@router.put("/settings", response_model=SettingsResponse)
+async def put_settings(
+    payload: SettingsRequest, admin: AdminUserDep, session: SessionDep, request: Request
+) -> SettingsResponse:
+    """The entity types users' own policies may name (null: any the detector offers)."""
+    row = await service.settings_row(session)
+    before = {"user_entity_types": row.user_entity_types}
+    types = (
+        None
+        if payload.user_entity_types is None
+        else sorted({t.strip().upper() for t in payload.user_entity_types if t.strip()})
+    )
+    row.user_entity_types = types
+    record_audit(
+        session,
+        admin,
+        "privacy_settings.update",
+        "privacy_settings",
+        None,
+        "Privacy settings",
+        before=before,
+        after={"user_entity_types": types},
+    )
+    await session.commit()
+    await _reload(request)
+    return SettingsResponse(user_entity_types=types)
+
+
 # -- the test box ------------------------------------------------------------------
 
 
-def _outcome(ev: Evaluation) -> tuple[str, str]:
-    if ev.pending is not None:
-        return (
-            "pending",
-            "A rule is waiting to learn whether the file is a scan. Give a file to read, or say "
-            "whether it is one.",
-        )
-    fired = ev.fired
-    if fired is None:
-        return "default", "No rule applies: the request is handled as it is today."
-    action = fired.action_type
-    if action == "refuse":
-        return "refuse", f"Refused with a 403 naming '{fired.name}'."
-    if action == "reader":
-        return "reader", f"Read with {fired.action.get('reader')}, whatever model was named."
-    if action == "local":
-        return "local", "Embedded on a local model; refused if none is available."
-    return action, f"'{fired.name}' applies."
-
-
-@router.post("/test", response_model=RuleTestResponse)
-async def test_rules(
-    payload: RuleTestRequest,
+@router.post("/test", response_model=DryRunResponse)
+async def test_pipelines(
+    payload: DryRunRequest,
     admin: AdminUserDep,
     session: SessionDep,
     request: Request,
     settings: SettingsDep,
     control_http: ControlHttpDep,
-) -> RuleTestResponse:
-    """Which rule would fire for these facts, why the earlier ones did not, and the outcome.
+) -> DryRunResponse:
+    """Which pipelines are in scope, what each does, and the combined outcome.
 
-    Reads the rules as saved. The text and the file are judged in memory and never
+    Reads the state as saved. The text and the file are judged in memory and never
     stored or logged; the answer carries labels and names, not content. Rate limited.
     """
     limiter = getattr(request.app.state, "privacy_test_limiter", None)
@@ -715,94 +978,26 @@ async def test_rules(
         )
     if not limiter.allow(("privacy-test", str(admin.id))):
         raise BadRequestError("Slow down: the test box is limited to 30 runs a minute.")
-    privacy = state_of(request)
-    rows = await _rules(session)
-    profiles = await _profiles(session)
-    # The saved list, not this worker's last poll: an administrator who just saved
-    # must see it applied.
+    state = await scratch_state(session, request)
+    user = await session.get(User, payload.user_id) if payload.user_id else None
+    if payload.user_id is not None and user is None:
+        raise BadRequestError("No such user.")
+    return await service.dry_run(
+        session,
+        state,
+        payload,
+        user=user,
+        settings=settings,
+        control_http=control_http,
+        redactor=getattr(request.app.state, "redactor", None),
+    )
+
+
+async def scratch_state(session: SessionDep, request: Request) -> Any:
+    """The saved state, not this worker's last poll: someone who just saved must see it applied."""
+    from gateway.privacy.state import PrivacyState, read_all
+
     scratch = PrivacyState()
-    scratch.cache = privacy.cache
-    scratch.load(rows, profiles, list(privacy.local_embedding_models), [])
-
-    filename = attribution.clean_filename(payload.filename)
-    mime = payload.mime
-    is_scan = payload.is_scan
-    extractor: str | None = None
-    fallback_reason: str | None = None
-    if payload.file_base64:
-        try:
-            data = base64.b64decode(payload.file_base64, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise BadRequestError("The file is not valid base64.") from exc
-        try:
-            read = await extraction.extract_document(
-                control_http,
-                settings.extractor.endpoint,
-                data,
-                media_type=mime,
-                filename=filename,
-                timeout_seconds=settings.extractor.timeout_seconds,
-            )
-        except Exception as exc:  # the local extractor may simply not be there
-            raise BadRequestError(f"The file could not be read here: {exc}") from exc
-        extractor, fallback_reason = read.extractor or None, read.fallback_reason or None
-        is_scan = attribution.is_scan_from(read.extractor, read.kind.value, bool(read.page_images))
-    facts = Facts(
-        kind=payload.kind,
-        user_email=(payload.user or None),
-        groups=tuple(payload.groups),
-        filename=filename,
-        mime=mime,
-        filetype=rulelib.filetype_of(mime, filename),
-        is_scan=is_scan,
-        target_model=payload.target_model,
-        target_provider=payload.target_provider,
-        target_local=payload.target_local,
-        text=payload.text if scratch.uses_verdicts(payload.kind) else None,
-    )
-    ev = await scratch.evaluator.evaluate(scratch.rules_of(payload.kind), facts)
-    outcome, text = _outcome(ev)
-    verdicts = {k: v for k, v in ev.verdicts.items() if not k.startswith("_")}
-    shown_facts: dict[str, Any] = {
-        "groups": list(facts.groups),
-        "user": facts.user_email,
-        "filename": facts.filename,
-        "mime": facts.mime,
-        "filetype": facts.filetype,
-        "is_scan": facts.is_scan,
-        "target_model": facts.target_model,
-        "target_provider": facts.target_provider,
-        "target_local": facts.target_local,
-        "text_checked": facts.text is not None,
-    }
-
-    def fired_of(rule: rulelib.Rule) -> FiredRule:
-        return FiredRule(
-            id=rule.id, name=rule.name, action=ActionView.model_validate(dict(rule.action))
-        )
-
-    return RuleTestResponse(
-        kind=payload.kind,
-        outcome=outcome,
-        outcome_text=text,
-        fired=fired_of(ev.fired) if ev.fired else None,
-        observed=[fired_of(r) for r in ev.observed],
-        steps=[
-            RuleTestStep(
-                rule_id=s.rule.id,
-                name=s.rule.name,
-                position=s.rule.position,
-                result=s.result,
-                reasons=s.reasons,
-                degraded=s.degraded,
-            )
-            for s in ev.steps
-        ],
-        facts=shown_facts,
-        verdicts=verdicts,
-        fallbacks=ev.fallbacks,
-        degraded=ev.degraded,
-        needs=ev.pending,
-        extractor=extractor,
-        fallback_reason=fallback_reason,
-    )
+    scratch.cache = state_of(request).cache
+    scratch.load(*await read_all(session))
+    return scratch

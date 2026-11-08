@@ -49,7 +49,7 @@ from fastapi.responses import JSONResponse
 
 from gateway import extraction
 from gateway.accounting import TokenCounts
-from gateway.config import Settings
+from gateway.config import EffectivePolicy, Settings
 from gateway.deps import (
     ControlHttpDep,
     EstimatorDep,
@@ -60,11 +60,11 @@ from gateway.deps import (
     SessionDep,
     SettingsDep,
 )
-from gateway.errors import BadRequestError, ContentBlockedError
+from gateway.errors import BadRequestError, ContentBlockedError, GatewayError
 from gateway.models import ApiSurface, ModelDef
 from gateway.privacy import attribution
-from gateway.privacy.evaluate import Evaluation
-from gateway.privacy.rules import filetype_of
+from gateway.privacy.combine import Combined, Retarget, plan
+from gateway.privacy.rules import BUILTIN_READER, filetype_of
 from gateway.privacy.state import state_of
 from gateway.redaction.report import SOURCE_DOCUMENT, build_detail, build_summary, relabel
 from gateway.routers import _metered
@@ -101,6 +101,7 @@ async def _redact_pages(
     principal: Any,
     model: ModelDef,
     metered: Any,
+    policy: EffectivePolicy | None,
     routing: dict[str, Any] | None = None,
     request_id: str = "",
 ) -> JSONResponse | None:
@@ -128,7 +129,6 @@ async def _redact_pages(
         _record_routing_only(request, payload, metered, redactor, routing, request_id)
         return None
 
-    policy = _metered.redaction_policy(request, principal=principal, model=model)
     messages = [
         {"role": "user", "content": text if isinstance(text, str) else ""} for text in texts
     ]
@@ -270,47 +270,93 @@ def _declared_mime(body: OcrRequest) -> str | None:
     return None
 
 
-#: What each reader a rule can ask for reads with, by the extractor's own names.
-_READER_NAMES = {"docling": ("docling",), "ocr": ("rapidocr",)}
-
-
-def _read_by(extractor: str, reader: str) -> bool:
-    """Whether *extractor* is (a form of) the reader a rule asked for."""
-    if reader == "markitdown":
-        return not any(name in extractor for name in ("docling", "rapidocr"))
-    return any(name in extractor for name in _READER_NAMES[reader])
-
-
-async def _refuse_after_reading(
-    request: Request,
-    metered: Any,
+async def _reader_model(
+    session: Any,
+    reader: str,
+    builtin_names: tuple[str, ...],
     *,
-    redactor: Any,
-    routing: dict[str, Any],
-    rule_name: str,
-    request_id: str,
-) -> JSONResponse:
-    """The 403 for a rule that could only apply once the document was read here.
+    principal: Any,
+    template: _metered.ResolvedModel,
+) -> _metered.ResolvedModel | None:
+    """The model a "read with" rule names, if this caller may use it, else None.
 
-    The reading happened on this deployment's own extractor, so nothing left it
-    and nothing is charged. The row records the refusal beside the routing.
+    A rule cannot grant access: each candidate goes through the same resolution
+    a direct call does, so a caller without the grant gets None, and the route
+    then fails closed rather than quietly using the model they named. "The
+    built-in extractor" is the first deployment model on the extractor plugin
+    the caller may use.
     """
-    detail = attribution.with_routing(None, {**routing, "outcome": "refused"})
-    detail["blocked"] = True
-    metered.accounting.observe_redaction(engine=getattr(redactor, "name", None), detail=detail)
-    await metered.completed(upstream_status=200)
-    content: dict[str, Any] = {
-        "error": {
-            "message": f"Refused by the privacy rule '{rule_name}': this document may not be read.",
-            "type": "invalid_request_error",
-            "code": "routing_refused",
-        }
-    }
-    if _metered.wants_redaction_summary(request):
-        content[_metered.REDACTION_SUMMARY_FIELD] = build_summary(
-            request_id=request_id, detail=detail, blocked=True
+    names = list(builtin_names) if reader == BUILTIN_READER else [reader]
+    for name in names:
+        try:
+            found = await _metered.resolve_model(
+                session, name, principal=principal, surface=SURFACE
+            )
+        except GatewayError:
+            continue
+        provider = found.model.provider
+        is_builtin = provider is not None and provider.plugin == LOCAL_EXTRACTOR
+        if reader == BUILTIN_READER and not is_builtin:
+            continue
+        return _metered.ResolvedModel(
+            model=found.model,
+            requested_name=template.requested_name,
+            attempt=template.attempt,
+            last=template.last,
+            routed=template.routed,
         )
-    return JSONResponse(status_code=403, content=content)
+    return None
+
+
+def _routing(
+    request: Request,
+    facts: Any,
+    combined: Combined,
+    *,
+    rerouted: bool,
+    **handled: Any,
+) -> dict[str, Any]:
+    names = _metered.policy_names_of(request, combined)
+    outcome = "rerouted" if rerouted else "rule" if combined.winner or names else "default"
+    return attribution.build(facts, combined=combined, outcome=outcome, policies=names, **handled)
+
+
+async def _refuse(
+    request: Request,
+    session: Any,
+    *,
+    principal: Any,
+    model: ModelDef,
+    settings: Settings,
+    request_id: str,
+    facts: Any,
+    combined: Combined,
+    rule: Any,
+    why: str,
+) -> None:
+    """The 403 for a file that may not be read, naming the rule that said so.
+
+    Raised before anything is sent anywhere, so nothing is charged; the row
+    records the refusal beside the routing.
+    """
+    await _metered.refuse_by_rule(
+        request,
+        session,
+        principal=principal,
+        model=model,
+        surface=SURFACE,
+        settings=settings,
+        request_id=request_id,
+        routing=attribution.build(
+            facts,
+            combined=combined,
+            outcome="refused",
+            policies=_metered.policy_names_of(request, combined),
+        ),
+        rule_name=rule.rule.name,
+        pipeline_name=rule.pipeline.name,
+        why=why,
+    )
 
 
 @router.post("/ocr", response_model=None)
@@ -360,72 +406,146 @@ async def extract_document(
             code="document_url_not_supported",
         )
 
-    # -- privacy routing (ADR 0113) -----------------------------------------
-    # Judged on this request alone, from what it shows: the file's name and type,
-    # who is asking, where it would go. Whether it is a scan is only known once
-    # it is read, so a rule that depends on that has the reading done here first.
+    # -- privacy pipelines (ADR 0113) -----------------------------------------
+    # Every pipeline in scope runs and the results combine: the highest level on
+    # the ladder wins, the policies add up. Judged on this request alone, from
+    # what it shows: the file's name and type, who is asking, which reader the
+    # caller named. Whether the file is a scan is only known once it is read, so
+    # a rule that asks has the file read on the built-in extractor first (it
+    # never leaves the stack for that). After a reroute the pipelines that cover
+    # the new reader also run.
     privacy = state_of(request)
     privacy.ensure_loaded()
-    read_rules = privacy.rules_of("read")
     facts = attribution.base_facts("read", principal, model, requested_name=resolved.requested_name)
     mime = inline[1] if inline is not None else _declared_mime(body)
     name = attribution.clean_filename(_document_name(request, body))
     facts = replace(facts, filename=name, mime=mime, filetype=filetype_of(mime, name))
-    plan = await privacy.evaluator.evaluate(read_rules, facts)
-    engine: str | None = None
-    fired = plan.fired
-    if fired is not None and fired.action_type == "refuse":
-        await _metered.refuse_by_rule(
-            request,
-            session,
-            principal=principal,
-            model=model,
-            surface=SURFACE,
-            settings=settings,
-            request_id=request_id,
-            routing=attribution.build(facts, evaluation=plan, outcome="refused"),
-            rule_name=fired.name,
-            why="this file may not be read.",
+    named = resolved
+    holder: dict[str, Any] = {"resolved": resolved}
+
+    async def retarget(reader: str) -> Retarget:
+        current = holder["resolved"]
+        current_local = (
+            current.model.provider is not None and current.model.provider.plugin == LOCAL_EXTRACTOR
         )
-    if fired is not None and fired.action_type == "reader":
-        engine = str(fired.action.get("reader"))
-    needs_local_read = engine is not None or plan.pending is not None
-    if needs_local_read and not local:
-        # The rule wants the file read here, which overrides the model the caller
-        # named. Only possible for a document that travelled with the request and
-        # when a local reader exists that the caller may use; otherwise fail
-        # closed, naming the rule that could not be carried out.
-        rerouted = None
-        if inline is not None:
-            rerouted = await _metered.reroute_to_local(
-                session,
-                privacy.local_extractor_models,
-                principal=principal,
-                surface=SURFACE,
-                template=resolved,
+        if reader == BUILTIN_READER and current_local:
+            return Retarget(None, same=True)
+        if reader != BUILTIN_READER and reader in (current.model.name, current.requested_name):
+            return Retarget(None, same=True)
+        if reader == BUILTIN_READER and inline is None:
+            return Retarget(
+                None,
+                impossible=(
+                    "it must be read by the built-in extractor, which reads only documents "
+                    "sent with the request, and this document is a link."
+                ),
             )
-        if rerouted is None:
-            blocking = fired or plan.pending_rule
-            assert blocking is not None
-            await _metered.refuse_by_rule(
+        moved = await _reader_model(
+            session, reader, privacy.builtin_readers, principal=principal, template=named
+        )
+        if moved is None:
+            return Retarget(
+                None,
+                impossible=(
+                    "it must be read with "
+                    + (
+                        "the built-in extractor"
+                        if reader == BUILTIN_READER
+                        else f"the reader '{reader}'"
+                    )
+                    + ", and that reader is not available to you."
+                ),
+            )
+        holder["resolved"] = moved
+        return Retarget(
+            replace(
+                attribution.base_facts(
+                    "read", principal, moved.model, requested_name=moved.requested_name
+                ),
+                filename=name,
+                mime=mime,
+                filetype=facts.filetype,
+                is_scan=facts.is_scan,
+            )
+        )
+
+    pipelines = privacy.pipelines_of("read")
+    combined = await plan(privacy.evaluator, pipelines, facts, retarget=retarget)
+    probe: Any = None
+    if combined.pending:
+        # The answer depends on a fact found while reading: read once on the
+        # built-in extractor (the file stays here), then plan again.
+        holder["resolved"] = named
+        probe_model = (
+            await _reader_model(
+                session,
+                BUILTIN_READER,
+                privacy.builtin_readers,
+                principal=principal,
+                template=named,
+            )
+            if inline is not None
+            else None
+        )
+        if probe_model is None:
+            assert combined.pending_run is not None
+            await _refuse(
                 request,
                 session,
                 principal=principal,
                 model=model,
-                surface=SURFACE,
                 settings=settings,
                 request_id=request_id,
-                routing=attribution.build(facts, evaluation=plan, outcome="refused"),
-                rule_name=blocking.name,
+                facts=facts,
+                combined=combined,
+                rule=combined.pending_run,
                 why=(
-                    "it must be read on this server, and that is not possible for this "
-                    "request (the document is a link, or no local reader is available to you)."
+                    "this file has to be read by the built-in extractor to be judged, and that "
+                    "is not possible for this request (the document is a link, or no built-in "
+                    "reader is available to you)."
                 ),
             )
-        assert rerouted is not None
-        resolved = rerouted
-        model = resolved.model
-        local = True
+        assert probe_model is not None and inline is not None
+        try:
+            probe = await extraction.extract_document(
+                control_http,
+                _extractor_endpoint(probe_model.model, settings),
+                inline[0],
+                media_type=inline[1],
+                filename=name,
+                request_id=request_id,
+                timeout_seconds=settings.extractor.timeout_seconds,
+            )
+        except (extraction.ExtractionTimeout, UpstreamError) as exc:
+            raise BadRequestError(
+                f"The document could not be read here to be judged: {exc}",
+                code="document_unreadable",
+            ) from exc
+        facts = replace(facts, is_scan=_scan_of(probe))
+        holder["resolved"] = named
+        combined = await plan(privacy.evaluator, pipelines, facts, retarget=retarget)
+    if combined.impossible is not None or combined.refused:
+        run = combined.reader_run if combined.impossible is not None else combined.winner
+        assert run is not None
+        await _refuse(
+            request,
+            session,
+            principal=principal,
+            model=model,
+            settings=settings,
+            request_id=request_id,
+            facts=facts,
+            combined=combined,
+            rule=run,
+            why=combined.impossible or "this file may not be read.",
+        )
+    resolved = holder["resolved"]
+    model = resolved.model
+    local = model.provider is not None and model.provider.plugin == LOCAL_EXTRACTOR
+    engine = combined.engine if local else None
+    policy = _metered.effective_policy_of(request, combined)
+    rerouted = resolved is not named
+    if rerouted:
         facts = replace(
             attribution.base_facts(
                 "read", principal, model, requested_name=resolved.requested_name
@@ -433,6 +553,7 @@ async def extract_document(
             filename=name,
             mime=mime,
             filetype=facts.filetype,
+            is_scan=facts.is_scan,
         )
 
     upstream = None if local else await _metered.resolve_upstream(providers, resolved)
@@ -490,29 +611,14 @@ async def extract_document(
             )
 
         try:
-            outcome = await read_with(engine)
+            if probe is not None and engine is None and body.page_images is None:
+                # The scan question was already answered by reading once on the
+                # built-in extractor with its default engine: that is this read
+                # (unless the caller wants page images, which the probe did not ask for).
+                outcome = probe
+            else:
+                outcome = await read_with(engine)
             facts = replace(facts, is_scan=_scan_of(outcome))
-            final: Evaluation = plan
-            if read_rules and (plan.pending is not None or engine is None):
-                # The scan fact is known now: judge the rules again, in full. A
-                # different reader than the one used is a second reading.
-                final = await privacy.evaluator.evaluate(read_rules, facts)
-                wanted = final.fired.action.get("reader") if final.fired else None
-                if (
-                    final.fired is not None
-                    and final.fired.action_type == "reader"
-                    and wanted != engine
-                    and not _read_by(outcome.extractor, str(wanted))
-                ):
-                    engine = str(wanted)
-                    outcome = await read_with(engine)
-                    facts = replace(facts, is_scan=_scan_of(outcome))
-                    # What the second reader found (a scan, or not) is judged
-                    # too, so what is logged and enforced is not the first
-                    # read's. At most two reads, whatever it says.
-                    final = await privacy.evaluator.evaluate(read_rules, facts)
-            elif read_rules:
-                final = await privacy.evaluator.evaluate(read_rules, facts)
         except extraction.ExtractionTimeout as exc:
             raise await metered.upstream_unreachable(
                 exc,
@@ -527,23 +633,16 @@ async def extract_document(
             # the same event from the caller's side, and the same ledger row.
             raise await metered.upstream_unreachable(exc) from exc
 
-        routing = attribution.build(
+        routing = _routing(
+            request,
             facts,
-            evaluation=final,
-            outcome="rule" if final.fired is not None else "default",
+            combined,
+            rerouted=rerouted,
             extractor=outcome.extractor or None,
             fallback_reason=outcome.fallback_reason,
             reader=engine,
+            engine=engine,
         )
-        if final.fired is not None and final.fired.action_type == "refuse":
-            return await _refuse_after_reading(
-                request,
-                metered,
-                redactor=redactor,
-                routing=routing,
-                rule_name=final.fired.name,
-                request_id=request_id,
-            )
 
         try:
             # Built with the *upstream* name, and rewritten to ours on the way
@@ -583,6 +682,7 @@ async def extract_document(
                 principal=principal,
                 model=model,
                 metered=metered,
+                policy=policy,
                 routing=routing,
                 request_id=request_id,
             )
@@ -626,11 +726,8 @@ async def extract_document(
             principal=principal,
             model=model,
             metered=metered,
-            routing=attribution.build(
-                facts,
-                evaluation=plan,
-                outcome="default",
-            ),
+            policy=policy,
+            routing=_routing(request, facts, combined, rerouted=rerouted),
             request_id=request_id,
         )
     ) is not None:

@@ -102,6 +102,8 @@ async def create_rerank(
             settings=settings,
             surface=SURFACE,
             request_id=request_id,
+            kind="embed",
+            requested_name=resolved.requested_name,
         )
         redacted = [str(message.get("content") or "") for message in outcome.messages]
         query, documents = redacted[0], redacted[1:]

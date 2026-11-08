@@ -1052,10 +1052,6 @@ class ProviderResponse(ResponseModel):
     plugin: str | None = None
     kind: str = "provider"
     billing_mode: str = "own_prices"
-    #: An administrator's statement that this endpoint runs on this
-    #: deployment's own infrastructure (ADR 0113). What privacy routing rules
-    #: mean by "local".
-    is_local: bool = False
     #: Prepended to every model name this provider contributes, so two vendors
     #: whose tiers share a word do not collide. Empty means none.
     prefix: str = ""
@@ -1132,10 +1128,6 @@ class ProviderCreateRequest(BaseModel):
     # named plugin below: pass-through needs a plugin that asserts its figure is
     # the counterparty's actual charge.
     billing_mode: Literal["own_prices", "provider_reported"] = "own_prices"
-    # Runs on this deployment's own infrastructure (ADR 0113). An administrator's
-    # statement, never inferred from the URL; refused on a member's private
-    # provider, where it would let a user claim "local" for their own endpoint.
-    is_local: bool = False
     # The catalogue entry this provider is an instance of (backlog P4). When
     # given, what the request leaves out (plugin, endpoint, prefix) is taken from
     # the entry; what the request states always wins.
@@ -1169,7 +1161,6 @@ class ProviderUpdateRequest(BaseModel):
     plugin: PluginName = None
     kind: Literal["provider", "router", "search"] | None = None
     billing_mode: Literal["own_prices", "provider_reported"] | None = None
-    is_local: bool | None = None
     # Setting or changing this re-applies it to the models already here: a
     # prefix that only reached future imports would leave the catalogue
     # half-disambiguated. An empty string removes the prefix and un-names the
@@ -2820,92 +2811,11 @@ class RedactionStatusResponse(ResponseModel):
 RedactionScopeName = Literal["all", "provider", "model", "group", "user", "api_key"]
 
 
-class RedactionRuleResponse(ResponseModel):
-    """One scoped rule, with enough about its subject to render a row.
-
-    ``subject_label`` is resolved server-side because the console would otherwise
-    have to hold five listings in memory to turn a ``scope_id`` into a word — and
-    would get it wrong for a subject it has no permission to list.
-    """
-
-    id: uuid.UUID
-    name: str
-    scope: RedactionScopeName
-    #: Null for the catch-all scope, whose subject is every request.
-    scope_id: uuid.UUID | None
-    #: The model name, provider name, group name, user email or key prefix.
-    #: **Null means the subject no longer exists**, which is the one thing this
-    #: field must be able to say: a rule pointing at a deleted group is inert and
-    #: looks identical to a working one without it. ``scope_id`` is not a foreign
-    #: key — it points at one of five tables — so nothing else catches that.
-    subject_label: str | None = None
-    policy: RedactionPolicy
-    is_active: bool
-    reason: str = ""
-    created_by: uuid.UUID | None = None
-    #: Null once the account is erased; the rule outlives its author.
-    created_by_email: str | None = None
-    created_at: datetime
-    updated_at: datetime
-
-
-class RedactionRuleCreateRequest(BaseModel):
-    """Attach a policy to one subject.
-
-    No reason is required, unlike the engine switch and unlike a deployment
-    policy change. A scoped rule can only ever tighten — ``RedactionPolicy.combine``
-    takes the strictest answer for every type — so there is no direction here
-    that a later review would ask about, and demanding a sentence per rule is how
-    a reason column fills up with "x" (ADR 0033's argument, applied one level
-    down).
-    """
-
-    name: str = Field(default="", max_length=255)
-    scope: RedactionScopeName
-    #: Null for, and only for, the catch-all scope, whose subject is every
-    #: request. Checked in the route rather than here: "which scopes need a
-    #: subject" is the model's rule and the database's CHECK, and a third copy
-    #: in a schema is a third thing to keep in step.
-    scope_id: uuid.UUID | None = None
-    policy: RedactionPolicy
-    is_active: bool = True
-    reason: str = Field(default="", max_length=500)
-
-
-class RedactionRuleUpdateRequest(BaseModel):
-    """Everything about a rule may change, its subject included.
-
-    The subject was frozen once, on the argument that a rule *is* a decision
-    about one subject and re-pointing it would silently make two subjects'
-    histories read as one. That argument does not survive contact with the
-    ledger: ``usage_records`` stamps the scope and the rule id onto every
-    request at request time, so the past explains itself no matter what the row
-    says now — and freezing had a real cost the argument ignored. ``scope_id``
-    is not a foreign key, so a deleted group leaves its rule pointing at
-    nothing: inert, labelled "deleted subject", and unrepairable — delete it and
-    retype a whole policy, or live with a rule that matches nothing. Re-pointing
-    is therefore accepted, validated exactly as creation is, and a subject that
-    already has a rule stays a 409: one rule per subject is the database's
-    promise and this endpoint does not get to merge two policies quietly.
-    """
-
-    name: str | None = Field(default=None, max_length=255)
-    #: Together with ``scope_id`` or in place of it: a new scope without a
-    #: subject is legal only for the catch-all, which names none. Omitted
-    #: entirely, the subject is untouched — an absent field is not a null one.
-    scope: RedactionScopeName | None = None
-    scope_id: uuid.UUID | None = None
-    policy: RedactionPolicy | None = None
-    is_active: bool | None = None
-    reason: str | None = Field(default=None, max_length=500)
-
-
 class RedactionPreviewRequest(BaseModel):
-    """A sample to run the real redaction path over.
+    """A sample to run the real redaction path over, under one policy.
 
-    ``scope``/``scope_id`` preview *as* a subject, so an admin can see what a
-    group's rule actually does before saving it. Omitted, the deployment policy
-    applies.
+    ``policy`` is a draft as the form stands; ``policy_id`` a saved one. Omitted,
+    the environment's policy applies.
 
     **This body is never logged.** It will contain real personal data within a
     week of shipping — an admin pastes the prompt that came back wrong — and a
@@ -2914,23 +2824,8 @@ class RedactionPreviewRequest(BaseModel):
     """
 
     text: str = Field(min_length=1, max_length=20_000)
-    scope: RedactionScopeName | None = None
-    scope_id: uuid.UUID | None = None
-    #: A rule that is not saved yet: the console's rule page previews the form as
-    #: it stands, which no stored rule can answer. It is folded exactly as a
-    #: saved rule would be (``RedactionPolicy.combine``), onto the catch-all
-    #: unless ``scope`` is ``all``, in which case it is the catch-all. The other
-    #: scoped rules are not folded in: the draft's own effect is the question.
+    policy_id: uuid.UUID | None = None
     policy: RedactionPolicy | None = None
-
-    @model_validator(mode="after")
-    def _scope_and_subject_together(self) -> RedactionPreviewRequest:
-        # A draft catch-all has no subject, so for it ``scope="all"`` stands
-        # alone; every other combination still needs both or neither.
-        draft_catch_all = self.policy is not None and self.scope == "all" and self.scope_id is None
-        if not draft_catch_all and (self.scope is None) != (self.scope_id is None):
-            raise ValueError("give both scope and scope_id, or neither")
-        return self
 
 
 class RedactionPreviewSpan(ResponseModel):
@@ -3122,120 +3017,6 @@ class ModelImportResponse(ResponseModel):
 UserRedactionMode = Literal["anonymise_restore", "anonymise", "redact", "block"]
 
 
-class UserRedactionRuleRequest(BaseModel):
-    """A user's own rule: a pattern, or a stricter mode for one entity type.
-
-    **There is no ``off``, no threshold, no allow-list and no placeholder style
-    here, and extra fields are refused**, so a rule that would loosen what the
-    administrators set cannot be expressed, let alone saved. A rule that is
-    merely not stricter than theirs is accepted and inert; the response says so.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["pattern", "mode"]
-    #: A pattern's label, or the entity type a mode applies to (``PERSON``).
-    name: str = Field(min_length=1, max_length=64)
-    #: The regex, RE2 syntax. For ``pattern`` only.
-    regex: str | None = Field(default=None, max_length=512)
-    mode: UserRedactionMode = "redact"
-
-    @model_validator(mode="after")
-    def _shape(self) -> UserRedactionRuleRequest:
-        if self.kind == "pattern" and not self.regex:
-            raise ValueError("a pattern needs a regex")
-        if self.kind == "mode" and self.regex is not None:
-            raise ValueError("a mode for an entity type takes no regex")
-        return self
-
-
-class UserRedactionRuleResponse(ResponseModel):
-    id: uuid.UUID
-    kind: Literal["pattern", "mode"]
-    name: str
-    regex: str | None = None
-    mode: str
-    #: ``adds_protection`` when the rule makes something stricter than the
-    #: administrators' rules already do for this user, ``covered`` when it does
-    #: not (theirs is as strict or stricter, so theirs applies).
-    status: Literal["adds_protection", "covered"]
-    #: What the administrators' rules already do with this type, for a mode rule.
-    admin_mode: str | None = None
-    created_at: datetime
-    updated_at: datetime
-
-
-class RedactionEntityView(ResponseModel):
-    entity_type: str
-    mode: str
-
-
-class RedactionPatternView(ResponseModel):
-    name: str
-    mode: str
-
-
-class AdminRuleView(ResponseModel):
-    """One administrator rule, as a user may read it.
-
-    Types and modes, not the regexes of its patterns (a pattern can name a
-    project that is itself confidential) and not its exceptions' values, only
-    how many there are.
-    """
-
-    id: uuid.UUID
-    name: str
-    scope: RedactionScopeName
-    #: The group, model, provider or key it names; null for everyone.
-    subject_label: str | None = None
-    default_mode: str
-    entities: list[RedactionEntityView]
-    patterns: list[RedactionPatternView]
-    exceptions: int
-
-
-class MyRedactionInForce(ResponseModel):
-    engine: str
-    #: False when the engine is ``noop``: nothing is screened, whatever rules exist.
-    engine_active: bool
-    rules: list[AdminRuleView]
-    max_user_rules: int
-
-
-class RedactionTestRequest(BaseModel):
-    """Text to try the rules on. Never logged."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    text: str = Field(min_length=1, max_length=20_000)
-
-
-class RedactionTestRule(ResponseModel):
-    id: uuid.UUID | None = None
-    name: str
-    owner: Literal["admin", "user"]
-
-
-class RedactionTestSpan(ResponseModel):
-    """One thing that would be hidden: where, what kind, and which rule decided.
-
-    Offsets only. The text is the caller's own and is not echoed back.
-    """
-
-    entity_type: str
-    start: int
-    end: int
-    mode: str
-    rule: RedactionTestRule | None = None
-
-
-class RedactionTestResponse(ResponseModel):
-    engine_active: bool
-    spans: list[RedactionTestSpan]
-    blocked: bool = False
-    note: str | None = None
-
-
 class RedactionEventRule(ResponseModel):
     id: uuid.UUID | None = None
     name: str
@@ -3254,7 +3035,6 @@ class RoutingTarget(ResponseModel):
     alias: str | None = None
     model: str | None = None
     provider: str | None = None
-    local: bool | None = None
 
 
 class RoutingVerdicts(ResponseModel):
@@ -3272,7 +3052,6 @@ class RoutingFilenameMatch(ResponseModel):
 class RoutingObserved(ResponseModel):
     """What Pystino saw in the request (ADR 0113). Labels and names, never content."""
 
-    groups: list[str] = Field(default_factory=list)
     target: RoutingTarget = Field(default_factory=RoutingTarget)
     #: Reading only: type and whether it is a scan. `filename` is present only in
     #: the per-response summary, never in the log; the log says which `filename`
@@ -3288,6 +3067,23 @@ class RoutingObserved(ResponseModel):
 class RoutingRule(ResponseModel):
     id: uuid.UUID | None = None
     name: str
+    #: The pipeline the rule is in, and whose it is (``admin`` or ``user``).
+    pipeline_id: uuid.UUID | None = None
+    pipeline: str | None = None
+    owner: str | None = None
+
+
+class RoutingPipelineRun(ResponseModel):
+    """One pipeline that was in scope, and the rule that fired in it."""
+
+    id: uuid.UUID
+    name: str
+    owner: str
+    hop: int = 0
+    #: Null when no rule matched and the pipeline's last rule ("everything else") applied.
+    rule: RoutingRule | None = None
+    #: The level the pipeline asked for, or ``pending``.
+    level: str
 
 
 class RoutingHandled(ResponseModel):
@@ -3296,8 +3092,12 @@ class RoutingHandled(ResponseModel):
     extractor: str | None = None
     fallback_reason: str | None = None
     reader: str | None = None
+    engine: str | None = None
     profile: str = "default"
+    #: The rule that set the winning level (the administrator's on a tie).
     routing_rule: RoutingRule | None = None
+    #: Names of the policies applied by the pipelines in scope.
+    policies: list[str] = Field(default_factory=list)
 
 
 class RoutingInfo(ResponseModel):
@@ -3310,6 +3110,7 @@ class RoutingInfo(ResponseModel):
     outcome: str = "default"
     #: Why a request was refused, in words (never content).
     reason: str | None = None
+    pipelines: list[RoutingPipelineRun] = Field(default_factory=list)
     observed_rules: list[RoutingRule] = Field(default_factory=list)
     degraded: list[str] = Field(default_factory=list)
     fallbacks: list[str] = Field(default_factory=list)

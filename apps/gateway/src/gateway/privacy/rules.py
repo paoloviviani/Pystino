@@ -1,16 +1,17 @@
-"""The routing rule vocabulary, its validation, and the save-time checks (ADR 0113).
+"""The rule vocabulary of a pipeline, its validation, and the save-time checks (ADR 0113).
 
-A rule is a *sentence*: a kind of request, conditions that must all hold, one
-action. This module owns what each kind may say, so the admin API, the test
-endpoint and the evaluator agree, and so a later kind (chat, phase 2) widens a
-table here and nothing else.
+A pipeline's rule is a *sentence*: conditions that must all hold, one action.
+This module owns what each kind may say, so the admin API, the user API, the
+test endpoint and the evaluator agree.
 
-Validation is split on purpose. **Errors** (:func:`validate`) block saving: an
-unknown key, a value of the wrong shape, an action the kind does not have.
-**Warnings** (:func:`check`) never block: a rule that can never fire, one a
-renamed file defeats, a profile that is down. A warning is a statement about the
-list as it is now, so it can go stale when another rule changes; the console
-asks for them again each time.
+Validation is split on purpose. **Errors** (:func:`validate_rule`) block saving:
+an unknown key, a value of the wrong shape, an action the kind does not have, a
+user's rule that would loosen something. **Warnings** (:func:`check`) never
+block: a rule that can never fire, one a renamed file defeats, a profile that is
+down. A warning is a statement about the pipeline as it is now, so it can go
+stale when another rule changes; the console asks for them again each time.
+
+Scope (who, which target) is a pipeline's, not a rule's: see ``pipelines``.
 """
 
 from __future__ import annotations
@@ -25,37 +26,46 @@ KIND_READ = "read"
 KIND_EMBED = "embed"
 KIND_CHAT = "chat"
 KINDS = (KIND_READ, KIND_EMBED, KIND_CHAT)
-#: Kinds an administrator can create rules for today. Chat arrives in phase 2;
-#: the column and the evaluator already carry it.
-CREATABLE_KINDS = (KIND_READ, KIND_EMBED)
 
-#: Past this many rules a list stops being readable aloud. A warning, not a limit.
+#: Past this many rules a pipeline stops being readable aloud. A warning, not a limit.
 SOFT_CAP = 20
+#: A hard bound, because rules are held in memory on every worker.
+MAX_RULES = 100
 
 PATTERNS = "patterns"
 
 #: Which condition keys each kind offers.
 CONDITION_KEYS: dict[str, tuple[str, ...]] = {
-    KIND_READ: ("filetype", "filename", "who"),
-    KIND_EMBED: ("who", "target", "verdict", "lang"),
-    KIND_CHAT: ("who", "target", "verdict", "lang"),
+    KIND_READ: ("filetype", "scan", "filename"),
+    KIND_EMBED: ("health", "ids", "lang"),
+    KIND_CHAT: ("health", "ids", "lang"),
 }
+#: Keys that are a yes/no about the request: they carry no values, only ``negate``.
+BOOL_KEYS = ("scan", "health", "ids")
 #: Keys decided by reading the request's own text, which carry a ``decide``.
-CONTENT_KEYS = ("verdict", "lang")
+CONTENT_KEYS = ("health", "ids", "lang")
 
-FILETYPES = ("pdf", "word", "excel", "powerpoint", "image", "text", "scan")
-VERDICTS = ("health", "ids")
-READERS = ("markitdown", "ocr", "docling")
+FILETYPES = ("pdf", "word", "excel", "powerpoint", "image", "text")
+#: The engines of the built-in extractor. Quality, not privacy: not on the ladder.
+ENGINES = ("markitdown", "ocr", "docling")
+#: The stored name of "the built-in extractor", whichever model carries it.
+BUILTIN_READER = "builtin"
 
-#: Actions per kind: type -> allowed extra fields.
-ACTIONS: dict[str, dict[str, tuple[str, ...]]] = {
-    KIND_READ: {"reader": ("reader",), "refuse": ()},
-    KIND_EMBED: {"refuse": (), "local": ("model",)},
-    KIND_CHAT: {"refuse": ()},
+#: The ladder, lowest to highest, per kind. The highest level across the
+#: pipelines in scope wins.
+LADDER: dict[str, tuple[str, ...]] = {
+    KIND_READ: ("default", "read_with", "refuse"),
+    KIND_EMBED: ("pass", "refuse"),
+    KIND_CHAT: ("pass", "refuse"),
 }
-#: Actions that protect (refuse, keep on this server) as opposed to merely
-#: choosing a reader: the ones that fail closed when something they need is down.
-PROTECTIVE = {"refuse", "local"}
+LEVEL_REFUSE = "refuse"
+LEVEL_READ_WITH = "read_with"
+
+
+def base_level(kind: str) -> str:
+    """What happens anyway: the default reader, or pass."""
+    return LADDER[kind][0]
+
 
 _LANG = re.compile(r"^[a-z]{2,3}$")
 _MAX_VALUES = 50
@@ -78,7 +88,11 @@ class Condition:
 
 @dataclass(frozen=True, slots=True)
 class Rule:
-    """An immutable snapshot of one rule, as the request path holds it."""
+    """An immutable snapshot of one rule, as the request path holds it.
+
+    ``action`` is ``{level, reader?, engine?, redact_with?}``. The pipeline's
+    fixed last rule ("everything else") is a ``Rule`` with no conditions.
+    """
 
     id: uuid.UUID
     kind: str
@@ -90,12 +104,22 @@ class Rule:
     action: Mapping[str, Any]
 
     @property
-    def action_type(self) -> str:
-        return str(self.action.get("type") or "")
+    def level(self) -> str:
+        return str(self.action.get("level") or base_level(self.kind))
+
+    @property
+    def is_noop(self) -> bool:
+        """Adds nothing to what happens anyway."""
+        return (
+            self.level == base_level(self.kind)
+            and not self.action.get("redact_with")
+            and not self.action.get("engine")
+        )
 
     @property
     def protective(self) -> bool:
-        return self.action_type in PROTECTIVE
+        """Whether the action protects (so it must not be skipped for want of a fact)."""
+        return not self.is_noop
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,12 +149,8 @@ class CheckContext:
     """Facts about the deployment the checks consult. All optional."""
 
     profiles: Mapping[str, ProfileInfo] = field(default_factory=dict)
-    #: Names of readers this deployment cannot run now (for example docling).
-    unavailable_readers: Sequence[str] = ()
-    has_local_embedding: bool = True
-    #: Names of the models that are local right now (active, deployment-owned, on
-    #: an `is_local` provider). None: not known, so a named model is not checked.
-    local_models: Collection[str] | None = None
+    #: Names of engines this deployment cannot run now (for example docling).
+    unavailable_engines: Sequence[str] = ()
 
 
 def condition_from_json(raw: Mapping[str, Any]) -> Condition:
@@ -153,6 +173,39 @@ def condition_to_json(condition: Condition) -> dict[str, Any]:
     return out
 
 
+def rule_to_json(rule: Rule) -> dict[str, Any]:
+    return {
+        "id": str(rule.id),
+        "name": rule.name,
+        "enabled": rule.enabled,
+        "observe_only": rule.observe_only,
+        "conditions": [condition_to_json(c) for c in rule.conditions],
+        "action": dict(rule.action),
+    }
+
+
+def rule_from_json(kind: str, position: int, raw: Mapping[str, Any]) -> Rule:
+    """A stored rule. Raises ``ValueError`` for one that does not read."""
+    for condition in raw.get("conditions") or []:
+        if condition.get("key") not in CONDITION_KEYS[kind] or not isinstance(
+            condition.get("values", []), list
+        ):
+            raise ValueError("a condition has no known key or values")
+    action = dict(raw.get("action") or {})
+    if action.get("level") not in LADDER[kind]:
+        raise ValueError("the rule has no action")
+    return Rule(
+        id=uuid.UUID(str(raw["id"])),
+        kind=kind,
+        name=str(raw.get("name") or ""),
+        enabled=bool(raw.get("enabled", True)),
+        observe_only=bool(raw.get("observe_only", False)),
+        position=position,
+        conditions=tuple(condition_from_json(c) for c in raw.get("conditions") or []),
+        action=action,
+    )
+
+
 def _clean_values(key: str, raw: Iterable[Any]) -> list[str]:
     values: list[str] = []
     for item in raw:
@@ -172,7 +225,7 @@ def _clean_values(key: str, raw: Iterable[Any]) -> list[str]:
     return values
 
 
-def _validate_value(kind: str, key: str, value: str) -> str:
+def _validate_value(key: str, value: str) -> str:
     if key == "filetype":
         value = value.lower()
         if value not in FILETYPES:
@@ -180,26 +233,6 @@ def _validate_value(kind: str, key: str, value: str) -> str:
     elif key == "filename":
         if not value.strip("*?[]"):
             raise RuleError("A file name pattern needs at least one ordinary character.")
-    elif key == "who":
-        prefix, _, rest = value.partition(":")
-        if prefix not in ("user", "group") or not rest.strip():
-            raise RuleError(f"'{value}' must look like 'user:name@example.org' or 'group:Name'.")
-        value = f"{prefix}:{rest.strip()}"
-        if prefix == "user":
-            value = f"user:{rest.strip().lower()}"
-    elif key == "target":
-        if value.lower() in ("local", "cloud"):
-            return value.lower()
-        prefix, _, rest = value.partition(":")
-        if prefix not in ("provider", "model") or not rest.strip():
-            raise RuleError(
-                f"'{value}' must be 'local', 'cloud', 'provider:<name>' or 'model:<name>'."
-            )
-        value = f"{prefix}:{rest.strip()}"
-    elif key == "verdict":
-        value = value.lower()
-        if value not in VERDICTS:
-            raise RuleError(f"Verdict '{value}' is not one of: {', '.join(VERDICTS)}.")
     elif key == "lang":
         value = value.lower()
         if not _LANG.match(value):
@@ -285,30 +318,87 @@ def glob_matches(glob: str, name: str) -> bool:
     return t == len(tokens)
 
 
-def validate(
+def clean_action(
     kind: str,
-    name: str,
-    conditions: Sequence[Mapping[str, Any]],
     action: Mapping[str, Any],
     *,
-    profile_ids: Iterable[str] = (),
-) -> tuple[str, list[Condition], dict[str, Any]]:
-    """The clean name, conditions and action, or :class:`RuleError`."""
-    if kind not in KINDS:
-        raise RuleError("Choose what the rule is for: reading a file, or embedding.")
-    if kind not in CREATABLE_KINDS:
-        raise RuleError("Chat rules are not available yet; reading and embedding are.")
-    name = (name or "").strip()
-    if not name:
-        raise RuleError("Give the rule a name.")
-    if len(name) > _MAX_NAME:
-        raise RuleError(f"The name is longer than {_MAX_NAME} characters.")
+    policy_ids: Collection[str] | None = None,
+    readers: Collection[str] | None = None,
+    user: bool = False,
+    otherwise: bool = False,
+) -> dict[str, Any]:
+    """The clean action of a rule, or :class:`RuleError`.
 
+    ``policy_ids`` and ``readers`` are what may be named (``None``: not checked).
+    For a user (``user=True``) only actions that tighten are accepted: read with a
+    reader, refuse, redact with a policy, an engine. A user's rule that adds
+    nothing is refused, except the fixed last rule (``otherwise``), which may.
+    """
+    ladder = LADDER[kind]
+    level = str(action.get("level") or "")
+    if level not in ladder:
+        raise RuleError(f"Choose where it is handled: {', '.join(ladder)}.")
+    unknown = set(action) - {"level", "reader", "engine", "redact_with"}
+    if unknown:
+        raise RuleError(f"The action does not take: {', '.join(sorted(unknown))}.")
+    clean: dict[str, Any] = {"level": level}
+    reader = action.get("reader")
+    engine = action.get("engine")
+    if level == LEVEL_READ_WITH:
+        reader = str(reader or BUILTIN_READER)
+        if readers is not None and reader != BUILTIN_READER and reader not in readers:
+            raise RuleError(
+                f"'{reader}' is not a reader you can use. Pick the built-in extractor "
+                "or a configured OCR model."
+                if user
+                else f"'{reader}' is not a configured OCR model."
+            )
+        clean["reader"] = reader
+        if engine:
+            if reader != BUILTIN_READER:
+                raise RuleError("An engine can only be chosen for the built-in extractor.")
+            if str(engine) not in ENGINES:
+                raise RuleError(f"Choose an engine: {', '.join(ENGINES)}.")
+            clean["engine"] = str(engine)
+    elif reader or engine:
+        raise RuleError("A reader or engine goes with 'read with'.")
+    policy = action.get("redact_with")
+    if policy:
+        if level == LEVEL_REFUSE:
+            raise RuleError("A refused request is not handled further, so no policy applies.")
+        if policy_ids is not None and str(policy) not in policy_ids:
+            raise RuleError("The policy chosen for 'redact with' does not exist.")
+        clean["redact_with"] = str(policy)
+    if user and not otherwise and level == base_level(kind) and not clean.get("redact_with"):
+        raise RuleError(
+            "A rule of yours has to add protection: read with a reader, refuse, or redact with a "
+            "policy."
+        )
+    return clean
+
+
+def validate_rule(
+    kind: str,
+    raw: Mapping[str, Any],
+    *,
+    profile_ids: Iterable[str] = (),
+    policy_ids: Collection[str] | None = None,
+    readers: Collection[str] | None = None,
+    user: bool = False,
+) -> dict[str, Any]:
+    """A rule as clean JSON (with an id), or :class:`RuleError`."""
+    if kind not in KINDS:
+        raise RuleError("Choose what the pipeline is for: reading, embedding or chat.")
+    name = str(raw.get("name") or "").strip()
+    if not name:
+        raise RuleError("Give every rule a name.")
+    if len(name) > _MAX_NAME:
+        raise RuleError(f"A rule name is longer than {_MAX_NAME} characters.")
     known_profiles = set(profile_ids)
     seen: set[str] = set()
-    clean: list[Condition] = []
-    for raw in conditions:
-        key = str(raw.get("key") or "")
+    conditions: list[dict[str, Any]] = []
+    for item in raw.get("conditions") or []:
+        key = str(item.get("key") or "")
         if key not in CONDITION_KEYS[kind]:
             allowed = ", ".join(CONDITION_KEYS[kind])
             raise RuleError(
@@ -317,9 +407,13 @@ def validate(
         if key in seen:
             raise RuleError(f"'{key}' is used twice; put the values in one condition.")
         seen.add(key)
-        values = _clean_values(key, raw.get("values") or ())
-        checked = [_validate_value(kind, key, v) for v in values]
-        decide = raw.get("decide")
+        if key in BOOL_KEYS:
+            if item.get("values"):
+                raise RuleError(f"'{key}' is a yes or no: it takes no values.")
+            values: list[str] = []
+        else:
+            values = [_validate_value(key, v) for v in _clean_values(key, item.get("values") or ())]
+        decide = item.get("decide")
         if key in CONTENT_KEYS:
             decide = str(decide) if decide else PATTERNS
             if decide != PATTERNS and decide not in known_profiles:
@@ -328,30 +422,29 @@ def validate(
             raise RuleError(f"'{key}' is read from the request itself; it has no 'how to decide'.")
         else:
             decide = None
-        clean.append(
-            Condition(key=key, values=tuple(checked), negate=bool(raw.get("negate")), decide=decide)
+        conditions.append(
+            {
+                "key": key,
+                "values": values,
+                "negate": bool(item.get("negate")),
+                **({"decide": decide} if decide is not None else {}),
+            }
         )
-
-    kind_actions = ACTIONS[kind]
-    action_type = str(action.get("type") or "")
-    if action_type not in kind_actions:
-        raise RuleError(
-            f"A {kind} rule needs an action: {', '.join(kind_actions)}."
-            if action_type == ""
-            else f"'{action_type}' is not an action for this kind. Use: {', '.join(kind_actions)}."
-        )
-    unknown = set(action) - {"type", *kind_actions[action_type]}
-    if unknown:
-        raise RuleError(f"The action does not take: {', '.join(sorted(unknown))}.")
-    clean_action: dict[str, Any] = {"type": action_type}
-    if action_type == "reader":
-        reader = str(action.get("reader") or "")
-        if reader not in READERS:
-            raise RuleError(f"Choose a reader: {', '.join(READERS)}.")
-        clean_action["reader"] = reader
-    if action_type == "local" and action.get("model"):
-        clean_action["model"] = str(action["model"]).strip()[:200]
-    return name, clean, clean_action
+    rule_id = raw.get("id")
+    try:
+        ident = str(uuid.UUID(str(rule_id))) if rule_id else str(uuid.uuid4())
+    except ValueError:
+        ident = str(uuid.uuid4())
+    return {
+        "id": ident,
+        "name": name,
+        "enabled": bool(raw.get("enabled", True)),
+        "observe_only": bool(raw.get("observe_only", False)),
+        "conditions": conditions,
+        "action": clean_action(
+            kind, raw.get("action") or {}, policy_ids=policy_ids, readers=readers, user=user
+        ),
+    }
 
 
 # -- save-time checks --------------------------------------------------------------
@@ -368,6 +461,8 @@ def _implied_by(rule_c: Condition, earlier_c: Condition) -> bool:
         return False
     if rule_c.key in CONTENT_KEYS and rule_c.decide != earlier_c.decide:
         return False
+    if rule_c.key in BOOL_KEYS:
+        return True
     mine, theirs = set(rule_c.values), set(earlier_c.values)
     if rule_c.key == "filename":
         if "*" in theirs:
@@ -412,7 +507,7 @@ def partly_covers(earlier: Rule, rule: Rule) -> bool:
 
 
 def shadowing(rules: Sequence[Rule]) -> dict[uuid.UUID, tuple[str, Rule]]:
-    """For each rule of one kind in order: ``("never"|"partly", the earlier rule)``.
+    """For each rule in order: ``("never"|"partly", the earlier rule)``.
 
     Only enabled, non-observe-only rules shadow: an observe-only rule takes no
     action and lets the search continue, so it never hides a later one.
@@ -433,85 +528,60 @@ def shadowing(rules: Sequence[Rule]) -> dict[uuid.UUID, tuple[str, Rule]]:
 
 
 def check(
-    rules: Sequence[Rule], context: CheckContext | None = None
+    rules: Sequence[Rule], otherwise: Rule | None = None, context: CheckContext | None = None
 ) -> dict[uuid.UUID, list[Issue]]:
-    """Warnings for every rule, by id, for the list as given (all kinds)."""
+    """Warnings for each rule of ONE pipeline, by id (the last rule included)."""
     ctx = context or CheckContext()
-    issues: dict[uuid.UUID, list[Issue]] = {r.id: [] for r in rules}
-    by_kind: dict[str, list[Rule]] = {}
-    for rule in rules:
-        by_kind.setdefault(rule.kind, []).append(rule)
-    for kind_rules in by_kind.values():
-        ordered = sorted(kind_rules, key=lambda r: r.position)
-        for rule_id, (how, earlier) in shadowing(ordered).items():
-            issues[rule_id].append(
-                Issue(
-                    "never_fires" if how == "never" else "partly_shadowed",
-                    (
-                        f"'{earlier.name}' above already catches everything this rule does."
-                        if how == "never"
-                        else f"'{earlier.name}' above catches some of what this rule does."
-                    ),
-                    rule_id=earlier.id,
-                    rule_name=earlier.name,
-                )
+    ordered = sorted(rules, key=lambda r: r.position)
+    everything = [*ordered, *([otherwise] if otherwise is not None else [])]
+    issues: dict[uuid.UUID, list[Issue]] = {r.id: [] for r in everything}
+    for rule_id, (how, earlier) in shadowing(ordered).items():
+        issues[rule_id].append(
+            Issue(
+                "never_fires" if how == "never" else "partly_shadowed",
+                (
+                    f"'{earlier.name}' above already catches everything this rule does."
+                    if how == "never"
+                    else f"'{earlier.name}' above catches some of what this rule does."
+                ),
+                rule_id=earlier.id,
+                rule_name=earlier.name,
             )
-    for rule in rules:
+        )
+    for rule in everything:
         out = issues[rule.id]
-        if not rule.conditions:
+        is_otherwise = rule is otherwise
+        if not rule.conditions and not is_otherwise:
             out.append(
                 Issue("catches_all", "This rule has no conditions, so it matches every request.")
             )
         keys = {c.key for c in rule.conditions}
+        live = rule.enabled and not rule.observe_only
         if (
             rule.kind == KIND_READ
-            and rule.enabled
-            and not rule.observe_only
+            and live
             and rule.protective
+            and rule.level in (LEVEL_REFUSE, LEVEL_READ_WITH)
+            and not is_otherwise
+            and keys
             and keys <= {"filename", "filetype"}
         ):
             out.append(
                 Issue(
                     "convenience_only",
                     "A renamed file will not be caught. To protect content wherever it comes "
-                    "from, add embedding rules that use 'contains health data'.",
+                    "from, add embed and chat pipelines that use 'contains health data'.",
                 )
             )
-        if rule.action_type == "reader" and rule.action.get("reader") in ctx.unavailable_readers:
+        if rule.action.get("engine") in ctx.unavailable_engines:
             out.append(
                 Issue(
                     "unavailable_now",
-                    f"The {rule.action.get('reader')} reader is not installed here; "
-                    "files fall back to the default reader.",
+                    f"The {rule.action.get('engine')} engine is not installed here; "
+                    "files are read with the default engine.",
                 )
             )
-        if rule.action_type == "local" and not ctx.has_local_embedding:
-            out.append(
-                Issue(
-                    "unavailable_now",
-                    "No local embedding provider is set up, so this rule refuses instead.",
-                )
-            )
-        named = rule.action.get("model")
-        if (
-            rule.action_type == "local"
-            and named
-            and ctx.local_models is not None
-            and named not in ctx.local_models
-        ):
-            out.append(
-                Issue(
-                    "unavailable_now",
-                    f"'{named}' is not a local embedding model now (switched off, or its "
-                    "provider is no longer marked local), so requests are refused.",
-                )
-            )
-        if (
-            rule.kind == KIND_READ
-            and rule.enabled
-            and not rule.observe_only
-            and any(c.key in ("filetype", "filename") for c in rule.conditions)
-        ):
+        if rule.kind == KIND_READ and live and keys & {"filetype", "filename"}:
             out.append(
                 Issue(
                     "unnamed_matches",
@@ -544,16 +614,15 @@ def check(
                         "log says so.",
                     )
                 )
-    for kind_rules in by_kind.values():
-        if len(kind_rules) > SOFT_CAP:
-            for rule in kind_rules:
-                issues[rule.id].append(
-                    Issue(
-                        "soft_cap",
-                        f"More than {SOFT_CAP} rules for this kind is hard to read aloud; "
-                        "consider merging some.",
-                    )
+    if len(ordered) > SOFT_CAP:
+        for rule in ordered:
+            issues[rule.id].append(
+                Issue(
+                    "soft_cap",
+                    f"More than {SOFT_CAP} rules in one pipeline is hard to read aloud; "
+                    "consider merging some.",
                 )
+            )
     return issues
 
 

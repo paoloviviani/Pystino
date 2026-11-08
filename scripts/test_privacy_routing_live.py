@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Privacy routing against the running stack (ADR 0113).
+"""Privacy pipelines against the running stack (ADR 0113).
 
 What only this can prove, that the unit suite on SQLite cannot:
 
-* the rules, the profiles and the `routing` log entry round-trip through
+* pipelines, policies, profiles and the `routing` log entry round-trip through
   **PostgreSQL** (a JSON column read with `->`, the migration's seeded profile);
-* an embedding rule reroutes to a provider marked local and the *fake upstream
-  receives the local model's name*, or, for a refusal, receives nothing at all;
+* an embedding pipeline refuses health data and the *fake upstream receives
+  nothing at all*; a pipeline that redacts with a policy hides what it names;
 * `/v1/ocr` reads a real PDF on the real extractor service: a file-name rule
-  refuses before anything is read, a scan rule reads first and then refuses (and
-  lets a PDF with a text layer through), and a reader rule's `X-Extractor-Engine`
-  reaches the service, whose own answer (and fallback reason) lands in the log;
-* every refusal is a 403 naming the rule and never the content.
+  refuses before anything is read, a scan rule reads first on the built-in
+  extractor and then refuses (and lets a PDF with a text layer through), and a
+  "read with" rule's engine reaches the service, whose own answer (and fallback
+  reason) lands in the log;
+* every refusal is a 403 naming the rule and its pipeline and never the content.
 
 Usage: see test_providers_live.py (same stack, same environment). Needs the
 `redaction` profile (the extractor service) and the bundled Authelia.
@@ -22,12 +23,13 @@ from __future__ import annotations
 import base64
 import json
 import sys
+import urllib.request
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from live_session import GATEWAY, admin_credentials, check, login, request, skip, user_credentials
+from live_session import GATEWAY, admin_credentials, check, login, skip, user_credentials
 from test_providers_live import api, sql
 from test_surfaces_live import call, key_for
 
@@ -36,7 +38,7 @@ UPSTREAM = "http://localhost:8081"
 SUMMARY = {"x-pystino-redaction-summary": "1"}
 HEALTH = "Il paziente presenta una diagnosi di diabete di tipo 2 e ipertensione."
 PLAIN = "La riunione di lunedi parlera del budget trimestrale e delle ferie."
-CLOUD, LOCAL = "route-embed-cloud", "route-embed-local"
+EMBED = "route-embed"
 
 
 def expect(label: str, condition: bool, detail: str = "") -> None:
@@ -107,10 +109,28 @@ def ensure_embedding(dave: Any, name: str, provider_id: str, group_id: str | Non
     return str(found["id"])
 
 
-def rule(dave: Any, body: dict[str, Any]) -> dict[str, Any]:
-    status, created = api(dave, "/api/admin/privacy/rules", json_body=body, method="POST")
-    expect(f"saved rule {body['name']!r}", status == 201, f"HTTP {status}: {created}")
+def pipeline(
+    dave: Any, kind: str, name: str, rules: list[dict[str, Any]], **extra: Any
+) -> dict[str, Any]:
+    body = {"kind": kind, "name": name, "rules": rules, **extra}
+    status, created = api(dave, "/api/admin/privacy/pipelines", json_body=body, method="POST")
+    expect(f"saved pipeline {name!r}", status == 201, f"HTTP {status}: {created}")
     return created if isinstance(created, dict) else {}
+
+
+def rule(name: str, conditions: list[dict[str, Any]], **action: Any) -> dict[str, Any]:
+    return {
+        "name": name,
+        "conditions": conditions,
+        "action": action or {"level": "refuse"},
+    }
+
+
+def wipe(dave: Any) -> None:
+    for existing in api(dave, "/api/admin/privacy/pipelines?limit=200")[1]["items"]:
+        api(dave, f"/api/admin/privacy/pipelines/{existing['id']}", method="DELETE")
+    for existing in api(dave, "/api/admin/privacy/policies?limit=200")[1]["items"]:
+        api(dave, f"/api/admin/privacy/policies/{existing['id']}", method="DELETE")
 
 
 def main() -> int:
@@ -143,134 +163,33 @@ def main() -> int:
             for p in profiles["items"]
         ),
     )
+    wipe(dave)
 
     print()
-    print("=== a local provider, two embedding models ===")
+    print("=== embedding: a pipeline refuses health data and nothing reaches the upstream ===")
     providers = api(dave, "/api/admin/providers?limit=200")[1]["items"]
-    cloud_provider = next(
-        (p for p in providers if p["is_active"] and p["plugin"] != "extractor"), None
-    )
-    if cloud_provider is None:
-        expect("an active provider exists", False)
+    provider = next((p for p in providers if p.get("plugin") != "extractor"), None)
+    if provider is None:
+        print("FAILED: no provider is catalogued")
         return 1
-    local_provider = next((p for p in providers if p["name"] == "route-local"), None)
-    if local_provider is None:
-        status, local_provider = api(
-            dave,
-            "/api/admin/providers",
-            json_body={
-                "name": "route-local",
-                "base_url": cloud_provider["base_url"],
-                "is_local": True,
-            },
-            method="POST",
-        )
-        expect(
-            "created a provider marked local",
-            status == 201 and local_provider["is_local"],
-            str(local_provider)[:120],
-        )
-    _, _, me_raw = request(alice, f"{GATEWAY}/api/me")
-    group = ((json.loads(me_raw)).get("default_billing_group") or {}).get("id")
-    if ensure_embedding(dave, CLOUD, cloud_provider["id"], group) is None:
+    group = (api(dave, "/api/me")[1] or {}).get("default_billing_group", {}) or {}
+    if ensure_embedding(dave, EMBED, provider["id"], group.get("id")) is None:
         return 1
-    if ensure_embedding(dave, LOCAL, local_provider["id"], group) is None:
-        return 1
-
-    # Start from no rules, so earlier runs and other checks cannot interfere.
-    for existing in api(dave, "/api/admin/privacy/rules")[1]["items"]:
-        api(dave, f"/api/admin/privacy/rules/{existing['id']}", method="DELETE")
-
-    print()
-    print("=== embedding: health text is rerouted to the local model, plain text is not ===")
-    health_rule = rule(
+    pipeline(
         dave,
-        {
-            "kind": "embed",
-            "name": "Health stays local",
-            "conditions": [
-                {"key": "verdict", "values": ["health"], "decide": "patterns"},
-                {"key": "target", "values": ["cloud"]},
-            ],
-            "action": {"type": "local", "model": LOCAL},
-        },
-    )
-    status, body = call(secret, "/v1/embeddings", {"model": CLOUD, "input": [HEALTH]}, sse=False)
-    expect("a health text is embedded", status == 200, f"HTTP {status}: {str(body)[:200]}")
-    expect(
-        "by the local model: the upstream received its name",
-        last_upstream().get("model") == f"upstream/{LOCAL}",
-        str(last_upstream().get("model")),
-    )
-    expect(
-        "and the caller still sees the name it sent",
-        isinstance(body, dict) and body.get("model") == CLOUD,
-    )
-    status, body = call(secret, "/v1/embeddings", {"model": CLOUD, "input": [PLAIN]})
-    expect(
-        "plain text goes to the model the caller named",
-        status == 200 and last_upstream().get("model") == f"upstream/{CLOUD}",
-        str(last_upstream().get("model")),
-    )
-
-    print()
-    print("=== embedding: the summary and the log carry the routing block ===")
-    import urllib.request
-
-    request_obj = urllib.request.Request(
-        f"{GATEWAY}/v1/embeddings",
-        data=json.dumps({"model": CLOUD, "input": [HEALTH]}).encode(),
-        headers={
-            "content-type": "application/json",
-            "authorization": f"Bearer {secret}",
-            **SUMMARY,
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(request_obj, timeout=60) as response:
-        summary = json.loads(response.read()).get("pystino_redaction", {})
-    routing = summary.get("routing", {})
-    expect(
-        "the summary names the kind and the outcome",
-        routing.get("kind") == "embed" and routing.get("outcome") == "rerouted",
-        str(routing)[:200],
-    )
-    expect(
-        "and the rule",
-        (routing.get("handled", {}).get("routing_rule") or {}).get("name") == "Health stays local",
-    )
-    row = sql(
-        "select redaction_detail->'routing'->>'kind', redaction_detail->'routing'->>'outcome', "
-        "redaction_detail->'routing'->'handled'->'routing_rule'->>'name' "
-        "from usage_records where api_surface = 'embeddings' and redaction_detail is not null "
-        "order by created_at desc limit 1;"
-    )
-    expect(
-        "PostgreSQL stores it and can read it back", row == "embed|rerouted|Health stays local", row
-    )
-
-    print()
-    print("=== embedding: refuse is a 403 naming the rule, and nothing reaches the upstream ===")
-    api(dave, f"/api/admin/privacy/rules/{health_rule['id']}", method="DELETE")
-    rule(
-        dave,
-        {
-            "kind": "embed",
-            "name": "No health text in the cloud",
-            "conditions": [
-                {"key": "verdict", "values": ["health"]},
-                {"key": "target", "values": ["cloud"]},
-            ],
-            "action": {"type": "refuse"},
-        },
+        "embed",
+        "Remote embeddings",
+        [rule("No health text", [{"key": "health"}])],
     )
     before = last_upstream()
     status, body = call(
-        secret, "/v1/embeddings", {"model": CLOUD, "input": [HEALTH + " ZZ-MARKER"]}
+        secret, "/v1/embeddings", {"model": EMBED, "input": [HEALTH + " ZZ-MARKER"]}
     )
     text = json.dumps(body)
     expect("it is a 403", status == 403, f"HTTP {status}")
-    expect("naming the rule", "No health text in the cloud" in text)
+    expect(
+        "naming the rule and the pipeline", "No health text" in text and "Remote embeddings" in text
+    )
     expect("and never the content", "diabete" not in text and "ZZ-MARKER" not in text)
     expect("the upstream was not called", last_upstream() == before)
     blocked = sql(
@@ -278,19 +197,23 @@ def main() -> int:
         "order by created_at desc limit 1;"
     )
     expect("the ledger has a blocked row", blocked == "blocked|routing_refused", blocked)
+    status, body = call(secret, "/v1/embeddings", {"model": EMBED, "input": [PLAIN]})
+    expect("plain text is embedded", status == 200, f"HTTP {status}: {str(body)[:120]}")
+    row = sql(
+        "select redaction_detail->'routing'->>'kind', redaction_detail->'routing'->>'outcome' "
+        "from usage_records where api_surface = 'embeddings' and status = 'completed' "
+        "and redaction_detail is not null order by created_at desc limit 1;"
+    )
+    expect("PostgreSQL stores the routing block and can read it back", row == "embed|default", row)
 
     print()
     print("=== reading: a file-name rule refuses before anything is read ===")
-    for existing in api(dave, "/api/admin/privacy/rules")[1]["items"]:
-        api(dave, f"/api/admin/privacy/rules/{existing['id']}", method="DELETE")
-    rule(
+    wipe(dave)
+    pipeline(
         dave,
-        {
-            "kind": "read",
-            "name": "Medical files stay",
-            "conditions": [{"key": "filename", "values": ["referto*"]}],
-            "action": {"type": "refuse"},
-        },
+        "read",
+        "Reports",
+        [rule("Medical files stay", [{"key": "filename", "values": ["referto*"]}])],
     )
     models = api(dave, "/api/admin/models?limit=200")[1]["items"]
     reader = next(
@@ -298,40 +221,34 @@ def main() -> int:
     )
     if reader is None:
         skip(
-            "reading rules", "no local extractor model is catalogued (start the redaction profile)"
+            "reading pipelines",
+            "no built-in extractor model is catalogued (start the redaction profile)",
         )
     else:
         text_pdf = pdf("Referto di prova")
-        status, body = call(
-            secret,
-            "/v1/ocr",
-            {
-                "model": reader["name"],
-                "document": {
-                    "type": "document_url",
-                    "document_url": text_pdf,
-                    "document_name": "referto-rossi.pdf",
+
+        def read(name: str, document: str) -> tuple[int, Any]:
+            return call(
+                secret,
+                "/v1/ocr",
+                {
+                    "model": reader["name"],
+                    "document": {
+                        "type": "document_url",
+                        "document_url": document,
+                        "document_name": name,
+                    },
                 },
-            },
-        )
+            )
+
+        status, body = read("referto-rossi.pdf", text_pdf)
         expect(
             "a file named referto* is refused",
             status == 403 and "Medical files stay" in json.dumps(body),
             f"HTTP {status}",
         )
         expect("without echoing its name", "referto-rossi" not in json.dumps(body))
-        status, body = call(
-            secret,
-            "/v1/ocr",
-            {
-                "model": reader["name"],
-                "document": {
-                    "type": "document_url",
-                    "document_url": text_pdf,
-                    "document_name": "fattura.pdf",
-                },
-            },
-        )
+        status, body = read("fattura.pdf", text_pdf)
         expect(
             "another file is read",
             status == 200 and "Referto di prova" in json.dumps(body),
@@ -340,52 +257,33 @@ def main() -> int:
 
         print()
         print("=== reading: a scan rule reads first, then refuses a scan and passes a text PDF ===")
-        for existing in api(dave, "/api/admin/privacy/rules")[1]["items"]:
-            api(dave, f"/api/admin/privacy/rules/{existing['id']}", method="DELETE")
-        rule(
-            dave,
-            {
-                "kind": "read",
-                "name": "No scans",
-                "conditions": [{"key": "filetype", "values": ["scan"]}],
-                "action": {"type": "refuse"},
-            },
-        )
-        status, body = call(
-            secret,
-            "/v1/ocr",
-            {
-                "model": reader["name"],
-                "document": {"type": "document_url", "document_url": pdf(None)},
-            },
-        )
+        wipe(dave)
+        pipeline(dave, "read", "Scans", [rule("No scans", [{"key": "scan"}])])
+        status, body = read("a.pdf", pdf(None))
         expect(
             "a PDF with no text layer is refused by the rule",
             status == 403 and "No scans" in json.dumps(body),
             f"HTTP {status}: {str(body)[:200]}",
         )
-        status, body = call(
-            secret,
-            "/v1/ocr",
-            {
-                "model": reader["name"],
-                "document": {"type": "document_url", "document_url": pdf("Testo normale")},
-            },
-        )
+        status, body = read("b.pdf", pdf("Testo normale"))
         expect("a PDF with text goes through", status == 200, f"HTTP {status}: {str(body)[:200]}")
 
         print()
-        print("=== reading: a reader rule's engine reaches the extractor, and it is logged ===")
-        for existing in api(dave, "/api/admin/privacy/rules")[1]["items"]:
-            api(dave, f"/api/admin/privacy/rules/{existing['id']}", method="DELETE")
-        rule(
+        print("=== reading: a read-with rule's engine reaches the extractor, and it is logged ===")
+        wipe(dave)
+        pipeline(
             dave,
-            {
-                "kind": "read",
-                "name": "PDFs with Docling",
-                "conditions": [{"key": "filetype", "values": ["pdf"]}],
-                "action": {"type": "reader", "reader": "docling"},
-            },
+            "read",
+            "PDFs with Docling",
+            [
+                rule(
+                    "PDFs with Docling",
+                    [{"key": "filetype", "values": ["pdf"]}],
+                    level="read_with",
+                    reader="builtin",
+                    engine="docling",
+                )
+            ],
         )
         request_obj = urllib.request.Request(
             f"{GATEWAY}/v1/ocr",
@@ -408,11 +306,12 @@ def main() -> int:
         handled = routing.get("handled", {})
         expect("the request was read", bool(payload.get("pages")), str(payload)[:160])
         expect(
-            "the rule is recorded",
-            (handled.get("routing_rule") or {}).get("name") == "PDFs with Docling",
+            "the rule and its pipeline are recorded",
+            (handled.get("routing_rule") or {}).get("name") == "PDFs with Docling"
+            and (handled.get("routing_rule") or {}).get("pipeline") == "PDFs with Docling",
             str(handled),
         )
-        expect("with the reader it asked for", handled.get("reader") == "docling")
+        expect("with the engine it asked for", handled.get("engine") == "docling")
         # The pattern image has no Docling: the extractor falls back and says why.
         expect(
             "and the extractor's own answer (the fallback reason) is in the log",
@@ -429,12 +328,11 @@ def main() -> int:
 
     print()
     print("=== cleanup ===")
-    for existing in api(dave, "/api/admin/privacy/rules")[1]["items"]:
-        api(dave, f"/api/admin/privacy/rules/{existing['id']}", method="DELETE")
-    remaining = api(dave, "/api/admin/privacy/rules")[1]["total"]
-    expect("no rules are left behind", remaining == 0, str(remaining))
-    audit = api(dave, "/api/admin/audit?target_type=privacy_rule&limit=200")[1]
-    expect("every change was audited", audit["total"] >= 8, str(audit["total"]))
+    wipe(dave)
+    remaining = api(dave, "/api/admin/privacy/pipelines")[1]["total"]
+    expect("no pipelines are left behind", remaining == 0, str(remaining))
+    audit = api(dave, "/api/admin/audit?target_type=privacy_pipeline&limit=200")[1]
+    expect("every change was audited", audit["total"] >= 6, str(audit["total"]))
 
     print()
     if FAILURES:
@@ -442,7 +340,7 @@ def main() -> int:
         for failure in FAILURES:
             print(f"  - {failure}")
         return 1
-    print("all privacy routing checks passed")
+    print("all privacy pipeline checks passed")
     return 0
 
 
