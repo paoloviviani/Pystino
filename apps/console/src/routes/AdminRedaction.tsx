@@ -4,19 +4,18 @@ import {
   Card,
   Dialog,
   Notice,
-  Select,
   Spinner,
+  Tooltip,
   Stat,
   SummaryStrip,
   Table,
   RowActions,
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
-import { useId, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import {
   useDeleteRedactionRule,
-  usePreviewRedaction,
   useRedactionStatus,
   useRedactionRules,
   useSetRedactionEngine,
@@ -26,15 +25,16 @@ import { entityLabel, modeLabel, summarisePolicy } from "../lib/entities";
 import { useOptionalToast } from "../lib/toast";
 import type {
   RedactionEngineOption,
+  RedactionPreview,
   RedactionPreviewSpan,
   RedactionScope,
   RedactionStatus,
   RedactionRule,
 } from "../lib/types";
-import { PageHeader } from "../components/PageHeader";
+import { PrivacyHeader } from "../components/PrivacyHeader";
 import { formatNumber, formatDateTime } from "../lib/format";
 import { m } from "../paraglide/messages.js";
-import { SCOPES, SubjectPicker, scopeNoun } from "../components/SubjectPicker";
+import { scopeNoun } from "../components/SubjectPicker";
 import {
   CHIPS,
   CODE,
@@ -50,14 +50,12 @@ import {
   FIELD,
   FIELD_LABEL,
   FORM,
-  FORM_ROW,
   MUTED,
   NOWRAP,
   PAGE,
   ROW_ACTIONS,
   SAMPLE,
   STATS,
-  TEXTAREA,
 } from "../lib/layout";
 
 
@@ -84,15 +82,25 @@ import {
  * is the engine's own, and re-deriving it here would mean the browser knowing
  * which settings each engine needs.
  */
-export function AdminRedaction() {
+/** Step 3 of the Privacy area: what gets hidden. The rules list, and nothing about engines. */
+export function AdminHidden() {
   const status = useRedactionStatus();
 
   return (
     <div className={PAGE}>
-      <PageHeader
-        title={m["admin_redaction.title"]()}
-        subtitle={m["admin_redaction.subtitle"]()}
-      />
+      <PrivacyHeader tab="hidden" />
+      <p className={`m-0 flex flex-wrap items-center gap-2 text-small ${MUTED}`}>
+        {m["privacy.hidden.where"]()}
+        <Tooltip label={m["privacy.hidden.scopes_tip"]()}>
+          <button
+            type="button"
+            aria-label={m["privacy.hidden.scopes_label"]()}
+            className="inline-flex size-5 cursor-help items-center justify-center rounded-full border border-line-strong bg-transparent p-0 text-dense text-ink-muted"
+          >
+            ?
+          </button>
+        </Tooltip>
+      </p>
 
       {status.isPending && <Spinner label={m["admin_redaction.loading"]()} />}
       {status.error ? (
@@ -104,14 +112,21 @@ export function AdminRedaction() {
         </Notice>
       ) : null}
 
-      {status.data && <Detail status={status.data} />}
+      {status.data && (
+        <>
+          <Warnings status={status.data} />
+          <RulesList
+            service={status.data.service}
+            patterns={status.data.presidio_pattern_matching ?? null}
+            ner={status.data.presidio_ner ?? null}
+          />
+        </>
+      )}
     </div>
   );
 }
 
-function Detail({ status }: { status: RedactionStatus }) {
-  const { service, activity } = status;
-
+function Warnings({ status }: { status: RedactionStatus }) {
   return (
     <>
       {/* i18n: server text — the API's own wording, rendered verbatim.
@@ -122,7 +137,43 @@ function Detail({ status }: { status: RedactionStatus }) {
           {note}
         </Notice>
       ))}
+    </>
+  );
+}
 
+/**
+ * A titled block inside a profile card: the engine choice and the detection
+ * families used to be cards of their own; they are settings of the profile now.
+ */
+function Section({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-3 border-t border-line-quiet pt-3">
+      <div>
+        <h3 className="m-0 text-body font-semibold">{title}</h3>
+        <p className={`m-0 text-small ${MUTED}`}>{description}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * The engine choice and the Presidio detection families, for the profile card
+ * that is the Presidio engine. The same calls and the same append-only row as
+ * before; only where they are shown changed.
+ */
+export function EngineSettings({ status }: { status: RedactionStatus }) {
+  return (
+    <>
+      <Warnings status={status} />
       <EngineList status={status} />
       {status.installed_engines.includes("http") && (
         <DetectorFamilies
@@ -131,13 +182,29 @@ function Detail({ status }: { status: RedactionStatus }) {
           status={status}
         />
       )}
-      <RulesList
-        service={service}
-        patterns={status.presidio_pattern_matching ?? null}
-        ner={status.presidio_ner ?? null}
-      />
-      <PreviewBox />
+    </>
+  );
+}
 
+/** The activity and configuration read-out, behind a disclosure on the Detectors tab. */
+export function EngineDetails({ status }: { status: RedactionStatus }) {
+  return (
+    <details>
+      <summary className="cursor-pointer text-small font-medium">
+        {m["privacy.detectors.engine_details"]()}
+      </summary>
+      <div className="mt-3 flex flex-col gap-4">
+        <Detail status={status} />
+      </div>
+    </details>
+  );
+}
+
+function Detail({ status }: { status: RedactionStatus }) {
+  const { service, activity } = status;
+
+  return (
+    <>
       <Card>
         <div className={STATS}>
           <Stat
@@ -373,7 +440,7 @@ function RulesList({
       render: (rule) => (
         <>
           <div>
-            <Link to={`/admin/redaction/rules/${rule.id}`}>
+            <Link to={`/admin/privacy/hidden/rules/${rule.id}`}>
               {rule.scope === "all"
                 ? m["admin_redaction.rules.every_request"]()
                 : // i18n: server text — the subject's own label.
@@ -412,7 +479,7 @@ function RulesList({
       header: "",
       render: (rule) => (
         <div className={ROW_ACTIONS}>
-          <Button variant="secondary" onClick={() => navigate(`/admin/redaction/rules/${rule.id}`)}>
+          <Button variant="secondary" onClick={() => navigate(`/admin/privacy/hidden/rules/${rule.id}`)}>
             {m["admin_redaction.action.edit"]()}
           </Button>
           <RowActions
@@ -421,7 +488,7 @@ function RulesList({
               {
                 key: "clone",
                 label: m["admin_redaction.action.clone"](),
-                onSelect: () => navigate("/admin/redaction/rules/new", { state: { cloneFrom: rule } }),
+                onSelect: () => navigate("/admin/privacy/hidden/rules/new", { state: { cloneFrom: rule } }),
               },
               {
                 key: "toggle",
@@ -486,7 +553,7 @@ function RulesList({
                 actions={
                   <Button
                     variant="primary"
-                    onClick={() => navigate("/admin/redaction/rules/new")}
+                    onClick={() => navigate("/admin/privacy/hidden/rules/new")}
                   >
                     {m["admin_redaction.rules.new_rule"]()}
                   </Button>
@@ -573,42 +640,18 @@ function RuleCoverageWarning({
  * rewritten in that case, so there is no text to show and echoing the sample
  * back would read as "this is what would be sent".
  */
-function PreviewBox() {
-  const preview = usePreviewRedaction();
-  const toast = useOptionalToast();
-  const sampleId = useId();
-  const [text, setText] = useState("");
-  const [scope, setScope] = useState<RedactionScope | "">("");
-  const [scopeId, setScopeId] = useState("");
-  // What was sent, kept apart from what is typed: the spans are offsets into
-  // the submitted sample, and slicing the live textarea with them would
-  // mislabel every match the moment a character is typed after a run.
-  const [sample, setSample] = useState("");
-
-  // A scope with no subject is not a narrower preview, it is the deployment
-  // policy wearing a label — so the run waits for the subject rather than
-  // quietly answering a different question.
-  const ready = text.trim().length > 0 && (scope === "" || scopeId.trim().length > 0);
-
-  const run = () => {
-    setSample(text);
-    preview.mutate(
-      scope === "" ? { text } : { text, scope, scope_id: scopeId },
-      {
-        onSuccess: () => toast?.add({ title: m["admin_redaction.preview.toast_ran"](), type: "success" }),
-        onError: (error) =>
-          toast?.add({
-            title: m["admin_redaction.preview.toast_failed"](),
-            // i18n: server text — the API's own error message.
-            description: error instanceof Error ? error.message : m["admin_redaction.unknown_error"](),
-            type: "error",
-          }),
-      },
-    );
-  };
-
-  const result = preview.data;
-
+/**
+ * What the provider would receive, and why each span was replaced. `sample` is
+ * the text that was sent: the API reports offsets into it, and slicing the live
+ * textarea would mislabel every match once a character is typed after a run.
+ */
+export function RedactionPreviewResult({
+  result,
+  sample,
+}: {
+  result: RedactionPreview;
+  sample: string;
+}) {
   const columns: Column<RedactionPreviewSpan>[] = [
     {
       key: "match",
@@ -653,69 +696,7 @@ function PreviewBox() {
   ];
 
   return (
-    <Card
-      title={m["admin_redaction.preview.card"]()}
-      description={m["admin_redaction.preview.description"]()}
-    >
-      <div className={FORM}>
-        {preview.error ? (
-          <Notice tone="danger">
-            {/* i18n: server text — the API's own error message. */}
-            {preview.error instanceof Error
-              ? preview.error.message
-              : m["admin_redaction.unknown_error"]()}
-          </Notice>
-        ) : null}
-
-        <div className={FIELD}>
-          <label className={FIELD_LABEL} htmlFor={sampleId}>
-            {m["admin_redaction.preview.sample"]()}
-          </label>
-          <textarea
-            id={sampleId}
-            className={TEXTAREA}
-            rows={4}
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            placeholder={m["admin_redaction.preview.sample_placeholder"]()}
-          />
-          <p className={MUTED}>{m["admin_redaction.preview.not_logged"]()}</p>
-        </div>
-
-        <div className={FORM_ROW}>
-          <Select
-            label={m["admin_redaction.preview.preview_as"]()}
-            value={scope}
-            onChange={(event) => {
-              setScope(event.target.value as RedactionScope | "");
-              setScopeId("");
-            }}
-          >
-            <option value="">{m["admin_redaction.preview.nobody"]()}</option>
-            {SCOPES.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label()}
-              </option>
-            ))}
-          </Select>
-          {scope !== "" && (
-            <SubjectPicker scope={scope} value={scopeId} onChange={setScopeId} />
-          )}
-        </div>
-
-        <div>
-          <Button
-            variant="primary"
-            busy={preview.isPending}
-            disabled={!ready}
-            onClick={run}
-          >
-            {m["admin_redaction.preview.run"]()}
-          </Button>
-        </div>
-
-        {result && (
-          <>
+    <div className={FORM}>
             {/* i18n: server text — rendered verbatim: an engine that detects
                 nothing must say so, or an empty result reads as a clean prompt. */}
             {result.note && <Notice tone="warn">{result.note}</Notice>}
@@ -741,6 +722,7 @@ function PreviewBox() {
                 : m["admin_redaction.preview.summary_rule"]({ scope: scopeNoun(result.scope) })}
             </p>
 
+            <div className="overflow-x-auto">
             <Table
               columns={columns}
               rows={result.spans}
@@ -748,13 +730,10 @@ function PreviewBox() {
               empty={m["admin_redaction.preview.empty"]()}
               caption={m["admin_redaction.preview.caption"]()}
             />
-          </>
-        )}
-      </div>
-    </Card>
+            </div>
+    </div>
   );
 }
-
 
 /**
  * The two Presidio recognizer families as big on/off switches.
@@ -830,7 +809,7 @@ function DetectorFamilies({ status, inForce }: { status: RedactionStatus; inForc
   };
 
   return (
-    <Card
+    <Section
       title={m["admin_redaction.families.card"]()}
       description={m["admin_redaction.families.description"]()}
     >
@@ -866,7 +845,7 @@ function DetectorFamilies({ status, inForce }: { status: RedactionStatus; inForc
       </div>
 
       {setEngine.isPending && <p className={MUTED}>{m["admin_redaction.families.saving"]()}</p>}
-    </Card>
+    </Section>
   );
 }
 
@@ -965,7 +944,7 @@ function EngineList({ status }: { status: RedactionStatus }) {
   };
 
   return (
-    <Card
+    <Section
       title={m["admin_redaction.engine.card"]()}
       description={m["admin_redaction.engine.description"]()}
     >
@@ -1062,7 +1041,7 @@ function EngineList({ status }: { status: RedactionStatus }) {
           )
         }
       />
-    </Card>
+    </Section>
   );
 }
 

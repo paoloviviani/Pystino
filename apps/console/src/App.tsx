@@ -1,6 +1,6 @@
 import { Notice, Spinner } from "@llmp/ui";
 import { NoConsole } from "./routes/NoConsole";
-import { Navigate, Route, Routes } from "react-router";
+import { Navigate, Route, Routes, useParams } from "react-router";
 import { RequireAdmin } from "./components/RequireAdmin";
 import { Shell } from "./components/Shell";
 import { NotAuthenticatedError } from "./lib/api";
@@ -17,7 +17,7 @@ import { AdminPrivacy } from "./routes/AdminPrivacy";
 import { AdminPrivacyProfiles } from "./routes/AdminPrivacyProfiles";
 import { AdminPrivacyRule } from "./routes/AdminPrivacyRule";
 import { AdminPrivacyTest } from "./routes/AdminPrivacyTest";
-import { AdminRedaction } from "./routes/AdminRedaction";
+import { AdminHidden } from "./routes/AdminRedaction";
 import { AdminRedactionRule } from "./routes/AdminRedactionRule";
 import { Admin } from "./routes/Admin";
 import { AdminReports } from "./routes/AdminReports";
@@ -33,6 +33,12 @@ import { Login } from "./routes/Login";
 import { NotFound } from "./routes/NotFound";
 import { Overview } from "./routes/Overview";
 import { Reports } from "./routes/Reports";
+
+/** `/admin/redaction/rules/:id`, moved under the Privacy area. */
+function RedirectRedactionRule() {
+  const { ruleId } = useParams();
+  return <Navigate to={`/admin/privacy/hidden/rules/${ruleId ?? "new"}`} replace />;
+}
 
 export function App() {
   const me = useMe();
@@ -152,13 +158,39 @@ export function App() {
           }
         />
         <Route
-          path="/admin/privacy/profiles"
+          path="/admin/privacy/detectors"
           element={
             <RequireAdmin me={me_}>
               <AdminPrivacyProfiles />
             </RequireAdmin>
           }
         />
+        <Route
+          path="/admin/privacy/hidden"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminHidden />
+            </RequireAdmin>
+          }
+        />
+        {/* One redaction rule, reached by clicking it in the list on the
+            What gets hidden tab. `new` shares the route: it cannot collide
+            with a uuid, and a second route would duplicate every line of the
+            form. */}
+        <Route
+          path="/admin/privacy/hidden/rules/:ruleId"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminRedactionRule />
+            </RequireAdmin>
+          }
+        />
+        {/* Old links keep working: Redaction and the Privacy routing pages were
+            one area split in two. */}
+        <Route path="/admin/privacy/profiles" element={<Navigate to="/admin/privacy/detectors" replace />} />
+        <Route path="/admin/redaction" element={<Navigate to="/admin/privacy/hidden" replace />} />
+        <Route path="/admin/redaction/rules/:ruleId" element={<RedirectRedactionRule />} />
+        <Route path="/admin/privacy/*" element={<Navigate to="/admin/privacy" replace />} />
         <Route
           path="/admin/routing"
           element={
@@ -229,25 +261,6 @@ export function App() {
           element={
             <RequireAdmin me={me_}>
               <AdminQuotaUsage />
-            </RequireAdmin>
-          }
-        />
-        <Route
-          path="/admin/redaction"
-          element={
-            <RequireAdmin me={me_}>
-              <AdminRedaction />
-            </RequireAdmin>
-          }
-        />
-        {/* One rule, reached by clicking it in the list on the Redaction
-            screen. `new` shares the route: it cannot collide with a uuid, and a
-            second route would duplicate every line of the form. */}
-        <Route
-          path="/admin/redaction/rules/:ruleId"
-          element={
-            <RequireAdmin me={me_}>
-              <AdminRedactionRule />
             </RequireAdmin>
           }
         />

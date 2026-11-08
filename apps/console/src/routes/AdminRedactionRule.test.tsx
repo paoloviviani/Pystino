@@ -178,8 +178,8 @@ function renderPage(path: string, state?: unknown) {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[state === undefined ? path : { pathname: path, state }]}>
         <Routes>
-          <Route path="/admin/redaction/rules/:ruleId" element={<AdminRedactionRule />} />
-          <Route path="/admin/redaction" element={<div>redaction screen</div>} />
+          <Route path="/admin/privacy/hidden/rules/:ruleId" element={<AdminRedactionRule />} />
+          <Route path="/admin/privacy/hidden" element={<div>redaction screen</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -194,7 +194,7 @@ describe("AdminRedactionRule", () => {
     // point of it. A screen that omitted it would leave the deployment-wide
     // policy unreachable, which is what the previous shape did by accident.
     vi.stubGlobal("fetch", routes([]));
-    renderPage("/admin/redaction/rules/new");
+    renderPage("/admin/privacy/hidden/rules/new");
 
     const scope = await screen.findByLabelText("Scope");
     const options = within(scope)
@@ -214,7 +214,7 @@ describe("AdminRedactionRule", () => {
         service: { ...STATUS.service, entities: ["EMAIL_ADDRESS"] },
       }),
     );
-    renderPage("/admin/redaction/rules/new");
+    renderPage("/admin/privacy/hidden/rules/new");
 
     const add = await screen.findByLabelText("Add a kind of data");
     await waitFor(() =>
@@ -231,7 +231,7 @@ describe("AdminRedactionRule", () => {
     // default, and a table of thirty rows that all read "Off" is noise.
     const user = userEvent.setup({ delay: null });
     vi.stubGlobal("fetch", routes([]));
-    renderPage("/admin/redaction/rules/new");
+    renderPage("/admin/privacy/hidden/rules/new");
 
     expect(
       await screen.findByText(/Every kind of data follows the default above/),
@@ -255,7 +255,7 @@ describe("AdminRedactionRule", () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { posts: [], patches: [] };
     vi.stubGlobal("fetch", routes([rule()], captured));
-    renderPage("/admin/redaction/rules/r1");
+    renderPage("/admin/privacy/hidden/rules/r1");
 
     await screen.findByRole("group", { name: /PERSON/ });
     await user.click(screen.getByRole("button", { name: "Reset Person name to the default" }));
@@ -271,7 +271,7 @@ describe("AdminRedactionRule", () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { posts: [], patches: [] };
     vi.stubGlobal("fetch", routes([], captured));
-    renderPage("/admin/redaction/rules/new");
+    renderPage("/admin/privacy/hidden/rules/new");
 
     await screen.findByLabelText("Scope");
     // "Every request" is the default selection, so this asserts it is possible
@@ -306,7 +306,7 @@ describe("AdminRedactionRule", () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { posts: [], patches: [] };
     vi.stubGlobal("fetch", routes([], captured));
-    renderPage("/admin/redaction/rules/new");
+    renderPage("/admin/privacy/hidden/rules/new");
 
     await screen.findByLabelText("Scope");
     expect(screen.queryByLabelText("Pattern 1 name")).not.toBeInTheDocument();
@@ -321,7 +321,7 @@ describe("AdminRedactionRule", () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { posts: [], patches: [] };
     vi.stubGlobal("fetch", routes([], captured));
-    renderPage("/admin/redaction/rules/new");
+    renderPage("/admin/privacy/hidden/rules/new");
 
     await screen.findByLabelText("Scope");
     await user.click(screen.getByRole("button", { name: "Add pattern from template" }));
@@ -341,7 +341,7 @@ describe("AdminRedactionRule", () => {
   it("will not create a scoped rule without a subject", async () => {
     const user = userEvent.setup({ delay: null });
     vi.stubGlobal("fetch", routes([]));
-    renderPage("/admin/redaction/rules/new");
+    renderPage("/admin/privacy/hidden/rules/new");
 
     await user.selectOptions(await screen.findByLabelText("Scope"), "group");
 
@@ -352,7 +352,7 @@ describe("AdminRedactionRule", () => {
     // The freeze is gone: the subject is editable, and the picker arrives
     // already naming the rule's subject rather than blank.
     vi.stubGlobal("fetch", routes([rule()]));
-    renderPage("/admin/redaction/rules/r1");
+    renderPage("/admin/privacy/hidden/rules/r1");
 
     await waitFor(() => expect(screen.getByLabelText("Scope")).toHaveValue("group"));
     await waitFor(() => expect(screen.getByLabelText("Group")).toHaveValue("g1"));
@@ -365,7 +365,7 @@ describe("AdminRedactionRule", () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { posts: [], patches: [] };
     vi.stubGlobal("fetch", routes([rule()], captured));
-    renderPage("/admin/redaction/rules/r1");
+    renderPage("/admin/privacy/hidden/rules/r1");
 
     await waitFor(() =>
       expect(
@@ -386,7 +386,7 @@ describe("AdminRedactionRule", () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { posts: [], patches: [] };
     vi.stubGlobal("fetch", routes([rule()], captured));
-    renderPage("/admin/redaction/rules/r1");
+    renderPage("/admin/privacy/hidden/rules/r1");
 
     await waitFor(() => expect(screen.getByLabelText("Group")).toHaveValue("g1"));
     await user.selectOptions(screen.getByLabelText("Group"), "g2");
@@ -404,7 +404,7 @@ describe("AdminRedactionRule", () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { posts: [], patches: [] };
     vi.stubGlobal("fetch", routes([rule()], captured));
-    renderPage("/admin/redaction/rules/r1");
+    renderPage("/admin/privacy/hidden/rules/r1");
 
     await waitFor(() => expect(screen.getByLabelText("Scope")).toHaveValue("group"));
     await user.selectOptions(screen.getByLabelText("Scope"), "all");
@@ -437,7 +437,7 @@ describe("AdminRedactionRule", () => {
           ),
       ),
     );
-    renderPage("/admin/redaction/rules/r1");
+    renderPage("/admin/privacy/hidden/rules/r1");
 
     await waitFor(() => expect(screen.getByLabelText("Group")).toHaveValue("g1"));
     await user.selectOptions(screen.getByLabelText("Group"), "g2");
@@ -452,7 +452,7 @@ describe("AdminRedactionRule", () => {
     // be unrepairable — dead weight with a "deleted subject" label. The warning
     // says so; the editable subject is what makes the warning actionable.
     vi.stubGlobal("fetch", routes([rule({ subject_label: null })]));
-    renderPage("/admin/redaction/rules/r1");
+    renderPage("/admin/privacy/hidden/rules/r1");
 
     expect(await screen.findByText("This rule's subject no longer exists")).toBeInTheDocument();
     expect(screen.getByText(/scope it to every request/)).toBeInTheDocument();
@@ -465,7 +465,7 @@ describe("AdminRedactionRule", () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { posts: [], patches: [] };
     vi.stubGlobal("fetch", routes([], captured));
-    renderPage("/admin/redaction/rules/new", {
+    renderPage("/admin/privacy/hidden/rules/new", {
       cloneFrom: rule({ reason: "handles patient data" }),
     });
 
@@ -507,7 +507,7 @@ describe("AdminRedactionRule", () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { posts: [], patches: [] };
     vi.stubGlobal("fetch", routes([rule()], captured));
-    renderPage("/admin/redaction/rules/r1");
+    renderPage("/admin/privacy/hidden/rules/r1");
 
     await waitFor(() =>
       expect(
@@ -543,7 +543,7 @@ describe("AdminRedactionRule", () => {
           ),
       ),
     );
-    renderPage("/admin/redaction/rules/r1");
+    renderPage("/admin/privacy/hidden/rules/r1");
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Save rule" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Save rule" }));
@@ -556,7 +556,7 @@ describe("AdminRedactionRule", () => {
   describe("the page", () => {
     it("puts the rule's name first, as the title, with its subject beneath", async () => {
       vi.stubGlobal("fetch", routes([rule()]));
-      renderPage("/admin/redaction/rules/r1");
+      renderPage("/admin/privacy/hidden/rules/r1");
 
       expect(
         await screen.findByRole("heading", {
@@ -573,7 +573,7 @@ describe("AdminRedactionRule", () => {
     it("follows the name as it is typed, and falls back for a new rule", async () => {
       const user = userEvent.setup({ delay: null });
       vi.stubGlobal("fetch", routes([]));
-      renderPage("/admin/redaction/rules/new");
+      renderPage("/admin/privacy/hidden/rules/new");
 
       expect(
         await screen.findByRole("heading", { level: 1, name: "New rule" }),
@@ -584,7 +584,7 @@ describe("AdminRedactionRule", () => {
 
     it("calls a clone with no name a clone", async () => {
       vi.stubGlobal("fetch", routes([]));
-      renderPage("/admin/redaction/rules/new", {
+      renderPage("/admin/privacy/hidden/rules/new", {
         cloneFrom: rule({ name: "" }),
       });
 
@@ -595,7 +595,7 @@ describe("AdminRedactionRule", () => {
     it("keeps the save bar stuck to the bottom, with Back, a hint and Save", async () => {
       const user = userEvent.setup({ delay: null });
       vi.stubGlobal("fetch", routes([rule()]));
-      renderPage("/admin/redaction/rules/r1");
+      renderPage("/admin/privacy/hidden/rules/r1");
 
       const bar = await screen.findByRole("region", { name: "Save the rule" });
       expect(bar).toHaveClass("sticky", "bottom-0");
@@ -612,7 +612,7 @@ describe("AdminRedactionRule", () => {
 
     it("says why Create is disabled on a clone with no subject", async () => {
       vi.stubGlobal("fetch", routes([]));
-      renderPage("/admin/redaction/rules/new", { cloneFrom: rule() });
+      renderPage("/admin/privacy/hidden/rules/new", { cloneFrom: rule() });
 
       const bar = await screen.findByRole("region", { name: "Save the rule" });
       expect(within(bar).getByText("Choose who it applies to before saving")).toBeInTheDocument();
@@ -622,7 +622,7 @@ describe("AdminRedactionRule", () => {
     it("goes back from the save bar", async () => {
       const user = userEvent.setup({ delay: null });
       vi.stubGlobal("fetch", routes([rule()]));
-      renderPage("/admin/redaction/rules/r1");
+      renderPage("/admin/privacy/hidden/rules/r1");
 
       await user.click(await screen.findByRole("button", { name: "Back" }));
       expect(await screen.findByText("redaction screen")).toBeInTheDocument();
@@ -631,7 +631,7 @@ describe("AdminRedactionRule", () => {
     it("summarises the form as it is edited", async () => {
       const user = userEvent.setup({ delay: null });
       vi.stubGlobal("fetch", routes([rule()]));
-      renderPage("/admin/redaction/rules/r1");
+      renderPage("/admin/privacy/hidden/rules/r1");
 
       const summary = await screen.findByTestId("rule-summary");
       await waitFor(() =>
@@ -650,7 +650,7 @@ describe("AdminRedactionRule", () => {
       const user = userEvent.setup({ delay: null });
       const captured: Captured = { posts: [], patches: [], previews: [] };
       vi.stubGlobal("fetch", routes([rule()], captured));
-      renderPage("/admin/redaction/rules/r1");
+      renderPage("/admin/privacy/hidden/rules/r1");
 
       // An edit the stored rule does not have.
       await user.click(
@@ -677,7 +677,7 @@ describe("AdminRedactionRule", () => {
     it("shows what the provider receives, with the replaced spans picked out", async () => {
       const user = userEvent.setup({ delay: null });
       vi.stubGlobal("fetch", routes([rule()]));
-      renderPage("/admin/redaction/rules/r1");
+      renderPage("/admin/privacy/hidden/rules/r1");
 
       await user.type(
         await screen.findByLabelText("Sample text"),
@@ -698,7 +698,7 @@ describe("AdminRedactionRule", () => {
       const user = userEvent.setup({ delay: null });
       const captured: Captured = { posts: [], patches: [], previews: [] };
       vi.stubGlobal("fetch", routes([], captured));
-      renderPage("/admin/redaction/rules/new");
+      renderPage("/admin/privacy/hidden/rules/new");
 
       await user.type(await screen.findByLabelText("Sample text"), "hello");
       await waitFor(() => expect(captured.previews).toHaveLength(1), {
@@ -731,7 +731,7 @@ describe("AdminRedactionRule", () => {
             ),
         ),
       );
-      renderPage("/admin/redaction/rules/r1");
+      renderPage("/admin/privacy/hidden/rules/r1");
 
       await user.type(await screen.findByLabelText("Sample text"), "123-45-6789");
       expect(
@@ -766,7 +766,7 @@ describe("AdminRedactionRule", () => {
             ),
         ),
       );
-      renderPage("/admin/redaction/rules/r1");
+      renderPage("/admin/privacy/hidden/rules/r1");
 
       await user.type(await screen.findByLabelText("Sample text"), "hello");
       expect(
@@ -780,7 +780,7 @@ describe("AdminRedactionRule", () => {
     it("sends nothing while the box is empty", async () => {
       const captured: Captured = { posts: [], patches: [], previews: [] };
       vi.stubGlobal("fetch", routes([rule()], captured));
-      renderPage("/admin/redaction/rules/r1");
+      renderPage("/admin/privacy/hidden/rules/r1");
 
       await screen.findByLabelText("Sample text");
       await new Promise((resolve) => setTimeout(resolve, 700));
@@ -802,7 +802,7 @@ describe("AdminRedactionRule", () => {
 
     it("is ignored, and the page says so, when a catch-all rule exists", async () => {
       vi.stubGlobal("fetch", routes([listed, catchAll()]));
-      renderPage("/admin/redaction/rules/r1");
+      renderPage("/admin/privacy/hidden/rules/r1");
 
       const summary = await screen.findByTestId("rule-summary");
       await waitFor(() => expect(summary).toHaveTextContent("ignores its never-hide list"));
@@ -812,7 +812,7 @@ describe("AdminRedactionRule", () => {
 
     it("counts when there is no catch-all rule", async () => {
       vi.stubGlobal("fetch", routes([listed]));
-      renderPage("/admin/redaction/rules/r1");
+      renderPage("/admin/privacy/hidden/rules/r1");
 
       const summary = await screen.findByTestId("rule-summary");
       await waitFor(() => expect(summary).toHaveTextContent("never hides 1 listed value"));
@@ -821,14 +821,14 @@ describe("AdminRedactionRule", () => {
 
     it("counts when the only catch-all is inactive, or is the rule itself", async () => {
       vi.stubGlobal("fetch", routes([listed, catchAll({ is_active: false })]));
-      const first = renderPage("/admin/redaction/rules/r1");
+      const first = renderPage("/admin/privacy/hidden/rules/r1");
       await waitFor(() =>
         expect(screen.getByTestId("rule-summary")).toHaveTextContent("never hides 1 listed value"),
       );
       first.unmount();
 
       vi.stubGlobal("fetch", routes([catchAll({ policy: listed.policy })]));
-      renderPage("/admin/redaction/rules/r0");
+      renderPage("/admin/privacy/hidden/rules/r0");
       await waitFor(() =>
         expect(screen.getByTestId("rule-summary")).toHaveTextContent("never hides 1 listed value"),
       );
@@ -837,7 +837,7 @@ describe("AdminRedactionRule", () => {
 
   it("says so when the rule is gone", async () => {
     vi.stubGlobal("fetch", routes([]));
-    renderPage("/admin/redaction/rules/missing");
+    renderPage("/admin/privacy/hidden/rules/missing");
 
     await waitFor(() => expect(screen.getByText("No such rule")).toBeInTheDocument());
   });

@@ -26,7 +26,7 @@ describe("Admin", () => {
     const headings = screen
       .getAllByRole("region")
       .map((region) => region.querySelector("h2")?.textContent ?? "");
-    expect(headings).toEqual(["Usage & limits", "Serving", "Privacy", "People", "Deployment"]);
+    expect(headings).toEqual(["Usage & limits", "Serving", "Protection", "People", "Deployment"]);
   });
 
   it("carries every screen exactly once, in the grouped order", () => {
@@ -53,8 +53,7 @@ describe("Admin", () => {
       // What users added with their own keys: a provider the deployment did
       // not choose, read beside the ones it did.
       "/admin/private-providers",
-      // Privacy.
-      "/admin/redaction",
+      // Protection: one Privacy area, routing and redaction together.
       "/admin/privacy",
       // People.
       "/admin/users",

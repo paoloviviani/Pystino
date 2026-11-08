@@ -7,11 +7,12 @@ import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   RedactionEngineOption,
-  RedactionPreview,
   RedactionRule,
   RedactionStatus,
 } from "../lib/types";
-import { AdminRedaction } from "./AdminRedaction";
+import type { PrivacyProfile } from "../lib/types";
+import { AdminHidden } from "./AdminRedaction";
+import { AdminPrivacyProfiles } from "./AdminPrivacyProfiles";
 
 /**
  * The screen exists to answer "is redaction on, and is it working". So what is
@@ -158,73 +159,6 @@ function withEngineChange(
  * Offsets are into the sample the tests type, because that is what the screen
  * slices to show each match — the API reports positions, not text.
  */
-function preview(overrides: Partial<RedactionPreview> = {}): RedactionPreview {
-  return {
-    engine: "http",
-    scope: null,
-    rule_id: null,
-    policy: status().policy,
-    spans: [
-      {
-        entity_type: "PERSON",
-        start: 0,
-        end: 8,
-        score: 0.85,
-        mode: "redact",
-        threshold: 0.5,
-        allow_listed: false,
-      },
-      {
-        entity_type: "URL",
-        start: 34,
-        end: 43,
-        score: 0.6,
-        mode: "off",
-        threshold: 0.5,
-        allow_listed: true,
-      },
-    ],
-    redacted_text: "<PERSON> le notizie del giorno da ilpost.it",
-    entity_count: 1,
-    blocked: false,
-    blocked_reason: null,
-    note: null,
-    ...overrides,
-  };
-}
-
-function withPreview(result: RedactionPreview): { fetch: typeof fetch; posts: unknown[] } {
-  const posts: unknown[] = [];
-  const stub = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input).includes("/api/admin/groups")) {
-      return new Response(
-        JSON.stringify({
-          items: [{ id: "g1", name: "clinical", description: null }],
-          total: 1,
-          limit: 50,
-          offset: 0,
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    }
-    if (init?.method === "POST" && String(input).includes("/redaction/preview")) {
-      posts.push(JSON.parse(String(init.body)));
-      return new Response(JSON.stringify(result), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }
-    return new Response(JSON.stringify(status()), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
-  });
-  return { fetch: stub as unknown as typeof fetch, posts };
-}
-
-/** The sample the preview tests run, and the prompt the Italian bug came from. */
-const SAMPLE = "Riassumi le notizie del giorno da ilpost.it";
-
 function renderScreen(element: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
@@ -239,10 +173,57 @@ function renderScreen(element: ReactElement) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("AdminRedaction", () => {
+/** The default "Fast" profile: the Presidio engine, which hosts the engine controls. */
+const FAST = {
+  id: "p1",
+  name: "Fast",
+  description: "",
+  engine: "presidio",
+  labels: [],
+  fallback: "refuse",
+  fallback_profile_id: null,
+  fallback_profile_name: null,
+  is_default: true,
+  status: "available",
+  status_detail: "The detection service is the one in use for redaction.",
+  decides: true,
+  cost_hint: "instant",
+  rules_using: 2,
+  created_at: "2026-11-08T10:00:00Z",
+  updated_at: "2026-11-08T10:00:00Z",
+} as PrivacyProfile;
+
+/** Answers the profiles list itself and leaves every other call to the stub the test installed. */
+function withProfiles() {
+  const inner = globalThis.fetch;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).includes("/api/admin/privacy/profiles")
+        ? new Response(JSON.stringify({ items: [FAST], total: 1, limit: 200, offset: 0 }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })
+        : inner(input, init),
+    ),
+  );
+}
+
+/** Detectors tab: the engine choice and the families live in the Fast profile's card. */
+function renderDetectors() {
+  withProfiles();
+  return renderScreen(<AdminPrivacyProfiles />);
+}
+
+/** What gets hidden tab: the rules. */
+function renderHidden() {
+  return renderScreen(<AdminHidden />);
+}
+
+describe("Detectors and What gets hidden (the former Redaction screen)", () => {
   it("says whether redaction is on, and which engine", async () => {
     vi.stubGlobal("fetch", respondWith(status()));
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     // Scoped to the stat block: the detector-family switches elsewhere on
     // the page now also render visible On/Off text.
@@ -264,7 +245,7 @@ describe("AdminRedaction", () => {
         }),
       ),
     );
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await waitFor(() =>
       expect(screen.getByText("prompts reach the provider unchanged")).toBeInTheDocument(),
@@ -280,7 +261,7 @@ describe("AdminRedaction", () => {
     // A name is not a choice: "http" and "noop" say nothing about which one
     // leaves personal data in a prompt. The description is what is being chosen.
     vi.stubGlobal("fetch", respondWith(status()));
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await waitFor(() =>
       expect(screen.getByText("Presidio (detection service)")).toBeInTheDocument(),
@@ -310,7 +291,7 @@ describe("AdminRedaction", () => {
         }),
       ),
     );
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await waitFor(() => expect(screen.getByText(/Cannot be enabled/)).toBeInTheDocument());
     expect(screen.getByText(/GATEWAY_REDACTION__ENDPOINT/)).toBeInTheDocument();
@@ -331,7 +312,7 @@ describe("AdminRedaction", () => {
     const { fetch, captured } = withEngineChange(off, status());
     vi.stubGlobal("fetch", fetch);
     const user = userEvent.setup();
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await user.click(await screen.findByRole("button", { name: "Enable" }));
 
@@ -344,7 +325,7 @@ describe("AdminRedaction", () => {
     "dims the detection families and disables the switches when %s is in force",
     async (name) => {
       vi.stubGlobal("fetch", respondWith(status({ engine: name, enabled: name !== "noop" })));
-      renderScreen(<AdminRedaction />);
+      renderDetectors();
 
       const patterns = await screen.findByRole("switch", { name: "Pattern matching" });
       const ner = screen.getByRole("switch", { name: "Named-entity recognition" });
@@ -363,7 +344,7 @@ describe("AdminRedaction", () => {
 
   it("keeps the detection families live when Presidio is in force", async () => {
     vi.stubGlobal("fetch", respondWith(status()));
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     const patterns = await screen.findByRole("switch", { name: "Pattern matching" });
     expect(patterns).toBeEnabled();
@@ -381,7 +362,7 @@ describe("AdminRedaction", () => {
     const { fetch, captured } = withEngineChange(before, after);
     vi.stubGlobal("fetch", fetch);
     const user = userEvent.setup({ delay: null });
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     const patterns = await screen.findByRole("switch", { name: "Pattern matching" });
     const entities = screen.getByRole("switch", { name: "Named-entity recognition" });
@@ -424,7 +405,7 @@ describe("AdminRedaction", () => {
         }),
       ),
     );
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     expect(
       await screen.findByRole("switch", { name: "Pattern matching" }),
@@ -451,7 +432,7 @@ describe("AdminRedaction", () => {
     });
     vi.stubGlobal("fetch", stub as unknown as typeof fetch);
     const user = userEvent.setup({ delay: null });
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     const entities = await screen.findByRole("switch", { name: "Named-entity recognition" });
     await user.click(entities);
@@ -511,7 +492,7 @@ describe("AdminRedaction", () => {
       });
     });
     vi.stubGlobal("fetch", stub as unknown as typeof fetch);
-    renderScreen(<AdminRedaction />);
+    renderHidden();
 
     // PERSON is protected by the rule and undetectable with NER off;
     // EMAIL_ADDRESS is still served, so it must not be listed.
@@ -552,7 +533,7 @@ describe("AdminRedaction", () => {
       });
     });
     vi.stubGlobal("fetch", stub as unknown as typeof fetch);
-    renderScreen(<AdminRedaction />);
+    renderHidden();
 
     // The subject cell renders "Every request" twice (link and scope noun),
     // so this only waits for the rules table itself.
@@ -591,11 +572,11 @@ describe("AdminRedaction", () => {
     });
     vi.stubGlobal("fetch", stub as unknown as typeof fetch);
     const user = userEvent.setup();
-    renderScreen(<AdminRedaction />);
+    renderHidden();
 
     await chooseRowAction(user, "Clone");
 
-    await waitFor(() => expect(location.pathname).toBe("/admin/redaction/rules/new"));
+    await waitFor(() => expect(location.pathname).toBe("/admin/privacy/hidden/rules/new"));
   });
 
   it("warns a default-on rule when a family is switched off, without touching it", async () => {
@@ -632,7 +613,7 @@ describe("AdminRedaction", () => {
       });
     });
     vi.stubGlobal("fetch", stub as unknown as typeof fetch);
-    renderScreen(<AdminRedaction />);
+    renderHidden();
 
     await waitFor(() =>
       expect(screen.getByText("Default covers a disabled family")).toBeInTheDocument(),
@@ -651,7 +632,7 @@ describe("AdminRedaction", () => {
     );
     vi.stubGlobal("fetch", fetch);
     const user = userEvent.setup();
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await user.click(await screen.findByRole("button", { name: "Turn redaction off" }));
 
@@ -688,7 +669,7 @@ describe("AdminRedaction", () => {
         }),
       ),
     );
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await waitFor(() => expect(screen.getByText(/This console/)).toBeInTheDocument());
     expect(screen.getByText("turned back on after the migration")).toBeInTheDocument();
@@ -697,7 +678,7 @@ describe("AdminRedaction", () => {
 
   it("names the environment variable when nothing has been set here", async () => {
     vi.stubGlobal("fetch", respondWith(status()));
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await waitFor(() =>
       expect(screen.getByText(/GATEWAY_REDACTION__ENGINE/)).toBeInTheDocument(),
@@ -706,7 +687,7 @@ describe("AdminRedaction", () => {
 
   it("reports the detection service as it answered just now", async () => {
     vi.stubGlobal("fetch", respondWith(status()));
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await waitFor(() => expect(screen.getByText("Answering")).toBeInTheDocument());
     expect(screen.getByText(/presidio 2\.2\.364 · 4ms/)).toBeInTheDocument();
@@ -728,7 +709,7 @@ describe("AdminRedaction", () => {
         }),
       ),
     );
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await waitFor(() => expect(screen.getByText("Not answering")).toBeInTheDocument());
     expect(screen.getByText(/connection refused/)).toBeInTheDocument();
@@ -738,7 +719,7 @@ describe("AdminRedaction", () => {
     // Configuration is not evidence. A wrong language or too high a threshold
     // both look like healthy silence.
     vi.stubGlobal("fetch", respondWith(status()));
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await waitFor(() => expect(screen.getByText("31")).toBeInTheDocument());
     expect(screen.getByText(/from 12 of 40 requests, last 24 hours/)).toBeInTheDocument();
@@ -747,7 +728,7 @@ describe("AdminRedaction", () => {
   it("renders the API's warnings verbatim", async () => {
     const note = "fail_open is on, so a detection failure forwards the prompt unredacted.";
     vi.stubGlobal("fetch", respondWith(status({ fail_open: true, warnings: [note] })));
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await waitFor(() => expect(screen.getByText(note)).toBeInTheDocument());
     expect(screen.getByText("Forward unredacted")).toBeInTheDocument();
@@ -755,7 +736,7 @@ describe("AdminRedaction", () => {
 
   it("names the model backing the configured language", async () => {
     vi.stubGlobal("fetch", respondWith(status()));
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await waitFor(() => expect(screen.getByText(/en_core_web_lg/)).toBeInTheDocument());
   });
@@ -769,7 +750,7 @@ describe("AdminRedaction", () => {
         }),
       ),
     );
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await waitFor(() =>
       expect(screen.getByText(/Served without a named-entity model/)).toBeInTheDocument(),
@@ -780,7 +761,7 @@ describe("AdminRedaction", () => {
 
   it("never renders the placeholder key, only whether it is set", async () => {
     vi.stubGlobal("fetch", respondWith(status()));
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await waitFor(() => expect(screen.getByText("Set")).toBeInTheDocument());
     expect(screen.getByText(/must stay stable/)).toBeInTheDocument();
@@ -797,105 +778,99 @@ describe("AdminRedaction", () => {
           }),
       ),
     );
-    renderScreen(<AdminRedaction />);
+    renderDetectors();
 
     await waitFor(() => expect(screen.getByText("Admin access required.")).toBeInTheDocument());
   });
+});
 
-  it("shows what the provider would receive, and why each span was replaced", async () => {
-    // The only place an operator can see what the detector actually does. Until
-    // it existed, the Italian bug was findable only by reading an upstream
-    // request body.
+describe("Detectors: the profile cards", () => {
+  function stubDetectors(profiles: PrivacyProfile[], calls: { method: string; url: string; body: unknown }[] = []) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        const json = (body: unknown) =>
+          new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+        if (method !== "GET") calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : null });
+        if (url.includes("/privacy/profiles")) {
+          return method === "GET"
+            ? json({ items: profiles, total: profiles.length, limit: 200, offset: 0 })
+            : json(profiles[0]);
+        }
+        return json(status());
+      }),
+    );
+  }
+
+  it("hosts the engine choice and the families in the Fast profile, not in a card of their own", async () => {
+    stubDetectors([FAST, { ...FAST, id: "p2", name: "Medical", engine: "gliner", is_default: false } as PrivacyProfile]);
+    renderScreen(<AdminPrivacyProfiles />);
+
+    const fast = (await screen.findByRole("heading", { name: /^Fast/ })).closest("section")!;
+    expect(await within(fast).findByText("Presidio (detection service)")).toBeInTheDocument();
+    expect(within(fast).getByRole("switch", { name: "Pattern matching" })).toBeInTheDocument();
+    expect(within(fast).getByRole("switch", { name: "Named-entity recognition" })).toBeInTheDocument();
+
+    const medical = screen.getByRole("heading", { name: /^Medical/ }).closest("section")!;
+    expect(within(medical).queryByRole("switch")).toBeNull();
+    expect(within(medical).queryByText("Presidio (detection service)")).toBeNull();
+  });
+
+  it("shows health and the fallback, and the default cannot be deleted", async () => {
+    stubDetectors([
+      FAST,
+      {
+        ...FAST,
+        id: "p2",
+        name: "Medical",
+        engine: "gliner",
+        is_default: false,
+        status: "not_installed",
+        status_detail: "This engine is not installed here.",
+        decides: false,
+        fallback: "fallback_to",
+        fallback_profile_id: "p1",
+        fallback_profile_name: "Fast",
+        rules_using: 0,
+      } as PrivacyProfile,
+    ]);
+    renderScreen(<AdminPrivacyProfiles />);
+
+    const fast = (await screen.findByRole("heading", { name: /^Fast/ })).closest("section")!;
+    expect(within(fast).getByText("Available")).toBeInTheDocument();
+    expect(within(fast).getByText("Default")).toBeInTheDocument();
+    expect(within(fast).queryByRole("button", { name: "Delete profile" })).toBeNull();
+
+    const medical = screen.getByRole("heading", { name: /^Medical/ }).closest("section")!;
+    expect(within(medical).getByText("Not installed")).toBeInTheDocument();
+    expect(within(medical).getByText(/protection is weaker, and the log says so/)).toBeInTheDocument();
+    expect(within(medical).getByRole("button", { name: "Delete profile" })).toBeInTheDocument();
+  });
+
+  it("changes a profile's fallback", async () => {
     const user = userEvent.setup({ delay: null });
-    const { fetch: stub, posts } = withPreview(preview());
-    vi.stubGlobal("fetch", stub);
-    renderScreen(<AdminRedaction />);
+    const calls: { method: string; url: string; body: unknown }[] = [];
+    stubDetectors([FAST, { ...FAST, id: "p2", name: "Medical", engine: "gliner", is_default: false } as PrivacyProfile], calls);
+    renderScreen(<AdminPrivacyProfiles />);
+    const medical = (await screen.findByRole("heading", { name: /^Medical/ })).closest("section")!;
+    await user.selectOptions(within(medical).getByLabelText("If it is unavailable"), "fallback_to");
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toMatchObject({
+      method: "PATCH",
+      body: { fallback: "fallback_to", fallback_profile_id: "p1" },
+    });
+  });
+});
 
-    await user.type(await screen.findByLabelText("Sample"), SAMPLE);
-    await user.click(screen.getByRole("button", { name: "Run preview" }));
-
-    await waitFor(() => expect(posts).toEqual([{ text: SAMPLE }]));
+describe("What gets hidden", () => {
+  it("says where it sits in the pipeline, and how its rules combine", async () => {
+    vi.stubGlobal("fetch", respondWith(status()));
+    renderHidden();
     expect(
-      screen.getByText("<PERSON> le notizie del giorno da ilpost.it"),
+      await screen.findByText(/Step 3\. Runs on what leaves: chat messages and tool results/),
     ).toBeInTheDocument();
-
-    const table = screen.getByRole("table");
-    // The matched text is sliced from the sample: the API reports offsets, and
-    // an offset tells nobody which word was replaced.
-    expect(within(table).getByText("Riassumi")).toBeInTheDocument();
-    expect(within(table).getByText("ilpost.it")).toBeInTheDocument();
-    expect(within(table).getByText("Person name")).toBeInTheDocument();
-    expect(within(table).getByText("0.85")).toBeInTheDocument();
-    expect(within(table).getByText("Redact")).toBeInTheDocument();
-    // Detected, and deliberately left alone. Without this the row reads as a
-    // detection that silently did nothing.
-    expect(within(table).getByText("Allow-listed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "How redaction rules apply" })).toBeInTheDocument();
   });
-
-  it("previews as a chosen subject, and waits for one", async () => {
-    const user = userEvent.setup({ delay: null });
-    const { fetch: stub, posts } = withPreview(preview({ scope: "group", rule_id: "r1" }));
-    vi.stubGlobal("fetch", stub);
-    renderScreen(<AdminRedaction />);
-
-    await user.type(await screen.findByLabelText("Sample"), SAMPLE);
-    await user.selectOptions(screen.getByLabelText("Preview as"), "group");
-    // A scope with no subject is the deployment policy wearing a label, which
-    // is a different question from the one being asked.
-    expect(screen.getByRole("button", { name: "Run preview" })).toBeDisabled();
-
-    await waitFor(() => expect(screen.getByLabelText("Group")).toBeInTheDocument());
-    await user.selectOptions(screen.getByLabelText("Group"), "g1");
-    await user.click(screen.getByRole("button", { name: "Run preview" }));
-
-    await waitFor(() =>
-      expect(posts).toEqual([{ text: SAMPLE, scope: "group", scope_id: "g1" }]),
-    );
-    expect(screen.getByText(/Group rule/)).toBeInTheDocument();
-  });
-
-  it("says plainly that a sample would be blocked, and shows no rewrite", async () => {
-    // Nothing is rewritten in that case, so echoing the sample back would read
-    // as "this is what would be sent".
-    const user = userEvent.setup({ delay: null });
-    const { fetch: stub } = withPreview(
-      preview({
-        blocked: true,
-        blocked_reason: "a CREDIT_CARD was found, and the policy blocks it",
-        redacted_text: null,
-        entity_count: 0,
-      }),
-    );
-    vi.stubGlobal("fetch", stub);
-    renderScreen(<AdminRedaction />);
-
-    await user.type(await screen.findByLabelText("Sample"), SAMPLE);
-    await user.click(screen.getByRole("button", { name: "Run preview" }));
-
-    await waitFor(() =>
-      expect(screen.getByText("This request would be blocked")).toBeInTheDocument(),
-    );
-    expect(screen.getByText(/the policy blocks it/)).toBeInTheDocument();
-    expect(screen.queryByText("What the provider receives")).not.toBeInTheDocument();
-  });
-
-  it("renders the engine's own note when it detects nothing", async () => {
-    const user = userEvent.setup({ delay: null });
-    const { fetch: stub } = withPreview(
-      preview({
-        spans: [],
-        entity_count: 0,
-        redacted_text: SAMPLE,
-        note: "the 'noop' engine detects nothing, so this sample would reach the provider exactly as it is written",
-      }),
-    );
-    vi.stubGlobal("fetch", stub);
-    renderScreen(<AdminRedaction />);
-
-    await user.type(await screen.findByLabelText("Sample"), SAMPLE);
-    await user.click(screen.getByRole("button", { name: "Run preview" }));
-
-    await waitFor(() => expect(screen.getByText(/detects nothing/)).toBeInTheDocument());
-  });
-
 });

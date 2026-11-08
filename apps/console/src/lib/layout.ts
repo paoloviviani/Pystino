@@ -231,7 +231,7 @@ const WIDE_ROUTES = new Set([
   "/admin/groups",
   "/admin/quotas",
   "/admin/quota-usage",
-  "/admin/redaction",
+  "/admin/privacy/hidden",
   "/admin/requests",
   "/admin/audit",
   "/admin/users",
@@ -259,7 +259,7 @@ export const NARROW_CONTENT_MAX_WIDTH = "57rem";
  * listing's reason: the rule form sits beside a summary and a test box, and two
  * columns need more than the 76rem that keeps a single column's lines readable.
  */
-const WIDE_PATTERNS = [/^\/admin\/redaction\/rules\/[^/]+$/, /^\/admin\/quota-usage\/[^/]+$/];
+const WIDE_PATTERNS = [/^\/admin\/privacy\/hidden\/rules\/[^/]+$/, /^\/admin\/quota-usage\/[^/]+$/];
 
 export function isWideRoute(pathname: string): boolean {
   const path = pathname.replace(/\/+$/, "") || "/";

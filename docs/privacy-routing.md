@@ -11,6 +11,33 @@ outcome is a function of the request, the rules and the configuration.
 Routing never lowers a redaction mode. It can only choose a reader, send text to a
 local model, or refuse; the redaction policy still runs after it, unchanged.
 
+## The pipeline: four steps, two kinds of rules
+
+Every request that carries text goes through the same four steps, in this order.
+
+1. **Route.** Routing rules, per kind of request (reading a file, embedding, chat
+   later): the **first rule that matches wins**. It picks the reader for a file,
+   whether text may go to a cloud model, or a refusal.
+2. **Detect.** The detector profile the route chose (the default, **Fast**, is
+   the Presidio engine); patterns always run.
+3. **Hide.** Redaction rules decide what is hidden. **Every matching rule
+   applies and the strictest mode wins**, then the user's own rules, which can
+   only tighten. A routing rule's "add a policy" adds one more set of rules at
+   this step.
+4. **Send or refuse.** What is left goes to the provider, or the request is
+   refused.
+
+Routing decides how a request is handled; redaction rules decide what is hidden.
+Routing never lowers a redaction mode.
+
+| | Routing rules | Redaction rules |
+|---|---|---|
+| Purpose | how a request is handled: reader, local or cloud, refuse | what is hidden from the provider |
+| Match on | kind of request, file type and name, who asked, target model or provider, what the text contains | scope: the deployment, a provider, a model, a group, a user or a key |
+| Several match | the **first** one applies (observe-only rules are logged and the search goes on) | **all** apply, and the **strictest** mode wins |
+| Can do | choose a reader, embed on a local model, refuse | per entity type: leave, redact, anonymise (with or without restoring the answer), block |
+| Lives in | console: **Privacy, Rules** | console: **Privacy, What gets hidden** |
+
 ## The kinds
 
 A rule is for one **kind** of request, fixed when it is saved. A request meets
@@ -184,14 +211,13 @@ Under `/api/admin/privacy` (administrators only, audited as
 
 ## The console
 
-**Admin, Privacy routing** is the list: rules grouped by kind, each as a sentence
+**Admin, Privacy, Rules** is the list: rules grouped by kind, each as a sentence
 with a badge when it needs a look (*Off*, *Observe*, *Never fires*, *Partly
 shadowed*, *Check*); tap a badge to see why. Rules move with the arrows (the whole
 new order is saved at once) and switch on and off in place. *How rules work* and
 *Start from a goal* (templates) open as overlays. The editor is a sentence: pick
 the kind, name it, then chips for each condition (is or is not, the values, and
-for what the text contains, *how to decide*) and the action. **Test it** runs
-the box. **Detector profiles** shows health, cost and the fallback.
+for what the text contains, *how to decide*) and the action. **Test** is one box for the whole pipeline (the route, the reader and detector, and what is hidden). **Detectors** shows the profiles with health, cost and the fallback.
 
 ## What it does not do yet
 

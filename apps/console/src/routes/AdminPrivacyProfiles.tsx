@@ -1,8 +1,9 @@
 import { Badge, Button, Card, Input, Notice, Select, Spinner } from "@llmp/ui";
 import { useState } from "react";
-import { useNavigate } from "react-router";
 
-import { PageHeader } from "../components/PageHeader";
+import { PrivacyHeader } from "../components/PrivacyHeader";
+import { useRedactionStatus } from "../lib/admin";
+import { EngineDetails, EngineSettings } from "./AdminRedaction";
 import { MUTED, PAGE } from "../lib/layout";
 import {
   useCreatePrivacyProfile,
@@ -10,7 +11,7 @@ import {
   usePrivacyProfiles,
   useUpdatePrivacyProfile,
 } from "../lib/privacy";
-import type { PrivacyProfile } from "../lib/types";
+import type { PrivacyProfile, RedactionStatus } from "../lib/types";
 import { m } from "../paraglide/messages.js";
 
 /**
@@ -31,9 +32,12 @@ function StatusBadge({ profile }: { profile: PrivacyProfile }) {
 function ProfileCard({
   profile,
   all,
+  redaction,
 }: {
   profile: PrivacyProfile;
   all: PrivacyProfile[];
+  /** The redaction engine's state, shown here when this profile is the Presidio engine. */
+  redaction?: RedactionStatus;
 }) {
   const update = useUpdatePrivacyProfile();
   const remove = useDeletePrivacyProfile();
@@ -109,6 +113,7 @@ function ProfileCard({
         {profile.fallback === "fallback_to" && (
           <Notice tone="warn">{m["privacy.profile.weakens"]()}</Notice>
         )}
+        {redaction && <EngineSettings status={redaction} />}
         {error && (
           <Notice tone="danger">
             {error instanceof Error ? error.message : m["privacy.error.unknown"]()}
@@ -195,20 +200,16 @@ function AddProfile() {
 }
 
 export function AdminPrivacyProfiles() {
-  const navigate = useNavigate();
   const profiles = usePrivacyProfiles();
+  const redaction = useRedactionStatus();
   const items = profiles.data?.items ?? [];
+  // The profile that is the Presidio engine hosts the engine choice and the
+  // detection families: the default "Fast" profile is that engine.
+  const presidio = items.find((p) => p.engine === "presidio" && p.is_default) ?? items.find((p) => p.engine === "presidio");
   return (
     <div className={PAGE}>
-      <PageHeader
-        title={m["privacy.profiles.title"]()}
-        subtitle={m["privacy.profiles.subtitle"]()}
-        actions={
-          <Button type="button" onClick={() => navigate("/admin/privacy")}>
-            {m["privacy.rule.back"]()}
-          </Button>
-        }
-      />
+      <PrivacyHeader tab="detectors" />
+      <p className={`m-0 text-small ${MUTED}`}>{m["privacy.profiles.subtitle"]()}</p>
       {profiles.isPending && <Spinner label={m["privacy.loading"]()} />}
       {profiles.error ? (
         <Notice tone="danger" title={m["privacy.error.load"]()}>
@@ -216,9 +217,21 @@ export function AdminPrivacyProfiles() {
         </Notice>
       ) : null}
       {items.map((profile) => (
-        <ProfileCard key={profile.id} profile={profile} all={items} />
+        <ProfileCard
+          key={profile.id}
+          profile={profile}
+          all={items}
+          redaction={profile.id === presidio?.id ? redaction.data : undefined}
+        />
       ))}
+      {redaction.error && presidio ? (
+        <Notice tone="danger" title={m["admin_redaction.load_error.title"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {redaction.error instanceof Error ? redaction.error.message : m["admin_redaction.unknown_error"]()}
+        </Notice>
+      ) : null}
       {profiles.data && <AddProfile />}
+      {redaction.data && <EngineDetails status={redaction.data} />}
     </div>
   );
 }

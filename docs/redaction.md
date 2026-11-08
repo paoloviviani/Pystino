@@ -9,6 +9,33 @@ scales with prompt length — roughly 0.1ms of CPU per prompt token, against a
 gateway cost that stays flat at 24–31ms. Capacity planning is redaction
 planning; see [Measured performance](performance.md).
 
+## The pipeline: four steps, two kinds of rules
+
+Every request that carries text goes through the same four steps, in this order.
+
+1. **Route.** Routing rules, per kind of request (reading a file, embedding, chat
+   later): the **first rule that matches wins**. It picks the reader for a file,
+   whether text may go to a cloud model, or a refusal.
+2. **Detect.** The detector profile the route chose (the default, **Fast**, is
+   the Presidio engine); patterns always run.
+3. **Hide.** Redaction rules decide what is hidden. **Every matching rule
+   applies and the strictest mode wins**, then the user's own rules, which can
+   only tighten. A routing rule's "add a policy" adds one more set of rules at
+   this step.
+4. **Send or refuse.** What is left goes to the provider, or the request is
+   refused.
+
+Routing decides how a request is handled; redaction rules decide what is hidden.
+Routing never lowers a redaction mode.
+
+| | Routing rules | Redaction rules |
+|---|---|---|
+| Purpose | how a request is handled: reader, local or cloud, refuse | what is hidden from the provider |
+| Match on | kind of request, file type and name, who asked, target model or provider, what the text contains | scope: the deployment, a provider, a model, a group, a user or a key |
+| Several match | the **first** one applies (observe-only rules are logged and the search goes on) | **all** apply, and the **strictest** mode wins |
+| Can do | choose a reader, embed on a local model, refuse | per entity type: leave, redact, anonymise (with or without restoring the answer), block |
+| Lives in | console: **Privacy, Rules** | console: **Privacy, What gets hidden** |
+
 ## Out of process, by contract
 
 The detection service (`services/redaction`, Presidio) is a separate process
@@ -210,7 +237,7 @@ tool call with the same hold-back rule as prose. This covers chat completions
 (`tool_calls`), the Responses surface (`function_call`) and Anthropic Messages
 (`tool_use`).
 
-Two settings, both read-only on the Redaction screen because they come from the
+Two settings, both read-only on the Detectors tab because they come from the
 environment:
 
 - `GATEWAY_REDACTION__RESTORE_IN_RESPONSE` (default on) puts real values back in
@@ -282,7 +309,7 @@ takes 16 characters, a column, a masked input. `<IT_FISCAL_CODE_Y5RD4GZTEK>` is
 27 characters and a model asked to fill a 16-character field with it will,
 reasonably, refuse. Each entity type and each custom pattern can therefore ask
 for `placeholder: same_length` (default `tagged`, today's form), edited on the
-Redaction screen under the type's action:
+rule page under the type's action:
 
 ```
 RSSMRA80A01F205X   ->   #J45PBO2XY7TXCF#     (16 characters, as the original)
@@ -344,7 +371,7 @@ notably different from quota scopes, because quotas follow who *pays* while
 redaction follows where the **text goes** and who **wrote it**.
 
 **The shipped default protects nothing**: no rules, no redaction. That is a
-visible absence — an empty rules list on the Redaction screen — rather than an
+visible absence — an empty rules list on the What gets hidden tab — rather than an
 invisible presence, and a visible absence is the failure mode that gets fixed.
 A deployment that wants protection writes one catch-all rule and the screen
 says so. This reversed an earlier default ("protect everything the engine finds
@@ -576,8 +603,10 @@ whose output is logged.
 
 ## Operating it
 
-- The **Redaction screen** in the console shows the engine, the rules and a
-  preview; the per-rule editor is its own page.
+- The **Privacy** area of the console holds all of it: **What gets hidden** is
+  the rules (the per-rule editor is its own page), **Detectors** the engine
+  choice and the detection families inside the Fast profile, and **Test** one box
+  that shows the route, the detector and what is hidden for a sample.
 - `GET /api/admin/redaction` reports what is in force.
 - The detection cache is a **per-process LRU** — adding worker processes
   lowers the hit rate. It is keyed on the text *and* everything the detector

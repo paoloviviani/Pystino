@@ -86,8 +86,10 @@ nav:
   - Bring your own key: byok.md
   - Decision models: decision-models.md
   - Provider catalogue: provider-catalogue.md
-  - Redaction: redaction.md
-  - Privacy routing: privacy-routing.md
+  - Privacy:
+      - Overview: privacy.md
+      - Redaction: redaction.md
+      - Privacy routing: privacy-routing.md
   - Document extractor engines: extractor-engines.md
   - Deployment: deployment.md
   - Coding agents: coding-agents.md

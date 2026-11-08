@@ -2,7 +2,7 @@ import { Badge, Button, Card, Dialog, EmptyState, Notice, Spinner } from "@llmp/
 import { useState } from "react";
 import { useNavigate } from "react-router";
 
-import { PageHeader } from "../components/PageHeader";
+import { PrivacyHeader } from "../components/PrivacyHeader";
 import { MUTED, PAGE } from "../lib/layout";
 import {
   KINDS,
@@ -255,23 +255,15 @@ export function AdminPrivacy() {
 
   return (
     <div className={PAGE}>
-      <PageHeader
-        title={m["privacy.title"]()}
-        subtitle={m["privacy.subtitle"]()}
+      <PrivacyHeader
+        tab="rules"
         actions={
-          <>
-            <Button type="button" onClick={() => setHow(true)}>
-              {m["privacy.how_link"]()}
-            </Button>
-            <Button type="button" onClick={() => navigate("/admin/privacy/test")}>
-              {m["privacy.test_link"]()}
-            </Button>
-            <Button type="button" onClick={() => navigate("/admin/privacy/profiles")}>
-              {m["privacy.profiles_link"]()}
-            </Button>
-          </>
+          <Button type="button" onClick={() => setHow(true)}>
+            {m["privacy.how_link"]()}
+          </Button>
         }
       />
+      <p className={`m-0 text-small ${MUTED}`}>{m["privacy.subtitle"]()}</p>
       <HowItWorks open={how} onClose={() => setHow(false)} />
 
       {rules.isPending && <Spinner label={m["privacy.loading"]()} />}

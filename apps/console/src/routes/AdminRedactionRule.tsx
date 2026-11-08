@@ -131,7 +131,7 @@ export function AdminRedactionRule() {
               : m["redaction_rule.toast.created"](),
           type: "success",
         });
-        navigate("/admin/redaction");
+        navigate("/admin/privacy/hidden");
       },
       onError: (error: Error) =>
         toast?.add({
@@ -194,7 +194,7 @@ export function AdminRedactionRule() {
           <Message
             message={m["redaction_rule.missing.body"]}
             markup={{
-              link: (children) => <a href="/admin/redaction">{children}</a>,
+              link: (children) => <a href="/admin/privacy/hidden">{children}</a>,
             }}
           />
         </Notice>
@@ -375,7 +375,7 @@ export function AdminRedactionRule() {
                 : ""}
         </p>
         <div className="flex items-center gap-2">
-          <Button onClick={() => navigate("/admin/redaction")}>{m["redaction_rule.back"]()}</Button>
+          <Button onClick={() => navigate("/admin/privacy/hidden")}>{m["redaction_rule.back"]()}</Button>
           <Button variant="primary" busy={saving} disabled={needsSubject} onClick={submit}>
             {existing ? m["redaction_rule.submit.save"]() : m["redaction_rule.submit.create"]()}
           </Button>
