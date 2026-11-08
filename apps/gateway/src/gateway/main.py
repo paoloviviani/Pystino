@@ -31,6 +31,7 @@ from gateway.logging_config import configure_logging
 from gateway.netguard import build_guarded_client
 from gateway.oidc import sweep_env_admin_email_rule
 from gateway.oidc_policy import OIDCPolicyResolver
+from gateway.privacy.state import PrivacyState
 from gateway.providers import ProviderRegistry
 from gateway.quota import (
     DatabaseCounterStore,
@@ -241,6 +242,14 @@ async def init_app_state(
     # logs, rather than refusing to boot over a database blip.
     await resolver.refresh()
     resolver.start()
+    # Privacy routing (ADR 0113): rules, detector profiles and the names of local
+    # models, polled like the redaction rules so the request path stays
+    # query-free. Non-fatal at startup for the same reason: under the test
+    # fixtures the schema does not exist yet.
+    privacy_state = PrivacyState(session_factory)
+    app.state.privacy = privacy_state
+    await privacy_state.refresh()
+    privacy_state.start()
     # The identity policy (ADR 0048): console-decided, environment-baselined,
     # polled the same way redaction is. Read once before serving, so a worker
     # never answers a login with the environment's policy when the console has
@@ -403,6 +412,8 @@ async def shutdown_app_state(app: FastAPI) -> None:
     # after a console change.
     if (resolver := getattr(app.state, "redaction", None)) is not None:
         await resolver.aclose()
+    if (privacy := getattr(app.state, "privacy", None)) is not None:
+        await privacy.aclose()
     if (policy := getattr(app.state, "oidc_policy", None)) is not None:
         await policy.stop()
     if (notifier := getattr(app.state, "quota_notifier", None)) is not None:

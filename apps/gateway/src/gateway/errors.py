@@ -185,6 +185,21 @@ class ContentBlockedError(GatewayError):
     findings: Any = None
 
 
+class RoutingRefusedError(GatewayError):
+    """A privacy routing rule refused the request (ADR 0113).
+
+    403, like a redaction block: the request is well formed and the caller is
+    signed in, and re-sending it will not change the answer. The message names
+    the **rule** an administrator wrote and says what was seen in plain words
+    ("a PDF", "a scan"); it never quotes the content, the text or the file's
+    name.
+    """
+
+    status_code = status.HTTP_403_FORBIDDEN
+    error_type = "invalid_request_error"
+    code = "routing_refused"
+
+
 class UpstreamUnavailableError(GatewayError):
     status_code = status.HTTP_502_BAD_GATEWAY
     error_type = "api_error"

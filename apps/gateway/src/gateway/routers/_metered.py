@@ -28,10 +28,10 @@ from __future__ import annotations
 import logging
 import random
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, TypeVar, cast
+from typing import Any, NoReturn, TypeVar, cast
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
@@ -52,7 +52,9 @@ from gateway.errors import (
     BadRequestError,
     ByokNotAllowedError,
     ContentBlockedError,
+    GatewayError,
     ModelNotFoundError,
+    RoutingRefusedError,
     ServiceUnavailableError,
     UpstreamUnavailableError,
     error_response,
@@ -70,6 +72,8 @@ from gateway.models import (
 )
 from gateway.plugins.base import ROUTER_ROUTING_FIELDS
 from gateway.plugins.base import ProviderKind as PluginKind
+from gateway.privacy import attribution
+from gateway.privacy.state import state_of
 from gateway.providers import ProviderConfigurationError, ProviderRegistry
 from gateway.quota import (
     QuotaAmounts,
@@ -1087,6 +1091,7 @@ async def redact_or_block(
     settings: Settings,
     surface: ApiSurface,
     request_id: str,
+    routing: dict[str, Any] | None = None,
 ) -> RedactionOutcome:
     """Redact under this request's effective policy, or refuse and record it.
 
@@ -1101,10 +1106,14 @@ async def redact_or_block(
     it carries is who, when, which model, and which rule decided.
     """
     policy = redaction_policy(request, principal=principal, model=model)
+    if routing is None:
+        routing = chat_routing(request, principal=principal, model=model, surface=surface)
     try:
-        return await redactor.redact_request(messages, policy=policy)
+        outcome = await redactor.redact_request(messages, policy=policy)
     except ContentBlockedError as exc:
         detail = build_detail(exc.findings or {}, policy, blocked=True)
+        if routing is not None:
+            detail = attribution.with_routing(detail, {**routing, "outcome": "blocked"})
         if wants_redaction_summary(request):
             # The 403 carries the summary too, so a caller that asked for one
             # learns what refused it. Types and counts and the deciding rule;
@@ -1114,33 +1123,167 @@ async def redact_or_block(
                     request_id=request_id, detail=detail, blocked=True
                 )
             }
-        session.add(
-            UsageRecord(
-                request_id=request_id,
-                status=UsageStatus.BLOCKED,
-                user_id=principal.user.id,
-                group_id=None if model.is_private else principal.require_billing_group().id,
-                api_key_id=principal.api_key.id if principal.api_key else None,
-                model_id=model.id,
-                model_name=model.api_name,
-                byok=model.is_private,
-                streamed=False,
-                api_surface=surface,
-                currency=settings.billing_currency,
-                usage_source=UsageSource.UNAVAILABLE,
-                cost=Decimal(0),
-                redaction_engine=getattr(redactor, "name", None),
-                redaction_scope=policy.scope if policy else None,
-                redaction_rule_id=policy.rule_id if policy else None,
-                redaction_detail=detail,
-                error_code=exc.code,
-                # Safe by construction: ContentBlockedError never quotes the
-                # matched text, which is the whole point of its own docstring.
-                error_message=str(exc),
-            )
+        await record_blocked(
+            session,
+            principal=principal,
+            model=model,
+            surface=surface,
+            settings=settings,
+            request_id=request_id,
+            code=exc.code,
+            message=str(exc),
+            detail=detail,
+            redaction_engine=getattr(redactor, "name", None),
+            policy=policy,
         )
-        await session.commit()
         raise
+    if routing is not None:
+        outcome.routing = routing
+        if outcome.detail is not None or privacy_configured(request):
+            outcome.detail = attribution.with_routing(outcome.detail, routing)
+    return outcome
+
+
+async def refuse_by_rule(
+    request: Request,
+    session: AsyncSession,
+    *,
+    principal: Principal,
+    model: ModelDef,
+    surface: ApiSurface,
+    settings: Settings,
+    request_id: str,
+    routing: dict[str, Any],
+    rule_name: str,
+    why: str,
+) -> NoReturn:
+    """Refuse the request under a routing rule: a 403 naming the rule, and a row.
+
+    The message carries the rule's name and a plain reason, never the content or
+    the file's name. The row is the same ``blocked`` row a redaction block leaves.
+    """
+    message = f"Refused by the privacy rule '{rule_name}': {why}"
+    detail = attribution.with_routing(None, {**routing, "outcome": "refused"})
+    detail["blocked"] = True
+    error = RoutingRefusedError(message)
+    if wants_redaction_summary(request):
+        error.extra_payload = {
+            REDACTION_SUMMARY_FIELD: build_summary(
+                request_id=request_id, detail=detail, blocked=True
+            )
+        }
+    await record_blocked(
+        session,
+        principal=principal,
+        model=model,
+        surface=surface,
+        settings=settings,
+        request_id=request_id,
+        code=error.code,
+        message=message,
+        detail=detail,
+    )
+    raise error
+
+
+async def reroute_to_local(
+    session: AsyncSession,
+    names: Sequence[str],
+    *,
+    principal: Principal,
+    surface: ApiSurface,
+    template: ResolvedModel,
+    preferred: str | None = None,
+) -> ResolvedModel | None:
+    """The first local model of *names* the caller may use, or None.
+
+    A rule saying "use a local model" cannot grant access: each candidate goes
+    through the same resolution a direct call does, so a caller without the grant
+    gets None, and the route then fails closed rather than quietly using the
+    model they named.
+    """
+    ordered = ([preferred] if preferred else []) + [n for n in names if n != preferred]
+    for name in ordered:
+        try:
+            found = await resolve_model(session, name, principal=principal, surface=surface)
+        except GatewayError:
+            continue
+        return ResolvedModel(
+            model=found.model,
+            requested_name=template.requested_name,
+            attempt=template.attempt,
+            last=template.last,
+            routed=template.routed,
+        )
+    return None
+
+
+def privacy_configured(request: Request) -> bool:
+    """Whether any routing rule is on: the condition for logging every request."""
+    return state_of(request).configured
+
+
+_CHAT_SURFACES = (ApiSurface.CHAT_COMPLETIONS, ApiSurface.RESPONSES, ApiSurface.MESSAGES)
+
+
+def chat_routing(
+    request: Request, *, principal: Principal, model: ModelDef, surface: ApiSurface
+) -> dict[str, Any] | None:
+    """The routing observation for a chat request (phase 0: nothing handles it yet).
+
+    None for a surface that is not one of the three kinds, so images, search and
+    the rest are not described as something they are not.
+    """
+    if surface not in _CHAT_SURFACES:
+        return None
+    facts = attribution.base_facts("chat", principal, model)
+    return attribution.build(facts)
+
+
+async def record_blocked(
+    session: AsyncSession,
+    *,
+    principal: Principal,
+    model: ModelDef,
+    surface: ApiSurface,
+    settings: Settings,
+    request_id: str,
+    code: str | None,
+    message: str,
+    detail: dict[str, Any] | None,
+    redaction_engine: str | None = None,
+    policy: EffectivePolicy | None = None,
+) -> None:
+    """Write the ``blocked`` row for a request refused before any provider saw it.
+
+    Zero tokens, zero cost: who, when, which model and which rule decided. Shared
+    by the redaction block and the routing refusal, so both leave the same trace.
+    """
+    session.add(
+        UsageRecord(
+            request_id=request_id,
+            status=UsageStatus.BLOCKED,
+            user_id=principal.user.id,
+            group_id=None if model.is_private else principal.require_billing_group().id,
+            api_key_id=principal.api_key.id if principal.api_key else None,
+            model_id=model.id,
+            model_name=model.api_name,
+            byok=model.is_private,
+            streamed=False,
+            api_surface=surface,
+            currency=settings.billing_currency,
+            usage_source=UsageSource.UNAVAILABLE,
+            cost=Decimal(0),
+            redaction_engine=redaction_engine,
+            redaction_scope=policy.scope if policy else None,
+            redaction_rule_id=policy.rule_id if policy else None,
+            redaction_detail=detail,
+            error_code=code,
+            # Safe by construction: neither refusal ever quotes the content.
+            error_message=message,
+        )
+    )
+    await session.commit()
 
 
 #: Opt-in headers for the per-response redaction summary (ADR 0112), and the
@@ -1181,12 +1324,20 @@ def redaction_summary_for(
     belong to a script whose output is logged, and the values are the one thing
     here that must not end up in a log. They are put in this response only.
     """
-    if not wants_redaction_summary(request) or not outcome.in_force:
+    if not wants_redaction_summary(request):
+        return None
+    if not outcome.in_force and not (outcome.routing is not None and privacy_configured(request)):
         return None
     values: list[dict[str, str]] | None = None
     if _header_on(request, REDACTION_VALUES_HEADER) and _is_interactive_sign_in(principal):
         values = list(outcome.values)
-    return build_summary(request_id=request_id, detail=outcome.detail, blocked=False, values=values)
+    return build_summary(
+        request_id=request_id,
+        detail=outcome.detail,
+        blocked=False,
+        values=values,
+        routing=outcome.routing,
+    )
 
 
 #: The header a caller labels a request with, and the longest label kept.

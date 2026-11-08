@@ -1098,6 +1098,12 @@ class Provider(Base):
         server_default=BillingMode.OWN_PRICES.value,
     )
 
+    #: Whether this endpoint runs on this deployment's own infrastructure: an
+    #: administrator's statement, never inferred from the URL (ADR 0113). It is
+    #: what the privacy routing rules mean by "local" for an embedding target and
+    #: what a `local` action may reroute to. False is "cloud".
+    is_local: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
@@ -2892,3 +2898,60 @@ class QuotaReset(Base):
 
     def __repr__(self) -> str:
         return f"<QuotaReset rule={self.rule_id} at={self.effective_at.isoformat()}>"
+
+
+class PrivacyRule(Base):
+    """One administrator routing rule (ADR 0113): kind, conditions, action.
+
+    Rules of one kind form an ordered list, first match wins. ``conditions`` is a
+    list of ``{key, values, negate, decide?}`` and ``action`` one
+    ``{type, ...}`` object; both are validated on save (``gateway.privacy.rules``)
+    and are plain JSON so a later kind (chat) or condition needs no migration.
+    Mutable: the history is each request's own log entry, which names the rule
+    and its id.
+    """
+
+    __tablename__ = "privacy_rules"
+    __table_args__ = (Index("ix_privacy_rules_kind_position", "kind", "position"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    #: ``read``, ``embed`` or ``chat``.
+    kind: Mapped[str] = mapped_column(String(16))
+    name: Mapped[str] = mapped_column(String(120))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    observe_only: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    #: Order within the kind, from 0.
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    conditions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    action: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class DetectorProfile(Base):
+    """A named way of detecting (ADR 0113): an engine, its labels, its fallback.
+
+    Phase 1 uses profiles as the ``decide`` targets of content conditions and
+    for display; phase 2 attaches them to chat. ``fallback`` says what happens
+    when the engine is unavailable: ``refuse`` (fail closed, the default) or
+    ``fallback_to`` the profile ``fallback_profile_id``, which is recorded as a
+    weakening on every request that used it. Status is not stored: it is read
+    from health.
+    """
+
+    __tablename__ = "detector_profiles"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    description: Mapped[str] = mapped_column(String(500), default="", server_default=text("''"))
+    #: ``presidio`` (the current detector), ``patterns`` or a later engine name.
+    engine: Mapped[str] = mapped_column(String(32))
+    labels: Mapped[list[str]] = mapped_column(JSON, default=list)
+    fallback: Mapped[str] = mapped_column(String(16), default="refuse", server_default="refuse")
+    fallback_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("detector_profiles.id", ondelete="SET NULL"), default=None
+    )
+    #: The seeded deployment default; cannot be deleted.
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)

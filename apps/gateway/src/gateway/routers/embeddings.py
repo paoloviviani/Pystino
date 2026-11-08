@@ -26,6 +26,7 @@ does and does not buy.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -45,6 +46,9 @@ from gateway.errors import (
     BadRequestError,
 )
 from gateway.models import ApiSurface
+from gateway.privacy import attribution
+from gateway.privacy.evaluate import Evaluation
+from gateway.privacy.state import state_of
 from gateway.routers import _metered
 from gateway.routing import affinity_key
 from gateway.schemas import EmbeddingRequest
@@ -55,6 +59,71 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1", tags=["openai"])
 
 SURFACE = ApiSurface.EMBEDDINGS
+
+
+async def _route_embedding(
+    request: Request,
+    session: Any,
+    resolved: _metered.ResolvedModel,
+    texts: list[str],
+    *,
+    principal: Any,
+    settings: Any,
+    request_id: str,
+) -> tuple[_metered.ResolvedModel, dict[str, Any]]:
+    """Apply the embedding rules: refuse, reroute to a local model, or carry on.
+
+    Returns the model to serve with (the caller's own unless a ``local`` rule
+    moved it) and the ``routing`` attribution for the log and the summary. A
+    rule that cannot be carried out fails closed with a 403 naming it.
+    """
+    privacy = state_of(request)
+    facts = attribution.base_facts(
+        "embed", principal, resolved.model, requested_name=resolved.requested_name
+    )
+    if privacy.uses_verdicts("embed"):
+        facts = replace(facts, text="\n".join(texts))
+    evaluation: Evaluation = await privacy.evaluator.evaluate(privacy.rules_of("embed"), facts)
+    fired = evaluation.fired
+    if fired is None:
+        return resolved, attribution.build(facts, evaluation=evaluation)
+
+    async def refuse(why: str) -> Any:
+        routing = attribution.build(facts, evaluation=evaluation, outcome="refused")
+        await _metered.refuse_by_rule(
+            request,
+            session,
+            principal=principal,
+            model=resolved.model,
+            surface=SURFACE,
+            settings=settings,
+            request_id=request_id,
+            routing=routing,
+            rule_name=fired.name,
+            why=why,
+        )
+
+    if fired.action_type == "refuse":
+        await refuse("embedding is not allowed for this request.")
+    if fired.action_type == "local":
+        if facts.target_local:
+            return resolved, attribution.build(facts, evaluation=evaluation, outcome="rule")
+        moved = await _metered.reroute_to_local(
+            session,
+            privacy.local_embedding_models,
+            principal=principal,
+            surface=SURFACE,
+            template=resolved,
+            preferred=fired.action.get("model"),
+        )
+        if moved is None:
+            await refuse("it must be embedded on a local model, and none is available to you here.")
+        assert moved is not None
+        facts = attribution.base_facts(
+            "embed", principal, moved.model, requested_name=resolved.requested_name
+        )
+        return moved, attribution.build(facts, evaluation=evaluation, outcome="rerouted")
+    return resolved, attribution.build(facts, evaluation=evaluation, outcome="rule")
 
 
 @router.post("/embeddings", response_model=None)
@@ -88,6 +157,18 @@ async def create_embeddings(
     async def serve(resolved: _metered.ResolvedModel) -> JSONResponse:
         # The target, when the name sent was an alias (ADR 0101); everything below
         # follows what serves the request.
+        # -- privacy routing (ADR 0113) -------------------------------------------
+        # Judged on this request alone, from what it shows: who, where it goes,
+        # and (only if a rule asks) what the text is. First match wins.
+        resolved, routing = await _route_embedding(
+            request,
+            session,
+            resolved,
+            texts,
+            principal=principal,
+            settings=settings,
+            request_id=request_id,
+        )
         model = resolved.model
         upstream = await _metered.resolve_upstream(providers, resolved)
 
@@ -105,6 +186,7 @@ async def create_embeddings(
             settings=settings,
             surface=SURFACE,
             request_id=request_id,
+            routing=routing,
         )
         redacted = [str(message.get("content") or "") for message in outcome.messages]
 
@@ -159,6 +241,11 @@ async def create_embeddings(
         # ledger.
         if body_out.get("model") is not None:
             body_out["model"] = resolved.requested_name
+        summary = _metered.redaction_summary_for(
+            request, principal=principal, outcome=outcome, request_id=request_id
+        )
+        if summary is not None:
+            body_out[_metered.REDACTION_SUMMARY_FIELD] = summary
         # Finalised after the answer is sent, not before it (ADR 0060).
         return JSONResponse(
             status_code=response.status_code,

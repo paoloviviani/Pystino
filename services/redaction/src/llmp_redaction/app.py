@@ -354,7 +354,7 @@ def create_app(detector: Detector | None = None) -> FastAPI:
         content type is unrecognised — several clients send
         `application/octet-stream` for every upload. `X-Page-Images: N` asks
         for up to N pictures of PDF pages that have no text (long side from
-        `X-Page-Image-Long-Side`). `X-Extractor-Engine: markitdown|docling` picks
+        `X-Page-Image-Long-Side`). `X-Extractor-Engine: markitdown|ocr|docling` picks
         the reader for this one request (default: `EXTRACTOR_ENGINE`; an
         unknown name is ignored), the seam a routing rule would use.
 
