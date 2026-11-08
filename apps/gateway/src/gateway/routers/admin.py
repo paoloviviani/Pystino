@@ -737,6 +737,7 @@ def _provider_response(
         plugin=provider.plugin,
         kind=provider.kind.value,
         billing_mode=provider.billing_mode.value,
+        is_local=provider.is_local,
         prefix=provider.prefix,
         unpriced_model_count=unpriced,
         plugin_kind=_plugin_kind(provider.plugin),
@@ -915,6 +916,7 @@ async def create_provider(
         plugin=plugin_name,
         kind=ProviderKind(payload.kind),
         billing_mode=BillingMode(payload.billing_mode),
+        is_local=payload.is_local if scope.owner is None else False,
         prefix=prefix,
         catalogue_id=entry.id if entry is not None else None,
     )
@@ -1072,6 +1074,12 @@ async def update_provider(
             await session.flush()
         provider.prefix = new_prefix
 
+    if "is_local" in fields and scope.owner is not None:
+        raise BadRequestError(
+            "Only an administrator can say a provider is local.", code="is_local_admin_only"
+        )
+    if fields.get("is_local", False) is None:
+        fields.pop("is_local")
     if "catalogue_id" in fields:
         entry = _catalogue_entry_or_400(catalogue, fields.pop("catalogue_id"))
         provider.catalogue_id = entry.id if entry is not None else None

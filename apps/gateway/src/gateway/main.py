@@ -49,6 +49,7 @@ from gateway.routers import (
     admin,
     admin_audit,
     admin_byok,
+    admin_privacy,
     aliases,
     auth,
     billing,
@@ -509,6 +510,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin.router)
     app.include_router(admin.me_router)
     app.include_router(admin_byok.router)
+    app.include_router(admin_privacy.router)
     app.include_router(aliases.router)
     app.include_router(admin_audit.router)
     app.include_router(identity_events.router)

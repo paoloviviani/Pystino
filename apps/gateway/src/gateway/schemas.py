@@ -1052,6 +1052,10 @@ class ProviderResponse(ResponseModel):
     plugin: str | None = None
     kind: str = "provider"
     billing_mode: str = "own_prices"
+    #: An administrator's statement that this endpoint runs on this
+    #: deployment's own infrastructure (ADR 0113). What privacy routing rules
+    #: mean by "local".
+    is_local: bool = False
     #: Prepended to every model name this provider contributes, so two vendors
     #: whose tiers share a word do not collide. Empty means none.
     prefix: str = ""
@@ -1128,6 +1132,10 @@ class ProviderCreateRequest(BaseModel):
     # named plugin below: pass-through needs a plugin that asserts its figure is
     # the counterparty's actual charge.
     billing_mode: Literal["own_prices", "provider_reported"] = "own_prices"
+    # Runs on this deployment's own infrastructure (ADR 0113). An administrator's
+    # statement, never inferred from the URL; refused on a member's private
+    # provider, where it would let a user claim "local" for their own endpoint.
+    is_local: bool = False
     # The catalogue entry this provider is an instance of (backlog P4). When
     # given, what the request leaves out (plugin, endpoint, prefix) is taken from
     # the entry; what the request states always wins.
@@ -1161,6 +1169,7 @@ class ProviderUpdateRequest(BaseModel):
     plugin: PluginName = None
     kind: Literal["provider", "router", "search"] | None = None
     billing_mode: Literal["own_prices", "provider_reported"] | None = None
+    is_local: bool | None = None
     # Setting or changing this re-applies it to the models already here: a
     # prefix that only reached future imports would leave the catalogue
     # half-disambiguated. An empty string removes the prefix and un-names the
@@ -3241,6 +3250,61 @@ class RedactionEventEntity(ResponseModel):
     sources: list[str]
 
 
+class RoutingTarget(ResponseModel):
+    alias: str | None = None
+    model: str | None = None
+    provider: str | None = None
+    local: bool | None = None
+
+
+class RoutingVerdicts(ResponseModel):
+    health: bool | None = None
+    ids: bool | None = None
+    lang: str | None = None
+    method: str = "patterns"
+
+
+class RoutingObserved(ResponseModel):
+    """What Pystino saw in the request (ADR 0113). Labels and names, never content."""
+
+    groups: list[str] = Field(default_factory=list)
+    target: RoutingTarget = Field(default_factory=RoutingTarget)
+    #: Reading only: the file's base name, type and whether it is a scan.
+    filename: str | None = None
+    mime: str | None = None
+    filetype: str | None = None
+    is_scan: bool | None = None
+    verdicts: RoutingVerdicts | None = None
+
+
+class RoutingRule(ResponseModel):
+    id: uuid.UUID | None = None
+    name: str
+
+
+class RoutingHandled(ResponseModel):
+    """What handled it: the reader, why it was not the one asked for, the rule."""
+
+    extractor: str | None = None
+    fallback_reason: str | None = None
+    reader: str | None = None
+    profile: str = "default"
+    routing_rule: RoutingRule | None = None
+
+
+class RoutingInfo(ResponseModel):
+    """The ``routing`` block of a log entry and of the per-response summary."""
+
+    kind: Literal["read", "embed", "chat"]
+    observed: RoutingObserved = Field(default_factory=RoutingObserved)
+    handled: RoutingHandled = Field(default_factory=RoutingHandled)
+    #: ``default`` (no rule applied), ``rule``, ``rerouted``, ``refused`` or ``blocked``.
+    outcome: str = "default"
+    observed_rules: list[RoutingRule] = Field(default_factory=list)
+    degraded: list[str] = Field(default_factory=list)
+    fallbacks: list[str] = Field(default_factory=list)
+
+
 class RedactionEventRow(ResponseModel):
     """One request where redaction hid something (or refused). No values."""
 
@@ -3253,3 +3317,6 @@ class RedactionEventRow(ResponseModel):
     byok: bool
     blocked: bool
     entities: list[RedactionEventEntity]
+    #: What Pystino observed and what handled it (ADR 0113); null on rows from
+    #: before routing attribution.
+    routing: RoutingInfo | None = None

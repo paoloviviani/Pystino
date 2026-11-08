@@ -124,6 +124,40 @@ def test_a_request_can_pick_the_engine_over_the_configured_one(
     assert extract(docx_bytes("x"), media_type=DOCX, engine="nonsense").extractor == "docling"
 
 
+def test_the_ocr_reader_without_the_weights_says_so_and_reads_as_markitdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A routing rule asking for `ocr` on a build without OCR must be told, not
+    quietly given a text-layer read (ADR 0113)."""
+    monkeypatch.setattr("llmp_redaction.documents.ocr.available", lambda config=None: False)
+    result = extract(docx_bytes("Plain paragraph"), media_type=DOCX, engine="ocr")
+    assert result.kind is ExtractionKind.TEXT
+    assert result.extractor == "markitdown"
+    assert result.fallback_reason == "ocr unavailable"
+
+
+def test_the_ocr_reader_switches_ocr_on_for_one_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llmp_shared import ExtractionResponse
+
+    seen: list[bool] = []
+
+    def by_page(data: bytes, *, max_pages: int, long_side: int, config: object) -> object:
+        seen.append(config.ocr)  # type: ignore[attr-defined]
+        return ExtractionResponse(kind=ExtractionKind.TEXT, text="read", extractor="rapidocr")
+
+    monkeypatch.setattr(documents.ocr, "available", lambda config=None: True)
+    monkeypatch.setattr(documents, "_pdf_by_page", by_page)
+    pdf = _blank_pdf(200)
+    # EXTRACTOR_OCR is unset, so a plain request does not use the OCR path...
+    extract(pdf, media_type=PDF)
+    assert seen == []
+    # ...and a request that asks for the `ocr` reader does, once.
+    result = extract(pdf, media_type=PDF, engine="ocr")
+    assert seen == [True] and result.extractor == "rapidocr" and result.fallback_reason == ""
+
+
 @pytest.mark.parametrize(
     "failure",
     [DoclingUnavailable("no weights"), RuntimeError("boom"), ValueError("bad page")],

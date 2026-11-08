@@ -340,6 +340,7 @@ def _implied_by(rule_c: Condition, earlier_c: Condition) -> bool:
 def _overlaps(rule_c: Condition, earlier_c: Condition) -> bool:
     return (
         rule_c.key == earlier_c.key
+        and rule_c.decide == earlier_c.decide
         and not rule_c.negate
         and not earlier_c.negate
         and bool(set(rule_c.values) & set(earlier_c.values))

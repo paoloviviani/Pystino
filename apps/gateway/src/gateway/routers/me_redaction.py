@@ -69,6 +69,7 @@ from gateway.schemas import (
     RedactionTestResponse,
     RedactionTestRule,
     RedactionTestSpan,
+    RoutingInfo,
     UserRedactionRuleRequest,
     UserRedactionRuleResponse,
 )
@@ -497,6 +498,7 @@ def _event_row(r: Any, *, with_user: bool) -> RedactionEventRow:
         byok=bool(r.byok),
         blocked=bool(detail.get("blocked")),
         entities=[RedactionEventEntity.model_validate(e) for e in detail.get("entities", [])],
+        routing=(RoutingInfo.model_validate(detail["routing"]) if detail.get("routing") else None),
     )
 
 
