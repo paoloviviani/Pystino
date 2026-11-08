@@ -4,6 +4,10 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+## v0.30.0 — 2026-11-08
+
+Paired with Cerea 0.45.0.
+
 - **Redaction image: medium spaCy models.** `SPACY_MODELS` now accepts `en_core_web_md` and `it_core_news_md` (3.8.0, pinned), about 40 MB each and roughly twice as fast as the `lg` models, somewhat less accurate on names; suited to small boxes. Also fixes an Italian-only NER image (for example `SPACY_MODELS="it_core_news_md"`) failing at startup with "supported languages have to be consistent".
 - **A provider without a model list tests as reachable.** Servers such as text-embeddings-inference answer `/models` with 404 but serve embeddings; the connection test now checks `/health` and `/info` beside the version path and says "reachable, add its models by hand" instead of "not reachable". A base URL missing `/v1` still gets the hint.
 - **Security: `/docs` and `/openapi.json` are closed by default.** Unauthenticated callers no longer get the API schema. `GATEWAY_DOCS_ENABLED=true` serves them again, for development; `scripts/export_openapi.py` and the console's generated types are unaffected.
