@@ -3264,13 +3264,21 @@ class RoutingVerdicts(ResponseModel):
     method: str = "patterns"
 
 
+class RoutingFilenameMatch(ResponseModel):
+    rule_id: uuid.UUID
+    pattern_index: int
+
+
 class RoutingObserved(ResponseModel):
     """What Pystino saw in the request (ADR 0113). Labels and names, never content."""
 
     groups: list[str] = Field(default_factory=list)
     target: RoutingTarget = Field(default_factory=RoutingTarget)
-    #: Reading only: the file's base name, type and whether it is a scan.
+    #: Reading only: type and whether it is a scan. `filename` is present only in
+    #: the per-response summary, never in the log; the log says which `filename`
+    #: condition matched instead.
     filename: str | None = None
+    filename_match: RoutingFilenameMatch | None = None
     mime: str | None = None
     filetype: str | None = None
     is_scan: bool | None = None

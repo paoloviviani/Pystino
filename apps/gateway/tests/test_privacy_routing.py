@@ -783,7 +783,9 @@ class TestReadingRules:
         assert not extractor.bodies
         row = await last_row(session_factory)
         assert row.status is UsageStatus.BLOCKED
-        assert row.redaction_detail["routing"]["observed"]["filename"] == "referto-rossi.pdf"
+        observed = row.redaction_detail["routing"]["observed"]
+        assert "filename" not in observed
+        assert observed["filename_match"]["pattern_index"] == 0
 
         other = await client.post(
             "/v1/ocr",
@@ -798,6 +800,47 @@ class TestReadingRules:
             headers=seeded.auth,
         )
         assert other.status_code == 200
+
+    async def test_the_uploaded_file_name_is_never_persisted(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """File names carry personal data; only the ephemeral summary may show one."""
+        app.state.control_http = FakeExtractor().client()
+        model = await add_local_model(session, seeded)
+        rule_id = await add_rule(
+            app,
+            session_factory,
+            kind="read",
+            name="Observe names",
+            observe_only=True,
+            conditions=[{"key": "filename", "values": ["x*", "*mario-rossi*"]}],
+        )
+        name = "referto-mario-rossi.pdf"
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": PDF, "document_name": name},
+            },
+            headers={**seeded.auth, **SUMMARY},
+        )
+        assert response.status_code == 200
+        # The summary of this one response may name the file...
+        assert response.json()["pystino_redaction"]["routing"]["observed"]["filename"] == name
+        # ...nothing persisted may.
+        async with session_factory() as db:
+            rows = (await db.execute(select(UsageRecord))).scalars().all()
+        dumped = " ".join(
+            str({c.name: getattr(r, c.name) for c in UsageRecord.__table__.columns}) for r in rows
+        )
+        assert "mario" not in dumped and "referto-" not in dumped
+        match = rows[-1].redaction_detail["routing"]["observed"]["filename_match"]
+        assert match == {"rule_id": str(rule_id), "pattern_index": 1}
 
     async def test_a_reader_rule_passes_the_engine_to_the_extractor(
         self,

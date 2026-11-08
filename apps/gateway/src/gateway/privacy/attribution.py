@@ -8,8 +8,10 @@ verdicts as labels) and *what handled it* (the extractor that read the file and
 why it was not the one asked for, the detector profile, the rule that applied).
 
 **No values and no offsets**, as the log has never held them. The one text field
-is a file's base name, which the user chose and the administrator's rules match
-on; it is cut to :data:`MAX_FILENAME` characters and never a path.
+is a file's base name, and it is **never persisted**: file names often carry
+personal data. It appears only in the ephemeral per-response summary;
+:func:`with_routing` (the one way into the log) strips it and keeps instead which
+``filename`` condition matched (rule id and pattern index).
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from gateway.privacy.evaluate import Evaluation, Facts
+from gateway.privacy.rules import Rule, glob_matches
 
 if TYPE_CHECKING:
     from gateway.deps import Principal
@@ -77,6 +80,21 @@ def base_facts(
     )
 
 
+def _filename_match(facts: Facts, rules: list[Rule]) -> dict[str, Any] | None:
+    """Which ``filename`` pattern of the first rule that used one matched, if any."""
+    name = clean_filename(facts.filename)
+    if not name:
+        return None
+    for rule in rules:
+        for condition in rule.conditions:
+            if condition.key != "filename" or condition.negate:
+                continue
+            for index, glob in enumerate(condition.values):
+                if glob_matches(glob, name):
+                    return {"rule_id": str(rule.id), "pattern_index": index}
+    return None
+
+
 def build(
     facts: Facts,
     *,
@@ -104,6 +122,11 @@ def build(
                 "mime": (facts.mime or "")[:100] or None,
                 "filetype": facts.filetype,
                 "is_scan": facts.is_scan,
+                "filename_match": _filename_match(
+                    facts,
+                    ([evaluation.fired] if evaluation and evaluation.fired else [])
+                    + (list(evaluation.observed) if evaluation else []),
+                ),
             }
         )
     fired = evaluation.fired if evaluation is not None else None
@@ -142,5 +165,7 @@ def build(
 def with_routing(detail: dict[str, Any] | None, routing: dict[str, Any]) -> dict[str, Any]:
     """*detail* (the redaction log entry) carrying *routing*; one is made if absent."""
     base = dict(detail) if detail is not None else {"v": 1, "blocked": False, "entities": []}
-    base["routing"] = routing
+    # The file name is for the response in hand only; the log never keeps it.
+    observed = {k: v for k, v in routing["observed"].items() if k != "filename"}
+    base["routing"] = {**routing, "observed": observed}
     return base

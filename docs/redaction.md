@@ -531,7 +531,7 @@ written only when something was hidden, as before.
   "observed": {
     "groups": ["Clinic"],
     "target": {"alias": "reader", "model": "local-reader", "provider": "onsite", "local": true},
-    "filename": "referto-rossi.pdf", "mime": "application/pdf",
+    "filename": "referto-rossi.pdf (summary only)", "filename_match": {"rule_id": "6c1e...", "pattern_index": 0}, "mime": "application/pdf",
     "filetype": "pdf", "is_scan": true,
     "verdicts": {"health": true, "ids": false, "lang": "it", "method": "patterns"}
   },
@@ -546,13 +546,14 @@ written only when something was hidden, as before.
 }
 ```
 
-- `observed.filename`, `mime`, `filetype` and `is_scan` are only for `read`;
+- `observed.filename` (summary only), `mime`, `filetype`, `is_scan` and `filename_match` are only for `read`;
   `verdicts` only when a rule asked for the text's content. `is_scan` is what the
   extractor reported, so it is `null` for a document that was never read here.
-- The **file name** is the one text field: a base name the user chose, at most 120
-  characters, never a path. It is in the log because rules match on it and an
-  administrator reading "why was this refused" needs it; keep that in mind
-  before giving file names to people who may not see them. Everything else is a
+- **The file name is never stored.** File names often carry personal data, so the
+  log keeps the type, the MIME, `is_scan` and `filename_match` (the rule id and
+  the index of the pattern that matched, if a `filename` condition did). The base
+  name (at most 120 characters, never a path) appears as `observed.filename` only
+  in the per-response summary, for that one response. Everything else here is a
   label, a group or model name, or a count.
 - `handled.extractor` and `fallback_reason` come from the extractor's own answer.
   `profile` is `default` until chat detector profiles (phase 2). `routing_rule`

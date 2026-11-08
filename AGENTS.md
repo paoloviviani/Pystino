@@ -607,8 +607,8 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
   file name. A `scan` condition is only known after reading, so the OCR route
   reads once on the local extractor and judges again. `routing` (what was
   observed, what handled it) rides in `redaction_detail["routing"]` and the
-  `pystino_redaction` summary: labels and names only, the one text field being a
-  file's base name. `providers.is_local` is admin-only (never BYOK).
+  `pystino_redaction` summary: labels and names only; a file's name is in the
+  summary of that response and never persisted. `providers.is_local` is admin-only (never BYOK).
 - **`InMemoryCounterStore` is atomic only because it never awaits.** It proves
   nothing about `MULTI`/`EXEC`, which is why `test_quota_race_live.py` exists.
 - **An abandoned stream is billed from our price table.** A client that hangs

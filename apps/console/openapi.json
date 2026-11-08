@@ -10031,6 +10031,25 @@
         "title": "ResponsesRequest",
         "type": "object"
       },
+      "RoutingFilenameMatch": {
+        "properties": {
+          "pattern_index": {
+            "title": "Pattern Index",
+            "type": "integer"
+          },
+          "rule_id": {
+            "format": "uuid",
+            "title": "Rule Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id",
+          "pattern_index"
+        ],
+        "title": "RoutingFilenameMatch",
+        "type": "object"
+      },
       "RoutingHandled": {
         "description": "What handled it: the reader, why it was not the one asked for, the rule.",
         "properties": {
@@ -10164,6 +10183,16 @@
             ],
             "title": "Filename"
           },
+          "filename_match": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutingFilenameMatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "filetype": {
             "anyOf": [
               {
@@ -10222,6 +10251,7 @@
           "groups",
           "target",
           "filename",
+          "filename_match",
           "mime",
           "filetype",
           "is_scan",

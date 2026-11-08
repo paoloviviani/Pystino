@@ -7661,6 +7661,16 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** RoutingFilenameMatch */
+        RoutingFilenameMatch: {
+            /** Pattern Index */
+            pattern_index: number;
+            /**
+             * Rule Id
+             * Format: uuid
+             */
+            rule_id: string;
+        };
         /**
          * RoutingHandled
          * @description What handled it: the reader, why it was not the one asked for, the rule.
@@ -7710,6 +7720,7 @@ export interface components {
         RoutingObserved: {
             /** Filename */
             filename: string | null;
+            filename_match: components["schemas"]["RoutingFilenameMatch"] | null;
             /** Filetype */
             filetype: string | null;
             /** Groups */
