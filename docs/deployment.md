@@ -53,7 +53,7 @@ add-ons are compose **profiles** chosen by `COMPOSE_PROFILES` in `.env`.
 | `valkey`, `migrate`, `gateway` | always      | the gateway and its console; there is no `gateway` profile here, because the gateway is the only thing this deployment serves |
 | `proxy`                        | always      | stock Caddy, reading `deploy/caddy/` (mounted read-only)                                                                      |
 | `authelia`                     | `authelia`  | the bundled identity provider at `/authelia`, stock image, reading `deploy/authelia/`                                         |
-| `redaction`, `extractor`       | `redaction` | Presidio, pattern-only in the published image                                                                                 |
+| `redaction`, `extractor`       | `redaction` | Presidio, pattern-only in the published image (`extractor` can use an OCR or Docling image, [built locally](extractor-engines.md)) |
 
 ## Setting up
 

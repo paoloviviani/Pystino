@@ -102,7 +102,7 @@ Three shapes, and all three work:
 
 | You want | How | What you get |
 |---|---|---|
-| **No redaction, no sidecar** | Leave `redaction` out of `COMPOSE_PROFILES` and the engine at `noop` | Nothing runs, and `noop` needs nothing. The same profile also runs `extractor`, the local document reader behind `/v1/ocr`, so it goes too |
+| **No redaction, no sidecar** | Leave `redaction` out of `COMPOSE_PROFILES` and the engine at `noop` | Nothing runs, and `noop` needs nothing. The same profile also runs `extractor`, the local document reader behind `/v1/ocr`, so it goes too. Reading scans and complex layouts is an option of that service: [extractor engines](extractor-engines.md) |
 | **Pattern matching only, no NER** | The `redaction` profile as shipped: the published `pystino-redaction:<version>-pattern` image (built with `SPACY_MODELS=` empty) and `REDACTION_NLP_ENGINE=disabled`, the `.env.example` default; engine `http` | Presidio's pattern recognisers — cards, IBANs, emails, phone numbers, the Italian identifiers — at about 150MB and without the CPU cost that scales with prompt length |
 | **Everything** | The `redaction` profile with the NER image built locally (`SPACY_MODELS=en_core_web_lg`, the Dockerfile's default; never published) named in `REDACTION_IMAGE`, and `REDACTION_NLP_ENGINE=spacy` | NER for the configured languages on top of the patterns |
 | **Everything, on a small box** | The same, built with the medium models: `SPACY_MODELS="it_core_news_md"` (add `en_core_web_md` for English) | The same NER with models of about 40MB each, roughly twice as fast as `lg` and somewhat less accurate on names. `it_*` weights are CC BY-NC-SA 3.0; the build prints that notice |

@@ -1,0 +1,52 @@
+{
+  "_comment": "Pinned model weights for the extractor image. Revisions are immutable commit hashes; every file is verified by SHA-256 after download. To upgrade: review the new revision (licences included), change the revision or URL here, download the files once, and record each file's sha256sum.",
+  "rapidocr": {
+    "licence": "Apache-2.0 (RapidOCR; PP-OCRv6 weights derived from PaddleOCR, Apache-2.0)",
+    "files": {
+      "PP-OCRv6_det_small.onnx": {
+        "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv6/det/PP-OCRv6_det_small.onnx",
+        "sha256": "090f04abcd9d9a7498bc4ebf677e4cb9bdce1fe4197ddb7e529f1ef44e1ff94f"
+      },
+      "PP-OCRv6_rec_small.onnx": {
+        "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv6/rec/PP-OCRv6_rec_small.onnx",
+        "sha256": "6f327246b50388f3c176ae304bd95767ea6dc0c9ae92153ef8cbe210b3c14884"
+      },
+      "ch_ppocr_mobile_v2.0_cls_mobile.onnx": {
+        "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+        "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c"
+      }
+    },
+    "source": "https://www.modelscope.cn/models/RapidAI/RapidOCR"
+  },
+  "huggingface": {
+    "docling-project/docling-layout-heron": {
+      "revision": "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8",
+      "licence": "Apache-2.0",
+      "allow_patterns": [
+        "model.safetensors",
+        "config.json",
+        "preprocessor_config.json",
+        "README.md"
+      ],
+      "files": {
+        "model.safetensors": "00333a43451945aaf89db8ca9c0a17e75d1537c17db60fdb91aa95f4c7929e0c",
+        "config.json": "fdea30805ce2f5666b147fca941dcdd27ad468e27d6ed21902207d3da056a97d",
+        "preprocessor_config.json": "cd38cd59999e7a95d68e487fbe5132df3d4e5c32a0836add57e6126ba0c4eaf1"
+      }
+    },
+    "docling-project/docling-models": {
+      "revision": "2199320848bb9a8a519d22e4b528185a4f9a6f64",
+      "licence": "CDLA-Permissive-2.0 (the model card at this revision also lists Apache-2.0; the v2.3.0 revision Docling pins says CDLA-Permissive-2.0 alone, for the same weight files)",
+      "allow_patterns": [
+        "model_artifacts/tableformer/accurate/*",
+        "config.json",
+        "README.md"
+      ],
+      "files": {
+        "model_artifacts/tableformer/accurate/tableformer_accurate.safetensors": "2a7d6c924b3cd12fb99a09280ca9c33a89c5d60b93253617d2e088c1a40374d9",
+        "model_artifacts/tableformer/accurate/tm_config.json": "984e122ceb8ccf84d84c9d2882f6f2302a44b4f1e577babd6289892c36f3cffd",
+        "config.json": "9c34024dc28ff47b75818f415e769809798c29bf9bde6f2ccc63a4acb62396d9"
+      }
+    }
+  }
+}

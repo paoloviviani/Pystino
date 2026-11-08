@@ -66,6 +66,7 @@ a reason that names the format and the next step.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import io
 import logging
 import os
@@ -73,11 +74,15 @@ import shutil
 import struct
 import subprocess
 import tempfile
+import time
 import zipfile
 from enum import StrEnum
 from typing import Final
 
 from llmp_shared import ExtractionKind, ExtractionResponse, PageImage
+
+from llmp_redaction import docling_engine, ocr
+from llmp_redaction.engines import Engine, Settings, parse_engine, settings
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +124,8 @@ _PPTX: Final = "application/vnd.openxmlformats-officedocument.presentationml.pre
 _DOC: Final = "application/msword"
 _XLS: Final = "application/vnd.ms-excel"
 _PDF: Final = "application/pdf"
+_PNG: Final = "image/png"
+_JPEG: Final = "image/jpeg"
 
 #: Accepted types, mapped to the extension markitdown dispatches on. An
 #: allowlist rather than "whatever markitdown supports": its converter set
@@ -132,7 +139,20 @@ _ACCEPTED: Final[dict[str, str]] = {
     _DOC: ".doc",
     _XLS: ".xls",
     _PDF: ".pdf",
+    _PNG: ".png",
+    _JPEG: ".jpg",
 }
+
+#: Picture files: readable only by an OCR build (`EXTRACTOR_OCR=rapidocr`), and
+#: refused with a reason that says so in any other.
+_IMAGES: Final = frozenset({_PNG, _JPEG})
+
+#: What the Docling engine reads. Old `.doc`/`.xls` never go to it.
+_DOCLING_TYPES: Final = frozenset({_PDF, _DOCX, _PPTX, _XLSX})
+
+#: Largest picture OCR will decode, in pixels: a decompression bomb is a small
+#: PNG that is a billion pixels wide.
+MAX_IMAGE_PIXELS: Final = 60_000_000
 
 #: Only consulted when the declared type is missing or unrecognised: several
 #: clients send `application/octet-stream` for every upload.
@@ -143,6 +163,9 @@ _BY_EXTENSION: Final[dict[str, str]] = {
     ".doc": _DOC,
     ".xls": _XLS,
     ".pdf": _PDF,
+    ".png": _PNG,
+    ".jpg": _JPEG,
+    ".jpeg": _JPEG,
 }
 
 #: The OOXML types are zip archives and get the bomb guard. The OLE formats and
@@ -302,11 +325,14 @@ def media_type_for(media_type: str | None, filename: str | None) -> str | None:
     a PDF called `.docx` becomes parser confusion.
     """
     declared = (media_type or "").split(";")[0].strip().lower()
-    if declared in _ACCEPTED:
+    # Pictures are a type only where OCR is on: elsewhere the answer stays the
+    # one every deployment had before ("no extractor for image/png").
+    pictures = settings().ocr
+    if declared in _ACCEPTED and (pictures or declared not in _IMAGES):
         return declared
     name = (filename or "").lower()
     for extension, mapped in _BY_EXTENSION.items():
-        if name.endswith(extension):
+        if name.endswith(extension) and (pictures or mapped not in _IMAGES):
             return mapped
     return None
 
@@ -342,6 +368,19 @@ def _pdf_pages(data: bytes) -> int:
     a spreadsheet has no pages until something decides on a paper size, so those
     report 0 rather than 1, which would be a guess dressed as a measurement.
     """
+    # pypdfium2 first: it reads the page tree without parsing each page, and it
+    # is what the per-page paths use, so the cap and the reading agree. pdfminer
+    # is the fallback for a file pdfium will not open.
+    try:
+        import pypdfium2 as pdfium
+
+        document = pdfium.PdfDocument(data)
+        try:
+            return len(document)
+        finally:
+            document.close()
+    except Exception as exc:
+        logger.debug("pdfium could not count PDF pages: %s", type(exc).__name__)
     try:
         from pdfminer.pdfpage import PDFPage
 
@@ -355,8 +394,17 @@ class _RenderFailed(Exception):
     """pypdfium2 could not open or draw the document."""
 
 
-def _pdf_by_page(data: bytes, *, max_pages: int, long_side: int) -> ExtractionResponse | None:
-    """Read a PDF page by page, drawing the pages that carry no text.
+def _pdf_by_page(
+    data: bytes,
+    *,
+    max_pages: int,
+    long_side: int,
+    config: Settings | None = None,
+    read_texts: list[str] | None = None,
+    extractor: str = "pypdfium2",
+    full_text: str | None = None,
+) -> ExtractionResponse | None:
+    """Read a PDF page by page, drawing or reading the pages that carry no text.
 
     pypdfium2 (Apache-2.0 / BSD-3-Clause, PDFium inside) rather than pdfminer,
     which parses text and cannot draw. Each page is judged on its own: more than
@@ -364,6 +412,17 @@ def _pdf_by_page(data: bytes, *, max_pages: int, long_side: int) -> ExtractionRe
     is an image. A scan with a typed cover sheet is therefore both, which is what
     it is. Returns None when every page has text — the ordinary path then reads
     the document exactly as it always has.
+
+    A page that is an image is **read** when OCR is on (`config.ocr`): drawn at
+    about 200 DPI and handed to RapidOCR, and only when OCR finds nothing in it
+    (a photograph, a blank back) does it stay a picture for the caller to ask
+    for. Pages past `config.max_pages` OCR'd pages, or past the time budget, are
+    left unread and the response says `truncated`.
+
+    With `read_texts` (the Docling engine's per-page Markdown) the page text
+    comes from there instead and nothing is OCR'd here; the pages that came
+    back empty are the ones drawn. `full_text` then replaces the joined pages,
+    so a table keeps its Markdown shape.
 
     One page is drawn, encoded and released before the next, so memory is one
     bitmap, not the document. At most `max_pages` image pages are returned and
@@ -373,9 +432,14 @@ def _pdf_by_page(data: bytes, *, max_pages: int, long_side: int) -> ExtractionRe
     """
     import pypdfium2 as pdfium
 
+    config = config or settings()
+    use_ocr = config.ocr and read_texts is None and ocr.available(config)
+    deadline = time.monotonic() + config.timeout_seconds
     texts: list[str] = []
     images: list[PageImage] = []
     image_pages = 0
+    ocr_pages = 0
+    unread = False
     total = 0
     chars = 0
     try:
@@ -384,16 +448,31 @@ def _pdf_by_page(data: bytes, *, max_pages: int, long_side: int) -> ExtractionRe
             count = len(document)
             for index in range(count):
                 page = document[index]
+                rendered = None
                 try:
-                    textpage = page.get_textpage()
-                    try:
-                        text = textpage.get_text_bounded()
-                    finally:
-                        textpage.close()
-                    if sum(1 for ch in text if not ch.isspace()) > MIN_PAGE_TEXT_CHARS:
+                    if read_texts is not None:
+                        text = read_texts[index] if index < len(read_texts) else ""
+                    else:
+                        textpage = page.get_textpage()
+                        try:
+                            text = textpage.get_text_bounded()
+                        finally:
+                            textpage.close()
+                    enough = sum(1 for ch in text if not ch.isspace()) > MIN_PAGE_TEXT_CHARS
+                    if enough or (read_texts is not None and text.strip()):
                         texts.append(text[: max(MAX_CHARS - chars, 0)])
                         chars += len(texts[-1])
                         continue
+                    if use_ocr:
+                        if ocr_pages >= config.max_pages or time.monotonic() > deadline:
+                            unread = True
+                        else:
+                            ocr_pages += 1
+                            read = _ocr_page(page)
+                            if read.strip():
+                                texts.append(read[: max(MAX_CHARS - chars, 0)])
+                                chars += len(texts[-1])
+                                continue
                     texts.append("")
                     image_pages += 1
                     if len(images) >= max_pages or total >= MAX_PAGE_IMAGE_BYTES:
@@ -403,6 +482,8 @@ def _pdf_by_page(data: bytes, *, max_pages: int, long_side: int) -> ExtractionRe
                     rendered = page.render(scale=scale).to_pil().convert("RGB")
                 finally:
                     page.close()
+                if rendered is None:
+                    continue
                 buffer = io.BytesIO()
                 rendered.save(buffer, format="JPEG", quality=PAGE_IMAGE_JPEG_QUALITY)
                 encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
@@ -413,21 +494,77 @@ def _pdf_by_page(data: bytes, *, max_pages: int, long_side: int) -> ExtractionRe
                 images.append(PageImage(page=index + 1, mime="image/jpeg", data=encoded))
         finally:
             document.close()
+    except ocr.OcrUnavailable:
+        raise
     except Exception as exc:
         logger.warning("could not render PDF pages: %s", type(exc).__name__)
         raise _RenderFailed from exc
-    if image_pages == 0:
+    if image_pages == 0 and not ocr_pages and read_texts is None:
         return None
-    joined = "\n\n".join(text for text in texts if text)
+    joined = full_text if full_text is not None else "\n\n".join(t for t in texts if t)
+    names = [extractor]
+    if ocr_pages:
+        names.append("rapidocr")
     return ExtractionResponse(
         kind=ExtractionKind.TEXT if joined.strip() else ExtractionKind.NO_TEXT_LAYER,
         text=joined,
-        extractor="pypdfium2",
+        extractor="+".join(names),
         pages=count,
         page_texts=texts,
         page_images=images,
         images_truncated=len(images) < image_pages,
+        truncated=unread,
+        detail=(
+            f"stopped reading scanned pages after {ocr_pages} pages or "
+            f"{config.timeout_seconds}s; the rest were not read"
+            if unread
+            else ""
+        ),
     )
+
+
+#: A scanned page is drawn at about this resolution for OCR: legible text at
+#: 200 DPI, and well under what a 300 DPI scan of an A4 page costs to detect.
+_OCR_SCALE: Final = 200 / 72
+
+
+def _ocr_scale(width: float, height: float) -> float:
+    """200 DPI, but never a bitmap whose long side exceeds what OCR would
+    downscale to anyway (`ocr.MAX_SIDE`): a 200-inch page drawn at 200 DPI is a
+    40,000-pixel square and several gigabytes before anything reads it."""
+    return min(_OCR_SCALE, ocr.MAX_SIDE / max(width, height, 1.0))
+
+
+def _ocr_page(page: object) -> str:
+    width, height = page.get_size()  # type: ignore[attr-defined]
+    rendered = page.render(scale=_ocr_scale(width, height)).to_pil()  # type: ignore[attr-defined]
+    return ocr.read_image(rendered)
+
+
+def _read_image_file(data: bytes, config: Settings) -> ExtractionResponse:
+    """Text in a PNG or JPEG, by OCR; refused with a reason when OCR is off."""
+    if not ocr.available(config):
+        return ExtractionResponse(
+            kind=ExtractionKind.UNSUPPORTED,
+            detail="reading pictures needs the OCR build of the extractor image",
+        )
+    from PIL import Image
+
+    try:
+        with Image.open(io.BytesIO(data)) as picture:
+            if picture.width * picture.height > MAX_IMAGE_PIXELS:
+                return ExtractionResponse(
+                    kind=ExtractionKind.UNREADABLE,
+                    detail=f"the picture is larger than {MAX_IMAGE_PIXELS} pixels",
+                )
+            picture.load()
+            text = ocr.read_image(picture, config)
+    except Exception as exc:
+        logger.warning("could not OCR a picture: %s", type(exc).__name__)
+        return ExtractionResponse(
+            kind=ExtractionKind.UNREADABLE, detail=f"{type(exc).__name__} while reading the picture"
+        )
+    return _clip(text, "rapidocr")
 
 
 def _converter() -> object:
@@ -502,6 +639,79 @@ def _refuse_legacy(kind: _Legacy) -> ExtractionResponse:
     return ExtractionResponse(kind=ExtractionKind.UNSUPPORTED, detail=reasons[kind])
 
 
+def _via_docling(
+    data: bytes,
+    resolved: str,
+    config: Settings,
+    *,
+    page_images: int,
+    long_side: int,
+) -> tuple[ExtractionResponse | None, str]:
+    """Read with Docling: (response, "") or (None, why) to let the other readers have it.
+
+    None for every way Docling can fail to help: not installed, weights absent,
+    an exception, or no text out of it (an empty page set goes to the readers
+    that can say why, and can draw the pages). The response's `extractor` says
+    who actually read it, so a fallback is visible and never silent in the
+    result, only here in the log.
+    """
+    pages = _pdf_pages(data) if resolved == _PDF else 0
+    # The page cap always applies to a PDF: when the pages cannot be counted the
+    # cap is passed anyway, and a result that fills it is reported truncated.
+    limit = (
+        config.max_pages if resolved == _PDF and (pages == 0 or pages > config.max_pages) else None
+    )
+    try:
+        converted = docling_engine.convert(
+            data, extension=_ACCEPTED[resolved], config=config, page_limit=limit
+        )
+    except docling_engine.DoclingUnavailable:
+        logger.warning("EXTRACTOR_ENGINE=docling but Docling is not in this image; falling back")
+        return None, "docling unavailable"
+    except docling_engine.DoclingBusy:
+        logger.warning("docling is busy with another document; falling back")
+        return None, "docling busy"
+    except docling_engine.DoclingTimeout:
+        logger.warning("docling ran out of time on %s; falling back", resolved)
+        return None, "docling timeout"
+    except Exception as exc:
+        # The type only: a parser's message can quote the document.
+        logger.warning("docling could not read %s: %s", resolved, type(exc).__name__)
+        return None, "docling failed"
+    if not converted.text.strip():
+        return None, "docling returned no text"
+    capped = limit is not None and (pages > limit or (pages == 0 and converted.pages >= limit))
+    if resolved == _PDF and page_images > 0:
+        try:
+            paged = _pdf_by_page(
+                data,
+                max_pages=page_images,
+                long_side=long_side,
+                config=config,
+                read_texts=converted.page_texts,
+                extractor=docling_engine.NAME,
+                full_text=converted.text,
+            )
+        except _RenderFailed:
+            paged = None
+        if paged is not None:
+            clipped = _clip(paged.text, docling_engine.NAME)
+            return (
+                paged.model_copy(
+                    update={
+                        "text": clipped.text,
+                        "truncated": clipped.truncated or capped or converted.partial,
+                    }
+                ),
+                "",
+            )
+    outcome = _clip(converted.text, docling_engine.NAME)
+    update: dict[str, object] = {"truncated": outcome.truncated or capped or converted.partial}
+    if resolved == _PDF:
+        update["pages"] = pages or converted.pages
+    return outcome.model_copy(update=update), ""
+
+
 def extract(
     data: bytes,
     *,
@@ -509,8 +719,40 @@ def extract(
     filename: str | None = None,
     page_images: int = 0,
     long_side: int = DEFAULT_LONG_SIDE,
+    engine: Engine | str | None = None,
+) -> ExtractionResponse:
+    """Text from one document (see `_extract`), with `fallback_reason` set when
+    the engine asked for did not read it."""
+    fallback: list[str] = []
+    result = _extract(
+        data,
+        media_type=media_type,
+        filename=filename,
+        page_images=page_images,
+        long_side=long_side,
+        engine=engine,
+        _fallback=fallback,
+        _started=time.monotonic(),
+    )
+    return result.model_copy(update={"fallback_reason": fallback[0]}) if fallback else result
+
+
+def _extract(
+    data: bytes,
+    *,
+    media_type: str | None = None,
+    filename: str | None = None,
+    page_images: int = 0,
+    long_side: int = DEFAULT_LONG_SIDE,
+    engine: Engine | str | None = None,
+    _fallback: list[str],
+    _started: float,
 ) -> ExtractionResponse:
     """Text from one document, with why it is what it is.
+
+    ``engine`` picks the reader for this one call (`markitdown` or `docling`);
+    None, or a name that is not an engine, means the configured one
+    (`EXTRACTOR_ENGINE`). The seam a per-request rule would use.
 
     Never raises for bad input. A document that cannot be read is a fact to
     report, because the caller has to answer "so do we forward this or not"
@@ -570,17 +812,42 @@ def extract(
     if resolved in _ZIP_BACKED and (problem := _zip_problem(data)):
         return ExtractionResponse(kind=ExtractionKind.UNREADABLE, detail=problem)
 
+    config = settings()
+
+    if resolved in _IMAGES:
+        return _read_image_file(data, config)
+
+    chosen = parse_engine(engine) if isinstance(engine, str) else engine
+    if (chosen or config.engine) is Engine.DOCLING and resolved in _DOCLING_TYPES:
+        done, why = _via_docling(
+            data,
+            resolved,
+            config,
+            page_images=min(page_images, MAX_PAGE_IMAGES),
+            long_side=min(max(long_side, MIN_LONG_SIDE), MAX_LONG_SIDE),
+        )
+        if done is not None:
+            return done
+        _fallback.append(why)
+        # The other readers share what is left of the budget; they do not get a
+        # fresh one because Docling used it up.
+        left = int(config.timeout_seconds - (time.monotonic() - _started))
+        config = dataclasses.replace(config, timeout_seconds=max(1, left))
+
     render_failed = False
-    if resolved == _PDF and page_images > 0:
+    if resolved == _PDF and (page_images > 0 or config.ocr):
         try:
             by_page = _pdf_by_page(
                 data,
                 max_pages=min(page_images, MAX_PAGE_IMAGES),
                 long_side=min(max(long_side, MIN_LONG_SIDE), MAX_LONG_SIDE),
+                config=config,
             )
         except _RenderFailed:
             by_page = None
             render_failed = True
+        except ocr.OcrUnavailable:
+            by_page = None
         if by_page is not None:
             return by_page
 

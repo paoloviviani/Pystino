@@ -4,6 +4,8 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **Extractor engines: Docling, and OCR for scans.** The local document reader gains `EXTRACTOR_ENGINE=docling` (layout, reading order, tables as Markdown, RapidOCR for scanned pages; Word, PowerPoint and Excel through Docling, with markitdown and antiword as fallbacks) and RapidOCR for scanned pages and pictures on the default engine (`EXTRACTOR_OCR=rapidocr`). Both are image variants built locally (`--build-arg EXTRACTOR=ocr|docling`, tags `-ocr` and `-docling`); the default `-pattern` image is unchanged. Weights are baked in at pinned revisions with SHA-256 checks, nothing is downloaded at runtime, and threads, pages and time per document are bounded (`EXTRACTOR_THREADS`, `EXTRACTOR_MAX_PAGES`, `EXTRACTOR_TIMEOUT_SECONDS`). An `X-Extractor-Engine` request header picks the engine for one request. The API and response shape are unchanged. The Docling table-structure weights are under CDLA-Permissive-2.0 (permissive, redistributable, not OSI-approved; accepted by the owner), so the image carries a `NOTICE.md`, the agreement text and licence labels, and may be published later; for now it is built locally. See docs/extractor-engines.md for licences and measurements.
+
 ## v0.31.0 — 2026-11-08
 
 Paired with Cerea 0.46.0.

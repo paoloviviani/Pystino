@@ -44,6 +44,25 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Scan reading for the default markitdown engine: RapidOCR (Apache-2.0) running
+# PaddleOCR's PP-OCRv5 models (Apache-2.0) on onnxruntime (MIT). Selected at
+# build time (`--build-arg EXTRACTOR=ocr`) so the default image stays small.
+ocr = [
+    "rapidocr>=3.9,<4",
+    "onnxruntime>=1.20,<2",
+]
+# The Docling engine (docs/extractor-engines.md): layout, reading order and
+# tables, with RapidOCR for scans. Code is MIT; torch is CPU-only (see
+# tool.uv.sources). Includes everything `ocr` does.
+docling = [
+    "llmp-redaction[ocr]",
+    "docling>=2.149,<3",
+    "huggingface-hub>=0.23",
+    # Named here because tool.uv.sources applies only to direct dependencies;
+    # left to docling's own requirement, uv resolves the CUDA wheel.
+    "torch>=2.2.2,<3",
+    "torchvision>=0.17,<1",
+]
 # The Italian NER model is NOT here: it is CC BY-NC-SA 3.0 and is added by a
 # Docker build argument, so the licence choice is explicit and per-deployment.
 dev = [
@@ -57,10 +76,22 @@ dev = [
     # openpyxl and python-pptx arrive with the runtime extras above; python-docx
     # does not, because markitdown reads Word through mammoth.
     "python-docx>=1.2,<2",
+    # Authors the synthetic PDFs (two-column report with a table, image-only
+    # scan page) the Docling and OCR tests read. BSD-3-Clause.
+    "reportlab>=4.2,<5",
 ]
 
 [tool.uv.sources]
 llmp-shared = { path = "../../packages/shared-py", editable = true }
+# The default torch wheel on Linux is the CUDA build, gigabytes of libraries a
+# CPU-only extractor never loads.
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]

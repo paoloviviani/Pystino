@@ -9,6 +9,16 @@
 # For a small box the medium models (en_core_web_md, it_core_news_md) are about
 # 40 MB each, roughly twice as fast as lg and somewhat less accurate on names.
 #
+# The extractor variants (docs/extractor-engines.md) add scan reading and the
+# Docling engine, and are built locally for now:
+#
+#   --build-arg EXTRACTOR=ocr      RapidOCR for scans and pictures. Every weight
+#                                  in it is Apache-2.0.
+#   --build-arg EXTRACTOR=docling  + Docling (layout, tables). Its table weights
+#                                  are under CDLA-Permissive-2.0, whose text and a
+#                                  per-model NOTICE.md travel in the image
+#                                  (/opt/extractor-models); torch is CPU-only.
+#
 # Italian *identifiers* (fiscal code, VAT, ID card, driving licence, passport) are
 # pattern and checksum recognisers and work without any Italian model. Only
 # Italian personal and place names need one.
@@ -33,6 +43,39 @@ COPY services/redaction/pyproject.toml services/redaction/README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv /opt/venv \
     && VIRTUAL_ENV=/opt/venv uv pip install --no-cache .
+
+# The extractor variant: none (the default image, unchanged), ocr or docling.
+# Installed in its own layer, after the base tree, so the default build never
+# sees it. Constrained by uv.lock (exported below) so a rebuild resolves to the
+# versions this was tested with, and so torch is the CPU wheel. Every wheel is
+# installed with its hash from uv.lock (--require-hashes), so a tampered index
+# or mirror fails the build.
+ARG EXTRACTOR=none
+COPY services/redaction/uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    set -eux; \
+    case "${EXTRACTOR}" in \
+        none) exit 0 ;; \
+        ocr|docling) ;; \
+        *) echo "EXTRACTOR must be none, ocr or docling, not ${EXTRACTOR}" >&2; exit 1 ;; \
+    esac; \
+    uv export --frozen --no-emit-project --no-emit-package llmp-shared \
+        --extra "${EXTRACTOR}" > /tmp/requirements.txt; \
+    VIRTUAL_ENV=/opt/venv uv pip install --no-cache --require-hashes --no-deps \
+        --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match \
+        -r /tmp/requirements.txt; \
+    VIRTUAL_ENV=/opt/venv uv pip install --no-cache --no-deps ".[${EXTRACTOR}]"
+
+# The weights: pinned revisions, SHA-256 verified, baked in so the service never
+# downloads anything (scripts/models.lock.json). Prints the licence information
+# and writes NOTICE.md (with the CDLA-Permissive-2.0 text) beside the weights.
+COPY services/redaction/scripts /src/scripts
+RUN set -eux; \
+    case "${EXTRACTOR}" in \
+        none) mkdir -p /opt/extractor-models ;; \
+        ocr) /opt/venv/bin/python /src/scripts/fetch_models.py --target /opt/extractor-models --ocr ;; \
+        docling) /opt/venv/bin/python /src/scripts/fetch_models.py --target /opt/extractor-models --docling ;; \
+    esac
 
 # Space-separated spaCy models. Default is English only, which keeps the image
 # MIT-licensed end to end. Building with SPACY_MODELS= (empty) installs no
@@ -99,6 +142,7 @@ RUN groupadd --system --gid 1001 detect \
     && useradd --system --uid 1001 --gid detect --no-create-home detect
 
 COPY --from=builder --chown=detect:detect /opt/venv /opt/venv
+COPY --from=builder /opt/extractor-models /opt/extractor-models
 COPY --chown=detect:detect services/redaction/src /app/src
 # The contract package is installed into the venv as an editable path
 # dependency, so the path it points at has to exist here too. Copied rather than
@@ -106,10 +150,25 @@ COPY --chown=detect:detect services/redaction/src /app/src
 # image and local development, and it is three files.
 COPY --chown=detect:detect packages/shared-py /src/packages/shared-py
 
+# What the build made this image into; the service reads it for its defaults
+# (EXTRACTOR_OCR is on in `ocr` and `docling`), and nothing is ever fetched at
+# runtime: the weights are in /opt/extractor-models.
+ARG EXTRACTOR=none
+# The weights' licences, for whoever pulls the image: the full list is
+# /opt/extractor-models/NOTICE.md (generated from scripts/models.lock.json).
+ARG WEIGHTS_LICENCES="see /opt/extractor-models/NOTICE.md"
+LABEL dev.pystino.extractor-variant=${EXTRACTOR} \
+      dev.pystino.weights-licences="${WEIGHTS_LICENCES}" \
+      dev.pystino.weights-notice=/opt/extractor-models/NOTICE.md
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONPATH="/app/src" \
     PYTHONUNBUFFERED=1 \
-    REDACTION_PORT=8080
+    REDACTION_PORT=8080 \
+    EXTRACTOR_VARIANT=${EXTRACTOR} \
+    EXTRACTOR_MODELS_DIR=/opt/extractor-models \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    HOME=/tmp
 
 # Baked at build time from the models actually installed above.
 RUN set -eux; cat /opt/venv/models.env >> /etc/environment

@@ -54,6 +54,10 @@ class ExtractionResponse(BaseModel):
     #: What read it, for the same reason ``DetectionResponse.engine`` exists: an
     #: operator asking why a document passed needs to know what read it.
     extractor: str = ""
+    #: Why the engine asked for was not the one that read it (for example
+    #: "docling timeout"), empty when it was. A short fixed phrase, never
+    #: document content.
+    fallback_reason: str = ""
     #: Why, when ``kind`` is a failure. Never quotes document content, because
     #: the content is the thing being protected.
     detail: str = ""

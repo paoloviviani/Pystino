@@ -87,6 +87,7 @@ nav:
   - Decision models: decision-models.md
   - Provider catalogue: provider-catalogue.md
   - Redaction: redaction.md
+  - Document extractor engines: extractor-engines.md
   - Deployment: deployment.md
   - Coding agents: coding-agents.md
   - Console: console.md

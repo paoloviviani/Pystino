@@ -95,6 +95,14 @@ module = ["presidio_analyzer.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# The extractor's optional engines and the test and benchmark tooling around them
+# (services/redaction extras `ocr`, `docling` and `dev`), likewise absent from the
+# workspace environment. They are imported inside functions, so a deployment
+# without them still starts.
+module = ["rapidocr.*", "docling.*", "numpy.*", "reportlab.*", "torch.*", "huggingface_hub.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 # The same situation as presidio_analyzer above, for the document extractors:
 # they are services/redaction's dependencies, and putting markitdown's
 # 37-package tree (onnxruntime, pandas, magika) into the gateway's lockfile to
