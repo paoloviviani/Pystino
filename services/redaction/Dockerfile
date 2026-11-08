@@ -10,13 +10,14 @@
 # 40 MB each, roughly twice as fast as lg and somewhat less accurate on names.
 #
 # The extractor variants (docs/extractor-engines.md) add scan reading and the
-# Docling engine, and are built locally, never published:
+# Docling engine, and are built locally for now:
 #
 #   --build-arg EXTRACTOR=ocr      RapidOCR for scans and pictures. Every weight
 #                                  in it is Apache-2.0.
 #   --build-arg EXTRACTOR=docling  + Docling (layout, tables). Its table weights
-#                                  carry CDLA-Permissive-2.0 (the build prints
-#                                  the notice); torch is CPU-only.
+#                                  are under CDLA-Permissive-2.0, whose text and a
+#                                  per-model NOTICE.md travel in the image
+#                                  (/opt/extractor-models); torch is CPU-only.
 #
 # Italian *identifiers* (fiscal code, VAT, ID card, driving licence, passport) are
 # pattern and checksum recognisers and work without any Italian model. Only
@@ -66,7 +67,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     VIRTUAL_ENV=/opt/venv uv pip install --no-cache --no-deps ".[${EXTRACTOR}]"
 
 # The weights: pinned revisions, SHA-256 verified, baked in so the service never
-# downloads anything (scripts/models.lock.json). Prints the licence notice.
+# downloads anything (scripts/models.lock.json). Prints the licence information
+# and writes NOTICE.md (with the CDLA-Permissive-2.0 text) beside the weights.
 COPY services/redaction/scripts /src/scripts
 RUN set -eux; \
     case "${EXTRACTOR}" in \
@@ -152,7 +154,12 @@ COPY --chown=detect:detect packages/shared-py /src/packages/shared-py
 # (EXTRACTOR_OCR is on in `ocr` and `docling`), and nothing is ever fetched at
 # runtime: the weights are in /opt/extractor-models.
 ARG EXTRACTOR=none
-LABEL dev.pystino.extractor-variant=${EXTRACTOR}
+# The weights' licences, for whoever pulls the image: the full list is
+# /opt/extractor-models/NOTICE.md (generated from scripts/models.lock.json).
+ARG WEIGHTS_LICENCES="see /opt/extractor-models/NOTICE.md"
+LABEL dev.pystino.extractor-variant=${EXTRACTOR} \
+      dev.pystino.weights-licences="${WEIGHTS_LICENCES}" \
+      dev.pystino.weights-notice=/opt/extractor-models/NOTICE.md
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONPATH="/app/src" \
     PYTHONUNBUFFERED=1 \

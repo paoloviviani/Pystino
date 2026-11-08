@@ -16,7 +16,7 @@ Layout (what Docling and `llmp_redaction.ocr` expect):
     <target>/docling-project--docling-models/model_artifacts/tableformer/accurate/
 
 The weights are licensed separately from the code: the notice this prints is
-for the person building the image.
+informational, and `NOTICE.md` (written beside the weights) travels with the image.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import sys
 import urllib.request
 from pathlib import Path
@@ -32,17 +33,16 @@ from typing import Any
 LOCK = Path(__file__).with_name("models.lock.json")
 
 NOTICE = """
-  LICENCE NOTICE (extractor model weights)
-  ----------------------------------------
-  RapidOCR / PP-OCRv6 .. Apache-2.0
-  docling-layout-heron . Apache-2.0
+  Extractor model weights and their licences
+  ------------------------------------------
+  RapidOCR / PP-OCRv6 ............ Apache-2.0
+  docling-layout-heron ........... Apache-2.0
   docling-models (TableFormer v1 table structure weights):
-      the model card at the pinned revision declares
-      "CDLA-Permissive-2.0 OR Apache-2.0"; the revision Docling itself pins
-      declares CDLA-Permissive-2.0 alone, for the same weight files.
-      CDLA-Permissive-2.0 is permissive but is not an OSI-approved licence.
-      Building a Docling image means you accept it. Do not publish this image
-      without that decision. See docs/extractor-engines.md.
+      CDLA-Permissive-2.0 (the model card at the pinned revision also lists
+      Apache-2.0). This image includes those weights under CDLA-Permissive-2.0,
+      which asks that its text travel with them: it is in
+      <target>/CDLA-Permissive-2.0.txt, with NOTICE.md listing every model,
+      revision and licence. See docs/extractor-engines.md.
 """
 
 
@@ -87,11 +87,43 @@ def fetch_docling(lock: dict[str, Any], target: Path) -> None:
         for name, expected in entry["files"].items():
             verify(folder / name, expected)
         # Docling reads the cache bookkeeping as clutter; drop it.
-        for clutter in (folder / ".cache",):
-            if clutter.is_dir():
-                import shutil
+        shutil.rmtree(folder / ".cache", ignore_errors=True)
 
-                shutil.rmtree(clutter)
+
+def write_notice(lock: dict[str, Any], target: Path, docling: bool) -> None:
+    """NOTICE.md beside the weights: each model, where it came from, its revision
+    and licence, and (Docling) the text of CDLA-Permissive-2.0, which that licence
+    asks to accompany the weights. Generated from the lock, so it cannot drift."""
+    lines = [
+        "# Model weights in this image",
+        "",
+        "Each file below is baked in at build time from the pinned revision and verified by",
+        "SHA-256 (`models.lock.json`). The code around them is Apache-2.0 (Pystino).",
+        "",
+        "| Model | Source | Revision | Licence |",
+        "|---|---|---|---|",
+    ]
+    ocr = lock["rapidocr"]
+    lines.append(
+        f"| PP-OCRv6 detection and recognition (RapidOCR ONNX conversion of PaddleOCR models) | "
+        f"{ocr['source']} | v3.10.0 | {ocr['licence']} |"
+    )
+    if docling:
+        for repo, entry in lock["huggingface"].items():
+            source = f"https://huggingface.co/{repo}"
+            lines.append(f"| {repo} | {source} | {entry['revision']} | {entry['licence']} |")
+        lines += [
+            "",
+            "## Attribution",
+            "",
+            "TableFormer table-structure weights (`docling-project/docling-models`) are by the",
+            "Docling Project (IBM Research and contributors), distributed under the Community",
+            "Data License Agreement - Permissive, Version 2.0, whose text is in",
+            "`CDLA-Permissive-2.0.txt` next to this file. Layout weights",
+            "(`docling-project/docling-layout-heron`) are Apache-2.0 by the same project.",
+        ]
+        shutil.copy(LOCK.with_name("CDLA-Permissive-2.0.txt"), target / "CDLA-Permissive-2.0.txt")
+    (target / "NOTICE.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main() -> None:
@@ -108,6 +140,7 @@ def main() -> None:
     if args.docling:
         print(NOTICE, file=sys.stderr)
         fetch_docling(lock, args.target)
+    write_notice(lock, args.target, args.docling)
 
 
 if __name__ == "__main__":

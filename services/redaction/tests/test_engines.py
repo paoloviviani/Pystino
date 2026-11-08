@@ -424,8 +424,28 @@ def test_docling_busy_hands_the_document_on(monkeypatch: pytest.MonkeyPatch) -> 
         docling_engine.convert(b"x", extension=".docx", config=settings())
 
 
-def test_the_docling_image_cannot_be_published_by_the_workflow() -> None:
-    workflow = (Path(__file__).resolve().parents[3] / ".github/workflows/images.yml").read_text()
-    assert "must not be published" in workflow  # the guard
-    matrix = workflow.split("IMAGES")[1]
-    assert "docling" not in matrix
+def test_the_notice_names_every_model_and_carries_the_cdla_text(tmp_path: Path) -> None:
+    import json
+    import sys
+
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    sys.path.insert(0, str(scripts))
+    try:
+        import fetch_models
+    finally:
+        sys.path.remove(str(scripts))
+    lock = json.loads((scripts / "models.lock.json").read_text())
+    fetch_models.write_notice(lock, tmp_path, docling=True)
+    notice = (tmp_path / "NOTICE.md").read_text()
+    for repo, entry in lock["huggingface"].items():
+        assert repo in notice and entry["revision"] in notice
+    assert "PP-OCRv6" in notice and "CDLA-Permissive-2.0" in notice
+    assert (
+        "makes available the text of this agreement"
+        in (tmp_path / "CDLA-Permissive-2.0.txt").read_text()
+    )
+    ocr_only = tmp_path / "ocr"
+    ocr_only.mkdir()
+    fetch_models.write_notice(lock, ocr_only, docling=False)
+    assert "CDLA" not in (ocr_only / "NOTICE.md").read_text()
+    assert not (ocr_only / "CDLA-Permissive-2.0.txt").exists()

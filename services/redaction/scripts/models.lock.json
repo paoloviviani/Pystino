@@ -15,7 +15,8 @@
         "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx",
         "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c"
       }
-    }
+    },
+    "source": "https://www.modelscope.cn/models/RapidAI/RapidOCR"
   },
   "huggingface": {
     "docling-project/docling-layout-heron": {
@@ -35,8 +36,7 @@
     },
     "docling-project/docling-models": {
       "revision": "2199320848bb9a8a519d22e4b528185a4f9a6f64",
-      "licence": "CDLA-Permissive-2.0 OR Apache-2.0 (model card front matter at this revision; the v2.3.0 revision Docling pins says CDLA-Permissive-2.0 alone, for the same weight files)",
-      "notice": true,
+      "licence": "CDLA-Permissive-2.0 (the model card at this revision also lists Apache-2.0; the v2.3.0 revision Docling pins says CDLA-Permissive-2.0 alone, for the same weight files)",
       "allow_patterns": [
         "model_artifacts/tableformer/accurate/*",
         "config.json",

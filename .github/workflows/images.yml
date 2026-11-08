@@ -66,12 +66,6 @@ jobs:
           short=${SHA::7}
           # image | context | Dockerfile | build args | tag suffix
           while IFS='|' read -r image context file args suffix; do
-            # The Docling variant carries model weights under CDLA-Permissive-2.0,
-            # which is not OSI-approved: it is built locally and never pushed
-            # (docs/extractor-engines.md). Refuse it here, whatever adds it.
-            case "$suffix $args" in
-              *docling*) echo "::error::$image: the -docling extractor variant must not be published"; exit 1 ;;
-            esac
             tags=()
             if [ "$REF" = refs/heads/main ]; then
               tags+=(-t "$REGISTRY/$image:edge$suffix" -t "$REGISTRY/$image:sha-$short$suffix")

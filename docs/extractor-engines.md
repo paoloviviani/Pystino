@@ -65,11 +65,12 @@ answer: raise it with `docling` on a small CPU (the kit sets 900).
 
 ## Building the images
 
-Never published (see the licences below); built locally, like `-ner`:
+Built locally for now, like `-ner` (publishing them is a separate decision, because of the 3.9 GB size; the licences below allow it):
 
 ```sh
 docker build -f services/redaction/Dockerfile \
   --build-arg SPACY_MODELS= --build-arg EXTRACTOR=docling \
+  --build-arg WEIGHTS_LICENCES="Apache-2.0; CDLA-Permissive-2.0 (TableFormer)" \
   -t pystino-redaction:<version>-docling .
 ```
 
@@ -78,10 +79,8 @@ installed from `services/redaction/uv.lock` (so torch is the CPU wheel, not the
 CUDA one) and the weights by `services/redaction/scripts/fetch_models.py` from
 revisions pinned in `scripts/models.lock.json`, with every file checked against
 its SHA-256. Wheels are installed with `--require-hashes` from the hashes in
-`uv.lock`, so a tampered index or mirror fails the build. The `-docling` image
-carries the label `dev.pystino.extractor-variant=docling`, and
-`.github/workflows/images.yml` refuses to publish any image whose tag suffix or
-build arguments name docling. The build prints the licence notice below. In the deploy kit:
+`uv.lock`, so a tampered index or mirror fails the build. Each variant image
+carries the label `dev.pystino.extractor-variant` (`ocr` or `docling`). The build prints the licence notice below. In the deploy kit:
 `dev/build.sh --docling` (or `--ocr`), then `./configure --extractor docling`.
 
 The extractor and the redaction service may use different images (the kit's
@@ -105,7 +104,7 @@ Checked at source on 2026-11-08 (package metadata of the versions in
 | other dependencies (scipy, pandas, shapely, pyclipper, lxml, tqdm, certifi, …) | | BSD, MIT, Apache-2.0, MPL-2.0 (certifi, tqdm), PSF | yes |
 | **Weights:** PP-OCRv6 detection and recognition (RapidOCR ONNX conversion of PaddleOCR models) | RapidOCR v3.10.0 | Apache-2.0 (RapidOCR README: the upstream models are Apache-2.0 and the converted ONNX files are redistributed under the same terms) | yes |
 | **Weights:** `docling-project/docling-layout-heron` (layout) | `8f39ad3` | Apache-2.0 (model card) | yes |
-| **Weights:** `docling-project/docling-models` (TableFormer v1, table structure) | `2199320` | model card front matter: `cdla-permissive-2.0` and `apache-2.0`; the `v2.3.0` revision Docling itself pins says `cdla-permissive-2.0` alone, for byte-identical weight files | **CDLA-Permissive-2.0 is not OSI-approved**; the Apache-2.0 alternative is stated only on the newer card |
+| **Weights:** `docling-project/docling-models` (TableFormer v1, table structure) | `2199320` | model card front matter: `cdla-permissive-2.0` and `apache-2.0`; the `v2.3.0` revision Docling itself pins says `cdla-permissive-2.0` alone, for byte-identical weight files | CDLA-Permissive-2.0 is permissive and allows redistribution (its one condition: the agreement text accompanies the shared weights) but is not OSI-approved; the Apache-2.0 alternative is stated only on the newer card |
 
 No AGPL or GPL component is in the image (checked by scanning the installed
 package metadata). antiword, which the image already carried for `.doc`, is
@@ -115,13 +114,19 @@ What was **not** audited: the licences of the models' training data, and the
 `MODEL_LICENSES.md` that RapidOCR's README points to (the link returns 404 at
 the time of writing; the statement relied on is in its README).
 
-**Decision for the owner.** The table-structure weights are the one component
-outside the policy. The `-docling` image is therefore built locally and not
-published, and its build prints the notice. Options: accept the card's
-Apache-2.0 alternative (state it in `NOTICE`); use TableFormerV2
-(`docling-project/TableFormerV2`, Apache-2.0, but a preview model); or drop table
-structure recognition (`do_table_structure=False`, tables then come out as text).
-The `-ocr` image has only Apache-2.0 weights and could be published.
+**Policy.** The owner decided that a non-OSI licence is acceptable for shipped
+weights when its terms allow redistribution, and CDLA-Permissive-2.0 does. So the
+`-docling` image is publishable by design: it carries the licences with it.
+`/opt/extractor-models/NOTICE.md` (generated from `scripts/models.lock.json`)
+lists each model, its source, revision and licence, with the attribution;
+`/opt/extractor-models/CDLA-Permissive-2.0.txt` is the agreement's text, which is
+the licence's only condition for sharing; the image labels
+`dev.pystino.weights-licences` and `dev.pystino.weights-notice` point to them. The
+build prints the same information. The image is **built locally for now and may be
+published later**; it is not in `images.yml`. Alternatives, should the choice be
+reopened: TableFormerV2 (`docling-project/TableFormerV2`, Apache-2.0, but a
+preview model), or no table structure recognition (`do_table_structure=False`).
+The `-ocr` image has only Apache-2.0 weights.
 
 ## Measured performance
 
