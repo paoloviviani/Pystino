@@ -140,6 +140,11 @@ MERGE_RULES: tuple[MergeRule, ...] = (
     # RESTRICT. Prices and anything hanging off a model go with it by ON DELETE.
     MergeRule("models", "owner_id", MergeRuleKind.DELETE),
     MergeRule("providers", "owner_id", MergeRuleKind.DELETE),
+    # A user's own redaction rules (ADR 0112): the surviving account keeps its
+    # own, the merged-away account's are dropped. Moving them would have to
+    # settle same-name collisions, and a rule only ever adds protection, so the
+    # cost of dropping is the person re-adding one, never a leak.
+    MergeRule("user_redaction_rules", "user_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE),
     MergeRule("quota_notification_settings", "user_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE),
     MergeRule("quota_notification_state", "user_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE),
 )

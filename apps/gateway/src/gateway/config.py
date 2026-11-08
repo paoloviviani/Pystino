@@ -797,6 +797,14 @@ class RedactionPolicy(BaseModel):
             name for name, entry in self.entities.items() if entry.mode is not EntityMode.OFF
         )
 
+    def is_active(self) -> bool:
+        """Whether this policy would do anything to a prompt at all."""
+        return (
+            self.default_mode is not EntityMode.OFF
+            or any(entry.mode is not EntityMode.OFF for entry in self.entities.values())
+            or any(pattern.mode is not EntityMode.OFF for pattern in self.patterns)
+        )
+
     def protects(self) -> set[str]:
         """Entity types this policy does something about. Used to compare two."""
         return {name for name, entry in self.entities.items() if entry.mode is not EntityMode.OFF}
@@ -936,6 +944,46 @@ class EffectivePolicy:
     #: deployment policy applied.
     scope: str | None = None
     rule_id: uuid.UUID | None = None
+    #: Every rule that took part in the fold, widest first, administrators'
+    #: before the user's own. Only read after detection, to say which rule
+    #: decided a type (the redaction log and the per-response summary).
+    contributors: tuple[Contributor, ...] = ()
+
+    def decider_for(self, entity_type: str) -> Contributor | None:
+        """The rule whose answer became this type's mode.
+
+        Mirrors :meth:`RedactionPolicy.combine`: a policy that *names* the type
+        votes by its mode and the strictest wins; failing that the pattern of
+        that name; failing that the strictest default. A tie goes to the
+        earliest contributor, which is the administrator's, so a user rule is
+        only ever named when it actually tightened something.
+        """
+        name = entity_type.upper()
+        order = list(EntityMode)
+        named = [c for c in self.contributors if name in c.policy.entities]
+        if named:
+            return max(named, key=lambda c: order.index(c.policy.entities[name].mode))
+        for contributor in self.contributors:
+            if any(pattern.name == name for pattern in contributor.policy.patterns):
+                return contributor
+        defaults = [c for c in self.contributors if c.policy.default_mode is not EntityMode.OFF]
+        if defaults:
+            return max(defaults, key=lambda c: order.index(c.policy.default_mode))
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class Contributor:
+    """One rule that took part in a request's fold, for attribution.
+
+    ``id`` is None for the deployment's own policy (no rule row behind it).
+    """
+
+    id: uuid.UUID | None
+    name: str
+    #: ``admin`` or ``user``: who wrote the rule.
+    owner: str
+    policy: RedactionPolicy
 
 
 #: What a deployment redacts before anybody has written a rule: **nothing**.

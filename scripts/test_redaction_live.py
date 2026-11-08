@@ -239,6 +239,8 @@ def main() -> int:
         "00743110157" not in json.dumps(streamed_seen),
     )
 
+    visibility(auth)
+
     print()
     if FAILURES:
         print(f"FAILED: {len(FAILURES)}")
@@ -247,6 +249,107 @@ def main() -> int:
         return 1
     print("all checks passed")
     return 0
+
+
+def visibility(auth: dict[str, str]) -> None:
+    """What the user can see (ADR 0112): the summary, their own rule, the log."""
+    from live_session import login, request
+
+    print()
+    print("=== the per-response summary is opt-in, and never carries values for a key ===")
+    messages = [{"role": "user", "content": "Write to luca.bianchi@example.org"}]
+    payload = {"model": MODEL, "messages": messages, "stream": False}
+    _, plain = post(f"{GATEWAY}/v1/chat/completions", payload, auth)
+    expect(
+        "without the header the body has no summary",
+        isinstance(plain, dict) and "pystino_redaction" not in plain,
+    )
+    status, opted = post(
+        f"{GATEWAY}/v1/chat/completions",
+        payload,
+        {**auth, "x-pystino-redaction-summary": "1", "x-pystino-redaction-values": "1"},
+    )
+    summary = opted.get("pystino_redaction") if isinstance(opted, dict) else None
+    expect("with the header the body carries the summary", status == 200 and bool(summary))
+    if summary:
+        expect("the summary says redaction applied", summary.get("applied") is True, str(summary))
+        expect("an API key gets no values", "values" not in summary, str(summary))
+        expect(
+            "the summary names the type and the rule",
+            any(e.get("type") == "EMAIL_ADDRESS" and e.get("rule") for e in summary["entities"]),
+            str(summary),
+        )
+        expect("the summary quotes no value", "luca.bianchi" not in json.dumps(summary))
+
+    print()
+    print("=== a user's own rule, the test box and the log ===")
+    credentials = user_credentials()
+    session = login(*credentials) if credentials is not None else None
+    if session is None:
+        expect("a member session for the user's own rules", False, "no member credentials")
+        return
+    status, _, body = request(
+        session,
+        f"{GATEWAY}/api/me/redaction/rules",
+        json_body={
+            "kind": "pattern",
+            "name": "live_project",
+            "regex": "PRJ-[0-9]+",
+            "mode": "redact",
+        },
+        method="POST",
+    )
+    expect("a user pattern is accepted", status == 201, f"HTTP {status}: {body[:200]!r}")
+    status, _, body = request(
+        session,
+        f"{GATEWAY}/api/me/redaction/rules",
+        json_body={"kind": "pattern", "name": "bad", "regex": "(?=x)x", "mode": "redact"},
+        method="POST",
+    )
+    expect("a pattern RE2 refuses is refused", status == 400, f"HTTP {status}")
+    status, _, body = request(
+        session,
+        f"{GATEWAY}/api/me/redaction/rules",
+        json_body={"kind": "mode", "name": "PERSON", "mode": "off"},
+        method="POST",
+    )
+    expect("a rule cannot be off", status == 400, f"HTTP {status}")
+    status, _, body = request(
+        session,
+        f"{GATEWAY}/api/me/redaction/test",
+        json_body={"text": "ticket PRJ-42"},
+        method="POST",
+    )
+    result = json.loads(body) if status == 200 else {}
+    expect(
+        "the test box finds the user's pattern and names the rule",
+        any(
+            span.get("entity_type") == "LIVE_PROJECT"
+            and (span.get("rule") or {}).get("owner") == "user"
+            for span in result.get("spans", [])
+        ),
+        body[:300] if isinstance(body, str) else str(body)[:300],
+    )
+    expect("the test box does not echo the text", "PRJ-42" not in str(body))
+
+    import time
+
+    time.sleep(12)  # the other workers learn on the resolver's ten-second poll
+    _status, _redacted = post(
+        f"{GATEWAY}/v1/chat/completions",
+        {"model": MODEL, "messages": [{"role": "user", "content": "see PRJ-42"}], "stream": False},
+        auth,
+    )
+    _, seen = get(f"{UPSTREAM}/_last_request")
+    expect(
+        "the user's pattern redacts their request",
+        "PRJ-42" not in json.dumps(seen),
+        str(seen)[:200],
+    )
+    status, _, body = request(session, f"{GATEWAY}/api/me/redaction/events", method="GET")
+    events = json.loads(body) if status == 200 else {}
+    expect("the log lists requests where something was hidden", events.get("total", 0) >= 1)
+    expect("the log holds no value", "luca.bianchi" not in str(body) and "PRJ-42" not in str(body))
 
 
 def _placeholders(text: str) -> set[str]:

@@ -72,6 +72,77 @@
         "title": "AdminAuditEventResponse",
         "type": "object"
       },
+      "AdminRuleView": {
+        "description": "One administrator rule, as a user may read it.\n\nTypes and modes, not the regexes of its patterns (a pattern can name a\nproject that is itself confidential) and not its exceptions' values, only\nhow many there are.",
+        "properties": {
+          "default_mode": {
+            "title": "Default Mode",
+            "type": "string"
+          },
+          "entities": {
+            "items": {
+              "$ref": "#/components/schemas/RedactionEntityView"
+            },
+            "title": "Entities",
+            "type": "array"
+          },
+          "exceptions": {
+            "title": "Exceptions",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "patterns": {
+            "items": {
+              "$ref": "#/components/schemas/RedactionPatternView"
+            },
+            "title": "Patterns",
+            "type": "array"
+          },
+          "scope": {
+            "enum": [
+              "all",
+              "provider",
+              "model",
+              "group",
+              "user",
+              "api_key"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "subject_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Label"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "scope",
+          "subject_label",
+          "default_mode",
+          "entities",
+          "patterns",
+          "exceptions"
+        ],
+        "title": "AdminRuleView",
+        "type": "object"
+      },
       "AliasCreateRequest": {
         "properties": {
           "description": {
@@ -5197,6 +5268,37 @@
         "title": "MyNotificationThresholdsRequest",
         "type": "object"
       },
+      "MyRedactionInForce": {
+        "properties": {
+          "engine": {
+            "title": "Engine",
+            "type": "string"
+          },
+          "engine_active": {
+            "title": "Engine Active",
+            "type": "boolean"
+          },
+          "max_user_rules": {
+            "title": "Max User Rules",
+            "type": "integer"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/AdminRuleView"
+            },
+            "title": "Rules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "engine",
+          "engine_active",
+          "rules",
+          "max_user_rules"
+        ],
+        "title": "MyRedactionInForce",
+        "type": "object"
+      },
       "OcrDocument": {
         "additionalProperties": true,
         "description": "The document to read, in the shape Cortecs and Mistral both accept.\n\nTwo forms, and the difference is not cosmetic — it decides whether this\ndeployment ever sees the bytes:\n\n* ``document_url`` / ``image_url`` pointing at an address. The *provider*\n  fetches it, so the document never passes through the gateway, and nothing\n  here can inspect or redact it. That is a property of the request, not a\n  gap to fix: we cannot read what we never receive.\n* a ``data:`` URI in either field, which is the document itself. That one we\n  hold, and it is the form local extraction and inspection can act on.",
@@ -6149,6 +6251,40 @@
         "title": "Page[QuotaResetResponse]",
         "type": "object"
       },
+      "Page_RedactionEventRow_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RedactionEventRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[RedactionEventRow]",
+        "type": "object"
+      },
       "Page_RedactionRuleResponse_": {
         "properties": {
           "items": {
@@ -6317,6 +6453,40 @@
           "offset"
         ],
         "title": "Page[UserQuotaSummary]",
+        "type": "object"
+      },
+      "Page_UserRedactionRuleResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UserRedactionRuleResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[UserRedactionRuleResponse]",
         "type": "object"
       },
       "PasswordResetResponse": {
@@ -7855,6 +8025,199 @@
         "title": "RedactionEngineRequest",
         "type": "object"
       },
+      "RedactionEntityView": {
+        "properties": {
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_type",
+          "mode"
+        ],
+        "title": "RedactionEntityView",
+        "type": "object"
+      },
+      "RedactionEventEntity": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RedactionEventRule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "count",
+          "mode",
+          "rule",
+          "sources"
+        ],
+        "title": "RedactionEventEntity",
+        "type": "object"
+      },
+      "RedactionEventRow": {
+        "description": "One request where redaction hid something (or refused). No values.",
+        "properties": {
+          "blocked": {
+            "title": "Blocked",
+            "type": "boolean"
+          },
+          "byok": {
+            "title": "Byok",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "entities": {
+            "items": {
+              "$ref": "#/components/schemas/RedactionEventEntity"
+            },
+            "title": "Entities",
+            "type": "array"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          },
+          "user_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Label"
+          }
+        },
+        "required": [
+          "request_id",
+          "created_at",
+          "user_id",
+          "user_label",
+          "model",
+          "provider",
+          "byok",
+          "blocked",
+          "entities"
+        ],
+        "title": "RedactionEventRow",
+        "type": "object"
+      },
+      "RedactionEventRule": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "enum": [
+              "admin",
+              "user"
+            ],
+            "title": "Owner",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "owner"
+        ],
+        "title": "RedactionEventRule",
+        "type": "object"
+      },
+      "RedactionPatternView": {
+        "properties": {
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "mode"
+        ],
+        "title": "RedactionPatternView",
+        "type": "object"
+      },
       "RedactionPolicy": {
         "description": "Per-entity redaction policy: the admin's answer to \"redact *what*\".\n\nBefore this existed, ``entity_types`` was ``None`` — \"everything the engine\nknows\" — and nobody had chosen it; it was the default of a field never\nfilled in. On a real request that meant *\"Riassumi le notizie del giorno da\nilpost.it\"* reaching the provider as ``<PERSON_…> le notizie del giorno da\n<URL_…>``: the verb read as a name, and the source the user asked for read as\nidentity. See ADR 0037.\n\n``default_mode`` is the answer for a type nobody has listed, and it defaults\nto *on* rather than off. That direction matters: a detector that gains a new\nnational-identifier recogniser next release should start protecting it\nwithout an admin noticing, and an entity type nobody has ruled on is exactly\nthe case to be conservative about.",
         "properties": {
@@ -8634,6 +8997,137 @@
           "warnings"
         ],
         "title": "RedactionStatusResponse",
+        "type": "object"
+      },
+      "RedactionTestRequest": {
+        "additionalProperties": false,
+        "description": "Text to try the rules on. Never logged.",
+        "properties": {
+          "text": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "RedactionTestRequest",
+        "type": "object"
+      },
+      "RedactionTestResponse": {
+        "properties": {
+          "blocked": {
+            "default": false,
+            "title": "Blocked",
+            "type": "boolean"
+          },
+          "engine_active": {
+            "title": "Engine Active",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "spans": {
+            "items": {
+              "$ref": "#/components/schemas/RedactionTestSpan"
+            },
+            "title": "Spans",
+            "type": "array"
+          }
+        },
+        "required": [
+          "engine_active",
+          "spans",
+          "blocked",
+          "note"
+        ],
+        "title": "RedactionTestResponse",
+        "type": "object"
+      },
+      "RedactionTestRule": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "enum": [
+              "admin",
+              "user"
+            ],
+            "title": "Owner",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "owner"
+        ],
+        "title": "RedactionTestRule",
+        "type": "object"
+      },
+      "RedactionTestSpan": {
+        "description": "One thing that would be hidden: where, what kind, and which rule decided.\n\nOffsets only. The text is the caller's own and is not echoed back.",
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "integer"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RedactionTestRule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "start": {
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entity_type",
+          "start",
+          "end",
+          "mode",
+          "rule"
+        ],
+        "title": "RedactionTestSpan",
         "type": "object"
       },
       "RequestLogRow": {
@@ -10396,6 +10890,133 @@
           "entries"
         ],
         "title": "UserQuotaUsage",
+        "type": "object"
+      },
+      "UserRedactionRuleRequest": {
+        "additionalProperties": false,
+        "description": "A user's own rule: a pattern, or a stricter mode for one entity type.\n\n**There is no ``off``, no threshold, no allow-list and no placeholder style\nhere, and extra fields are refused**, so a rule that would loosen what the\nadministrators set cannot be expressed, let alone saved. A rule that is\nmerely not stricter than theirs is accepted and inert; the response says so.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "pattern",
+              "mode"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mode": {
+            "default": "redact",
+            "enum": [
+              "anonymise_restore",
+              "anonymise",
+              "redact",
+              "block"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "regex": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regex"
+          }
+        },
+        "required": [
+          "kind",
+          "name"
+        ],
+        "title": "UserRedactionRuleRequest",
+        "type": "object"
+      },
+      "UserRedactionRuleResponse": {
+        "properties": {
+          "admin_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Mode"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "pattern",
+              "mode"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "regex": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regex"
+          },
+          "status": {
+            "enum": [
+              "adds_protection",
+              "covered"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "regex",
+          "mode",
+          "status",
+          "admin_mode",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "UserRedactionRuleResponse",
         "type": "object"
       },
       "UserStatusCounts": {
@@ -14353,6 +14974,100 @@
         ]
       }
     },
+    "/api/admin/redaction/events": {
+      "get": {
+        "description": "Everyone's redaction log, newest first, for an administrator.\n\n**Never a user's own-key (BYOK) requests**, as every administrator read of\nthe ledger: those belong to their owner. No values, as in the user's view.",
+        "operationId": "all_redaction_events_api_admin_redaction_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "request_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Request Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "user_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "User Id"
+            }
+          },
+          {
+            "description": "Rows to return, at most 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Rows to return, at most 200.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Rows to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Rows to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_RedactionEventRow_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "All Redaction Events",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
     "/api/admin/redaction/preview": {
       "post": {
         "description": "Run the real redaction path over a sample and report what it did.\n\n**Not a proxy to ``/detect``.** The spans alone answer \"what does the\ndetector find\", which is not the question anyone has: the question is *what\nwould the provider receive*, and that is the modes, the per-type thresholds,\nthe allow-list and the overlap resolution — none of which live in the\ndetector. So this calls ``apply_spans`` with the effective policy, over a\nthrowaway ``PlaceholderMap``, exactly as a request would.\n\nTwo things this route does deliberately differently from a request:\n\n* **A block is a 200 with ``blocked: true``**, never a 403. This is a\n  preview; refusing it would make the tool look broken at the exact moment\n  it is doing its job, and an operator checking whether a rule blocks needs\n  the answer rather than an error.\n* **Nothing here is logged.** Not the sample, not the spans, not the\n  rewrite. Within a week of shipping this box will contain the real prompt\n  that came back wrong — that is what it is for — and a redaction inspector\n  that writes unredacted personal data to the log file has defeated itself.",
@@ -17326,6 +18041,334 @@
         "summary": "Test Provider",
         "tags": [
           "bring-your-own-key"
+        ]
+      }
+    },
+    "/api/me/redaction/events": {
+      "get": {
+        "description": "Requests of the caller's where redaction hid something or refused, newest first.\n\nThe caller's own requests only, **including the ones on their own provider\nkeys** (BYOK; flagged ``byok``): those requests are theirs, and nobody else\nreads them. No parameter names another user. The entries carry no values.",
+        "operationId": "my_redaction_events_api_me_redaction_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "request_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Request Id"
+            }
+          },
+          {
+            "description": "Rows to return, at most 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Rows to return, at most 200.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Rows to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Rows to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_RedactionEventRow_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "My Redaction Events",
+        "tags": [
+          "self-service"
+        ]
+      }
+    },
+    "/api/me/redaction/in-force": {
+      "get": {
+        "description": "The administrators' rules that can apply to this user, read-only.\n\nThe rules that name everyone, this user, one of their groups or keys, and\nevery provider and model rule (those apply by where a request goes). Types\nand modes only: not the regexes of an administrator's patterns, nor the\nvalues on an allow-list.",
+        "operationId": "rules_in_force_api_me_redaction_in_force_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyRedactionInForce"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Rules In Force",
+        "tags": [
+          "self-service"
+        ]
+      }
+    },
+    "/api/me/redaction/rules": {
+      "get": {
+        "description": "The caller's own rules. The user is the caller's; there is no way to name another.",
+        "operationId": "list_my_rules_api_me_redaction_rules_get",
+        "parameters": [
+          {
+            "description": "Rows to return, at most 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Rows to return, at most 200.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Rows to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Rows to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_UserRedactionRuleResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List My Rules",
+        "tags": [
+          "self-service"
+        ]
+      },
+      "post": {
+        "operationId": "create_my_rule_api_me_redaction_rules_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserRedactionRuleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRedactionRuleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create My Rule",
+        "tags": [
+          "self-service"
+        ]
+      }
+    },
+    "/api/me/redaction/rules/{rule_id}": {
+      "delete": {
+        "operationId": "delete_my_rule_api_me_redaction_rules__rule_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Rule Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete My Rule",
+        "tags": [
+          "self-service"
+        ]
+      },
+      "put": {
+        "operationId": "update_my_rule_api_me_redaction_rules__rule_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Rule Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserRedactionRuleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRedactionRuleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update My Rule",
+        "tags": [
+          "self-service"
+        ]
+      }
+    },
+    "/api/me/redaction/test": {
+      "post": {
+        "description": "What would be hidden in this text, by which rule. Offsets, never the text.\n\nRuns the real path (detection, then the same eligibility and overlap rules a\nrequest uses) under the policy this user's requests run under: the\nadministrators' rules for them and their default billing group, then their\nown. A blocked request is a 200 with ``blocked: true``. **Nothing here is\nlogged**: not the text, not the spans.",
+        "operationId": "test_my_rules_api_me_redaction_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedactionTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedactionTestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test My Rules",
+        "tags": [
+          "self-service"
         ]
       }
     },

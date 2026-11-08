@@ -390,6 +390,123 @@ ten-second poll as a dictionary swap — never a redactor rebuild, which would
 quietly destroy the detection cache's hit rate (the difference between 13ms
 and 135ms on a 1,000-token prompt).
 
+## User rules
+
+A user can keep rules of their own, and a user's rules can only **add**
+protection. They are applied last, after the administrators' rules have been
+folded exactly as above, as the narrowest scope there is:
+
+- **a custom pattern** is added to the patterns in force, under the same RE2
+  engine, the same validation and the same limits as an administrator's custom
+  pattern (no backreferences or lookaround; a pattern that matches the empty
+  string is refused);
+- **a stricter mode for an entity type** wins over a weaker one, by the order
+  `off` < `anonymise_restore` < `anonymise` < `redact` < `block`.
+
+A user rule cannot loosen anything. There is no `off` to choose, and no
+threshold, exception, allow-list or placeholder style to set: the request has no
+such fields and an unknown one is refused. A rule that is not stricter than what
+the administrators already say is saved and is inert, and a tie goes to the
+administrators; the console marks it "Already covered" and says which mode
+applies instead. Names that collide with an administrator's pattern or type
+cannot loosen it either.
+
+The rules apply to requests whose principal is that user: a token the user
+signed in with, and the user's own API keys. They never reach another user's
+requests. They are held in memory by every worker, loaded on the same
+ten-second poll as the administrators' rules, so the request path stays
+query-free; the worker that handled the edit has it at once.
+
+- Each user keeps at most 25 rules. They are removed with the account, and a
+  merge keeps the surviving account's rules and drops the merged-away
+  account's.
+- If the engine is `noop`, nothing is screened, so a user's rules have nothing
+  to act on. The console says so.
+- A user rule that blocks makes that user's own requests fail with the usual
+  403 when it matches.
+
+The API is `/api/me/redaction/rules` (list, add, change, remove; cookie session
+and the `console` capability, like the rest of `/api/me`). `POST
+/api/me/redaction/test` runs the real path over a text and answers with what
+would be hidden: type, offsets, mode and the deciding rule (its name, and
+whether an administrator or the user wrote it). It never echoes the text and
+never logs it. `GET /api/me/redaction/in-force` lists the administrators' rules
+that can apply to the user, read-only, as types and modes (not the regexes of an
+administrator's patterns, nor the values on an allow-list).
+
+## What users can see
+
+**The log.** Whenever redaction hid something, or refused a request, the usage
+row for that request carries a log entry (`usage_records.redaction_detail`).
+Per entity type it has the count, the mode, the rule that decided (id, name,
+owner `admin` or `user`) and where the value was (`message`, `tool_result`, or
+`document` for `/v1/ocr`, whose screened text is the extracted document), plus
+whether the request was blocked.
+
+**It never holds a value.** Not the original, not the matched text, and no
+character offsets. A request where redaction ran and found nothing leaves no
+entry. The entry lives on the usage row, so it costs no extra write and its
+retention is the request log's (which keeps rows; only the reply text has a
+sweep, see `GATEWAY_TRANSCRIPT_RETENTION_HOURS`). With accounting switched off
+there is no request log and so no redaction log.
+
+- `GET /api/me/redaction/events` lists the caller's own entries, newest first,
+  in the usual paginated envelope, with a `request_id` filter. A user's
+  own-key (BYOK) requests are theirs and are included, flagged `byok`.
+- `GET /api/admin/redaction/events` is the administrator's view of everyone's,
+  with `user_id` and `request_id` filters. Like every administrator read of the
+  ledger it leaves BYOK requests out.
+- The console's **Redactions** page, next to Your usage, shows the log, the
+  administrators' rules in plain words, the user's own rules and the test box.
+
+### The per-response summary
+
+A caller that asks gets a summary of what redaction did to *this* request, in
+the response. It is opt-in: send `x-pystino-redaction-summary: 1`. Without the
+header a response is byte for byte what it was, so an OpenAI client never sees a
+field it did not ask for.
+
+On `/v1/chat/completions` the response then carries a top-level
+`pystino_redaction` object, in the JSON body when not streaming and on the final
+chunk when streaming. The final chunk is the one that carries `usage`, or, when
+the client is not shown usage, the chunk that finishes the answer; it is never
+a separate event.
+
+```json
+{
+  "applied": true,
+  "request_id": "9f2c...",
+  "blocked": false,
+  "entities": [
+    {"type": "PERSON", "count": 2, "mode": "anonymise_restore",
+     "rule": {"id": "6c1e...", "name": "Cloud providers", "owner": "admin"},
+     "sources": ["message", "tool_result"]}
+  ]
+}
+```
+
+- The object is **absent** when redaction is off for the request: the engine is
+  `noop`, or no rule applies. `applied` is `false` with an empty `entities` when
+  redaction ran and found nothing.
+- `rule.id` is `null` for the deployment's own policy, which has no row.
+- A blocked request is a 403; with the header its error body also carries the
+  object, with `blocked: true`.
+- `request_id` is the id the request was logged under. (The gateway otherwise
+  never returns the id it uses; this is the one place it does, because the
+  caller asked.)
+- Only chat completions carry it. `/v1/responses` and `/v1/messages` do not yet.
+- **No cost.** `pystino_cost` is not sent: the cost of a request is settled
+  after the response is sent, so it is not known when the object is built. Read
+  it from `GET /v1/pystino/usage` once the request is over.
+
+**The values.** With a second header, `x-pystino-redaction-values: 1`, *and* a
+caller that authenticated with an OIDC user token (never an API key), the object
+also has `values`: `{"type", "original", "placeholder"}` for every value that
+was substituted. They are put in that one response and **never written to a log
+or a database**: the usage row, the redaction log and the application log hold
+none of them. An API key never gets them, because a key may belong to a script
+whose output is logged.
+
 ## Operating it
 
 - The **Redaction screen** in the console shows the engine, the rules and a

@@ -7,7 +7,7 @@ per-group model availability and a pluggable redaction layer.
 
 | Path | Auth | Purpose |
 |---|---|---|
-| `POST /v1/chat/completions` | key or bearer | Proxy to the configured upstream, streaming and not |
+| `POST /v1/chat/completions` | key or bearer | Proxy to the configured upstream, streaming and not. With `x-pystino-redaction-summary: 1` the reply also carries what [redaction did to the request](redaction.md#the-per-response-summary) |
 | `POST /v1/responses` | key or bearer | OpenAI's Responses API. Server-side conversation state (`previous_response_id`, `store`) is refused |
 | `POST /v1/messages` | key or bearer | Anthropic's Messages API, over the same chat models |
 | `POST /v1/embeddings` | key or bearer | Embeddings, metered and redacted like a completion |
@@ -26,7 +26,7 @@ per-group model availability and a pluggable redaction layer.
 | `POST /v1/session/announce` | access token of the chat client | The chat's sign-in door: runs linking, provisioning and the admin rules, and answers who this is |
 | `GET /auth/login`, `/auth/callback/{provider}` | — | OIDC authorization-code login (PKCE); the provider is `default` for the one set in `.env` |
 | `GET /auth/methods`, `/auth/session`, `POST /auth/logout` | —, cookie, cookie | Which sign-in methods exist; whether a session cookie is still good; sign out, at the provider too |
-| `/api/me/*` | session cookie | Identity, billing group, API keys, own usage and reports |
+| `/api/me/*` | session cookie | Identity, billing group, API keys, own usage and reports, and [own redaction rules and log](redaction.md#user-rules) |
 | `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, quotas, users, providers, redaction rules, reports, identity events, the [administrator audit log](console.md#the-administrator-audit-log) |
 | `/scim/v2/{provider}/*` | the provider's SCIM token | SCIM 2.0 pushes from an external directory ([User sync](oidc-generic-provider.md#user-sync)) |
 | `GET /opencode/install.sh` | — | The opencode setup script ([Coding agents](coding-agents.md#point-opencode-at-the-gateway-with-a-script)) |

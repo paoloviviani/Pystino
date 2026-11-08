@@ -1581,6 +1581,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/redaction/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * All Redaction Events
+         * @description Everyone's redaction log, newest first, for an administrator.
+         *
+         *     **Never a user's own-key (BYOK) requests**, as every administrator read of
+         *     the ledger: those belong to their owner. No values, as in the user's view.
+         */
+        get: operations["all_redaction_events_api_admin_redaction_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/redaction/preview": {
         parameters: {
             query?: never;
@@ -2687,6 +2710,120 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/redaction/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My Redaction Events
+         * @description Requests of the caller's where redaction hid something or refused, newest first.
+         *
+         *     The caller's own requests only, **including the ones on their own provider
+         *     keys** (BYOK; flagged ``byok``): those requests are theirs, and nobody else
+         *     reads them. No parameter names another user. The entries carry no values.
+         */
+        get: operations["my_redaction_events_api_me_redaction_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/redaction/in-force": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Rules In Force
+         * @description The administrators' rules that can apply to this user, read-only.
+         *
+         *     The rules that name everyone, this user, one of their groups or keys, and
+         *     every provider and model rule (those apply by where a request goes). Types
+         *     and modes only: not the regexes of an administrator's patterns, nor the
+         *     values on an allow-list.
+         */
+        get: operations["rules_in_force_api_me_redaction_in_force_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/redaction/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List My Rules
+         * @description The caller's own rules. The user is the caller's; there is no way to name another.
+         */
+        get: operations["list_my_rules_api_me_redaction_rules_get"];
+        put?: never;
+        /** Create My Rule */
+        post: operations["create_my_rule_api_me_redaction_rules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/redaction/rules/{rule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update My Rule */
+        put: operations["update_my_rule_api_me_redaction_rules__rule_id__put"];
+        post?: never;
+        /** Delete My Rule */
+        delete: operations["delete_my_rule_api_me_redaction_rules__rule_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/redaction/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test My Rules
+         * @description What would be hidden in this text, by which rule. Offsets, never the text.
+         *
+         *     Runs the real path (detection, then the same eligibility and overlap rules a
+         *     request uses) under the policy this user's requests run under: the
+         *     administrators' rules for them and their default billing group, then their
+         *     own. A blocked request is a 200 with ``blocked: true``. **Nothing here is
+         *     logged**: not the text, not the spans.
+         */
+        post: operations["test_my_rules_api_me_redaction_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/reports/usage": {
         parameters: {
             query?: never;
@@ -3531,6 +3668,38 @@ export interface components {
             target_label: string;
             /** Target Type */
             target_type: string;
+        };
+        /**
+         * AdminRuleView
+         * @description One administrator rule, as a user may read it.
+         *
+         *     Types and modes, not the regexes of its patterns (a pattern can name a
+         *     project that is itself confidential) and not its exceptions' values, only
+         *     how many there are.
+         */
+        AdminRuleView: {
+            /** Default Mode */
+            default_mode: string;
+            /** Entities */
+            entities: components["schemas"]["RedactionEntityView"][];
+            /** Exceptions */
+            exceptions: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Patterns */
+            patterns: components["schemas"]["RedactionPatternView"][];
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "all" | "provider" | "model" | "group" | "user" | "api_key";
+            /** Subject Label */
+            subject_label: string | null;
         };
         /** AliasCreateRequest */
         AliasCreateRequest: {
@@ -5560,6 +5729,17 @@ export interface components {
             /** Thresholds */
             thresholds?: number[];
         };
+        /** MyRedactionInForce */
+        MyRedactionInForce: {
+            /** Engine */
+            engine: string;
+            /** Engine Active */
+            engine_active: boolean;
+            /** Max User Rules */
+            max_user_rules: number;
+            /** Rules */
+            rules: components["schemas"]["AdminRuleView"][];
+        };
         /**
          * OcrDocument
          * @description The document to read, in the shape Cortecs and Mistral both accept.
@@ -5915,6 +6095,17 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** Page[RedactionEventRow] */
+        Page_RedactionEventRow_: {
+            /** Items */
+            items: components["schemas"]["RedactionEventRow"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /** Page[RedactionRuleResponse] */
         Page_RedactionRuleResponse_: {
             /** Items */
@@ -5963,6 +6154,17 @@ export interface components {
         Page_UserQuotaSummary_: {
             /** Items */
             items: components["schemas"]["UserQuotaSummary"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** Page[UserRedactionRuleResponse] */
+        Page_UserRedactionRuleResponse_: {
+            /** Items */
+            items: components["schemas"]["UserRedactionRuleResponse"][];
             /** Limit */
             limit: number;
             /** Offset */
@@ -6546,6 +6748,71 @@ export interface components {
              */
             reason?: string;
         };
+        /** RedactionEntityView */
+        RedactionEntityView: {
+            /** Entity Type */
+            entity_type: string;
+            /** Mode */
+            mode: string;
+        };
+        /** RedactionEventEntity */
+        RedactionEventEntity: {
+            /** Count */
+            count: number;
+            /** Mode */
+            mode: string;
+            rule: components["schemas"]["RedactionEventRule"] | null;
+            /** Sources */
+            sources: string[];
+            /** Type */
+            type: string;
+        };
+        /**
+         * RedactionEventRow
+         * @description One request where redaction hid something (or refused). No values.
+         */
+        RedactionEventRow: {
+            /** Blocked */
+            blocked: boolean;
+            /** Byok */
+            byok: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Entities */
+            entities: components["schemas"]["RedactionEventEntity"][];
+            /** Model */
+            model: string;
+            /** Provider */
+            provider: string | null;
+            /** Request Id */
+            request_id: string;
+            /** User Id */
+            user_id: string | null;
+            /** User Label */
+            user_label: string | null;
+        };
+        /** RedactionEventRule */
+        RedactionEventRule: {
+            /** Id */
+            id: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Owner
+             * @enum {string}
+             */
+            owner: "admin" | "user";
+        };
+        /** RedactionPatternView */
+        RedactionPatternView: {
+            /** Mode */
+            mode: string;
+            /** Name */
+            name: string;
+        };
         /**
          * RedactionPolicy
          * @description Per-entity redaction policy: the admin's answer to "redact *what*".
@@ -6883,6 +7150,57 @@ export interface components {
             timeout_seconds: number;
             /** Warnings */
             warnings: string[];
+        };
+        /**
+         * RedactionTestRequest
+         * @description Text to try the rules on. Never logged.
+         */
+        RedactionTestRequest: {
+            /** Text */
+            text: string;
+        };
+        /** RedactionTestResponse */
+        RedactionTestResponse: {
+            /**
+             * Blocked
+             * @default false
+             */
+            blocked: boolean;
+            /** Engine Active */
+            engine_active: boolean;
+            /** Note */
+            note: string | null;
+            /** Spans */
+            spans: components["schemas"]["RedactionTestSpan"][];
+        };
+        /** RedactionTestRule */
+        RedactionTestRule: {
+            /** Id */
+            id: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Owner
+             * @enum {string}
+             */
+            owner: "admin" | "user";
+        };
+        /**
+         * RedactionTestSpan
+         * @description One thing that would be hidden: where, what kind, and which rule decided.
+         *
+         *     Offsets only. The text is the caller's own and is not echoed back.
+         */
+        RedactionTestSpan: {
+            /** End */
+            end: number;
+            /** Entity Type */
+            entity_type: string;
+            /** Mode */
+            mode: string;
+            rule: components["schemas"]["RedactionTestRule"] | null;
+            /** Start */
+            start: number;
         };
         /**
          * RequestLogRow
@@ -7605,6 +7923,68 @@ export interface components {
              * Format: uuid
              */
             user_id: string;
+        };
+        /**
+         * UserRedactionRuleRequest
+         * @description A user's own rule: a pattern, or a stricter mode for one entity type.
+         *
+         *     **There is no ``off``, no threshold, no allow-list and no placeholder style
+         *     here, and extra fields are refused**, so a rule that would loosen what the
+         *     administrators set cannot be expressed, let alone saved. A rule that is
+         *     merely not stricter than theirs is accepted and inert; the response says so.
+         */
+        UserRedactionRuleRequest: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "pattern" | "mode";
+            /**
+             * Mode
+             * @default redact
+             * @enum {string}
+             */
+            mode?: "anonymise_restore" | "anonymise" | "redact" | "block";
+            /** Name */
+            name: string;
+            /** Regex */
+            regex?: string | null;
+        };
+        /** UserRedactionRuleResponse */
+        UserRedactionRuleResponse: {
+            /** Admin Mode */
+            admin_mode: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "pattern" | "mode";
+            /** Mode */
+            mode: string;
+            /** Name */
+            name: string;
+            /** Regex */
+            regex: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "adds_protection" | "covered";
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /**
          * UserStatusCounts
@@ -9988,6 +10368,42 @@ export interface operations {
             };
         };
     };
+    all_redaction_events_api_admin_redaction_events_get: {
+        parameters: {
+            query?: {
+                request_id?: string | null;
+                user_id?: string | null;
+                /** @description Rows to return, at most 200. */
+                limit?: number;
+                /** @description Rows to skip. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_RedactionEventRow_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     preview_redaction_api_admin_redaction_preview_post: {
         parameters: {
             query?: never;
@@ -11569,6 +11985,225 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderTestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    my_redaction_events_api_me_redaction_events_get: {
+        parameters: {
+            query?: {
+                request_id?: string | null;
+                /** @description Rows to return, at most 200. */
+                limit?: number;
+                /** @description Rows to skip. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_RedactionEventRow_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rules_in_force_api_me_redaction_in_force_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyRedactionInForce"];
+                };
+            };
+        };
+    };
+    list_my_rules_api_me_redaction_rules_get: {
+        parameters: {
+            query?: {
+                /** @description Rows to return, at most 200. */
+                limit?: number;
+                /** @description Rows to skip. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_UserRedactionRuleResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_my_rule_api_me_redaction_rules_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserRedactionRuleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserRedactionRuleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_my_rule_api_me_redaction_rules__rule_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserRedactionRuleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserRedactionRuleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_my_rule_api_me_redaction_rules__rule_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_my_rules_api_me_redaction_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RedactionTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedactionTestResponse"];
                 };
             };
             /** @description Validation Error */

@@ -19,6 +19,7 @@ import { Admin } from "./routes/Admin";
 import { AdminReports } from "./routes/AdminReports";
 import { AdminRequests } from "./routes/AdminRequests";
 import { MyProviders } from "./routes/MyProviders";
+import { MyRedactions } from "./routes/MyRedactions";
 import { MyRequests } from "./routes/MyRequests";
 import { AdminByok } from "./routes/AdminByok";
 import { AdminGroups } from "./routes/AdminGroups";
@@ -76,6 +77,9 @@ export function App() {
             including administrators, whose own spend is not administration. */}
         <Route path="/reports" element={<Reports />} />
         <Route path="/requests" element={<MyRequests />} />
+        {/* What redaction hid from providers, the rules in force and the user's
+            own. Not admin-gated: it is their own requests. */}
+        <Route path="/redactions" element={<MyRedactions />} />
         {/* Bring your own key. Not admin-gated and not capability-gated in the
             router: the page itself explains a missing capability, so a
             bookmarked link says why rather than reading as a broken deploy. */}

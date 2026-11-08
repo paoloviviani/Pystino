@@ -145,6 +145,55 @@ def usage_visibility_stage(client_wants_usage: bool) -> StreamStage:
     return stage
 
 
+def redaction_summary_stage(summary: dict[str, Any]) -> StreamStage:
+    """Put the ``pystino_redaction`` object on the stream's final chunk.
+
+    The final chunk is the one carrying ``usage``, or, when the client is not
+    shown one (or the provider sends none), the chunk that finishes the answer.
+    Never a separate event: an OpenAI client that opted in is still reading a
+    plain chat-completion stream.
+
+    Placed after :func:`usage_visibility_stage`, so it sees what the client
+    sees. Only a *candidate* chunk (a finish or a usage chunk) is held, and only
+    until the next frame shows whether it was the last: holding every frame
+    would delay every token by one. A provider that repeats usage on every chunk
+    therefore gets the object on the last of them, as the contract says. A
+    stream with neither kind of chunk carries nothing, which no provider does.
+    """
+    terminal = reader_for(SURFACE).is_terminal
+
+    def attach(event: SSEEvent) -> SSEEvent:
+        payload = event.json()
+        if isinstance(payload, dict):
+            payload[_metered.REDACTION_SUMMARY_FIELD] = summary
+            event.replace_json(payload)
+        return event
+
+    async def stage(events: AsyncIterator[SSEEvent]) -> AsyncIterator[SSEEvent]:
+        held: SSEEvent | None = None
+        async for event in events:
+            if event.is_done():
+                if held is not None:
+                    yield attach(held)
+                    held = None
+                yield event
+                continue
+            if held is not None:
+                yield held
+                held = None
+            payload = event.json()
+            if isinstance(payload, dict) and (
+                payload.get("usage") is not None or terminal(payload)
+            ):
+                held = event
+                continue
+            yield event
+        if held is not None:
+            yield attach(held)
+
+    return stage
+
+
 def build_upstream_payload(
     body: ChatCompletionRequest,
     *,
@@ -283,6 +332,9 @@ async def chat_completions(
         if isinstance(metered, JSONResponse):
             return metered
 
+        summary = _metered.redaction_summary_for(
+            request, principal=principal, outcome=outcome, request_id=request_id
+        )
         payload = build_upstream_payload(
             body, outcome=outcome, upstream_model=resolved.upstream_model
         )
@@ -302,6 +354,7 @@ async def chat_completions(
                 upstream=upstream,
                 metered=metered,
                 request_id=request_id,
+                summary=summary,
             )
 
         return await _buffered_response(
@@ -313,6 +366,7 @@ async def chat_completions(
             upstream=upstream,
             metered=metered,
             request_id=request_id,
+            summary=summary,
         )
 
     return await _metered.serve_with_failover(session, plan, serve)
@@ -328,6 +382,7 @@ async def _buffered_response(
     upstream: ChatUpstream,
     metered: _metered.Metered,
     request_id: str,
+    summary: dict[str, Any] | None = None,
 ) -> JSONResponse:
     """Non-streaming completion.
 
@@ -391,6 +446,9 @@ async def _buffered_response(
             ),
         )
 
+    if summary is not None:
+        body_payload[_metered.REDACTION_SUMMARY_FIELD] = summary
+
     # Finalised after the answer is sent, not before it (ADR 0060).
     return JSONResponse(
         status_code=200,
@@ -411,6 +469,7 @@ async def _stream_response(
     upstream: ChatUpstream,
     metered: _metered.Metered,
     request_id: str,
+    summary: dict[str, Any] | None = None,
 ) -> JSONResponse | StreamingResponse:
     """Streaming completion.
 
@@ -463,6 +522,7 @@ async def _stream_response(
                 rename_model_stage(client_facing_name),
                 redactor.response_stage(outcome),
                 usage_visibility_stage(body.client_wants_usage()),
+                *([redaction_summary_stage(summary)] if summary is not None else []),
             )
             async for event in pipeline:
                 yield event.encode()
