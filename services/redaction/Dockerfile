@@ -6,6 +6,9 @@
 #
 #   docker build --build-arg SPACY_MODELS="en_core_web_lg it_core_news_lg" .
 #
+# For a small box the medium models (en_core_web_md, it_core_news_md) are about
+# 40 MB each, roughly twice as fast as lg and somewhat less accurate on names.
+#
 # Italian *identifiers* (fiscal code, VAT, ID card, driving licence, passport) are
 # pattern and checksum recognisers and work without any Italian model. Only
 # Italian personal and place names need one.
@@ -47,8 +50,10 @@ RUN set -eux; \
     for model in ${SPACY_MODELS}; do \
         case "${model}" in \
             en_core_web_lg) version=3.8.0 ;; \
+            en_core_web_md) version=3.8.0 ;; \
             en_core_web_sm) version=3.8.0 ;; \
             it_core_news_lg) version=3.8.0 ;; \
+            it_core_news_md) version=3.8.0 ;; \
             it_core_news_sm) version=3.8.0 ;; \
             *) echo "unknown model ${model}: add its pinned version here" >&2; exit 1 ;; \
         esac; \
