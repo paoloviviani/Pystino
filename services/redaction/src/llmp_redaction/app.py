@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 
 from llmp_redaction.detector import Detector
 from llmp_redaction.documents import DEFAULT_LONG_SIDE, extract
+from llmp_redaction.engines import ENGINE_HEADER
 
 logger = logging.getLogger(__name__)
 
@@ -353,7 +354,9 @@ def create_app(detector: Detector | None = None) -> FastAPI:
         content type is unrecognised — several clients send
         `application/octet-stream` for every upload. `X-Page-Images: N` asks
         for up to N pictures of PDF pages that have no text (long side from
-        `X-Page-Image-Long-Side`).
+        `X-Page-Image-Long-Side`). `X-Extractor-Engine: markitdown|docling` picks
+        the reader for this one request (default: `EXTRACTOR_ENGINE`; an
+        unknown name is ignored), the seam a routing rule would use.
 
         Always 200 with an outcome, never 4xx for an unreadable document: "we
         could not read this" is an answer the caller has to act on, and an HTTP
@@ -376,6 +379,7 @@ def create_app(detector: Detector | None = None) -> FastAPI:
             page_images=_requested_page_images(request.headers.get("x-page-images")),
             long_side=_requested_page_images(request.headers.get("x-page-image-long-side"))
             or DEFAULT_LONG_SIDE,
+            engine=request.headers.get(ENGINE_HEADER),
         )
         logger.info(
             "extracted %d bytes: %s (%s) in %dms",
