@@ -18,6 +18,7 @@ provider would hang a request forever instead of failing fast.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
@@ -385,6 +386,28 @@ class OpenAICompatibleUpstream:
             headers=dict(response.headers),
         )
 
+    async def _answers_without_a_model_list(self) -> bool:
+        """Whether a server that 404s on ``/models`` is up all the same.
+
+        Some OpenAI-compatible servers serve ``/v1/embeddings`` or
+        ``/v1/chat/completions`` but no model list: Hugging Face's
+        text-embeddings-inference and infinity answer ``GET /models`` with 404
+        and report themselves at ``/health`` or ``/info`` beside the version
+        path. A 404 is also what a base URL missing its ``/v1`` gets, which the
+        hint is for, so this only says "reachable" when one of those health
+        routes answers 200; anything else keeps the hint.
+        """
+        base = self._settings.base_url.rstrip("/")
+        root = re.sub(r"/v\d+[a-z0-9]*$", "", base)
+        for path in ("/health", "/info"):
+            try:
+                response = await self._client.get(f"{root}{path}", headers=self._headers())
+            except httpx.HTTPError:
+                continue
+            if response.status_code == 200:
+                return True
+        return False
+
     async def default_probe(self) -> ProbeResult:
         """The original connection test: does ``GET /models`` answer.
 
@@ -403,6 +426,15 @@ class OpenAICompatibleUpstream:
             if result.status_code in (401, 403):
                 hint = " — check the API key"
             elif result.status_code == 404:
+                if await self._answers_without_a_model_list():
+                    return ProbeResult(
+                        ok=True,
+                        status_code=result.status_code,
+                        detail=(
+                            "reachable, but this server does not list its models at "
+                            "/models: add its models by hand"
+                        ),
+                    )
                 hint = " — check the base URL includes the version path, e.g. /v1"
             return ProbeResult(
                 ok=False,

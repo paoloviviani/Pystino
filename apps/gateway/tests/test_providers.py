@@ -575,6 +575,23 @@ class TestProviderTest:
         assert body["ok"] is False
         assert "/v1" in body["detail"]
 
+    async def test_a_server_without_a_model_list_is_reachable(
+        self, admin_client: httpx.AsyncClient, seeded: Seeded, fake_upstream: FakeUpstream
+    ) -> None:
+        """text-embeddings-inference and friends 404 on /models but answer /health
+        beside the version path: reachable, models added by hand."""
+
+        def responder(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/health"):
+                return httpx.Response(200)
+            return httpx.Response(404, json={"error": "not found"})
+
+        fake_upstream._responder = responder
+        body = (await admin_client.post(f"/api/admin/providers/{seeded.provider.id}/test")).json()
+        assert body["ok"] is True
+        assert "by hand" in body["detail"]
+        assert any(url.endswith("/health") and "/v1/" not in url for url in fake_upstream.urls)
+
     async def test_a_failing_test_is_still_a_200(
         self, admin_client: httpx.AsyncClient, seeded: Seeded, fake_upstream: FakeUpstream
     ) -> None:
