@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from gateway.models import DetectorProfile, ModelDef, ModelKind, PrivacyRule, Provider
 from gateway.privacy.classify import VerdictCache
 from gateway.privacy.evaluate import Evaluator, Profile, profile_snapshot
-from gateway.privacy.rules import Rule, condition_from_json
+from gateway.privacy.rules import CONDITION_KEYS, Rule, condition_from_json
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,22 @@ DEFAULT_REFRESH_SECONDS = 10.0
 RUNNABLE_ENGINES = frozenset({"presidio", "patterns"})
 
 
+def _schema_missing(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "privacy_rules" in text and ("no such table" in text or "does not exist" in text)
+
+
 def engine_available(engine: str) -> bool:
     return engine in RUNNABLE_ENGINES
 
 
 def rule_from_row(row: PrivacyRule) -> Rule:
+    keys = {k for group in CONDITION_KEYS.values() for k in group}
+    for condition in row.conditions or []:
+        if condition.get("key") not in keys or not isinstance(condition.get("values"), list):
+            raise ValueError("a condition has no known key or values")
+    if not (row.action or {}).get("type"):
+        raise ValueError("the rule has no action")
     return Rule(
         id=row.id,
         kind=row.kind,
@@ -68,6 +79,15 @@ class PrivacyState:
         self.local_extractor_models: tuple[str, ...] = ()
         self.cache = VerdictCache()
         self.evaluator = Evaluator(self.profiles, self.cache)
+        #: False until the rules have been read once. A worker that has never
+        #: read them cannot say what the rules are, so requests of the kinds that
+        #: rules govern fail closed (503) rather than run with none. An app built
+        #: without a database (no session factory) has no rules to read.
+        self.loaded = session_factory is None
+        self.load_error: str | None = None
+        #: Rows that could not be turned into a rule, as "id: reason". Skipped
+        #: with an error log; the rest of the rules still load.
+        self.bad_rules: list[str] = []
 
     @property
     def configured(self) -> bool:
@@ -95,9 +115,20 @@ class PrivacyState:
         embedding_models: list[str],
         extractor_models: list[str],
     ) -> None:
-        self.rules = tuple(
-            rule_from_row(r) for r in sorted(rules, key=lambda r: (r.kind, r.position))
-        )
+        good: list[Rule] = []
+        bad: list[str] = []
+        for row in sorted(rules, key=lambda r: (r.kind, r.position)):
+            try:
+                good.append(rule_from_row(row))
+            except Exception as exc:
+                bad.append(f"{row.id}: {type(exc).__name__}")
+                logger.error(
+                    "skipping privacy rule %s, which cannot be read", row.id, exc_info=True
+                )
+        self.rules = tuple(good)
+        self.bad_rules = bad
+        self.loaded = True
+        self.load_error = None
         self.profiles = profile_snapshot(
             profiles, {p.id: engine_available(p.engine) for p in profiles}
         )
@@ -112,10 +143,28 @@ class PrivacyState:
         try:
             async with self._session_factory() as session:
                 self._apply(await read_all(session))
-        except Exception:
+        except Exception as exc:
+            if _schema_missing(exc):
+                # Migration 0081 has not run, so no rule can exist: nothing to
+                # enforce. (Migrations run before the gateway starts in a real
+                # deployment; this is what a database without the table says.)
+                self.loaded = True
+                return False
+            self.load_error = f"{type(exc).__name__}"
             logger.warning("could not refresh the privacy routing rules", exc_info=True)
             return False
         return True
+
+    def ensure_loaded(self) -> None:
+        """Refuse (503) when this worker has never read the rules."""
+        if not self.loaded:
+            from gateway.errors import ServiceUnavailableError
+
+            raise ServiceUnavailableError(
+                "Privacy routing rules have not loaded on this server yet, so the "
+                "request is refused rather than run without them. Try again shortly.",
+                code="privacy_rules_unavailable",
+            )
 
     def _apply(self, loaded: tuple[Any, ...]) -> None:
         self.load(*loaded)

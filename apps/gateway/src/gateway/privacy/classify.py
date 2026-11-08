@@ -28,9 +28,17 @@ import unicodedata
 from collections import OrderedDict
 from dataclasses import dataclass
 
-#: Only this much of a text is judged: the verdict is about whether the text is
-#: that kind of text, and an embedding batch can be megabytes.
-MAX_CHARS = 20_000
+#: A text is scanned in windows of this size, so a long one is judged in full
+#: rather than by its start (a medical passage must not escape by being the
+#: 30th chunk of a batch or by padding). Windows overlap by `OVERLAP` so a term
+#: or an identifier cut at a boundary is still seen.
+WINDOW = 20_000
+OVERLAP = 256
+#: The most one text may take. Past it the rest is *not checked* and the verdict
+#: says so (`incomplete`); the evaluator then fails closed.
+MAX_TEXT_CHARS = 2_000_000
+#: The most a whole request may take, summed over its inputs.
+MAX_REQUEST_CHARS = 4_000_000
 
 UNKNOWN_LANGUAGE = "und"
 
@@ -42,6 +50,9 @@ class Classification:
     health: bool
     ids: bool
     lang: str
+    #: Part of the text was not checked (over the size cap). A verdict that is
+    #: incomplete must not be read as "clean".
+    incomplete: bool = False
 
 
 def _fold(text: str) -> str:
@@ -473,7 +484,7 @@ def detect_language(text: str) -> str:
     Cheap and good enough for "is this Italian": it needs a few sentences and
     returns ``und`` for a handful of words or a text with no clear winner.
     """
-    words = [w.lower() for w in _TOKEN.findall(text[:MAX_CHARS])]
+    words = [w.lower() for w in _TOKEN.findall(text[:WINDOW])]
     if len(words) < 4:
         return UNKNOWN_LANGUAGE
     scores = {
@@ -487,13 +498,29 @@ def detect_language(text: str) -> str:
 
 
 def classify(text: str) -> Classification:
-    """The quick check over (the first :data:`MAX_CHARS` of) *text*."""
-    clipped = text[:MAX_CHARS]
-    return Classification(
-        health=_is_health(_fold(clipped)),
-        ids=_has_ids(clipped),
-        lang=detect_language(clipped),
-    )
+    """The quick check over the whole of *text*, window by window.
+
+    Health and identifiers hold if they hold in any window; the language is the
+    first window's. Beyond :data:`MAX_TEXT_CHARS` the rest is not scanned and the
+    result is marked ``incomplete``.
+    """
+    health = ids = False
+    incomplete = len(text) > MAX_TEXT_CHARS
+    limit = min(len(text), MAX_TEXT_CHARS)
+    start = 0
+    lang = UNKNOWN_LANGUAGE
+    first = True
+    while start < limit or first:
+        window = text[start : min(start + WINDOW, limit)]
+        if first:
+            lang = detect_language(window)
+            first = False
+        health = health or _is_health(_fold(window))
+        ids = ids or _has_ids(window)
+        if (health and ids) or start + WINDOW >= limit:
+            break
+        start += WINDOW - OVERLAP
+    return Classification(health=health, ids=ids, lang=lang, incomplete=incomplete)
 
 
 class VerdictCache:
@@ -511,7 +538,7 @@ class VerdictCache:
         self.misses = 0
 
     def classify(self, text: str) -> Classification:
-        key = hashlib.sha256(text[:MAX_CHARS].encode("utf-8", "surrogatepass")).hexdigest()
+        key = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
         with self._lock:
             found = self._entries.get(key)
             if found is not None:

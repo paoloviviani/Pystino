@@ -21,6 +21,7 @@ from gateway.models import (
     UsageRecord,
     UsageStatus,
 )
+from gateway.rate_limit import SlidingWindowLimiter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
@@ -401,7 +402,7 @@ class TestAdminApi:
     async def test_the_test_endpoint_is_rate_limited(
         self, app: Any, admin: None, client: httpx.AsyncClient
     ) -> None:
-        app.state.redaction_test_limiter._max_calls = 2
+        app.state.privacy_test_limiter = SlidingWindowLimiter(max_calls=2, window_seconds=60)
         for _ in range(2):
             assert (
                 await client.post("/api/admin/privacy/test", json={"kind": "read"})
@@ -1222,3 +1223,494 @@ class TestChatObservation:
         )
         assert "pystino_redaction" not in response.json()
         assert (await last_row(session_factory)).redaction_detail is None
+
+
+# -- review fixes ---------------------------------------------------------------------
+
+
+class TestEveryInputInFull:
+    async def health_rule(self, app: Any, sf: Any, **extra: Any) -> None:
+        await add_rule(
+            app,
+            sf,
+            kind="embed",
+            name="Health stays out",
+            conditions=[
+                {"key": "verdict", "values": ["health"], "decide": "patterns"},
+                *extra.get("conditions", []),
+            ],
+        )
+
+    async def test_a_medical_chunk_late_in_a_big_batch_is_still_found(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        await add_embedding_model(session, seeded)
+        await self.health_rule(app, session_factory)
+        fake_upstream.set_json(embedding_body())
+        batch = [PLAIN_TEXT] * 100
+        batch[30] = HEALTH_TEXT
+        response = await client.post(
+            "/v1/embeddings", json={"model": "embed-1", "input": batch}, headers=seeded.auth
+        )
+        assert response.status_code == 403 and not fake_upstream.bodies
+
+    async def test_padding_cannot_hide_health_text_in_one_input(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        await add_embedding_model(session, seeded)
+        await self.health_rule(app, session_factory)
+        fake_upstream.set_json(embedding_body())
+        padded = PLAIN_TEXT * 2000 + " " + HEALTH_TEXT  # well past one window
+        assert len(padded) > 100_000
+        response = await client.post(
+            "/v1/embeddings", json={"model": "embed-1", "input": padded}, headers=seeded.auth
+        )
+        assert response.status_code == 403
+
+    async def test_a_text_too_big_to_check_fails_closed(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        fake_upstream: FakeUpstream,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import gateway.privacy.classify as classify_mod
+
+        monkeypatch.setattr(classify_mod, "MAX_TEXT_CHARS", 1000)
+        await add_embedding_model(session, seeded)
+        await self.health_rule(app, session_factory)
+        response = await client.post(
+            "/v1/embeddings",
+            json={"model": "embed-1", "input": PLAIN_TEXT * 100},
+            headers={**seeded.auth, **SUMMARY},
+        )
+        assert response.status_code == 403
+        reasons = response.json()["pystino_redaction"]["routing"]
+        assert reasons["reason"]
+
+    async def test_language_holds_if_any_input_is_in_it_and_negation_means_none(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        await add_embedding_model(session, seeded)
+        fake_upstream.set_json(embedding_body())
+        english = "The cat is on the table and the house is not very big."
+        italian = "Il gatto e sul tavolo e la casa non e molto grande."
+        await add_rule(
+            app,
+            session_factory,
+            kind="embed",
+            name="No Italian",
+            conditions=[{"key": "lang", "values": ["it"], "decide": "patterns"}],
+        )
+        mixed = await client.post(
+            "/v1/embeddings",
+            json={"model": "embed-1", "input": [english, italian]},
+            headers=seeded.auth,
+        )
+        assert mixed.status_code == 403
+        only_english = await client.post(
+            "/v1/embeddings",
+            json={"model": "embed-1", "input": [english, english]},
+            headers=seeded.auth,
+        )
+        assert only_english.status_code == 200
+
+
+class TestLocalModelIsChecked:
+    async def test_the_named_model_must_be_a_deployment_model_on_a_local_provider(
+        self,
+        admin: None,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        await add_embedding_model(session, seeded)  # cloud
+        await add_local_embedder(session, seeded)
+
+        async def create(model: str) -> httpx.Response:
+            return await client.post(
+                "/api/admin/privacy/rules",
+                json={
+                    "kind": "embed",
+                    "name": f"L-{model}",
+                    "action": {"type": "local", "model": model},
+                },
+            )
+
+        for bad in ("my/private", "no-such-model", "embed-1", "test-model"):
+            response = await create(bad)
+            assert response.status_code == 422, (bad, response.text)
+        assert (await create("embed-local")).status_code == 201
+        checked = await client.post(
+            "/api/admin/privacy/rules/check",
+            json={"kind": "embed", "action": {"type": "local", "model": "embed-1"}},
+        )
+        assert checked.json()["error"]
+
+    async def test_an_alias_is_refused(
+        self,
+        admin: None,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        local = await add_local_embedder(session, seeded)
+        session.add(ModelDef(name="emb-alias", is_alias=True, kind=ModelKind.EMBEDDING))
+        await session.commit()
+        response = await client.post(
+            "/api/admin/privacy/rules",
+            json={"kind": "embed", "name": "A", "action": {"type": "local", "model": "emb-alias"}},
+        )
+        assert response.status_code == 422 and local
+
+    async def test_switching_is_local_off_warns_and_requests_fail_closed(
+        self,
+        app: Any,
+        admin: None,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        await add_embedding_model(session, seeded)
+        local = await add_local_embedder(session, seeded)
+        created = await client.post(
+            "/api/admin/privacy/rules",
+            json={
+                "kind": "embed",
+                "name": "Keep here",
+                "action": {"type": "local", "model": "embed-local"},
+            },
+        )
+        assert created.status_code == 201
+        fake_upstream.set_json(embedding_body(model="onsite/embed"))
+        ok = await client.post(
+            "/v1/embeddings", json={"model": "embed-1", "input": "x"}, headers=seeded.auth
+        )
+        assert ok.status_code == 200
+        async with session_factory() as db:
+            provider = await db.get(Provider, local.provider_id)
+            provider.is_local = False
+            await db.commit()
+        # Before the next poll the cached list may still name it; the request
+        # checks what actually resolved, so it still fails closed.
+        refused = await client.post(
+            "/v1/embeddings", json={"model": "embed-1", "input": "x"}, headers=seeded.auth
+        )
+        assert refused.status_code == 403
+        await app.state.privacy.refresh()
+        rules = (await client.get("/api/admin/privacy/rules")).json()["items"]
+        assert "unavailable_now" in [i["code"] for i in rules[0]["issues"]]
+
+    async def test_a_reroute_records_the_target_that_served(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        fake_upstream: FakeUpstream,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gateway.routers import _metered
+
+        pinned: list[str] = []
+
+        async def spy(session: Any, plan: Any, resolved: Any) -> None:
+            pinned.append(resolved.model.name)
+
+        monkeypatch.setattr(_metered, "_stick", spy)
+        await add_embedding_model(session, seeded)
+        await add_local_embedder(session, seeded)
+        await add_rule(
+            app, session_factory, kind="embed", name="Keep here", action={"type": "local"}
+        )
+        fake_upstream.set_json(embedding_body(model="onsite/embed"))
+        await client.post(
+            "/v1/embeddings", json={"model": "embed-1", "input": "x"}, headers=seeded.auth
+        )
+        assert pinned == ["embed-local"]
+
+
+class TestUnknownFilesFailClosed:
+    async def test_the_name_comes_from_a_links_path(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        await add_ocr_model(session, seeded, name="cloud-reader")
+        await add_rule(
+            app,
+            session_factory,
+            kind="read",
+            name="Medical files stay",
+            conditions=[{"key": "filename", "values": ["referto*"]}],
+        )
+        fake_upstream.set_json(ocr_response())
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": "cloud-reader",
+                "document": {
+                    "type": "document_url",
+                    "document_url": "https://files.example.org/a/referto%20rossi.pdf?sig=1",
+                },
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 403 and not fake_upstream.bodies
+
+    async def test_a_link_with_no_name_or_type_matches_protective_rules(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        await add_ocr_model(session, seeded, name="cloud-reader")
+        await add_rule(
+            app,
+            session_factory,
+            kind="read",
+            name="Medical files stay",
+            conditions=[{"key": "filename", "values": ["referto*"]}],
+        )
+        fake_upstream.set_json(ocr_response())
+        unnamed = await client.post(
+            "/v1/ocr",
+            json={
+                "model": "cloud-reader",
+                "document": {
+                    "type": "document_url",
+                    "document_url": "https://files.example.org/",
+                },
+            },
+            headers=seeded.auth,
+        )
+        assert unnamed.status_code == 403
+        named = await client.post(
+            "/v1/ocr",
+            json={
+                "model": "cloud-reader",
+                "document": {
+                    "type": "document_url",
+                    "document_url": "https://files.example.org/fattura.pdf",
+                },
+            },
+            headers=seeded.auth,
+        )
+        assert named.status_code == 200
+
+    async def test_a_filetype_rule_matches_a_file_of_unknown_type(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        await add_ocr_model(session, seeded, name="cloud-reader")
+        await add_rule(
+            app,
+            session_factory,
+            kind="read",
+            name="No images",
+            conditions=[{"key": "filetype", "values": ["image"]}],
+        )
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": "cloud-reader",
+                "document": {"type": "document_url", "document_url": "https://files.example.org/x"},
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 403
+
+    async def test_the_save_time_warning_says_so(
+        self, admin: None, client: httpx.AsyncClient
+    ) -> None:
+        checked = await client.post(
+            "/api/admin/privacy/rules/check",
+            json={
+                "kind": "read",
+                "conditions": [{"key": "filename", "values": ["a*"]}],
+                "action": {"type": "refuse"},
+            },
+        )
+        assert "unnamed_matches" in [i["code"] for i in checked.json()["issues"]]
+
+
+class TestRulesMustLoad:
+    async def test_a_worker_that_never_loaded_the_rules_refuses_governed_kinds(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        await add_embedding_model(session, seeded)
+        await add_ocr_model(session, seeded, name="cloud-reader")
+        app.state.privacy.loaded = False
+        app.state.privacy.load_error = "OperationalError"
+        emb = await client.post(
+            "/v1/embeddings", json={"model": "embed-1", "input": "x"}, headers=seeded.auth
+        )
+        ocr = await client.post(
+            "/v1/ocr",
+            json={
+                "model": "cloud-reader",
+                "document": {"type": "document_url", "document_url": "https://x.example/a.pdf"},
+            },
+            headers=seeded.auth,
+        )
+        assert emb.status_code == 503 and ocr.status_code == 503
+        assert emb.json()["error"]["code"] == "privacy_rules_unavailable"
+        assert not fake_upstream.bodies
+        ready = await client.get("/readyz")
+        assert "never loaded" in ready.json()["checks"]["privacy_routing"]
+        assert "privacy_routing" in (await client.get("/healthz")).json()
+        # Chat is only observed, so it still runs.
+        app.state.privacy.loaded = True
+
+    async def test_one_bad_row_is_skipped_and_the_rest_load(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        admin: None,
+    ) -> None:
+        await add_rule(app, session_factory, kind="embed", name="Good", action={"type": "refuse"})
+        await add_rule(
+            app, session_factory, kind="embed", name="Bad", position=1, conditions=[{"nonsense": 1}]
+        )
+        state = app.state.privacy
+        assert [r.name for r in state.rules] == ["Good"]
+        assert state.loaded and len(state.bad_rules) == 1
+        status = (await client.get("/api/admin/privacy/status")).json()
+        assert status["unreadable_rules"] and status["rules"] == 1
+        ready = (await client.get("/readyz")).json()
+        assert "skipped" in ready["checks"]["privacy_routing"]
+
+    async def test_a_failed_refresh_with_a_database_error_leaves_it_not_loaded(
+        self, app: Any
+    ) -> None:
+        from gateway.privacy.state import PrivacyState
+
+        class Broken:
+            def __call__(self) -> Any:
+                raise RuntimeError("database down")
+
+        state = PrivacyState(Broken())  # type: ignore[arg-type]
+        assert state.loaded is False
+        assert await state.refresh() is False and state.loaded is False
+        with pytest.raises(Exception, match=r"not loaded|have not loaded"):
+            state.ensure_loaded()
+
+
+class TestTestBoxLimits:
+    async def test_it_is_limited_even_when_no_limiter_was_set_up(
+        self, app: Any, admin: None, client: httpx.AsyncClient
+    ) -> None:
+        del app.state.privacy_test_limiter
+        assert (
+            await client.post("/api/admin/privacy/test", json={"kind": "read"})
+        ).status_code == 200
+        assert hasattr(app.state, "privacy_test_limiter")
+
+    async def test_a_file_has_a_size_cap(self) -> None:
+        from gateway.privacy.schemas import RuleTestRequest
+
+        with pytest.raises(Exception, match="at most"):
+            RuleTestRequest(kind="read", file_base64="A" * 34_000_001)
+
+
+class TestSecondReadIsJudged:
+    async def test_what_the_second_reader_found_is_what_is_logged_and_enforced(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        calls: list[str | None] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            engine = request.headers.get("x-extractor-engine")
+            calls.append(engine)
+            if engine is None:  # the first read: a scan, read by OCR
+                payload = {
+                    "kind": "text",
+                    "text": "t",
+                    "extractor": "pypdfium2+rapidocr",
+                    "pages": 1,
+                }
+            else:  # the second reader finds a text layer
+                payload = {"kind": "text", "text": "t", "extractor": "docling", "pages": 1}
+            return httpx.Response(200, json=payload)
+
+        app.state.control_http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        model = await add_local_model(session, seeded)
+        await add_rule(
+            app,
+            session_factory,
+            kind="read",
+            name="Scans with Docling",
+            conditions=[{"key": "filetype", "values": ["scan"]}],
+            action={"type": "reader", "reader": "docling"},
+        )
+        await add_rule(
+            app,
+            session_factory,
+            kind="read",
+            name="Anything else, refused",
+            position=1,
+            action={"type": "refuse"},
+        )
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": PDF, "document_name": "a.pdf"},
+            },
+            headers={**seeded.auth, **SUMMARY},
+        )
+        # Two reads at most; the second read found no scan, so the first rule no
+        # longer applies and the second one does: the answer is the refusal.
+        assert calls == [None, "docling"]
+        assert response.status_code == 403
+        routing = response.json()["pystino_redaction"]["routing"]
+        assert routing["observed"]["is_scan"] is False
+        assert routing["handled"]["routing_rule"]["name"] == "Anything else, refused"

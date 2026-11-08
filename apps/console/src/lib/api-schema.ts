@@ -1355,6 +1355,26 @@ export interface paths {
         patch: operations["update_rule_api_admin_privacy_rules__rule_id__patch"];
         trace?: never;
     };
+    "/api/admin/privacy/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Privacy Status
+         * @description Whether this worker has loaded the rules, and any row it had to skip.
+         */
+        get: operations["privacy_status_api_admin_privacy_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/privacy/test": {
         parameters: {
             query?: never;
@@ -7712,6 +7732,8 @@ export interface components {
              * @default default
              */
             outcome: string;
+            /** Reason */
+            reason: string | null;
         };
         /**
          * RoutingObserved
@@ -10958,6 +10980,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    privacy_status_api_admin_privacy_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };

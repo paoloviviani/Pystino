@@ -81,8 +81,11 @@ async def _route_embedding(
     facts = attribution.base_facts(
         "embed", principal, resolved.model, requested_name=resolved.requested_name
     )
+    privacy.ensure_loaded()
     if privacy.uses_verdicts("embed"):
-        facts = replace(facts, text="\n".join(texts))
+        # Each input is judged separately and in full (a batch is health data if
+        # any input is).
+        facts = replace(facts, texts=tuple(texts))
     evaluation: Evaluation = await privacy.evaluator.evaluate(privacy.rules_of("embed"), facts)
     fired = evaluation.fired
     if fired is None:
@@ -115,6 +118,7 @@ async def _route_embedding(
             surface=SURFACE,
             template=resolved,
             preferred=fired.action.get("model"),
+            must_be_local=True,
         )
         if moved is None:
             await refuse("it must be embedded on a local model, and none is available to you here.")
@@ -154,6 +158,8 @@ async def create_embeddings(
         catalogue=request.app.state.catalogue,
     )
 
+    served: list[_metered.ResolvedModel] = []
+
     async def serve(resolved: _metered.ResolvedModel) -> JSONResponse:
         # The target, when the name sent was an alias (ADR 0101); everything below
         # follows what serves the request.
@@ -169,6 +175,7 @@ async def create_embeddings(
             settings=settings,
             request_id=request_id,
         )
+        served.append(resolved)
         model = resolved.model
         upstream = await _metered.resolve_upstream(providers, resolved)
 
@@ -253,4 +260,4 @@ async def create_embeddings(
             background=metered.completed_after_response(upstream_status=response.status_code),
         )
 
-    return await _metered.serve_with_failover(session, plan, serve)
+    return await _metered.serve_with_failover(session, plan, serve, served)

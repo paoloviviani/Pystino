@@ -473,6 +473,7 @@ async def serve_with_failover[ResponseT: Response](
     session: AsyncSession,
     plan: RoutePlan,
     serve: Callable[[ResolvedModel], Awaitable[ResponseT]],
+    served: list[ResolvedModel] | None = None,
 ) -> ResponseT:
     """Run ``serve`` against each target of the plan until one answers.
 
@@ -491,6 +492,8 @@ async def serve_with_failover[ResponseT: Response](
     """
     failure: AttemptFailed | None = None
     for resolved in plan.attempts:
+        if served is not None:
+            served.clear()
         try:
             response = await serve(resolved)
         except AttemptFailed as failed:
@@ -503,7 +506,8 @@ async def serve_with_failover[ResponseT: Response](
             failure = failed
             continue
         if response.status_code < 400:
-            await _stick(session, plan, resolved)
+            # The target that served, which a routing rule may have changed.
+            await _stick(session, plan, served[-1] if served else resolved)
         return response
     # Unreachable by construction (the last attempt never raises AttemptFailed);
     # kept so that a future change cannot turn it into a silent `None`.
@@ -1163,7 +1167,7 @@ async def refuse_by_rule(
     the file's name. The row is the same ``blocked`` row a redaction block leaves.
     """
     message = f"Refused by the privacy rule '{rule_name}': {why}"
-    detail = attribution.with_routing(None, {**routing, "outcome": "refused"})
+    detail = attribution.with_routing(None, {**routing, "outcome": "refused", "reason": why})
     detail["blocked"] = True
     error = RoutingRefusedError(message)
     if wants_redaction_summary(request):
@@ -1194,6 +1198,7 @@ async def reroute_to_local(
     surface: ApiSurface,
     template: ResolvedModel,
     preferred: str | None = None,
+    must_be_local: bool = False,
 ) -> ResolvedModel | None:
     """The first local model of *names* the caller may use, or None.
 
@@ -1207,6 +1212,16 @@ async def reroute_to_local(
         try:
             found = await resolve_model(session, name, principal=principal, surface=surface)
         except GatewayError:
+            continue
+        if must_be_local and not (
+            found.model.provider is not None
+            and found.model.provider.is_local
+            and not found.model.is_private
+        ):
+            # A rule that says "local" is checked against what actually resolved:
+            # a name an administrator typed, an alias, or a provider whose
+            # `is_local` has since been switched off must not pass as local.
+            logger.warning("routing: %s is not on a local provider; skipped", name)
             continue
         return ResolvedModel(
             model=found.model,

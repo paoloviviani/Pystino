@@ -10155,6 +10155,17 @@
             "default": "default",
             "title": "Outcome",
             "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           }
         },
         "required": [
@@ -10162,6 +10173,7 @@
           "observed",
           "handled",
           "outcome",
+          "reason",
           "observed_rules",
           "degraded",
           "fallbacks"
@@ -10627,6 +10639,7 @@
           "file_base64": {
             "anyOf": [
               {
+                "maxLength": 34000000,
                 "type": "string"
               },
               {
@@ -16389,6 +16402,30 @@
           }
         },
         "summary": "Update Rule",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/status": {
+      "get": {
+        "description": "Whether this worker has loaded the rules, and any row it had to skip.",
+        "operationId": "privacy_status_api_admin_privacy_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Privacy Status Api Admin Privacy Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Privacy Status",
         "tags": [
           "administration"
         ]

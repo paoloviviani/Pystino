@@ -42,6 +42,7 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -251,7 +252,15 @@ def _document_name(request: Request, body: OcrRequest) -> str | None:
         if key.strip().lower() in ("name", "filename") and value:
             return value
     header_name: str | None = request.headers.get("x-filename")
-    return header_name or None
+    if header_name:
+        return header_name
+    # A link names its file in its path ("https://host/a/referto.pdf?sig=..."):
+    # the name and extension a rule can match on, without fetching anything.
+    location = body.document.location()
+    if location.startswith(("http://", "https://")):
+        base = unquote(urlsplit(location).path).rsplit("/", 1)[-1]
+        return base or None
+    return None
 
 
 def _declared_mime(body: OcrRequest) -> str | None:
@@ -356,6 +365,7 @@ async def extract_document(
     # who is asking, where it would go. Whether it is a scan is only known once
     # it is read, so a rule that depends on that has the reading done here first.
     privacy = state_of(request)
+    privacy.ensure_loaded()
     read_rules = privacy.rules_of("read")
     facts = attribution.base_facts("read", principal, model, requested_name=resolved.requested_name)
     mime = inline[1] if inline is not None else _declared_mime(body)
@@ -497,6 +507,10 @@ async def extract_document(
                     engine = str(wanted)
                     outcome = await read_with(engine)
                     facts = replace(facts, is_scan=_scan_of(outcome))
+                    # What the second reader found (a scan, or not) is judged
+                    # too, so what is logged and enforced is not the first
+                    # read's. At most two reads, whatever it says.
+                    final = await privacy.evaluator.evaluate(read_rules, facts)
             elif read_rules:
                 final = await privacy.evaluator.evaluate(read_rules, facts)
         except extraction.ExtractionTimeout as exc:

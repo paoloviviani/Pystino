@@ -104,6 +104,7 @@ def build(
     fallback_reason: str = "",
     reader: str | None = None,
     profile: str = DEFAULT_PROFILE,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     """The ``routing`` object for one request."""
     observed: dict[str, Any] = {
@@ -154,6 +155,8 @@ def build(
             {"id": str(r.id), "name": r.name} for r in (evaluation.observed if evaluation else [])
         ],
     }
+    if reason:
+        routing["reason"] = reason
     if evaluation is not None:
         if evaluation.degraded:
             routing["degraded"] = list(evaluation.degraded)

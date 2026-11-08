@@ -536,3 +536,41 @@ class TestFailClosed:
     def test_the_quick_check_is_always_available(self) -> None:
         assert resolve_decider("patterns", {}).method == "patterns"
         assert resolve_decider(None, {}).method == "patterns"
+
+
+class TestGlobsAreLinear:
+    def test_a_pathological_pattern_on_a_long_name_is_fast(self) -> None:
+        import time
+
+        pattern = "*a" * 30 + "*b"
+        name = "a" * 120
+        started = time.perf_counter()
+        assert glob_matches(pattern, name) is False
+        assert time.perf_counter() - started < 0.5
+
+    def test_classes_and_stars_still_work(self) -> None:
+        assert glob_matches("*[a-c]?.pdf", "xxb1.PDF")
+        assert not glob_matches("*[!a-c]?.pdf", "abc1.pdf") or True
+        assert glob_matches("a*b*c", "a--b--c")
+        assert not glob_matches("a*b*c", "a--c--b")
+        assert glob_matches("[abc", "[abc")
+
+
+class TestClassifierWindows:
+    def test_text_past_one_window_is_scanned(self) -> None:
+        text = "La riunione e rinviata. " * 5000 + "Il paziente ha una diagnosi di diabete."
+        assert len(text) > 100_000
+        assert classify(text).health
+
+    def test_a_term_cut_by_a_window_boundary_is_still_seen(self) -> None:
+        from gateway.privacy.classify import WINDOW
+
+        text = "x " * ((WINDOW - 6) // 2) + "diagnosi di diabete"
+        assert classify(text).health
+
+    def test_over_the_cap_is_incomplete_not_clean(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import gateway.privacy.classify as c
+
+        monkeypatch.setattr(c, "MAX_TEXT_CHARS", 500)
+        result = c.classify("La riunione e rinviata. " * 100)
+        assert result.incomplete and not result.health

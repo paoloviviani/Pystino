@@ -26,7 +26,7 @@ from gateway import extraction
 from gateway.admin_audit import record_audit
 from gateway.deps import AdminUserDep, ControlHttpDep, SessionDep, SettingsDep
 from gateway.errors import BadRequestError, GatewayError, NotFoundError
-from gateway.models import DetectorProfile, PrivacyRule
+from gateway.models import DetectorProfile, ModelDef, ModelKind, PrivacyRule, Provider
 from gateway.pagination import MAX_LIMIT, Page
 from gateway.privacy import attribution
 from gateway.privacy import rules as rulelib
@@ -50,6 +50,7 @@ from gateway.privacy.schemas import (
     RuleUpdateRequest,
 )
 from gateway.privacy.state import PrivacyState, engine_available, rule_from_row, state_of
+from gateway.rate_limit import SlidingWindowLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -117,9 +118,13 @@ async def _profiles(session: SessionDep) -> list[DetectorProfile]:
 
 
 def _check_context(
-    profiles: list[DetectorProfile], *, has_local_embedding: bool
+    profiles: list[DetectorProfile],
+    *,
+    has_local_embedding: bool,
+    local_models: set[str] | None = None,
 ) -> rulelib.CheckContext:
     return rulelib.CheckContext(
+        local_models=local_models,
         profiles={
             str(p.id): rulelib.ProfileInfo(
                 id=p.id,
@@ -176,6 +181,43 @@ def _validated(
         raise UnprocessableError(str(exc)) from exc
 
 
+async def _require_local_model(session: SessionDep, action: dict[str, Any]) -> None:
+    """A `local` action's named model must be a deployment model on a local provider.
+
+    Not a member's private model (`my/...`), not an alias (it could point
+    anywhere, so name the served model), and its provider must be marked
+    `is_local`. Checked again on every request against what actually resolves.
+    """
+    name = action.get("model")
+    if action.get("type") != "local" or not name:
+        return
+    if str(name).startswith("my/"):
+        raise UnprocessableError(
+            "A private model cannot be the local model. Name a deployment model."
+        )
+    row = (
+        await session.execute(
+            select(ModelDef, Provider)
+            .outerjoin(Provider, Provider.id == ModelDef.provider_id)
+            .where(ModelDef.name == name, ModelDef.owner_id.is_(None))
+        )
+    ).first()
+    if row is None:
+        raise UnprocessableError(f"There is no deployment model named '{name}'.")
+    model, provider = row
+    if model.is_alias or provider is None:
+        raise UnprocessableError(
+            f"'{name}' is an alias. Name the embedding model that serves it, on a local provider."
+        )
+    if provider.is_local is not True or provider.owner_id is not None:
+        raise UnprocessableError(
+            f"'{name}' is not on a local provider. Mark its provider as local first, "
+            "or name another."
+        )
+    if model.kind != ModelKind.EMBEDDING:
+        raise UnprocessableError(f"'{name}' is not an embedding model.")
+
+
 async def _renumber(session: SessionDep, kind: str, ordered: list[PrivacyRule]) -> None:
     for index, row in enumerate(ordered):
         if row.position != index:
@@ -194,8 +236,24 @@ async def _all_issues(
 ) -> tuple[list[PrivacyRule], dict[uuid.UUID, list[rulelib.Issue]]]:
     rows = await _rules(session)
     profiles = await _profiles(session)
-    context = _check_context(profiles, has_local_embedding=await _local_embedding_exists(request))
+    context = _check_context(
+        profiles,
+        has_local_embedding=await _local_embedding_exists(request),
+        local_models=set(state_of(request).local_embedding_models),
+    )
     return rows, rulelib.check([rule_from_row(r) for r in rows], context)
+
+
+@router.get("/status")
+async def privacy_status(admin: AdminUserDep, request: Request) -> dict[str, Any]:
+    """Whether this worker has loaded the rules, and any row it had to skip."""
+    state = state_of(request)
+    return {
+        "loaded": state.loaded,
+        "load_error": state.load_error,
+        "rules": len(state.rules),
+        "unreadable_rules": list(state.bad_rules),
+    }
 
 
 # -- rules -------------------------------------------------------------------------
@@ -224,6 +282,7 @@ async def create_rule(
         payload.action.clean(),
         profiles,
     )
+    await _require_local_model(session, action)
     siblings = [r for r in await _rules(session) if r.kind == payload.kind]
     if any(r.name.lower() == name.lower() for r in siblings):
         raise ConflictError(f"A {payload.kind} rule named '{name}' already exists.")
@@ -291,6 +350,8 @@ async def update_rule(
         ),
         profiles,
     )
+    if action != dict(row.action or {}):
+        await _require_local_model(session, action)
     if name.lower() != row.name.lower():
         taken = [r for r in await _rules(session) if r.kind == row.kind and r.id != row.id]
         if any(r.name.lower() == name.lower() for r in taken):
@@ -380,6 +441,10 @@ async def check_rule(
         )
     except rulelib.RuleError as exc:
         return RuleCheckResponse(error=str(exc), issues=[], soft_cap=rulelib.SOFT_CAP)
+    try:
+        await _require_local_model(session, action)
+    except UnprocessableError as exc:
+        return RuleCheckResponse(error=exc.message, issues=[], soft_cap=rulelib.SOFT_CAP)
     rows = await _rules(session)
     same = [r for r in rows if r.kind == payload.kind]
     others = [rule_from_row(r) for r in rows if r.id != payload.rule_id]
@@ -395,7 +460,11 @@ async def check_rule(
         conditions=tuple(conditions),
         action=action,
     )
-    context = _check_context(profiles, has_local_embedding=await _local_embedding_exists(request))
+    context = _check_context(
+        profiles,
+        has_local_embedding=await _local_embedding_exists(request),
+        local_models=set(state_of(request).local_embedding_models),
+    )
     issues = rulelib.check([*others, draft], context)
     return RuleCheckResponse(issues=_issues(issues.get(draft_id, [])), soft_cap=rulelib.SOFT_CAP)
 
@@ -638,8 +707,13 @@ async def test_rules(
     Reads the rules as saved. The text and the file are judged in memory and never
     stored or logged; the answer carries labels and names, not content. Rate limited.
     """
-    limiter = getattr(request.app.state, "redaction_test_limiter", None)
-    if limiter is not None and not limiter.allow(("privacy-test", str(admin.id))):
+    limiter = getattr(request.app.state, "privacy_test_limiter", None)
+    if limiter is None:
+        # Always limited: the box can run the slow engine and the extractor.
+        limiter = request.app.state.privacy_test_limiter = SlidingWindowLimiter(
+            max_calls=30, window_seconds=60
+        )
+    if not limiter.allow(("privacy-test", str(admin.id))):
         raise BadRequestError("Slow down: the test box is limited to 30 runs a minute.")
     privacy = state_of(request)
     rows = await _rules(session)

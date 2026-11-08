@@ -188,7 +188,7 @@ class RuleTestRequest(BaseModel):
     is_scan: bool | None = None
     #: Reading: the file itself, base64, read on the local extractor to learn
     #: its type and whether it is a scan. Never kept.
-    file_base64: str | None = None
+    file_base64: str | None = Field(default=None, max_length=34_000_000)
     #: Embedding: the target model or provider, and whether it is local.
     target_model: str | None = None
     target_provider: str | None = None

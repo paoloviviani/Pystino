@@ -18,7 +18,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from gateway.privacy.classify import Classification, VerdictCache
+from gateway.privacy.classify import MAX_REQUEST_CHARS, VerdictCache
 from gateway.privacy.rules import (
     CONTENT_KEYS,
     PATTERNS,
@@ -71,6 +71,27 @@ class Facts:
     target_local: bool | None = None
     #: The text verdicts are computed from. Held in memory for the call only.
     text: str | None = field(default=None, repr=False)
+    #: A batch (embedding): each input is judged separately and in full.
+    texts: tuple[str, ...] = field(default=(), repr=False)
+
+    @property
+    def inputs(self) -> tuple[str, ...]:
+        return self.texts or ((self.text,) if self.text else ())
+
+
+@dataclass(frozen=True, slots=True)
+class BatchVerdict:
+    """What the quick check found over every input of a request.
+
+    ``health`` and ``ids`` hold if they hold for *any* input; ``langs`` is each
+    input's language. ``incomplete`` means some input (or the request's total)
+    exceeded the size caps and part of it was not checked.
+    """
+
+    health: bool
+    ids: bool
+    langs: tuple[str, ...]
+    incomplete: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,7 +211,11 @@ def _target(condition: Condition, facts: Facts) -> tuple[State, str]:
     return State.FALSE, f"The target ({where}) {'is' if condition.negate else 'is not'} {shown}."
 
 
-def _filetype(condition: Condition, facts: Facts) -> tuple[State, str]:
+def _filetype(condition: Condition, facts: Facts, closed: bool) -> tuple[State, str]:
+    if closed and facts.filetype is None and "scan" not in condition.values:
+        # A file whose type cannot be told (a link with no extension, no MIME
+        # type sent): a protective rule must not be skipped for want of a fact.
+        return State.TRUE, "The file type is not known; treated as a match."
     wants_scan = "scan" in condition.values
     plain = [v for v in condition.values if v != "scan"]
     hit = facts.filetype in plain if facts.filetype else False
@@ -205,8 +230,10 @@ def _filetype(condition: Condition, facts: Facts) -> tuple[State, str]:
     return State.FALSE, f"The file ({kind}) {'is' if condition.negate else 'is not'} {shown}."
 
 
-def _filename(condition: Condition, facts: Facts) -> tuple[State, str]:
+def _filename(condition: Condition, facts: Facts, closed: bool) -> tuple[State, str]:
     name = facts.filename or ""
+    if closed and not name:
+        return State.TRUE, "The request names no file; treated as a match."
     hit = bool(name) and any(glob_matches(g, name) for g in condition.values)
     shown = ", ".join(condition.values)
     label = f"'{name}'" if name else "The request names no file; it"
@@ -224,17 +251,30 @@ class Evaluator:
         self.profiles = profiles or {}
         self.cache = cache or VerdictCache()
 
-    # Content conditions are decided on the request's own text. The verdict is
-    # computed once per request however many rules ask.
-    def _classification(self, facts: Facts, ev: Evaluation) -> Classification:
+    # Content conditions are decided on the request's own text, each input
+    # separately and in full. The verdict is computed once per request however
+    # many rules ask.
+    def _classification(self, facts: Facts, ev: Evaluation) -> BatchVerdict:
         found = ev.verdicts.get("_classification")
-        if isinstance(found, Classification):
+        if isinstance(found, BatchVerdict):
             return found
-        result = self.cache.classify(facts.text or "")
+        health = ids = incomplete = False
+        langs: list[str] = []
+        budget = MAX_REQUEST_CHARS
+        for text in facts.inputs:
+            if budget <= 0:
+                incomplete = True
+                break
+            budget -= len(text)
+            one = self.cache.classify(text)
+            health, ids = health or one.health, ids or one.ids
+            incomplete = incomplete or one.incomplete
+            langs.append(one.lang)
+        result = BatchVerdict(health, ids, tuple(langs), incomplete or budget < 0)
         ev.verdicts["_classification"] = result
         ev.verdicts["health"] = result.health
         ev.verdicts["ids"] = result.ids
-        ev.verdicts["lang"] = result.lang
+        ev.verdicts["lang"] = ",".join(sorted(set(result.langs))) or None
         return result
 
     def _content(
@@ -249,6 +289,12 @@ class Evaluator:
             degraded.append(message)
             return State.TRUE, message
         result = self._classification(facts, ev)
+        if result.incomplete:
+            # Part of the text was not checked, so "clean" cannot be claimed:
+            # fail closed, as for an unavailable detector.
+            message = "The text was too large to check in full; treated as a match."
+            degraded.append(message)
+            return State.TRUE, message
         if condition.key == "verdict":
             hits = [v for v in condition.values if getattr(result, v)]
             hit = bool(hits)
@@ -257,8 +303,10 @@ class Evaluator:
             )
             text = f"The text {'contains' if hit else 'does not contain'} {shown}."
         else:
-            hit = result.lang in condition.values
-            text = f"The text is in {result.lang}, rule says {', '.join(condition.values)}."
+            # A batch is in a language if any input is.
+            hit = any(lang in condition.values for lang in result.langs)
+            seen = ", ".join(sorted(set(result.langs))) or "none"
+            text = f"The text is in {seen}, rule says {', '.join(condition.values)}."
         if hit != condition.negate:
             return State.TRUE, text
         return State.FALSE, text
@@ -279,7 +327,7 @@ class Evaluator:
             unknown = False
             matched = True
             for condition in _ordered(rule.conditions):
-                state, why = self._condition(condition, facts, ev, degraded)
+                state, why = self._condition(condition, facts, ev, degraded, rule)
                 reasons.append(why)
                 if state is State.FALSE:
                     matched = False
@@ -315,16 +363,30 @@ class Evaluator:
         return ev
 
     def _condition(
-        self, condition: Condition, facts: Facts, ev: Evaluation, degraded: list[str]
+        self,
+        condition: Condition,
+        facts: Facts,
+        ev: Evaluation,
+        degraded: list[str],
+        rule: Rule,
     ) -> tuple[State, str]:
+        # A rule that refuses, keeps text local or chooses a reader is protective
+        # for a file whose name or type is unknown: it matches rather than miss.
+        closed = rule.kind == "read" and rule.action_type in ("refuse", "local", "reader")
         if condition.key == "who":
             return _who(condition, facts)
         if condition.key == "target":
             return _target(condition, facts)
         if condition.key == "filetype":
-            return _filetype(condition, facts)
+            state, why = _filetype(condition, facts, closed)
+            if "treated as a match" in why:
+                degraded.append(why)
+            return state, why
         if condition.key == "filename":
-            return _filename(condition, facts)
+            state, why = _filename(condition, facts, closed)
+            if "treated as a match" in why:
+                degraded.append(why)
+            return state, why
         if condition.key in CONTENT_KEYS:
             return self._content(condition, facts, ev, degraded)
         return State.FALSE, f"Unknown condition {condition.key}."

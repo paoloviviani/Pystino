@@ -47,6 +47,12 @@ every request of its kind. A key appears at most once per rule.
   winning rule wants a different reader than the one used, the file is read a
   second time. Nothing leaves the deployment during that read. A document sent as
   a link (not bytes) cannot be read here, so a scan rule cannot be judged on it.
+- **Unknown name or type fails closed.** A link's name and extension are taken from
+  its path (`https://host/a/referto.pdf?sig=...`). When a file still has no name
+  or no known type (a link with no extension, no MIME type sent), a rule that
+  refuses, keeps text local or chooses a reader treats its `filename` and
+  `filetype` conditions as **matching** (the editor warns: "unnamed_matches"), and
+  the log says so under `degraded`. A rule that is observe-only is unaffected.
 - **File name and type are a convenience, not protection.** A renamed file is not
   caught. The console says so on any protective reading rule that depends only on
   them. Protect content with embedding rules that use `verdict`.
@@ -55,7 +61,14 @@ every request of its kind. A key appears at most once per rule.
 
 ### How to decide: the quick check, or a detector profile
 
-`verdict` and `lang` are judged from the request's own text, and only if an
+`verdict` and `lang` are judged from the request's own text, **every input
+separately and in full** (long texts are scanned window by window with overlap,
+so padding or a late chunk cannot hide anything). A batch holds a verdict if it
+holds for *any* input ("contains health data": any input does; "is in Italian": any
+input is). Negation flips the whole batch: "does not contain health data" holds only
+if *no* input does. A text over 2,000,000 characters (or a request over 4,000,000
+in all) cannot be checked in full: the condition then **matches**, fail closed,
+and the log says it was too large. The condition is evaluated only if a rule uses it, and only if an
 enabled rule of that kind uses them. Each such condition has a **decide** field:
 
 - **`patterns`** (the default): the quick check. Health vocabulary in Italian
@@ -64,8 +77,7 @@ enabled rule of that kind uses them. Each such condition has a **decide** field:
   reporting (Italian fiscal code, VAT number with its context, IBAN, payment card,
   US SSN, NHS number), and a stop-word language detector. It takes microseconds.
   It finds what is written in the usual vocabulary and misses health data written
-  in plain words ("he takes insulin since March"). Only the first 20,000 characters
-  are judged. The patterns are written out in the gateway; Presidio itself stays
+  in plain words ("he takes insulin since March"). The patterns are written out in the gateway; Presidio itself stays
   in the redaction service.
 - **A detector profile.** The profile's engine decides. In this release a profile
   can decide only if its engine is `patterns` or `presidio` (whose verdicts are the
@@ -90,7 +102,7 @@ verdict, never text. It only saves time: a miss recomputes the same answer.
 |---|---|---|
 | read | `reader`: `markitdown`, `ocr`, `docling` | The file is read by that reader (sent to the extractor as `X-Extractor-Engine`), **overriding the model the caller named**. If the caller named a remote OCR model, the request is served by a local extractor model the caller may use; if the document is a link or no such model is available, the request is refused (fail closed). `ocr` is markitdown with OCR switched on for the one request. The response reports the reader that ran. |
 | read, embed | `refuse` | 403 with `routing_refused`, naming the rule. Never the content or the file's name. |
-| embed | `local` (optional `model`) | The request is embedded by a local embedding model: a model on a provider an administrator marked **local** (`is_local`). The caller must be allowed to use it. If the target is already local, nothing changes. If there is none the caller may use, the request is refused. |
+| embed | `local` (optional `model`) | The request is embedded by a local embedding model: a model on a provider an administrator marked **local** (`is_local`). The caller must be allowed to use it. A named `model` is checked when the rule is saved (a deployment embedding model on a local provider; not a private `my/` model, not an alias) and again on every request against what actually resolved: if the provider has since stopped being local, the rule shows a "Check" warning and requests are refused. If the target is already local, nothing changes. If there is none the caller may use, the request is refused. |
 
 There is no "let it go as usual" action: no action means default handling.
 
@@ -118,6 +130,15 @@ a member's own private provider cannot claim it. It is what `target: local` and 
 The rules, the profiles and the names of local models are held in memory on each
 worker and reloaded every ten seconds (and at once on the worker that served an
 administrator's change), so the request path adds no database query.
+
+A worker that has **never** read the rules (the first read failed) answers
+`/v1/ocr` and `/v1/embeddings` with a 503 (`privacy_rules_unavailable`) rather
+than run with none; `/readyz` reports `privacy_routing` as an error and `/healthz`
+mentions it. A single rule row that cannot be read is skipped with an error log
+and the rest load; `/readyz` says how many were skipped and
+`GET /api/admin/privacy/status` lists them. File name patterns are matched by a
+linear matcher, not a regular expression, so a hostile pattern cannot stall a
+worker.
 
 ## Saving a rule
 
@@ -158,6 +179,7 @@ Under `/api/admin/privacy` (administrators only, audited as
 | `POST /rules/reorder` | `{kind, order: [ids]}`; must name every rule of the kind. |
 | `POST /rules/check` | Warnings for a draft. |
 | `GET/POST /profiles`, `PATCH/DELETE /profiles/{id}` | Detector profiles: name, engine, labels, fallback (`refuse` or `fallback_to` with `fallback_profile_id`). Status comes from health. The default profile and a profile a rule decides with cannot be deleted; a fallback loop is refused. |
+| `GET /status` | Whether this worker loaded the rules, and any unreadable rule rows. |
 | `POST /test` | Given a kind and facts (or a file, or text), which rule fires, why the earlier ones did not, and the outcome. The text and the file are judged in memory and are never stored or logged; the answer has labels and names, not content. Rate limited to 30 runs a minute. |
 
 ## The console

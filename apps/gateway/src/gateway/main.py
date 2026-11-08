@@ -317,6 +317,7 @@ async def init_app_state(
     app.state.announce_limiter = SlidingWindowLimiter(max_calls=10, window_seconds=60)
     # ADR 0112: the redaction test box runs the detector for each call.
     app.state.redaction_test_limiter = SlidingWindowLimiter(max_calls=30, window_seconds=60)
+    app.state.privacy_test_limiter = SlidingWindowLimiter(max_calls=30, window_seconds=60)
     # ADR 0093 §9.3: retries a delete's chat call, exponential backoff,
     # never gives up. The inline try after a delete commits covers the
     # common case; this is what a chat that was down at that moment gets

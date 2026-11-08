@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -128,6 +128,9 @@ class CheckContext:
     #: Names of readers this deployment cannot run now (for example docling).
     unavailable_readers: Sequence[str] = ()
     has_local_embedding: bool = True
+    #: Names of the models that are local right now (active, deployment-owned, on
+    #: an `is_local` provider). None: not known, so a named model is not checked.
+    local_models: Collection[str] | None = None
 
 
 def condition_from_json(raw: Mapping[str, Any]) -> Condition:
@@ -177,10 +180,6 @@ def _validate_value(kind: str, key: str, value: str) -> str:
     elif key == "filename":
         if not value.strip("*?[]"):
             raise RuleError("A file name pattern needs at least one ordinary character.")
-        try:
-            re.compile(_glob_to_regex(value))
-        except re.error as exc:
-            raise RuleError(f"'{value}' is not a valid file name pattern: {exc}.") from exc
     elif key == "who":
         prefix, _, rest = value.partition(":")
         if prefix not in ("user", "group") or not rest.strip():
@@ -208,38 +207,82 @@ def _validate_value(kind: str, key: str, value: str) -> str:
     return value
 
 
-def _glob_to_regex(glob: str) -> str:
-    """A case-insensitive anchored regex for a file name glob.
-
-    ``*`` and ``?`` as in a shell, ``[...]`` classes; deliberately not
-    ``fnmatch.translate`` so the one place that defines what a glob means is this.
-    """
-    out: list[str] = []
+def _parse_glob(glob: str) -> list[tuple[str, Any]]:
+    """A glob as tokens: ``("lit", c)``, ``("any", None)``, ``("star", None)`` or
+    ``("cls", (negated, ranges))``. ``[`` with no closing ``]`` is a literal."""
+    tokens: list[tuple[str, Any]] = []
     i, n = 0, len(glob)
     while i < n:
         ch = glob[i]
         i += 1
         if ch == "*":
-            out.append(".*")
+            if not tokens or tokens[-1][0] != "star":
+                tokens.append(("star", None))
         elif ch == "?":
-            out.append(".")
+            tokens.append(("any", None))
         elif ch == "[":
             j = glob.find("]", i + 1)
             if j == -1:
-                out.append(re.escape(ch))
-            else:
-                body = glob[i:j]
-                if body.startswith("!"):
-                    body = "^" + body[1:]
-                out.append("[" + body.replace("\\", "\\\\") + "]")
-                i = j + 1
+                tokens.append(("lit", ch.lower()))
+                continue
+            body = glob[i:j]
+            negated = body.startswith("!")
+            body = body[1:] if negated else body
+            ranges: list[tuple[str, str]] = []
+            k = 0
+            while k < len(body):
+                if k + 2 < len(body) and body[k + 1] == "-":
+                    ranges.append((body[k].lower(), body[k + 2].lower()))
+                    k += 3
+                else:
+                    ranges.append((body[k].lower(), body[k].lower()))
+                    k += 1
+            tokens.append(("cls", (negated, ranges)))
+            i = j + 1
         else:
-            out.append(re.escape(ch))
-    return "^" + "".join(out) + "$"
+            tokens.append(("lit", ch.lower()))
+    return tokens
+
+
+def _token_matches(token: tuple[str, Any], ch: str) -> bool:
+    kind, arg = token
+    if kind == "lit":
+        return bool(arg == ch)
+    if kind == "any":
+        return True
+    negated, ranges = arg
+    return bool(any(lo <= ch <= hi for lo, hi in ranges) != negated)
 
 
 def glob_matches(glob: str, name: str) -> bool:
-    return re.match(_glob_to_regex(glob), name, re.IGNORECASE | re.DOTALL) is not None
+    """Whether *name* matches *glob* (``*``, ``?``, ``[abc]``, case-insensitive).
+
+    A linear two-pointer matcher that remembers only the last ``*``, not a regular
+    expression: a pattern such as ``*a*a*a*a*a*b`` cannot make a backtracking
+    engine take exponential time on a hostile name. Worst case is O(len(glob) x
+    len(name)), with both bounded (values are at most 200 characters).
+    """
+    tokens = _parse_glob(glob)
+    text = name.lower()
+    t = i = 0
+    star = -1
+    mark = 0
+    while i < len(text):
+        if t < len(tokens) and tokens[t][0] == "star":
+            star, mark = t, i
+            t += 1
+        elif t < len(tokens) and _token_matches(tokens[t], text[i]):
+            t += 1
+            i += 1
+        elif star != -1:
+            mark += 1
+            i = mark
+            t = star + 1
+        else:
+            return False
+    while t < len(tokens) and tokens[t][0] == "star":
+        t += 1
+    return t == len(tokens)
 
 
 def validate(
@@ -447,6 +490,33 @@ def check(
                 Issue(
                     "unavailable_now",
                     "No local embedding provider is set up, so this rule refuses instead.",
+                )
+            )
+        named = rule.action.get("model")
+        if (
+            rule.action_type == "local"
+            and named
+            and ctx.local_models is not None
+            and named not in ctx.local_models
+        ):
+            out.append(
+                Issue(
+                    "unavailable_now",
+                    f"'{named}' is not a local embedding model now (switched off, or its "
+                    "provider is no longer marked local), so requests are refused.",
+                )
+            )
+        if (
+            rule.kind == KIND_READ
+            and rule.enabled
+            and not rule.observe_only
+            and any(c.key in ("filetype", "filename") for c in rule.conditions)
+        ):
+            out.append(
+                Issue(
+                    "unnamed_matches",
+                    "A file whose name or type cannot be told (a link with no extension, "
+                    "no name sent) is treated as matching, so this rule applies to it.",
                 )
             )
         for condition in rule.conditions:

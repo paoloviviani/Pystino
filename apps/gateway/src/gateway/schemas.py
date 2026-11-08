@@ -3308,6 +3308,8 @@ class RoutingInfo(ResponseModel):
     handled: RoutingHandled = Field(default_factory=RoutingHandled)
     #: ``default`` (no rule applied), ``rule``, ``rerouted``, ``refused`` or ``blocked``.
     outcome: str = "default"
+    #: Why a request was refused, in words (never content).
+    reason: str | None = None
     observed_rules: list[RoutingRule] = Field(default_factory=list)
     degraded: list[str] = Field(default_factory=list)
     fallbacks: list[str] = Field(default_factory=list)
