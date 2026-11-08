@@ -2,39 +2,33 @@
 
 Redaction is the layer between the caller's prompt and the upstream provider:
 detected entities are replaced with deterministic placeholders before any text
-leaves the building, and restored (or not) in the answer the person reads. With a rule in force, what it matches never reaches the upstream. The shipped default has no rules, so nothing is redacted until an administrator writes one.
+leaves the building, and restored (or not) in the answer the person reads. With a policy applied, what it matches never reaches the upstream. The shipped default applies none, so nothing is redacted until an administrator writes a policy and a pipeline that applies it.
 
 It is also **~90% of the CPU**. Detection is named-entity recognition and
 scales with prompt length — roughly 0.1ms of CPU per prompt token, against a
 gateway cost that stays flat at 24–31ms. Capacity planning is redaction
 planning; see [Measured performance](performance.md).
 
-## The pipeline: four steps, two kinds of rules
+## Policies and pipelines
 
-Every request that carries text goes through the same four steps, in this order.
+Two objects, one job each (ADR 0113; see [Privacy](privacy.md) and [Privacy
+pipelines](privacy-routing.md)). A **redaction policy** is *what to hide*:
+patterns, entity types and a mode for each, with no scope. A **pipeline** is *when
+and how*: a kind (read, embed, chat), a scope (who, which target), ordered rules,
+and a fixed last rule, and any non-refuse action may **redact with** one policy.
 
-1. **Route.** Routing rules, per kind of request (reading a file, embedding, chat
-   later): the **first rule that matches wins**. It picks the reader for a file,
-   whether text may go to a cloud model, or a refusal.
-2. **Detect.** The detector profile the route chose (the default, **Fast**, is
-   the Presidio engine); patterns always run.
-3. **Hide.** Redaction rules decide what is hidden. **Every matching rule
-   applies and the strictest mode wins**, then the user's own rules, which can
-   only tighten. A routing rule's "add a policy" adds one more set of rules at
-   this step.
-4. **Send or refuse.** What is left goes to the provider, or the request is
-   refused.
+Every pipeline in scope runs and the results combine: **the policies add up and
+the strictest mode wins for each entity type**, and the highest level on the
+ladder wins for where a request is handled. A policy is applied to the returned
+text (reading), the input (embedding and rerank), or messages and tool results
+(chat).
 
-Routing decides how a request is handled; redaction rules decide what is hidden.
-Routing never lowers a redaction mode.
-
-| | Routing rules | Redaction rules |
+| | Redaction policy | Pipeline |
 |---|---|---|
-| Purpose | how a request is handled: reader, local or cloud, refuse | what is hidden from the provider |
-| Match on | kind of request, file type and name, who asked, target model or provider, what the text contains | scope: the deployment, a provider, a model, a group, a user or a key |
-| Several match | the **first** one applies (observe-only rules are logged and the search goes on) | **all** apply, and the **strictest** mode wins |
-| Can do | choose a reader, embed on a local model, refuse | per entity type: leave, redact, anonymise (with or without restoring the answer), block |
-| Lives in | console: **Privacy, Rules** | console: **Privacy, What gets hidden** |
+| Purpose | what is hidden from the provider | when and how a request is handled |
+| Scope | none | who and target |
+| Several apply | **all** apply, and the **strictest** mode wins | all in scope run and combine; the first rule matching wins inside one |
+| Lives in | console: **Privacy, Redaction policies** | console: **Privacy, Pipelines** |
 
 ## Out of process, by contract
 
@@ -361,112 +355,106 @@ for common structured identifiers; choosing a template adds an editable row.
 Credential templates block the request, while identifier templates redact the
 matched value.
 
-## Rules, not a deployment policy
+## Policies, not a deployment policy
 
-There is no deployment-wide policy any more; there is a rules table
-(`redaction_rules`), and the **catch-all is one rule among them** — scope
-`all`, exactly one row may hold it. A rule can scope to `provider`, `model`,
-`group`, `user` or `api_key` —
-notably different from quota scopes, because quotas follow who *pays* while
-redaction follows where the **text goes** and who **wrote it**.
+There is no deployment-wide policy; there is a table of **policies**
+(`redaction_policies`) and pipelines that apply them. What ADR 0038 called a
+scoped rule is now a policy with no scope, and the scope moved to the pipeline
+that applies it: a pipeline's **who** (all, users, groups, keys) and **target**
+(all, only, all except, over providers and models) are what a policy's
+`all`/`provider`/`model`/`group`/`user`/`api_key` scope used to be. Redaction
+follows where the **text goes** and who **wrote it**, which is why *groups* means
+the group the request is billed to.
 
-**The shipped default protects nothing**: no rules, no redaction. That is a
-visible absence — an empty rules list on the What gets hidden tab — rather than an
-invisible presence, and a visible absence is the failure mode that gets fixed.
-A deployment that wants protection writes one catch-all rule and the screen
-says so. This reversed an earlier default ("protect everything the engine finds
-except four types") after that default redacted the wrong things for a
-language it was never written against: *"Riassumi le notizie del giorno da
-ilpost.it"* went upstream as `<PERSON_…> le notizie del giorno da <URL_…>` —
-an English model calling an Italian verb a person at 0.85 and the news site a
-URL.
+**The shipped default protects nothing**: no policy applied, no redaction. That is
+a visible absence (an empty list on the Pipelines tab) rather than an invisible
+presence, and a visible absence is the failure mode that gets fixed. A deployment
+that wants protection writes one policy and a pipeline on everything that applies
+it. This reversed an earlier default ("protect everything the engine finds except
+four types") after that default redacted the wrong things for a language it was
+never written against: *"Riassumi le notizie del giorno da ilpost.it"* went
+upstream as `<PERSON_…> le notizie del giorno da <URL_…>` — an English model
+calling an Italian verb a person at 0.85 and the news site a URL.
 
-An allow-list (values never redacted, compared case-insensitively, **exactly**
-— a substring rule would let "it" allow every Italian domain) belongs to the
-deployment alone, never to a narrower scope.
+An allow-list (values never redacted, compared case-insensitively, **exactly** — a
+substring rule would let "it" allow every Italian domain) is taken from the
+**first** policy in the fold, which is the widest scope's, never a narrower one's.
 
-### Adding a scope can only tighten
+### Adding a pipeline can only tighten
 
-Applicable policies combine as: `max` over the mode ranking, `min` over
-thresholds (lower catches more), union over custom patterns (one more regex
-only finds more), allow-list from the deployment alone.
+The policies the pipelines in scope chose combine as: `max` over the mode ranking
+(`anonymise_restore` < `anonymise` < `redact` < `block`), `min` over thresholds
+(lower catches more), union over custom patterns (one more regex only finds more),
+allow-list from the first policy alone.
 
-So **adding a scope can only tighten, by construction** — a rule saved wrong is
+So **adding a pipeline can only tighten, by construction** — one saved wrong is
 inert rather than dangerous, which is the difference between a bug and an
-incident. Nothing needs a priority column or a "most specific wins" rule. This
-is the quota model's fold inverted: quotas are *all rules must pass* because a
+incident. Nothing needs a priority column or a "most specific wins" rule. This is
+the quota model's fold inverted: quotas are *all rules must pass* because a
 permissive rule would raise a ceiling; redaction is *the strictest answer wins*
 because a permissive rule would remove protection.
 
-One subtlety cost a test to find: there is **one row per subject**, so an
-administrator's `scope=user` rule and that person's own policy are the *same
-row*. "Their own" is decided by who wrote it, not by scope — otherwise the one
-rule a person could overrule is precisely the rule about them. The invariant is
-a courtesy, not the enforcement: the fold above already makes a weaker rule
-inert. It exists so the refusal names the entity type that failed, because
-"accepted and silently ignored" reads as the feature not working.
-
 ### Provenance
 
-Every request records `redaction_scope` and `redaction_rule_id` — the
-narrowest rule that applied, since the rules table itself is mutable and
-"why was this request redacted" has to be answerable from the request.
-Resolution costs no extra queries: every subject a rule can name is already
-loaded on the request, and the rules arrive on the resolver's existing
-ten-second poll as a dictionary swap — never a redactor rebuild, which would
-quietly destroy the detection cache's hit rate (the difference between 13ms
-and 135ms on a 1,000-token prompt).
+Every request records `redaction_scope` and `redaction_rule_id`: the **policy** of
+the narrowest pipeline that applied one (and that pipeline's scope), since the
+tables are mutable and "why was this request redacted" has to be answerable from
+the request. A policy keeps its id when it is edited. Resolution costs no extra
+queries: every id a scope can name is already loaded on the request, and
+pipelines and policies arrive on the state's existing ten-second poll as a swap,
+never a redactor rebuild, which would quietly destroy the detection cache's hit
+rate (the difference between 13ms and 135ms on a 1,000-token prompt).
 
-## User rules
+## User policies and pipelines
 
-A user can keep rules of their own, and a user's rules can only **add**
-protection. They are applied last, after the administrators' rules have been
-folded exactly as above, as the narrowest scope there is:
+A user can keep **policies of their own** and **pipelines** that apply them, and
+what they write can only **add** protection. A user's policy is an ordered list of
+entries, folded last, after the administrators' policies have been folded exactly
+as above:
 
 - **a custom pattern** is added to the patterns in force, under the same RE2
   engine, the same validation and the same limits as an administrator's custom
   pattern (no backreferences or lookaround; a pattern that matches the empty
   string is refused);
 - **a stricter mode for an entity type** wins over a weaker one, by the order
-  `off` < `anonymise_restore` < `anonymise` < `redact` < `block`.
+  `off` < `anonymise_restore` < `anonymise` < `redact` < `block`. An entity type
+  must be one the administrator has made available to users (Detectors tab; blank
+  means any).
 
-A user's pattern also never displaces or shrinks what the administrators'
-rules already cover: a pattern span that overlaps a detected or administrator
-span is dropped, and the administrator's span stands whole in the
-administrators' mode (otherwise a pattern such as `ar` would cut `Mario Rossi`
-down to its own letters). A pattern that overlaps nothing simply adds.
+A user's pattern also never displaces or shrinks what the administrators' policies
+already cover: a pattern span that overlaps a detected or administrator span is
+dropped, and the administrator's span stands whole in the administrators' mode
+(otherwise a pattern such as `ar` would cut `Mario Rossi` down to its own
+letters). A pattern that overlaps nothing simply adds.
 
-A user rule cannot loosen anything. There is no `off` to choose, and no
+A user policy cannot loosen anything. There is no `off` to choose, and no
 threshold, exception, allow-list or placeholder style to set: the request has no
-such fields and an unknown one is refused. A rule that is not stricter than what
+such fields and an unknown one is refused. An entry that is not stricter than what
 the administrators already say is saved and is inert, and a tie goes to the
-administrators; the console marks it "Already covered" and says which mode
-applies instead. Names that collide with an administrator's pattern or type
-cannot loosen it either.
+administrators. Names that collide with an administrator's pattern or type cannot
+loosen it either.
 
-The rules apply to requests whose principal is that user: a token the user
-signed in with, and the user's own API keys. They never reach another user's
-requests. They are held in memory by every worker, loaded on the same
-ten-second poll as the administrators' rules, so the request path stays
-query-free; the worker that handled the edit has it at once.
+They apply to requests whose principal is that user: a token the user signed in
+with, and the user's own API keys. They never reach another user's requests. They
+are held in memory by every worker, loaded on the same ten-second poll, so the
+request path stays query-free; the worker that handled the edit has it at once.
 
-- Each user keeps at most 25 rules. They are removed with the account, and a
-  merge keeps the surviving account's rules and drops the merged-away
-  account's.
-- If the engine is `noop`, nothing is screened, so a user's rules have nothing
+- Each user keeps at most 25 pipelines, 10 policies and 25 entries per policy.
+  They are removed with the account, and a merge keeps the surviving account's and
+  drops the merged-away account's.
+- If the engine is `noop`, nothing is screened, so a user's policies have nothing
   to act on. The console says so.
-- A user rule that blocks makes that user's own requests fail with the usual
-  403 when it matches.
+- A user policy that blocks makes that user's own requests fail with the usual 403
+  when it matches.
 
-The API is `/api/me/redaction/rules` (list, add, change, remove; cookie session
-and the `console` capability, like the rest of `/api/me`). `POST
-/api/me/redaction/test` runs the real path over a text and answers with what
-would be hidden: type, offsets, mode and the deciding rule (its name, and
-whether an administrator or the user wrote it). It never echoes the text and
-never logs it. It runs the detector, so it is limited to 30 calls a minute per
-user (per worker); the 31st is a 429. `GET /api/me/redaction/in-force` lists the administrators' rules
-that can apply to the user, read-only, as types and modes (not the regexes of an
-administrator's patterns, nor the values on an allow-list).
+The API is `/api/me/privacy` (policies, pipelines, options, in-force, test; cookie
+session and the `console` capability, like the rest of `/api/me`). `POST
+/api/me/privacy/test` runs the real combination over a text or a file's facts, as
+the user, and answers with the pipelines in scope, the ladder and the policy table.
+It never echoes the text and never logs it, and it is limited to 30 calls a minute
+per user (per worker); the 31st is a 429. `GET /api/me/privacy/in-force` lists the
+administrators' pipelines that cover the user, read-only (rule names and what each
+does; policies by name).
 
 ## What users can see
 
@@ -479,8 +467,8 @@ whether the request was blocked.
 
 **It never holds a value.** Not the original, not the matched text, and no
 character offsets. A request where redaction ran and found nothing leaves no
-entry, unless privacy routing is configured: then every request of a known kind
-leaves one, with an empty `entities` list and the `routing` block described
+entry, unless a pipeline does routing (a rule, or a last rule that is not the base
+level): then every request of a known kind leaves one, with an empty `entities` list and the `routing` block described
 below. The entry lives on the usage row, so it costs no extra write and its
 retention is the request log's (which keeps rows; only the reply text has a
 sweep, see `GATEWAY_TRANSCRIPT_RETENTION_HOURS`). With accounting switched off
@@ -492,8 +480,8 @@ there is no request log and so no redaction log.
 - `GET /api/admin/redaction/events` is the administrator's view of everyone's,
   with `user_id` and `request_id` filters. Like every administrator read of the
   ledger it leaves BYOK requests out.
-- The console's **Redactions** page, next to Your usage, shows the log, the
-  administrators' rules in plain words, the user's own rules and the test box.
+- The console's **Redactions** page, next to Your usage, shows the log; the
+  user's own pipelines, policies and test box are on **Privacy pipelines**.
 
 ### The per-response summary
 
@@ -522,7 +510,7 @@ a separate event.
 ```
 
 - The object is **absent** when redaction is off for the request (the engine is
-  `noop`, or no rule applies) and no routing rule is configured. `applied` is
+  `noop`, or no policy applies) and no pipeline does routing. `applied` is
   `false` with an empty `entities` when redaction ran and found nothing.
 - `rule.id` is `null` for the deployment's own policy, which has no row.
 - A blocked request is a 403; with the header its error body also carries the
@@ -547,27 +535,30 @@ every chat completion, response and message (kind `chat`), every `/v1/embeddings
 call (`embed`) and every `/v1/ocr` call (`read`). It lives in the same place as
 the entities: `usage_records.redaction_detail["routing"]` (so no extra column
 and no extra write), and `pystino_redaction["routing"]` in the opt-in summary.
-The log entry itself is written for every request once at least one routing rule
-is enabled, even when nothing was hidden; with no rules configured the entry is
-written only when something was hidden, as before.
+The log entry itself is written for every request once a pipeline does routing (a
+rule, or a last rule that is not the base level), even when nothing was hidden;
+otherwise the entry is written only when something was hidden, as before.
 
 ```json
 {
-  "v": 1,
+  "v": 2,
   "kind": "read",
   "observed": {
-    "groups": ["Clinic"],
-    "target": {"alias": "reader", "model": "local-reader", "provider": "onsite", "local": true},
+    "target": {"alias": "reader", "model": "local-reader", "provider": "onsite"},
     "filename": "referto-rossi.pdf (summary only)", "filename_match": {"rule_id": "6c1e...", "pattern_index": 0}, "mime": "application/pdf",
     "filetype": "pdf", "is_scan": true,
     "verdicts": {"health": true, "ids": false, "lang": "it", "method": "patterns"}
   },
   "handled": {
-    "extractor": "docling", "fallback_reason": "docling busy", "reader": "docling",
-    "profile": "default",
-    "routing_rule": {"id": "6c1e...", "name": "Medical PDFs"}
+    "extractor": "docling", "fallback_reason": "docling busy", "reader": "docling", "engine": "docling",
+    "profile": "default", "policies": ["Default"],
+    "routing_rule": {"id": "6c1e...", "name": "Medical PDFs", "pipeline": "Reports", "pipeline_id": "…", "owner": "admin"}
   },
   "outcome": "rule",
+  "pipelines": [
+    {"id": "…", "name": "Reports", "owner": "admin", "hop": 0, "rule": {"id": "6c1e...", "name": "Medical PDFs"}, "level": "read_with"},
+    {"id": "…", "name": "My reports", "owner": "user", "hop": 0, "rule": null, "level": "default"}
+  ],
   "observed_rules": [{"id": "...", "name": "Trial"}],
   "degraded": [], "fallbacks": []
 }
@@ -584,12 +575,16 @@ written only when something was hidden, as before.
   label, a group or model name, or a count.
 - `handled.extractor` and `fallback_reason` come from the extractor's own answer.
   `profile` is `default` until chat detector profiles (phase 2). `routing_rule`
-  is the rule that applied, or `null`.
-- `outcome` is `default` (no rule applied), `rule`, `rerouted`, `refused`, or
+  is the rule that set the winning level (the administrator's on a tie), with its
+  pipeline and `owner`, or `null`; `policies` names the policies applied.
+- `pipelines` lists every pipeline that was in scope and the rule that fired in
+  each (`rule` is `null` when the pipeline's fixed last rule applied), with the
+  level it asked for and `hop` (1 or more for pipelines that ran after a reroute).
+- `outcome` is `default` (nothing applied), `rule`, `rerouted`, `refused`, or
   `blocked` (redaction refused it).
 - `observed_rules` lists observe-only rules that would have applied.
 - `degraded` and `fallbacks` appear when a detector a rule needed was
-  unavailable, and say how that was handled (see [Privacy routing](privacy-routing.md)).
+  unavailable, and say how that was handled (see [Privacy pipelines](privacy-routing.md)).
 - The console's **Redactions** page shows these fields compactly in a "Handled
   by" column, and lists requests where nothing was hidden when routing is on.
 
@@ -603,16 +598,16 @@ whose output is logged.
 
 ## Operating it
 
-- The **Privacy** area of the console holds all of it: **What gets hidden** is
-  the rules (the per-rule editor is its own page), **Detectors** the engine
-  choice and the detection families inside the Fast profile, and **Test** one box
-  that shows the route, the detector and what is hidden for a sample.
+- The **Privacy** area of the console holds all of it: **Pipelines** (when and
+  how), **Redaction policies** (what is hidden; the editor is its own page),
+  **Detectors** (the engine choice and the detection families inside the Fast
+  profile), and **Test** (one box that runs the real combination for a sample).
 - `GET /api/admin/redaction` reports what is in force.
 - The detection cache is a **per-process LRU** — adding worker processes
   lowers the hit rate. It is keyed on the text *and* everything the detector
   was asked (language, threshold, entity types, engine options), so a change
   of policy never serves a result computed under another. At scale, a shared cache in Valkey is the answer (see
   [Measured performance](performance.md)).
-- Scoping redaction is a **performance lever** as much as a policy one: not
-  running NER where no rule requires it is the largest single optimisation
+- Scoping is a **performance lever** as much as a policy one: not
+  running NER where no pipeline applies a policy is the largest single optimisation
   available.

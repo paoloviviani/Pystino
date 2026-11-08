@@ -1,43 +1,89 @@
 # Privacy
 
-Routing and redaction are one pipeline, and one area of the console: **Privacy**.
-The two topics are documented separately: [Privacy routing](privacy-routing.md)
-(how a request is handled) and [Redaction](redaction.md) (what is hidden).
+Privacy in Pystino is two objects, each with one job, and one area of the console
+for both: **Privacy**.
 
-## The pipeline: four steps, two kinds of rules
-
-Every request that carries text goes through the same four steps, in this order.
-
-1. **Route.** Routing rules, per kind of request (reading a file, embedding, chat
-   later): the **first rule that matches wins**. It picks the reader for a file,
-   whether text may go to a cloud model, or a refusal.
-2. **Detect.** The detector profile the route chose (the default, **Fast**, is
-   the Presidio engine); patterns always run.
-3. **Hide.** Redaction rules decide what is hidden. **Every matching rule
-   applies and the strictest mode wins**, then the user's own rules, which can
-   only tighten. A routing rule's "add a policy" adds one more set of rules at
-   this step.
-4. **Send or refuse.** What is left goes to the provider, or the request is
-   refused.
-
-Routing decides how a request is handled; redaction rules decide what is hidden.
-Routing never lowers a redaction mode.
-
-| | Routing rules | Redaction rules |
+| | Redaction policy | Pipeline |
 |---|---|---|
-| Purpose | how a request is handled: reader, local or cloud, refuse | what is hidden from the provider |
-| Match on | kind of request, file type and name, who asked, target model or provider, what the text contains | scope: the deployment, a provider, a model, a group, a user or a key |
-| Several match | the **first** one applies (observe-only rules are logged and the search goes on) | **all** apply, and the **strictest** mode wins |
-| Can do | choose a reader, embed on a local model, refuse | per entity type: leave, redact, anonymise (with or without restoring the answer), block |
-| Lives in | console: **Privacy, Rules** | console: **Privacy, What gets hidden** |
+| Says | **what to hide**: patterns, entity types, a mode for each | **when and how** a request is handled |
+| Has | a name, a detector profile, and per entity type: leave, redact, anonymise (with or without restoring the answer), block | a **kind** (read, embed, chat), a **scope** (who, which target), ordered **rules**, and a fixed last rule, "everything else" |
+| Scope | none: no user, group, provider or model | who (all, users, groups, keys) and target (all, only, all except, over providers and models) |
+| Several apply | all of them, and the **strictest mode wins** per entity type | all in scope run and **combine**; inside one pipeline the **first rule that matches wins** |
+| Lives in | console: **Privacy, Redaction policies** | console: **Privacy, Pipelines** |
+
+The two are documented separately: [Privacy pipelines](privacy-routing.md) (when
+and how: the kinds, the ladder, readers, user pipelines, migration) and
+[Redaction](redaction.md) (what is hidden: policies, modes, the log and the
+summary).
+
+## How a request is handled
+
+1. The **kind** comes from the endpoint: reading a file (`/v1/ocr`), embedding
+   (`/v1/embeddings` and `/v1/rerank`), or chat (every chat surface).
+2. Every pipeline of that kind **whose scope covers the request** runs. Inside
+   each, the first matching rule decides what that pipeline asks for.
+3. The answers **combine**. *Where it is handled* is a ladder and the highest
+   level wins across all pipelines (read: default reader, then read with a chosen
+   reader, then refuse; embed and chat: pass, then refuse). *What is hidden* adds
+   up: the policies the pipelines chose are folded and the strictest mode wins
+   for each entity type.
+4. What is left goes to the provider, or the request is refused with a 403 that
+   names the rule, never the content.
+
+Nothing is remembered between requests, and every OpenAI-compatible client gets
+the same protection with no Cerea headers.
+
+Two things follow from the design and are worth saying once:
+
+- **Whole files leave whole.** A file sent to a remote reader leaves as it is;
+  redaction only screens the text that comes back. To keep a file here, read it
+  with the built-in extractor, or with a reader deployed in your facility.
+- **There is no "local".** A provider is a provider. Pystino does not know which
+  are on your own infrastructure; scope decides which pipelines guard which
+  targets (leave a facility vLLM or your own embedder out of the scope of the
+  pipelines that guard remote providers). Nor is there a reroute between models
+  for embedding or chat: vectors from two models do not match, and choosing the
+  model is the caller's job. To keep text in-house, refuse it and point the client
+  at your own model.
+
+## Users
+
+A user can write **pipelines of their own**, for themselves only, and they can
+only **add** protection: read with a reader they are granted, refuse, redact with
+a policy (an administrator's, or their own), choose an engine. The combination
+takes the highest level and the strictest mode, so a user's pipeline can never
+lower anything an administrator's did. A user's own policy uses custom patterns
+and only the entity types and detector profiles an administrator has made
+available (Detectors tab). See [User pipelines](privacy-routing.md#user-pipelines).
 
 ## The console
 
-| Tab | What it holds | Step |
-|---|---|---|
-| **Rules** | routing rules, per kind, in first-match order | 1 Route |
-| **What gets hidden** | redaction rules: scopes, a mode per entity type, custom patterns, same-length placeholders, the labels the model is told | 3 Hide |
-| **Detectors** | detector profiles; the Fast profile carries the engine choice (with its append-only record) and the Presidio pattern and named-entity switches | 2 Detect |
-| **Test** | one box: a kind of request, its facts and a text or file, and the four steps in order. Nothing is stored | all |
+| Tab | What it holds |
+|---|---|
+| **Pipelines** | pipelines by kind: scope, rules as sentences, the fixed last rule; the editor (ladder as radios, "Redact with", observe-only), reorder, turn off |
+| **Redaction policies** | policies: a mode per entity type, custom patterns, same-length placeholders, the labels the model is told, the allow-list |
+| **Detectors** | detector profiles with health, cost and fallback; the Fast profile carries the engine choice (with its append-only record) and the Presidio pattern and named-entity switches; what users may add to their own policies |
+| **Test** | one box: a kind of request, a user and a target, a text or file; every pipeline in scope with its trace, the reroute, the ladder, who chose the reader and engine, and the policies added up. Nothing is stored |
 
-Old links to `/admin/redaction` and `/admin/privacy/profiles` redirect to their new places.
+Users have **Privacy pipelines** (their own pipelines and policies, the
+administrator's read-only list, and a test box locked to themselves) and
+**Redactions** (the log). A **How it works** overlay explains the model once; the
+screens keep their explanations in (?) tooltips.
+
+Old links keep working: `/admin/redaction` and `/admin/privacy/hidden` go to
+Redaction policies, `/admin/redaction/rules/{id}` and
+`/admin/privacy/hidden/rules/{id}` go to the same policy (a rule kept its id when
+it became a policy), and `/admin/privacy/profiles` goes to Detectors.
+
+## Seeing it before choosing it
+
+`GET /v1/pystino/privacy` answers, for the calling user and per embedding model
+and per chat model, what the pipelines in scope do, in short words ("refuses
+health data", "redacts with Default"). A client such as Cerea can show it beside
+the embedder choice, so a knowledge base's owner chooses informed, up front.
+Read-only; labels and names only.
+
+## Upgrading from scoped rules
+
+Migration `0082` turns what you had into the new shape and requests are handled
+exactly as before. See [migration](privacy-routing.md#migration).

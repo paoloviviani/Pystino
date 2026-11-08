@@ -1,228 +1,276 @@
-# Privacy routing
+# Privacy pipelines
 
-Redaction (see [Redaction](redaction.md)) decides *what is hidden* from a
-provider. Privacy routing decides *how a request is handled* before that: which
-reader opens a file, whether text may be embedded by a cloud model, and whether a
-request is refused. An administrator writes **rules**; each request is judged on
-its own, from what Pystino can see in it. It works for any OpenAI-compatible
-client, with no Cerea headers, and nothing is remembered between requests: the
-outcome is a function of the request, the rules and the configuration.
+A **redaction policy** (see [Redaction](redaction.md)) says *what to hide*. A
+**pipeline** says *when and how* a request is handled: which reader opens a file,
+whether a request is refused, and which policies are applied to it. Each request
+is judged on its own, from what Pystino can see in it. It works for any
+OpenAI-compatible client, with no Cerea headers, and nothing is remembered between
+requests: the outcome is a function of the request, the pipelines and the
+configuration.
 
-Routing never lowers a redaction mode. It can only choose a reader, send text to a
-local model, or refuse; the redaction policy still runs after it, unchanged.
+A pipeline never lowers a redaction mode. It can choose a reader, refuse, or add a
+policy; policies only add up and the strictest mode wins.
 
-## The pipeline: four steps, two kinds of rules
+## The two objects, and how they combine
 
-Every request that carries text goes through the same four steps, in this order.
-
-1. **Route.** Routing rules, per kind of request (reading a file, embedding, chat
-   later): the **first rule that matches wins**. It picks the reader for a file,
-   whether text may go to a cloud model, or a refusal.
-2. **Detect.** The detector profile the route chose (the default, **Fast**, is
-   the Presidio engine); patterns always run.
-3. **Hide.** Redaction rules decide what is hidden. **Every matching rule
-   applies and the strictest mode wins**, then the user's own rules, which can
-   only tighten. A routing rule's "add a policy" adds one more set of rules at
-   this step.
-4. **Send or refuse.** What is left goes to the provider, or the request is
-   refused.
-
-Routing decides how a request is handled; redaction rules decide what is hidden.
-Routing never lowers a redaction mode.
-
-| | Routing rules | Redaction rules |
+| | Policy | Pipeline |
 |---|---|---|
-| Purpose | how a request is handled: reader, local or cloud, refuse | what is hidden from the provider |
-| Match on | kind of request, file type and name, who asked, target model or provider, what the text contains | scope: the deployment, a provider, a model, a group, a user or a key |
-| Several match | the **first** one applies (observe-only rules are logged and the search goes on) | **all** apply, and the **strictest** mode wins |
-| Can do | choose a reader, embed on a local model, refuse | per entity type: leave, redact, anonymise (with or without restoring the answer), block |
-| Lives in | console: **Privacy, Rules** | console: **Privacy, What gets hidden** |
+| Job | what to hide | when and how |
+| Scope | none | who and target |
+| Rules | modes per entity type | ordered conditions → action, plus a fixed "everything else" |
+
+**Inside one pipeline the first rule that matches wins** (observe-only rules are
+logged as would-fire and the search goes on). **Across pipelines nothing is
+first: every pipeline in scope runs, and the results combine.**
+
+| | How it combines |
+|---|---|
+| Where it is handled | the **ladder**: the highest level across all pipelines wins |
+| What is hidden | the policies each pipeline chose are **added up**; for each entity type the **strictest mode** wins (`anonymise_restore` < `anonymise` < `redact` < `block`, the fold of ADR 0038, unchanged) |
+| The reader, the engine | an **administrator** pipeline's choice holds; a user's applies only if no administrator pipeline chose one; otherwise the default |
+| Who is named | the rule that set the winning level; on a tie, the administrator's |
+| The trace | every pipeline in scope and the rule that fired in each |
+
+### The ladder
+
+| Kind | Levels, lowest to highest |
+|---|---|
+| Read | **default reader** (the model the caller named) < **read with** a chosen reader < **refuse** |
+| Embed | **pass** < **refuse** |
+| Chat | **pass** < **refuse** |
+
+Every non-refuse action may also **redact with** one policy: on the returned text
+(read), the input (embed), or messages and tool results (chat). A refused request
+is not handled further, so no policy applies.
+
+Policies fold widest scope first (the same order scoped rules always folded in),
+which matters for one field: the allow-list is taken from the first policy alone.
 
 ## The kinds
 
-A rule is for one **kind** of request, fixed when it is saved. A request meets
-only the rules of its kind, in order, and the first match applies.
+The kind comes from the endpoint and is fixed when a pipeline is saved.
 
-| Kind | Endpoint | What a rule can see | What a rule can do |
-|---|---|---|---|
-| Reading a file | `/v1/ocr` | file name, file type, whether it is a scan, who asked | choose the reader, or refuse |
-| Embedding | `/v1/embeddings` | who asked, the target model and provider (local or cloud), what the text contains, its language | embed on a local model, or refuse |
-| Chat | `/v1/chat/completions`, `/v1/responses`, `/v1/messages` | recorded only (rules arrive in a later release) | none yet |
+| Kind | Endpoints | What a rule can see |
+|---|---|---|
+| Read | `/v1/ocr` | file name, file type, whether it is a scan |
+| Embed | `/v1/embeddings`, `/v1/rerank` | what the text contains (health data, IDs), its language |
+| Chat | `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, and the other chat surfaces | what the messages contain, its language |
 
-Every request of these kinds is *described* in the log and the summary
-([routing attribution](redaction.md#routing-attribution)) whether or not a rule
-exists.
+Who is asking and where the request goes are not conditions: they are the
+pipeline's **scope**.
+
+## Scope
+
+- **Who**: all, users, groups or keys. *Groups* means the group the request is
+  billed to (as redaction scopes always did). A user's own pipeline is fixed to
+  that user.
+- **Target**: all, only, or all except, over providers and models. For a read the
+  target is the OCR model or provider named in the request.
+
+A pipeline runs only on requests inside its scope. A facility vLLM, your own TEI
+or a reader deployed in your facility is left out of the scope of the pipelines
+that guard remote providers: that is how an administrator treats one differently.
 
 ## Conditions
 
-All conditions of a rule must hold (AND). A condition has one or more values (any
-of them, OR) and may be negated ("is not"). A rule with no conditions matches
-every request of its kind. A key appears at most once per rule.
+All conditions of a rule must hold (AND). A condition may be negated ("is not").
+A rule with no conditions matches every request of its pipeline's kind. A key
+appears at most once per rule.
 
-| Key | Kinds | Values |
+| Key | Kind | Values |
 |---|---|---|
-| `filetype` | read | `pdf`, `word`, `excel`, `powerpoint`, `image`, `text`, `scan` |
+| `filetype` | read | `pdf`, `word`, `excel`, `powerpoint`, `image`, `text` |
+| `scan` | read | yes or no: the file is a scan |
 | `filename` | read | globs: `*`, `?`, `[abc]`, case-insensitive, matched on the base name |
-| `who` | read, embed | `user:<email>` or `group:<name>` |
-| `target` | embed | `local`, `cloud`, `provider:<name>`, `model:<name or alias>` |
-| `verdict` | embed | `health`, `ids` |
-| `lang` | embed | a language code such as `it` or `en` |
+| `health` | embed, chat | yes or no: the text contains health data |
+| `ids` | embed, chat | yes or no: the text contains IDs |
+| `lang` | embed, chat | a language code such as `it` or `en` |
 
-- **A scan** is found while reading: the extractor reports a page with no text
-  layer (or one it had to OCR). A rule that depends on it makes the gateway read
-  the file first on the local extractor, then judge the rules again; if the
-  winning rule wants a different reader than the one used, the file is read a
-  second time. Nothing leaves the deployment during that read. A document sent as
-  a link (not bytes) cannot be read here, so a scan rule cannot be judged on it.
-- **Unknown name or type fails closed.** A link's name and extension are taken from
-  its path (`https://host/a/referto.pdf?sig=...`). When a file still has no name
-  or no known type (a link with no extension, no MIME type sent), a rule that
-  refuses, keeps text local or chooses a reader treats its `filename` and
-  `filetype` conditions as **matching** (the editor warns: "unnamed_matches"), and
-  the log says so under `degraded`. A rule that is observe-only is unaffected.
+- **A scan** is found while reading. A pipeline that depends on it makes the
+  gateway read the file first on the **built-in extractor** (the file never
+  leaves the deployment for that), then judge again. If no built-in reader is
+  available to the caller, or the document is a link, the request is refused
+  (fail closed), naming the rule that was waiting.
+- **Unknown name or type fails closed.** A link's name and extension are taken
+  from its path. When a file still has no name or no known type, a rule that
+  protects (refuses, reads elsewhere, redacts) treats its `filename` and
+  `filetype` conditions as **matching** (the editor warns), and the log says so
+  under `degraded`.
 - **File name and type are a convenience, not protection.** A renamed file is not
-  caught. The console says so on any protective reading rule that depends only on
-  them. Protect content with embedding rules that use `verdict`.
-- **Negation and unknown.** "File name is not `referto*`" matches a request that
-  names no file; a protective rule is not skipped because a fact is missing.
+  caught. The console says so on a protective reading rule that depends only on
+  them. Protect content with embed and chat pipelines that use `health`.
 
 ### How to decide: the quick check, or a detector profile
 
-`verdict` and `lang` are judged from the request's own text, **every input
-separately and in full** (long texts are scanned window by window with overlap,
-so padding or a late chunk cannot hide anything). A batch holds a verdict if it
-holds for *any* input ("contains health data": any input does; "is in Italian": any
-input is). Negation flips the whole batch: "does not contain health data" holds only
-if *no* input does. A text over 2,000,000 characters (or a request over 4,000,000
-in all) cannot be checked in full: the condition then **matches**, fail closed,
-and the log says it was too large. The condition is evaluated only if a rule uses it, and only if an
-enabled rule of that kind uses them. Each such condition has a **decide** field:
+`health`, `ids` and `lang` are judged from the request's own text, **every input
+separately and in full** (long texts are scanned window by window with overlap).
+A batch holds a verdict if it holds for *any* input; negation flips the whole
+batch. A text over 2,000,000 characters (or a request over 4,000,000 in all)
+cannot be checked in full: the condition then **matches**, fail closed. The
+classifier runs only if an enabled pipeline of that kind has a rule that uses its
+verdict, and only for pipelines in scope. Each such condition has **how to
+decide**:
 
-- **`patterns`** (the default): the quick check. Health vocabulary in Italian
-  and English (clinical terms count alone; common words such as "therapy" count
-  only in pairs), identifier formats with the checksum that makes a match worth
-  reporting (Italian fiscal code, VAT number with its context, IBAN, payment card,
-  US SSN, NHS number), and a stop-word language detector. It takes microseconds.
-  It finds what is written in the usual vocabulary and misses health data written
-  in plain words ("he takes insulin since March"). The patterns are written out in the gateway; Presidio itself stays
-  in the redaction service.
-- **A detector profile.** The profile's engine decides. In this release a profile
-  can decide only if its engine is `patterns` or `presidio` (whose verdicts are the
-  quick check); a model engine such as GLiNER is *not installed* and arrives with
-  chat rules (phase 2).
+- **Quick check** (the default): health vocabulary in Italian and English,
+  identifier formats with the checksum that makes a match worth reporting (Italian
+  fiscal code, VAT number with its context, IBAN, payment card, US SSN, NHS
+  number), and a stop-word language detector. Microseconds. It finds what is
+  written in the usual vocabulary and misses health data written in plain words.
+- **A detector profile**: the profile's engine decides. A profile can decide only
+  if its engine is `patterns` or `presidio`; a model engine is *not installed* and
+  follows its fallback.
 
 If the chosen profile cannot decide, **its fallback** applies, set per profile:
+`refuse` (the default) fails closed, `fallback_to` another profile uses that
+profile's method and records it as a weakening.
 
-- `refuse` (the default): fail closed. The condition is treated as holding, so a
-  rule with a protective action takes it. A rule whose other conditions do not
-  hold is not triggered.
-- `fallback_to` another profile: that profile's method decides, and the fact is
-  recorded as a weakening (`fallbacks` in the log and summary, and a warning in
-  the console).
+## Reading
 
-An optional in-process LRU keyed by `sha256(text)` stores the three labels of a
-verdict, never text. It only saves time: a miss recomputes the same answer.
+| Level | Effect |
+|---|---|
+| default reader | the model the caller named reads the file, possibly a remote one |
+| **read with** a reader | any configured `/v1/ocr` model: the **built-in extractor** (`builtin`; the first extractor model the caller may use), or another OCR provider such as a facility reader. It **overrides the model the caller named**. |
+| refuse | 403 with `routing_refused`, naming the rule and its pipeline. Never the content or the file's name |
 
-## Actions
+- The built-in extractor may name an **engine** (`markitdown`, `ocr`, `docling`;
+  passed as `X-Extractor-Engine`). The engine is quality, not privacy, so it is
+  not on the ladder. An administrator pipeline's engine holds, then a user's, then
+  the deployment default.
+- **It fails closed when it cannot be done**: the document is a link and the
+  reader is the built-in extractor (which reads only documents sent with the
+  request, never a URL: that would be a server-side request forgery), or the
+  reader is not available to the caller (not granted, switched off).
+- **After a reroute, the pipelines whose target scope covers the new reader also
+  run**, so a reroute can never escape a pipeline that guards that reader. The
+  loop is bounded (three hops).
+- **Whole files leave whole.** A file sent to a remote reader leaves as it is.
+  Redaction only screens the text that comes back.
 
-| Kind | Action | Effect |
-|---|---|---|
-| read | `reader`: `markitdown`, `ocr`, `docling` | The file is read by that reader (sent to the extractor as `X-Extractor-Engine`), **overriding the model the caller named**. If the caller named a remote OCR model, the request is served by a local extractor model the caller may use; if the document is a link or no such model is available, the request is refused (fail closed). `ocr` is markitdown with OCR switched on for the one request. The response reports the reader that ran. |
-| read, embed | `refuse` | 403 with `routing_refused`, naming the rule. Never the content or the file's name. |
-| embed | `local` (optional `model`) | The request is embedded by a local embedding model: a model on a provider an administrator marked **local** (`is_local`). The caller must be allowed to use it. A named `model` is checked when the rule is saved (a deployment embedding model on a local provider; not a private `my/` model, not an alias) and again on every request against what actually resolved: if the provider has since stopped being local, the rule shows a "Check" warning and requests are refused. If the target is already local, nothing changes. If there is none the caller may use, the request is refused. |
+## Embedding and chat
 
-There is no "let it go as usual" action: no action means default handling.
-
-A refusal is also a row in the ledger (status `blocked`, zero cost, with the
-routing block), exactly as a redaction block is.
-
-### Local providers
-
-`is_local` is a provider attribute only an administrator sets (Providers, "Runs
-on this deployment's own infrastructure"). It is never inferred from the URL, and
-a member's own private provider cannot claim it. It is what `target: local` and a
-`local` action mean.
+Only two levels: pass and refuse. **There is no reroute for embed or chat.** An
+embedding sent to another model breaks the vector space, and choosing the provider
+is the caller's job. The refusal is a 403 naming the rule; an applied policy hides
+what it names in the input (embed) or in messages and tool results (chat).
 
 ## Evaluation
 
 1. The kind comes from the endpoint.
-2. The rules of that kind are taken in order. Disabled rules are skipped.
-3. A rule matches when all its conditions hold. Cheap conditions (who, target,
-   file type and name) are checked first; the text is classified only when they
-   all hold.
-4. An **observe-only** rule that matches is recorded (`observed_rules`) and the
-   search continues. The first non-observe rule that matches applies.
-5. If no rule matches, the request is handled as it always was.
+2. Every enabled pipeline of that kind whose scope covers the request runs; in each
+   the rules are taken in order, disabled rules are skipped, cheap conditions
+   (file type and name) come before the text is classified, and the first
+   matching non-observe rule decides (or the fixed last rule when none does).
+3. The answers combine as above.
+4. A refusal is a 403; otherwise the folded policy redacts, and the request goes on.
 
-The rules, the profiles and the names of local models are held in memory on each
-worker and reloaded every ten seconds (and at once on the worker that served an
-administrator's change), so the request path adds no database query.
+Pipelines, policies, profiles and the names of readers are held in memory on each
+worker and reloaded every ten seconds (and at once on the worker that served a
+change), so the request path adds no database query.
 
-A worker that has **never** read the rules (the first read failed) answers
-`/v1/ocr` and `/v1/embeddings` with a 503 (`privacy_rules_unavailable`) rather
-than run with none; `/readyz` reports `privacy_routing` as an error and `/healthz`
-mentions it. A single rule row that cannot be read is skipped with an error log
-and the rest load; `/readyz` says how many were skipped and
-`GET /api/admin/privacy/status` lists them. File name patterns are matched by a
-linear matcher, not a regular expression, so a hostile pattern cannot stall a
-worker.
+A worker that has **never** read the pipelines answers the kinds they govern with
+a 503 (`privacy_rules_unavailable`) rather than run with none; `/readyz` reports
+`privacy_routing` as an error and `/healthz` mentions it. A row that cannot be
+read is skipped with an error log and the rest load; `GET
+/api/admin/privacy/status` lists them. File name patterns are matched by a linear
+matcher, not a regular expression, so a hostile pattern cannot stall a worker.
 
-## Saving a rule
+## User pipelines
 
-Errors block saving (HTTP 422, a message naming the field): a kind that is not
-available, a key the kind does not have, a value of the wrong shape (a bad glob,
-an unknown file type), an action the kind does not have, a missing name, a
-profile that does not exist. Names are unique within a kind.
+A user may create pipelines, for themselves alone. Kind and target are free; the
+who-scope is fixed to the user (the server sets it whatever is sent, and the
+request-time scope check holds it again).
 
-Warnings never block; they come back with every rule and from
-`POST /api/admin/privacy/rules/check` (a draft, before saving):
+- **Their actions only tighten**: read with a reader, refuse, redact with a
+  policy, choose an engine. There is no "default reader" or "pass" action for a
+  rule (that is what happens anyway), though "everything else" may add nothing.
+- **Policies**: an administrator's, or their own. A user's own policy is an ordered
+  list of custom patterns (the administrators' own RE2 validation) and stricter
+  modes for entity types the administrator has made available; no `off`, no
+  threshold, no allow-list. It is folded after the administrators' answer and can
+  only tighten. Never another user's policy.
+- **Readers**: only ones they are granted; the request path resolves it again and
+  fails closed.
+- Because the combination is monotone, a user's pipeline can never loosen
+  anything: a value an administrator's policy hides stays hidden whatever the
+  user's policies say. A stored row that loosens is skipped when read.
+- At most 25 pipelines and 10 policies per user. They are removed with the
+  account; a merge keeps the surviving account's and drops the merged-away
+  account's; an administrator pipeline that names the merged-away user among its
+  users is re-pointed at the survivor.
+
+## Saving a pipeline
+
+Errors block saving (HTTP 422, naming the field): a kind that does not exist, a
+condition the kind does not have, a value of the wrong shape (a bad glob, an
+unknown file type), a level the kind does not have, a missing name, a profile,
+policy, reader, user, group, key, provider or model that does not exist, two rules
+with one name. Names are unique within a kind (per owner).
+
+Warnings never block; they come back with every pipeline and from `POST
+/api/admin/privacy/pipelines/check` (a draft):
 
 | Code | Meaning |
 |---|---|
-| `never_fires` | An earlier enabled rule of the kind catches everything this one does. |
-| `partly_shadowed` | An earlier rule catches some of what this one does. |
-| `unavailable_now` | A profile it decides with cannot decide now, or no local embedding provider exists. |
-| `weakens` | A profile it uses falls back to a weaker method. |
-| `convenience_only` | A protective reading rule that depends only on name or type. |
-| `catches_all` | The rule has no conditions. |
-| `soft_cap` | More than 20 rules of a kind. A warning, not a limit. |
+| `never_fires` | An earlier enabled rule of the pipeline catches everything this one does |
+| `partly_shadowed` | An earlier rule catches some of what this one does |
+| `unavailable_now` | A profile or engine it uses cannot decide or run now |
+| `weakens` | A profile it uses falls back to a weaker method |
+| `convenience_only` | A protective reading rule that depends only on name or type |
+| `catches_all` | The rule has no conditions |
+| `soft_cap` | More than 20 rules in one pipeline |
 
-Shadowing is a **hint, not a proof**: the check is conservative (it says "never
-fires" only when it can show it for one earlier rule, and treats a different way
-of deciding as different), so it can miss a case where several earlier rules
-together cover a later one. Observe-only and disabled rules never shadow.
+Shadowing is a hint, not a proof. Observe-only and disabled rules never shadow.
 
 ## The administrator API
 
-Under `/api/admin/privacy` (administrators only, audited as
-`privacy_rule.*` and `privacy_profile.*`):
+Under `/api/admin/privacy` (administrators only, audited as `privacy_pipeline.*`,
+`redaction_policy.*`, `privacy_profile.*` and `privacy_settings.*`):
 
 | Route | Purpose |
 |---|---|
-| `GET /rules` | Every rule, grouped by kind and in order, each with its warnings. |
-| `POST /rules` | Create (`kind`, `name`, `enabled`, `observe_only`, `conditions`, `action`, optional `position`). |
-| `PATCH /rules/{id}` | Change a rule. The kind is fixed. |
-| `DELETE /rules/{id}` | Delete; later rules move up. |
-| `POST /rules/reorder` | `{kind, order: [ids]}`; must name every rule of the kind. |
-| `POST /rules/check` | Warnings for a draft. |
-| `GET/POST /profiles`, `PATCH/DELETE /profiles/{id}` | Detector profiles: name, engine, labels, fallback (`refuse` or `fallback_to` with `fallback_profile_id`). Status comes from health. The default profile and a profile a rule decides with cannot be deleted; a fallback loop is refused. |
-| `GET /status` | Whether this worker loaded the rules, and any unreadable rule rows. |
-| `POST /test` | Given a kind and facts (or a file, or text), which rule fires, why the earlier ones did not, and the outcome. The text and the file are judged in memory and are never stored or logged; the answer has labels and names, not content. Rate limited to 30 runs a minute. |
+| `GET /pipelines`, `POST /pipelines`, `GET/PATCH/DELETE /pipelines/{id}` | pipelines (`kind`, `name`, `enabled`, `who`, `target`, `rules`, `otherwise`); the kind is fixed |
+| `POST /pipelines/reorder`, `POST /pipelines/check` | the order within a kind; warnings for a draft |
+| `GET/POST /policies`, `PATCH/DELETE /policies/{id}` | redaction policies; one a pipeline applies cannot be deleted |
+| `GET/POST /profiles`, `PATCH/DELETE /profiles/{id}` | detector profiles, including `user_available` |
+| `GET/PUT /settings` | the entity types users may name in their own policies |
+| `GET /options` | what the editors may pick: users, groups, keys, providers, models, readers, policies, profiles |
+| `GET /status` | whether this worker loaded the pipelines, and unreadable rows |
+| `POST /test` | the real combination over given facts, with no side effects; the text and file are never stored or logged; 30 runs a minute |
 
-## The console
+A user's are under `/api/me/privacy` (`pipelines`, `policies`, `in-force`,
+`options`, `test`, cookie session): the same shapes, enforced as above.
 
-**Admin, Privacy, Rules** is the list: rules grouped by kind, each as a sentence
-with a badge when it needs a look (*Off*, *Observe*, *Never fires*, *Partly
-shadowed*, *Check*); tap a badge to see why. Rules move with the arrows (the whole
-new order is saved at once) and switch on and off in place. *How rules work* and
-*Start from a goal* (templates) open as overlays. The editor is a sentence: pick
-the kind, name it, then chips for each condition (is or is not, the values, and
-for what the text contains, *how to decide*) and the action. **Test** is one box for the whole pipeline (the route, the reader and detector, and what is hidden). **Detectors** shows the profiles with health, cost and the fallback.
+## Migration
+
+Migration `0082` rewrites what an existing deployment had and handles requests
+exactly as before; a contract test proves it byte for byte (the redacted text on
+chat, responses, embeddings, rerank and both readers, and the refusals) for
+representative configurations, and that a deployment with no rules behaves
+exactly as before.
+
+- Every **scoped redaction rule** becomes a **policy** (same id and name) plus one
+  administrator **pipeline per kind** with the rule's scope and a last rule that
+  applies that policy. A rule on everything becomes pipelines scoped to all;
+  provider and model scopes become a target; group, user and key scopes a who.
+  Rules fold in the same order as before, so strictest-mode-wins, unioned
+  patterns and the allow-list from the first policy come out identical.
+- A user's **own rules** (ADR 0112) become one user policy ("My rules", entries in
+  the order written) and three user pipelines.
+- **Routing rules** from the first build of this feature become rules inside
+  per-kind administrator pipelines ("Routing rules (read)"), scoped to all; a rule
+  that named users, groups or targets gets a pipeline with that scope. "This or
+  that" conditions (a file type or a scan; health data or IDs) are split into
+  adjacent rules, which keeps first-match meaning. A `local` action becomes
+  `refuse` (it failed closed without a local model).
+- `providers.is_local` is dropped.
+
+A deployment migrated from redaction rules logs as it always did: only a request
+where something was hidden leaves an entry, until a pipeline does real routing
+(a rule, or a last rule that is not the base level).
 
 ## What it does not do yet
 
-Chat rules (profile, policy and refusal on chat), model-based classifiers such as
-GLiNER, optional enrichment by clients (Cerea's descriptions of retrieved text),
-and rerouting chat to a local model are later phases of ADR 0113. A model
-profile can be created and chosen today, but is reported *not installed* and
-follows its fallback.
+Model-based classifiers such as GLiNER (a model profile can be created and chosen
+today, but is reported *not installed* and follows its fallback), and optional
+enrichment by clients (Cerea's descriptions of retrieved text), are later phases of
+ADR 0113.
