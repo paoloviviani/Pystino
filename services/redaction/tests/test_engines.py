@@ -303,3 +303,129 @@ def test_the_engine_header_reaches_the_extractor(monkeypatch: pytest.MonkeyPatch
         "markitdown",
     )
     assert len(fake.calls) == 1
+
+
+# --- review follow-ups: caps, reasons, budget ------------------------------------
+
+
+def _blank_pdf(side: float) -> bytes:
+    from reportlab.pdfgen import canvas
+
+    buffer = io.BytesIO()
+    page = canvas.Canvas(buffer, pagesize=(side, side))
+    page.showPage()
+    page.save()
+    return buffer.getvalue()
+
+
+def test_a_giant_page_is_rendered_within_the_ocr_cap(
+    fake_ocr: list[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sizes: list[tuple[int, int]] = []
+
+    def read(image: object, config: object = None) -> str:
+        sizes.append(image.size)  # type: ignore[attr-defined]
+        return "pagina enorme"
+
+    monkeypatch.setattr(ocr, "read_image", read)
+    # 14400 points is 200 inches: at a fixed 200 DPI that is a 40,000 pixel square.
+    result = extract(_blank_pdf(14400), media_type=PDF)
+    assert result.extractor == "pypdfium2+rapidocr"
+    assert len(sizes) == 1
+    assert max(sizes[0]) <= ocr.MAX_SIDE
+
+
+def test_an_ordinary_page_still_gets_200_dpi() -> None:
+    assert documents._ocr_scale(595, 842) == pytest.approx(200 / 72)
+    assert documents._ocr_scale(14400, 14400) * 14400 <= ocr.MAX_SIDE + 1
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (DoclingUnavailable("x"), "docling unavailable"),
+        (docling_engine.DoclingBusy(), "docling busy"),
+        (docling_engine.DoclingTimeout(), "docling timeout"),
+        (RuntimeError("boom"), "docling failed"),
+    ],
+)
+def test_a_fallback_says_why_without_content(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception, reason: str
+) -> None:
+    monkeypatch.setenv("EXTRACTOR_ENGINE", "docling")
+    fake = FakeDocling(monkeypatch)
+    fake.error = failure
+    result = extract(docx_bytes("Plain"), media_type=DOCX)
+    assert result.extractor == "markitdown"
+    assert result.fallback_reason == reason
+
+
+def test_no_fallback_reason_when_the_engine_asked_for_read_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EXTRACTOR_ENGINE", "docling")
+    FakeDocling(monkeypatch)
+    assert extract(docx_bytes("x"), media_type=DOCX).fallback_reason == ""
+    monkeypatch.setenv("EXTRACTOR_ENGINE", "markitdown")
+    assert extract(docx_bytes("x"), media_type=DOCX).fallback_reason == ""
+
+
+def test_an_empty_docling_result_is_a_reason_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EXTRACTOR_ENGINE", "docling")
+    FakeDocling(monkeypatch, text=" ")
+    result = extract(docx_bytes("x"), media_type=DOCX)
+    assert result.fallback_reason == "docling returned no text"
+
+
+def test_the_fallback_shares_the_time_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("EXTRACTOR_ENGINE", "docling")
+    monkeypatch.setenv("EXTRACTOR_OCR", "rapidocr")
+    monkeypatch.setenv("EXTRACTOR_TIMEOUT_SECONDS", "840")
+    monkeypatch.setattr(ocr, "available", lambda config=None: True)
+    fake = FakeDocling(monkeypatch)
+    fake.error = docling_engine.DoclingTimeout()
+    clock = iter([1000.0, 1800.0])  # the call starts, then Docling has used 800 s
+    monkeypatch.setattr(documents, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    seen: list[int] = []
+
+    def by_page(data: bytes, **kwargs: object) -> None:
+        seen.append(kwargs["config"].timeout_seconds)  # type: ignore[attr-defined]
+        return None
+
+    monkeypatch.setattr(documents, "_pdf_by_page", by_page)
+    result = extract(synth_pdf.report_pdf(scan_pages=0), media_type=PDF)
+    assert seen == [40]
+    assert result.fallback_reason == "docling timeout"
+
+
+def test_pages_are_counted_by_pdfium() -> None:
+    assert documents._pdf_pages(synth_pdf.report_pdf(scan_pages=2)) == 3
+    assert documents._pdf_pages(b"not a pdf") == 0
+
+
+def test_the_page_cap_applies_when_pages_cannot_be_counted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EXTRACTOR_ENGINE", "docling")
+    monkeypatch.setenv("EXTRACTOR_MAX_PAGES", "2")
+    monkeypatch.setattr(documents, "_pdf_pages", lambda data: 0)
+    fake = FakeDocling(monkeypatch)
+    result = extract(synth_pdf.report_pdf(scan_pages=0), media_type=PDF)
+    assert fake.calls[0]["page_limit"] == 2
+    assert result.truncated is True  # the fake reports two pages: the cap was reached
+
+
+def test_docling_busy_hands_the_document_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("docling", reason="convert() imports Docling before it takes the lock")
+    monkeypatch.setattr(docling_engine, "LOCK_WAIT_SECONDS", 0.05)
+    with docling_engine._lock, pytest.raises(docling_engine.DoclingBusy):
+        docling_engine.convert(b"x", extension=".docx", config=settings())
+
+
+def test_the_docling_image_cannot_be_published_by_the_workflow() -> None:
+    workflow = (Path(__file__).resolve().parents[3] / ".github/workflows/images.yml").read_text()
+    assert "must not be published" in workflow  # the guard
+    matrix = workflow.split("IMAGES")[1]
+    assert "docling" not in matrix

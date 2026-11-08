@@ -1,5 +1,5 @@
 {
-  "_comment": "Pinned model weights for the extractor image. Revisions are immutable commit hashes; every file is verified by SHA-256 after download. Regenerate with scripts/fetch_models.py --print-lock after reviewing an upgrade (licences included).",
+  "_comment": "Pinned model weights for the extractor image. Revisions are immutable commit hashes; every file is verified by SHA-256 after download. To upgrade: review the new revision (licences included), change the revision or URL here, download the files once, and record each file's sha256sum.",
   "rapidocr": {
     "licence": "Apache-2.0 (RapidOCR; PP-OCRv6 weights derived from PaddleOCR, Apache-2.0)",
     "files": {

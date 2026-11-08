@@ -26,8 +26,19 @@ Which engine reads which format, with `EXTRACTOR_ENGINE=docling`:
 | PNG, JPEG | RapidOCR (only when OCR is on; otherwise `unsupported`, as before) | |
 
 `extractor` in the response names who actually read the document
-(`markitdown`, `docling`, `pypdfium2+rapidocr`, `rapidocr`, `antiword`), so a
-fallback is visible to the caller and in the response, not only in the log.
+(`markitdown`, `docling`, `pypdfium2+rapidocr`, `rapidocr`, `antiword`), and
+`fallback_reason` says why it was not the engine asked for (`docling
+unavailable`, `docling busy`, `docling timeout`, `docling failed`, `docling
+returned no text`; empty when it was). Fixed phrases, never content. The
+fallback readers share what is left of the document's time budget
+(`EXTRACTOR_TIMEOUT_SECONDS`), they do not start a fresh one.
+
+**Docling reads one document at a time**: the converter holds the models in
+memory and two layouts racing on a small CPU are slower than one after the
+other. A document that cannot get the converter within 60 seconds is read by the
+other engines (`fallback_reason: docling busy`) rather than queuing behind a
+slow one, but throughput for Docling is one document at a time, per container.
+OCR on the markitdown path is serialised the same way.
 
 ## Choosing the engine
 
@@ -37,7 +48,7 @@ fallback is visible to the caller and in the response, not only in the log.
 | `X-Extractor-Engine` request header | `markitdown` or `docling` for this one request; anything else is ignored. The gateway does not send it yet: it is the seam a routing rule (by caller, by document type or size) would use without changing the response shape. |
 | `EXTRACTOR_OCR` | `rapidocr` or `none`. Default: on in the `-ocr` and `-docling` images, off elsewhere. Docling always uses RapidOCR for scans. |
 | `EXTRACTOR_THREADS` | Intra-op threads for ONNX and torch. Default: the cores this container may use (the CPU-affinity mask, which follows `--cpuset` and not a CPU quota: set it explicitly with `cpus:` limits). |
-| `EXTRACTOR_MAX_PAGES` | Pages read by OCR or Docling per document (default 200). Further pages are not read and the response says `truncated`. |
+| `EXTRACTOR_MAX_PAGES` | Pages read by OCR or Docling per document (default 200). Further pages are not read and the response says `truncated`. Pages are counted by pdfium (pdfminer as a fallback); when neither can count, the cap is still passed to Docling. A page is drawn for OCR at 200 DPI but never larger than 2600 pixels on its long side, so a 200-inch page cannot become a multi-gigabyte bitmap. |
 | `EXTRACTOR_TIMEOUT_SECONDS` | A soft time budget per document (default 300), checked between pages. A page already being read is not interrupted, so the real bound is this plus one page. Docling stops and returns what it has (`truncated`). |
 | `EXTRACTOR_MODELS_DIR` | Where the baked weights are (`/opt/extractor-models`). |
 
@@ -66,7 +77,11 @@ docker build -f services/redaction/Dockerfile \
 installed from `services/redaction/uv.lock` (so torch is the CPU wheel, not the
 CUDA one) and the weights by `services/redaction/scripts/fetch_models.py` from
 revisions pinned in `scripts/models.lock.json`, with every file checked against
-its SHA-256. The build prints the licence notice below. In the deploy kit:
+its SHA-256. Wheels are installed with `--require-hashes` from the hashes in
+`uv.lock`, so a tampered index or mirror fails the build. The `-docling` image
+carries the label `dev.pystino.extractor-variant=docling`, and
+`.github/workflows/images.yml` refuses to publish any image whose tag suffix or
+build arguments name docling. The build prints the licence notice below. In the deploy kit:
 `dev/build.sh --docling` (or `--ocr`), then `./configure --extractor docling`.
 
 The extractor and the redaction service may use different images (the kit's

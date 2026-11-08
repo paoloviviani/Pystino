@@ -66,6 +66,7 @@ a reason that names the format and the next step.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import io
 import logging
 import os
@@ -367,6 +368,19 @@ def _pdf_pages(data: bytes) -> int:
     a spreadsheet has no pages until something decides on a paper size, so those
     report 0 rather than 1, which would be a guess dressed as a measurement.
     """
+    # pypdfium2 first: it reads the page tree without parsing each page, and it
+    # is what the per-page paths use, so the cap and the reading agree. pdfminer
+    # is the fallback for a file pdfium will not open.
+    try:
+        import pypdfium2 as pdfium
+
+        document = pdfium.PdfDocument(data)
+        try:
+            return len(document)
+        finally:
+            document.close()
+    except Exception as exc:
+        logger.debug("pdfium could not count PDF pages: %s", type(exc).__name__)
     try:
         from pdfminer.pdfpage import PDFPage
 
@@ -514,8 +528,16 @@ def _pdf_by_page(
 _OCR_SCALE: Final = 200 / 72
 
 
+def _ocr_scale(width: float, height: float) -> float:
+    """200 DPI, but never a bitmap whose long side exceeds what OCR would
+    downscale to anyway (`ocr.MAX_SIDE`): a 200-inch page drawn at 200 DPI is a
+    40,000-pixel square and several gigabytes before anything reads it."""
+    return min(_OCR_SCALE, ocr.MAX_SIDE / max(width, height, 1.0))
+
+
 def _ocr_page(page: object) -> str:
-    rendered = page.render(scale=_OCR_SCALE).to_pil()  # type: ignore[attr-defined]
+    width, height = page.get_size()  # type: ignore[attr-defined]
+    rendered = page.render(scale=_ocr_scale(width, height)).to_pil()  # type: ignore[attr-defined]
     return ocr.read_image(rendered)
 
 
@@ -624,8 +646,8 @@ def _via_docling(
     *,
     page_images: int,
     long_side: int,
-) -> ExtractionResponse | None:
-    """Read with Docling, or None to let the other readers have the document.
+) -> tuple[ExtractionResponse | None, str]:
+    """Read with Docling: (response, "") or (None, why) to let the other readers have it.
 
     None for every way Docling can fail to help: not installed, weights absent,
     an exception, or no text out of it (an empty page set goes to the readers
@@ -634,20 +656,31 @@ def _via_docling(
     result, only here in the log.
     """
     pages = _pdf_pages(data) if resolved == _PDF else 0
-    limit = config.max_pages if resolved == _PDF and pages > config.max_pages else None
+    # The page cap always applies to a PDF: when the pages cannot be counted the
+    # cap is passed anyway, and a result that fills it is reported truncated.
+    limit = (
+        config.max_pages if resolved == _PDF and (pages == 0 or pages > config.max_pages) else None
+    )
     try:
         converted = docling_engine.convert(
             data, extension=_ACCEPTED[resolved], config=config, page_limit=limit
         )
     except docling_engine.DoclingUnavailable:
         logger.warning("EXTRACTOR_ENGINE=docling but Docling is not in this image; falling back")
-        return None
+        return None, "docling unavailable"
+    except docling_engine.DoclingBusy:
+        logger.warning("docling is busy with another document; falling back")
+        return None, "docling busy"
+    except docling_engine.DoclingTimeout:
+        logger.warning("docling ran out of time on %s; falling back", resolved)
+        return None, "docling timeout"
     except Exception as exc:
         # The type only: a parser's message can quote the document.
         logger.warning("docling could not read %s: %s", resolved, type(exc).__name__)
-        return None
+        return None, "docling failed"
     if not converted.text.strip():
-        return None
+        return None, "docling returned no text"
+    capped = limit is not None and (pages > limit or (pages == 0 and converted.pages >= limit))
     if resolved == _PDF and page_images > 0:
         try:
             paged = _pdf_by_page(
@@ -663,19 +696,20 @@ def _via_docling(
             paged = None
         if paged is not None:
             clipped = _clip(paged.text, docling_engine.NAME)
-            return paged.model_copy(
-                update={
-                    "text": clipped.text,
-                    "truncated": clipped.truncated or limit is not None or converted.partial,
-                }
+            return (
+                paged.model_copy(
+                    update={
+                        "text": clipped.text,
+                        "truncated": clipped.truncated or capped or converted.partial,
+                    }
+                ),
+                "",
             )
     outcome = _clip(converted.text, docling_engine.NAME)
-    update: dict[str, object] = {
-        "truncated": outcome.truncated or limit is not None or converted.partial
-    }
+    update: dict[str, object] = {"truncated": outcome.truncated or capped or converted.partial}
     if resolved == _PDF:
         update["pages"] = pages or converted.pages
-    return outcome.model_copy(update=update)
+    return outcome.model_copy(update=update), ""
 
 
 def extract(
@@ -686,6 +720,33 @@ def extract(
     page_images: int = 0,
     long_side: int = DEFAULT_LONG_SIDE,
     engine: Engine | str | None = None,
+) -> ExtractionResponse:
+    """Text from one document (see `_extract`), with `fallback_reason` set when
+    the engine asked for did not read it."""
+    fallback: list[str] = []
+    result = _extract(
+        data,
+        media_type=media_type,
+        filename=filename,
+        page_images=page_images,
+        long_side=long_side,
+        engine=engine,
+        _fallback=fallback,
+        _started=time.monotonic(),
+    )
+    return result.model_copy(update={"fallback_reason": fallback[0]}) if fallback else result
+
+
+def _extract(
+    data: bytes,
+    *,
+    media_type: str | None = None,
+    filename: str | None = None,
+    page_images: int = 0,
+    long_side: int = DEFAULT_LONG_SIDE,
+    engine: Engine | str | None = None,
+    _fallback: list[str],
+    _started: float,
 ) -> ExtractionResponse:
     """Text from one document, with why it is what it is.
 
@@ -758,7 +819,7 @@ def extract(
 
     chosen = parse_engine(engine) if isinstance(engine, str) else engine
     if (chosen or config.engine) is Engine.DOCLING and resolved in _DOCLING_TYPES:
-        done = _via_docling(
+        done, why = _via_docling(
             data,
             resolved,
             config,
@@ -767,6 +828,11 @@ def extract(
         )
         if done is not None:
             return done
+        _fallback.append(why)
+        # The other readers share what is left of the budget; they do not get a
+        # fresh one because Docling used it up.
+        left = int(config.timeout_seconds - (time.monotonic() - _started))
+        config = dataclasses.replace(config, timeout_seconds=max(1, left))
 
     render_failed = False
     if resolved == _PDF and (page_images > 0 or config.ocr):

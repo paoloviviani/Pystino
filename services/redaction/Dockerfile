@@ -46,7 +46,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # The extractor variant: none (the default image, unchanged), ocr or docling.
 # Installed in its own layer, after the base tree, so the default build never
 # sees it. Constrained by uv.lock (exported below) so a rebuild resolves to the
-# versions this was tested with, and so torch is the CPU wheel.
+# versions this was tested with, and so torch is the CPU wheel. Every wheel is
+# installed with its hash from uv.lock (--require-hashes), so a tampered index
+# or mirror fails the build.
 ARG EXTRACTOR=none
 COPY services/redaction/uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -56,9 +58,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         ocr|docling) ;; \
         *) echo "EXTRACTOR must be none, ocr or docling, not ${EXTRACTOR}" >&2; exit 1 ;; \
     esac; \
-    uv export --frozen --no-hashes --no-emit-project --no-emit-package llmp-shared \
-        --extra "${EXTRACTOR}" > /tmp/constraints.txt; \
-    VIRTUAL_ENV=/opt/venv uv pip install --no-cache -c /tmp/constraints.txt ".[${EXTRACTOR}]"
+    uv export --frozen --no-emit-project --no-emit-package llmp-shared \
+        --extra "${EXTRACTOR}" > /tmp/requirements.txt; \
+    VIRTUAL_ENV=/opt/venv uv pip install --no-cache --require-hashes --no-deps \
+        --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match \
+        -r /tmp/requirements.txt; \
+    VIRTUAL_ENV=/opt/venv uv pip install --no-cache --no-deps ".[${EXTRACTOR}]"
 
 # The weights: pinned revisions, SHA-256 verified, baked in so the service never
 # downloads anything (scripts/models.lock.json). Prints the licence notice.
@@ -147,6 +152,7 @@ COPY --chown=detect:detect packages/shared-py /src/packages/shared-py
 # (EXTRACTOR_OCR is on in `ocr` and `docling`), and nothing is ever fetched at
 # runtime: the weights are in /opt/extractor-models.
 ARG EXTRACTOR=none
+LABEL dev.pystino.extractor-variant=${EXTRACTOR}
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONPATH="/app/src" \
     PYTHONUNBUFFERED=1 \

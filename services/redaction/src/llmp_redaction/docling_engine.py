@@ -27,6 +27,8 @@ from llmp_redaction.engines import Settings
 logger = logging.getLogger(__name__)
 
 NAME: Final = "docling"
+#: How long a document waits for the converter before the other readers have it.
+LOCK_WAIT_SECONDS: Final = 60
 DOCLING_MISSING: Final = "The Docling engine is not available in this extractor image"
 
 _lock = threading.Lock()
@@ -36,6 +38,14 @@ _converter_key: tuple[object, ...] | None = None
 
 class DoclingUnavailable(Exception):
     """Docling or its baked weights are not in this image."""
+
+
+class DoclingBusy(Exception):
+    """Another document held the converter for the whole time budget."""
+
+
+class DoclingTimeout(Exception):
+    """Docling ran out of time (or pages) before producing any text."""
 
 
 @dataclass(frozen=True)
@@ -120,7 +130,12 @@ def convert(
     from docling.datamodel.base_models import ConversionStatus, DocumentStream
 
     key = (config.models_dir, config.threads, config.timeout_seconds)
-    with _lock:
+    # One document at a time. A caller that cannot get the converter within
+    # LOCK_WAIT_SECONDS is not left queuing behind a slow document: it is told,
+    # and the other readers take the document.
+    if not _lock.acquire(timeout=min(config.timeout_seconds, LOCK_WAIT_SECONDS)):
+        raise DoclingBusy
+    try:
         if _converter is None or key != _converter_key:
             if not available(config):
                 raise DoclingUnavailable(DOCLING_MISSING)
@@ -142,6 +157,10 @@ def convert(
             if extension in (".pdf", ".pptx")
             else []
         )
+    finally:
+        _lock.release()
+    if result.status is ConversionStatus.PARTIAL_SUCCESS and not text.strip():
+        raise DoclingTimeout
     return Converted(
         text=text,
         pages=pages,
