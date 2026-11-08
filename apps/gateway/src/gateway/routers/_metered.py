@@ -1159,6 +1159,17 @@ def wants_redaction_summary(request: Request) -> bool:
     return _header_on(request, REDACTION_SUMMARY_HEADER)
 
 
+def _is_interactive_sign_in(principal: Principal) -> bool:
+    """Whether the caller is the user's own sign-in, not a key somebody holds.
+
+    True for an external IdP access token (no key row) and for the house IdP's
+    session token, which is a key row minted at login (``minted_by`` set, ADR
+    0046). False for every standing key, which a person created
+    (``minted_by`` null): it may sit in a script whose output is logged.
+    """
+    return principal.api_key is None or principal.api_key.minted_by is not None
+
+
 def redaction_summary_for(
     request: Request, *, principal: Principal, outcome: RedactionOutcome, request_id: str
 ) -> dict[str, Any] | None:
@@ -1173,7 +1184,7 @@ def redaction_summary_for(
     if not wants_redaction_summary(request) or not outcome.in_force:
         return None
     values: list[dict[str, str]] | None = None
-    if _header_on(request, REDACTION_VALUES_HEADER) and principal.api_key is None:
+    if _header_on(request, REDACTION_VALUES_HEADER) and _is_interactive_sign_in(principal):
         values = list(outcome.values)
     return build_summary(request_id=request_id, detail=outcome.detail, blocked=False, values=values)
 

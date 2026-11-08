@@ -32,7 +32,7 @@ from sqlalchemy.exc import IntegrityError
 
 from gateway.config import EffectivePolicy, EntityMode, RedactionPolicy
 from gateway.deps import AdminUserDep, ManagementUserDep, SessionDep, SettingsDep
-from gateway.errors import BadRequestError, GatewayError, NotFoundError
+from gateway.errors import BadRequestError, GatewayError, NotFoundError, TooManyRequestsError
 from gateway.models import (
     ApiKey,
     Group,
@@ -47,8 +47,7 @@ from gateway.models import (
 )
 from gateway.pagination import Page, PageDep, count_of
 from gateway.redaction.http import (
-    eligible_spans,
-    pattern_spans,
+    eligible_for,
     resolve_overlaps,
 )
 from gateway.redaction.resolver import RedactionResolver
@@ -78,6 +77,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/me/redaction", tags=["self-service"])
 admin_router = APIRouter(prefix="/api/admin/redaction", tags=["administration"])
+
+
+#: How many test-box runs one user may make a minute.
+TEST_CALLS_PER_MINUTE = 30
 
 
 class ConflictError(GatewayError):
@@ -199,6 +202,9 @@ async def create_my_rule(
     body: UserRedactionRuleRequest, user: ManagementUserDep, session: SessionDep, request: Request
 ) -> UserRedactionRuleResponse:
     name, regex = _checked(body)
+    # Serialise this user's creates on their own row, so two at once cannot both
+    # pass the count below. The lock is held until the commit.
+    await session.execute(select(User.id).where(User.id == user.id).with_for_update())
     existing = int(
         (
             await session.execute(
@@ -309,7 +315,20 @@ async def rules_in_force(
                     RedactionRule.is_active.is_(True),
                     or_(
                         RedactionRule.scope == RedactionScope.ALL,
-                        RedactionRule.scope.in_([RedactionScope.PROVIDER, RedactionScope.MODEL]),
+                        # Where a request goes: deployment providers and models,
+                        # and this user's own, never another user's private ones.
+                        (RedactionRule.scope == RedactionScope.PROVIDER)
+                        & RedactionRule.scope_id.in_(
+                            select(Provider.id).where(
+                                or_(Provider.owner_id.is_(None), Provider.owner_id == user.id)
+                            )
+                        ),
+                        (RedactionRule.scope == RedactionScope.MODEL)
+                        & RedactionRule.scope_id.in_(
+                            select(ModelDef.id).where(
+                                or_(ModelDef.owner_id.is_(None), ModelDef.owner_id == user.id)
+                            )
+                        ),
                         (RedactionRule.scope == RedactionScope.USER)
                         & (RedactionRule.scope_id == user.id),
                         (RedactionRule.scope == RedactionScope.GROUP)
@@ -407,6 +426,13 @@ async def test_my_rules(
     own. A blocked request is a 200 with ``blocked: true``. **Nothing here is
     logged**: not the text, not the spans.
     """
+    # Each call is a full detector run, which no quota meters. Per user and per
+    # worker, like the announce limiter: it damps a loop, it is not a ceiling.
+    if not request.app.state.redaction_test_limiter.allow(("redaction-test", str(user.id))):
+        raise TooManyRequestsError(
+            f"You can try at most {TEST_CALLS_PER_MINUTE} texts a minute. "
+            "Wait a moment and try again."
+        )
     resolver = _resolver(request)
     redactor: object = getattr(request.app.state, "redactor", None)
     engine = getattr(redactor, "name", None) or settings.redaction.engine
@@ -426,8 +452,13 @@ async def test_my_rules(
     policy = effective.policy
     detector = cast("Any", redactor)
     detected: list[EntitySpan] = (await detector.detect([body.text], policy=policy))[0]
-    spans = [*detected, *pattern_spans(body.text, policy)]
-    eligible = eligible_spans(body.text, spans, policy, settings.redaction.score_threshold)
+    eligible = eligible_for(
+        body.text,
+        detected,
+        policy,
+        settings.redaction.score_threshold,
+        effective.user_pattern_keys(),
+    )
     blocked = any(policy.mode_for(span.entity_type) is EntityMode.BLOCK for span in eligible)
     chosen = resolve_overlaps(body.text, eligible)
     described: list[RedactionTestSpan] = []

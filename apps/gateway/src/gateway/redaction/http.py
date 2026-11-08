@@ -310,20 +310,31 @@ def _message_targets(message: dict[str, Any]) -> list[_Target]:
     return out
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=4096)
 def _compiled(pattern: str) -> Any:
     """One compile per distinct pattern per process.
 
     Compiling is cheap and doing it per request is still waste on the hottest
     path there is. Bounded rather than unbounded because the key is operator
     input: a deployment editing rules in a loop must not grow this without end.
+    The bound is generous because users' own patterns (25 each) share it: a
+    small one would thrash across many active users, recompiling on the hot path.
     """
     import re2
 
     return re2.compile(pattern)
 
 
-def pattern_spans(text: str, policy: RedactionPolicy) -> list[EntitySpan]:
+PatternKey = tuple[str, str]
+
+
+def pattern_spans(
+    text: str,
+    policy: RedactionPolicy,
+    *,
+    only: frozenset[PatternKey] | None = None,
+    skip: frozenset[PatternKey] = frozenset(),
+) -> list[EntitySpan]:
     """Spans for the operator's own regexes.
 
     Produced in the gateway rather than asked of the detection service: no
@@ -335,10 +346,17 @@ def pattern_spans(text: str, policy: RedactionPolicy) -> list[EntitySpan]:
 
     Score 1.0: a pattern somebody wrote by hand is not a guess, so it outranks
     a model's opinion when the two overlap.
+
+    ``skip`` and ``only`` select patterns by ``(name, regex)``: a user's own
+    patterns are matched apart from the rest (:func:`eligible_for`) so that their
+    spans can only be added, never displace an administrator's.
     """
     spans: list[EntitySpan] = []
     for pattern in policy.patterns:
         if pattern.mode is EntityMode.OFF:
+            continue
+        key = (pattern.name, pattern.regex)
+        if key in skip or (only is not None and key not in only):
             continue
         for match in _compiled(pattern.regex).finditer(text):
             start, end = match.span()
@@ -358,6 +376,42 @@ def eligible_spans(
         and span.score >= policy.threshold_for(span.entity_type, default_threshold)
         and not policy.allows(span.slice_of(text))
     ]
+
+
+def _overlaps(a: EntitySpan, b: EntitySpan) -> bool:
+    return a.start < b.end and b.start < a.end
+
+
+def eligible_for(
+    text: str,
+    detected: list[EntitySpan],
+    policy: RedactionPolicy,
+    default_threshold: float,
+    user_patterns: frozenset[PatternKey] = frozenset(),
+) -> list[EntitySpan]:
+    """Every span the policy acts on, with a user's own patterns held to "add only".
+
+    Overlap resolution prefers the higher score, and a pattern span scores 1.0,
+    so a user's pattern (``ar``, or ``\\b\\w``) would beat the detector's
+    ``Mario Rossi`` at 0.85 and shrink an administrator's redaction to the
+    letters the user chose, leaving the rest of the name to the provider. So a
+    user-owned span that overlaps any other eligible span is **dropped**: the
+    administrators' span stands whole, in the administrators' mode. A user span
+    that overlaps nothing adds protection, which is all a user rule is for.
+    Spans from several user patterns still compete with each other as usual.
+    """
+    base = eligible_spans(
+        text,
+        [*detected, *pattern_spans(text, policy, skip=user_patterns)],
+        policy,
+        default_threshold,
+    )
+    if not user_patterns:
+        return base
+    mine = eligible_spans(
+        text, pattern_spans(text, policy, only=user_patterns), policy, default_threshold
+    )
+    return [*base, *(span for span in mine if not any(_overlaps(span, other) for other in base))]
 
 
 def resolve_overlaps(text: str, eligible: list[EntitySpan]) -> list[EntitySpan]:
@@ -394,6 +448,7 @@ def apply_spans(
     findings: dict[str, EntityFinding] | None = None,
     source: str = SOURCE_MESSAGE,
     issued_types: dict[str, str] | None = None,
+    user_patterns: frozenset[PatternKey] = frozenset(),
 ) -> tuple[str, int]:
     """Substitute placeholders for *spans* in *text*, according to *policy*.
 
@@ -428,10 +483,7 @@ def apply_spans(
     # Before the empty check too, and that is not a detail: a deployment whose
     # detector finds nothing still has its own patterns, and returning early on
     # `not spans` would have silently skipped every one of them.
-    spans = [*spans, *pattern_spans(text, policy)]
-    if not spans:
-        return text, 0
-    eligible = eligible_spans(text, spans, policy, default_threshold)
+    eligible = eligible_for(text, spans, policy, default_threshold, user_patterns)
     if not eligible:
         return text, 0
 
@@ -742,6 +794,7 @@ class HttpDetectionRedactor:
         scope = policy.scope if policy is not None else None
         rule_id = policy.rule_id if policy is not None else None
         in_force = effective.is_active()
+        user_patterns = policy.user_pattern_keys() if policy is not None else frozenset()
         note = system_note(
             effective,
             restore_text=self._settings.restore_in_response,
@@ -783,6 +836,7 @@ class HttpDetectionRedactor:
                     findings=findings,
                     source=target.source,
                     issued_types=issued_types,
+                    user_patterns=user_patterns,
                 )
             except ContentBlockedError as exc:
                 exc.findings = findings

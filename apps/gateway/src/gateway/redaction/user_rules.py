@@ -41,10 +41,6 @@ from gateway.config import (
 #: worker (the request path stays query-free), so the count is bounded.
 MAX_RULES_PER_USER = 25
 
-#: The most user rules a worker will hold at all, for the same reason as the
-#: administrators' ``MAX_RULES``.
-MAX_USER_RULES = 50_000
-
 #: The modes a user may choose: every mode but ``off``.
 USER_MODES = tuple(mode for mode in EntityMode if mode is not EntityMode.OFF)
 

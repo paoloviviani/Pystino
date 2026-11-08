@@ -1109,3 +1109,272 @@ class TestCacheInvalidation:
         resolver._reload_rules([rule])
 
         assert resolver.policy_for(user_id=user_id).policy.mode_for("PERSON") is EntityMode.BLOCK
+
+
+class TestAUserPatternOnlyAdds:
+    """A user's pattern scores 1.0, which would beat a detector's 0.85 in overlap
+    resolution. It must never displace or shrink what an administrator's span covers."""
+
+    async def _redacted(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        fake_upstream: Any,
+        regex: str,
+        content: str,
+        mode: str = "anonymise_restore",
+    ) -> str:
+        install(app, admin=[catch_all(PERSON=EntityPolicy(mode=EntityMode.REDACT))])
+        as_user(app, seeded.user)
+        created = await client.post(
+            "/api/me/redaction/rules",
+            json={"kind": "pattern", "name": "MINE", "regex": regex, "mode": mode},
+        )
+        assert created.status_code == 201, created.text
+        fake_upstream.set_json(completion_body())
+        response = await client.post(
+            "/v1/chat/completions", json=body_for(seeded, content), headers=seeded.auth
+        )
+        assert response.status_code == 200, response.text
+        return str(fake_upstream.bodies[-1]["messages"][-1]["content"])
+
+    async def test_a_short_pattern_inside_a_name_does_not_shrink_the_redaction(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
+    ) -> None:
+        sent = await self._redacted(app, client, seeded, fake_upstream, "ar", f"hi {SECRET_NAME}")
+
+        assert sent == "hi <PERSON>"
+        assert "Rossi" not in sent and "<MINE" not in sent
+
+    async def test_a_word_character_pattern_does_not_shred_a_name(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
+    ) -> None:
+        sent = await self._redacted(
+            app, client, seeded, fake_upstream, r"\b\w", f"- {SECRET_NAME}", mode="redact"
+        )
+
+        assert sent == "- <PERSON>"
+
+    async def test_a_weaker_user_mode_over_an_admin_span_changes_nothing(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
+    ) -> None:
+        """anonymise_restore over the administrators' redact: nothing is restored,
+        and the value never reaches the provider in part or whole."""
+        sent = await self._redacted(
+            app, client, seeded, fake_upstream, "Mario", f"hi {SECRET_NAME}", "anonymise_restore"
+        )
+
+        assert "Mario" not in sent and "Rossi" not in sent
+        assert "<PERSON>" in sent
+
+    async def test_a_pattern_that_overlaps_nothing_still_applies(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
+    ) -> None:
+        sent = await self._redacted(
+            app,
+            client,
+            seeded,
+            fake_upstream,
+            r"(ar|PRJ-\d+)",
+            f"{SECRET_NAME} works on PRJ-42",
+            mode="redact",
+        )
+
+        assert sent == "<PERSON> works on <MINE>"
+
+    async def test_the_test_box_reports_the_same(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
+    ) -> None:
+        install(app, admin=[catch_all(PERSON=EntityPolicy(mode=EntityMode.REDACT))])
+        as_user(app, seeded.user)
+        await client.post(
+            "/api/me/redaction/rules",
+            json={"kind": "pattern", "name": "MINE", "regex": "ar", "mode": "block"},
+        )
+
+        body = (
+            await client.post("/api/me/redaction/test", json={"text": f"hi {SECRET_NAME}"})
+        ).json()
+
+        assert [(s["entity_type"], s["rule"]["owner"]) for s in body["spans"]] == [
+            ("PERSON", "admin")
+        ]
+        assert body["blocked"] is False
+
+    def test_the_selection_keeps_the_administrators_span_whole(self) -> None:
+        from gateway.config import CustomPattern
+        from gateway.redaction.http import eligible_for
+        from llmp_shared import EntitySpan
+
+        text = f"hi {SECRET_NAME}"
+        base = policy(
+            default_mode=EntityMode.OFF,
+            entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT)},
+            patterns=[CustomPattern(name="MINE", regex="ar", mode=EntityMode.BLOCK)],
+        )
+        detected = [EntitySpan(start=3, end=14, entity_type="PERSON", score=0.85)]
+
+        chosen = eligible_for(text, detected, base, 0.0, frozenset({("MINE", "ar")}))
+        assert [(s.entity_type, s.start, s.end) for s in chosen] == [("PERSON", 3, 14)]
+
+
+class TestValuesForASignIn:
+    async def test_a_house_idp_session_token_gets_the_values_and_a_created_key_does_not(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        fake_upstream: Any,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        from datetime import timedelta
+
+        from gateway.models import ApiKey
+        from gateway.security import generate_api_key
+        from gateway.types import utcnow
+
+        install(app, admin=[catch_all(PERSON=EntityPolicy())])
+        fake_upstream.set_json(completion_body())
+        minted = generate_api_key(environment_prefix="gwa")
+        async with session_factory() as db:
+            db.add(
+                ApiKey(
+                    user_id=seeded.user.id,
+                    prefix=minted.prefix,
+                    key_hash=minted.key_hash,
+                    name="idp:console",
+                    minted_by="console",
+                    expires_at=utcnow() + timedelta(minutes=15),
+                )
+            )
+            await db.commit()
+
+        session_token = await client.post(
+            "/v1/chat/completions",
+            json=body_for(seeded),
+            headers={"authorization": f"Bearer {minted.secret}", **BOTH},
+        )
+        created_key = await client.post(
+            "/v1/chat/completions", json=body_for(seeded), headers={**seeded.auth, **BOTH}
+        )
+
+        assert session_token.json()["pystino_redaction"]["values"][0]["original"] == SECRET_NAME
+        assert "values" not in created_key.json()["pystino_redaction"]
+
+
+class TestTheTestBoxIsRateLimited:
+    async def test_the_thirty_first_call_in_a_minute_is_refused(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
+    ) -> None:
+        as_user(app, seeded.user)
+        for _ in range(30):
+            assert (
+                await client.post("/api/me/redaction/test", json={"text": "x"})
+            ).status_code == 200
+
+        over = await client.post("/api/me/redaction/test", json={"text": "x"})
+
+        assert over.status_code == 429
+        assert "at most 30 texts a minute" in over.json()["error"]["message"]
+
+
+class TestLowerFindings:
+    async def test_rules_in_force_leave_out_another_users_private_provider(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        from gateway.models import Provider
+
+        install(app)
+        async with session_factory() as db:
+            other = User(issuer="https://idp.test", subject="other", email="o@example.org")
+            db.add(other)
+            await db.flush()
+            private = Provider(
+                name="theirs",
+                base_url="https://x.example/v1",
+                api_key_encrypted="",
+                api_key_hint="",
+                owner_kind="user",
+                owner_id=other.id,
+            )
+            db.add(private)
+            await db.flush()
+            db.add(admin_rule(RedactionScope.PROVIDER, private.id, "Their provider"))
+            db.add(admin_rule(RedactionScope.PROVIDER, seeded.provider.id, "Deployment provider"))
+            await db.commit()
+        as_user(app, seeded.user)
+
+        names = [
+            r["name"] for r in (await client.get("/api/me/redaction/in-force")).json()["rules"]
+        ]
+
+        assert names == ["Deployment provider"]
+
+    async def test_the_admin_preview_as_a_key_includes_its_owners_rules(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
+    ) -> None:
+        install(app)
+        as_user(app, seeded.user)
+        await client.post(
+            "/api/me/redaction/rules",
+            json={"kind": "mode", "name": "EMAIL_ADDRESS", "mode": "redact"},
+        )
+        seeded.user.is_admin = True
+
+        response = await client.post(
+            "/api/admin/redaction/preview",
+            json={
+                "text": "write to a@example.org",
+                "scope": "api_key",
+                "scope_id": str(seeded.api_key.id),
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["policy"]["entities"]["EMAIL_ADDRESS"]["mode"] == "redact"
+
+    async def test_a_held_finish_chunk_is_flushed_before_an_upstream_error(self) -> None:
+        from collections.abc import AsyncIterator
+
+        from gateway.routers.chat import redaction_summary_stage
+        from gateway.sse.events import SSEEvent
+
+        async def upstream() -> AsyncIterator[SSEEvent]:
+            yield SSEEvent.from_json(chunk("Hi"))
+            yield SSEEvent.from_json(chunk(finish_reason="stop"))
+            raise RuntimeError("the upstream dropped")
+
+        seen: list[SSEEvent] = []
+        with pytest.raises(RuntimeError):
+            async for event in redaction_summary_stage({"applied": False})(upstream()):
+                seen.append(event)
+
+        assert len(seen) == 2
+        assert "pystino_redaction" not in seen[0].data
+        assert "pystino_redaction" in seen[1].data
+
+    async def test_the_creation_cap_takes_a_row_lock_and_still_holds(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
+    ) -> None:
+        """The count and the insert run under a lock on the user's row; the cap
+        itself is exercised in TestTheManagementApi."""
+        from gateway.redaction.user_rules import MAX_RULES_PER_USER
+
+        install(app)
+        as_user(app, seeded.user)
+        for index in range(MAX_RULES_PER_USER):
+            await client.post(
+                "/api/me/redaction/rules",
+                json={"kind": "mode", "name": f"T{index}", "mode": "redact"},
+            )
+
+        over = await client.post(
+            "/api/me/redaction/rules", json={"kind": "mode", "name": "EXTRA", "mode": "redact"}
+        )
+
+        assert over.status_code == 400

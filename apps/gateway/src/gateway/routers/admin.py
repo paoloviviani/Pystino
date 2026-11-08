@@ -7352,7 +7352,17 @@ async def preview_redaction(
         # not taking effect.
         await _check_subject(session, scope, payload.scope_id)
         if resolver is not None:
-            effective = _policy_for_subject(resolver, scope, payload.scope_id)
+            if scope is RedactionScope.API_KEY:
+                # A request on a key is also its owner's request, so their own
+                # rules apply to it (ADR 0112).
+                owner = (
+                    await session.execute(
+                        select(ApiKey.user_id).where(ApiKey.id == payload.scope_id)
+                    )
+                ).scalar_one_or_none()
+                effective = resolver.policy_for(api_key_id=payload.scope_id, user_id=owner)
+            else:
+                effective = _policy_for_subject(resolver, scope, payload.scope_id)
 
     if not isinstance(redactor, _DetectingRedactor):
         return RedactionPreviewResponse(
@@ -7395,6 +7405,7 @@ async def preview_redaction(
             policy=effective.policy,
             default_threshold=settings.redaction.score_threshold,
             scope=effective.scope,
+            user_patterns=effective.user_pattern_keys(),
         )
     except ContentBlockedError as exc:
         return RedactionPreviewResponse(

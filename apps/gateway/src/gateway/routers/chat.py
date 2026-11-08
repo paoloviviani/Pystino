@@ -171,23 +171,33 @@ def redaction_summary_stage(summary: dict[str, Any]) -> StreamStage:
 
     async def stage(events: AsyncIterator[SSEEvent]) -> AsyncIterator[SSEEvent]:
         held: SSEEvent | None = None
-        async for event in events:
-            if event.is_done():
+        try:
+            async for event in events:
+                if event.is_done():
+                    if held is not None:
+                        yield attach(held)
+                        held = None
+                    yield event
+                    continue
                 if held is not None:
-                    yield attach(held)
+                    yield held
                     held = None
+                payload = event.json()
+                if isinstance(payload, dict) and (
+                    payload.get("usage") is not None or terminal(payload)
+                ):
+                    held = event
+                    continue
                 yield event
-                continue
+        except Exception:
+            # The upstream failed before the next frame: the chunk held back
+            # (the one that finishes the answer) must still reach the client,
+            # with the summary, ahead of the error. A cancellation (the client
+            # left) is not an Exception and has nobody to send it to.
             if held is not None:
-                yield held
-                held = None
-            payload = event.json()
-            if isinstance(payload, dict) and (
-                payload.get("usage") is not None or terminal(payload)
-            ):
-                held = event
-                continue
-            yield event
+                pending, held = held, None
+                yield attach(pending)
+            raise
         if held is not None:
             yield attach(held)
 

@@ -100,13 +100,18 @@ async def load_rules(session: AsyncSession) -> list[RedactionRule]:
 
 
 async def load_user_rules(session: AsyncSession) -> list[UserRedactionRule]:
-    """Every user's own rules, oldest first so the fold order is stable."""
+    """Every user's own rules, oldest first so the fold order is stable.
+
+    **No global limit.** Each user is capped at ``MAX_RULES_PER_USER`` when they
+    save, so the table is bounded by users times that; a cap here would silently
+    switch off the newest users' protection once the table grew past it.
+    """
     return list(
         (
             await session.execute(
-                select(UserRedactionRule)
-                .order_by(UserRedactionRule.created_at, UserRedactionRule.id)
-                .limit(user_rules.MAX_USER_RULES + 1)
+                select(UserRedactionRule).order_by(
+                    UserRedactionRule.created_at, UserRedactionRule.id
+                )
             )
         )
         .scalars()
@@ -457,13 +462,6 @@ class RedactionResolver:
 
     def _reload_user_rules(self, rows: Sequence[UserRedactionRule]) -> bool:
         """Swap the users' own rules in. True when they changed."""
-        if len(rows) > user_rules.MAX_USER_RULES:
-            logger.error(
-                "more than %d user redaction rules; only the first %d are in force on this worker",
-                user_rules.MAX_USER_RULES,
-                user_rules.MAX_USER_RULES,
-            )
-            rows = rows[: user_rules.MAX_USER_RULES]
         parsed = _user_rules_of(rows)
         if parsed == self._user_rules:
             return False

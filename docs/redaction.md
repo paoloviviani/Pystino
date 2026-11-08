@@ -403,6 +403,12 @@ folded exactly as above, as the narrowest scope there is:
 - **a stricter mode for an entity type** wins over a weaker one, by the order
   `off` < `anonymise_restore` < `anonymise` < `redact` < `block`.
 
+A user's pattern also never displaces or shrinks what the administrators'
+rules already cover: a pattern span that overlaps a detected or administrator
+span is dropped, and the administrator's span stands whole in the
+administrators' mode (otherwise a pattern such as `ar` would cut `Mario Rossi`
+down to its own letters). A pattern that overlaps nothing simply adds.
+
 A user rule cannot loosen anything. There is no `off` to choose, and no
 threshold, exception, allow-list or placeholder style to set: the request has no
 such fields and an unknown one is refused. A rule that is not stricter than what
@@ -430,7 +436,8 @@ and the `console` capability, like the rest of `/api/me`). `POST
 /api/me/redaction/test` runs the real path over a text and answers with what
 would be hidden: type, offsets, mode and the deciding rule (its name, and
 whether an administrator or the user wrote it). It never echoes the text and
-never logs it. `GET /api/me/redaction/in-force` lists the administrators' rules
+never logs it. It runs the detector, so it is limited to 30 calls a minute per
+user (per worker); the 31st is a 429. `GET /api/me/redaction/in-force` lists the administrators' rules
 that can apply to the user, read-only, as types and modes (not the regexes of an
 administrator's patterns, nor the values on an allow-list).
 
@@ -500,11 +507,11 @@ a separate event.
   it from `GET /v1/pystino/usage` once the request is over.
 
 **The values.** With a second header, `x-pystino-redaction-values: 1`, *and* a
-caller that authenticated with an OIDC user token (never an API key), the object
+caller that authenticated with the user's own sign-in (an external IdP access token, or the bundled IdP's session token, which is a key minted at login), never a key the user or anyone created, the object
 also has `values`: `{"type", "original", "placeholder"}` for every value that
 was substituted. They are put in that one response and **never written to a log
 or a database**: the usage row, the redaction log and the application log hold
-none of them. An API key never gets them, because a key may belong to a script
+none of them. A standing API key never gets them, because a key may belong to a script
 whose output is logged.
 
 ## Operating it

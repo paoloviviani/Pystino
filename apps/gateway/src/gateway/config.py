@@ -949,6 +949,28 @@ class EffectivePolicy:
     #: decided a type (the redaction log and the per-response summary).
     contributors: tuple[Contributor, ...] = ()
 
+    def user_pattern_keys(self) -> frozenset[tuple[str, str]]:
+        """``(name, regex)`` of the patterns only a user's own rules supply.
+
+        A pattern an administrator also wrote is theirs, not the user's, so it
+        keeps its place in overlap resolution.
+        """
+        mine = {
+            (p.name, p.regex)
+            for c in self.contributors
+            if c.owner == "user"
+            for p in c.policy.patterns
+        }
+        if not mine:
+            return frozenset()
+        theirs = {
+            (p.name, p.regex)
+            for c in self.contributors
+            if c.owner != "user"
+            for p in c.policy.patterns
+        }
+        return frozenset(mine - theirs)
+
     def decider_for(self, entity_type: str) -> Contributor | None:
         """The rule whose answer became this type's mode.
 
