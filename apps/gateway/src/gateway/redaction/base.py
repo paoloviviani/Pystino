@@ -66,9 +66,27 @@ class RedactionOutcome:
     #: length, rather than as ``<LABEL_TOKEN>``.
     same_length_substitutions: int = 0
 
+    #: Whether redaction was in force for this request: an engine that screens
+    #: and a policy that does something. None means the engine did not say, which
+    #: is read as "in force unless it is the ``noop`` engine".
+    active: bool | None = None
+    #: The log entry (``redaction.report.build_detail``): per type, the count,
+    #: the mode, the deciding rule and where the value was. No values, no
+    #: offsets. None when nothing was hidden.
+    detail: dict[str, Any] | None = None
+    #: What was substituted: ``{"type", "original", "placeholder"}``. In memory
+    #: for the one response that may carry it and **never written anywhere**:
+    #: nothing that persists reads this field (ADR 0112).
+    values: list[dict[str, str]] = field(default_factory=list)
+
     @property
     def changed(self) -> bool:
         return self.entity_count > 0
+
+    @property
+    def in_force(self) -> bool:
+        """Whether the per-response summary is present for this request."""
+        return self.active if self.active is not None else self.engine != "noop"
 
 
 def restore_reasoning_and_arguments(

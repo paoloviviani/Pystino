@@ -79,6 +79,7 @@ from gateway.quota import (
     Reservation,
 )
 from gateway.redaction import RedactionOutcome, Redactor
+from gateway.redaction.report import build_detail, build_summary
 from gateway.redaction.resolver import RedactionResolver
 from gateway.routing import (
     MAX_ATTEMPTS,
@@ -1024,6 +1025,7 @@ async def begin(
             redacted_entity_count=outcome.entity_count if outcome else 0,
             redaction_scope=outcome.scope if outcome else None,
             redaction_rule_id=outcome.rule_id if outcome else None,
+            redaction_detail=outcome.detail if outcome else None,
             surface=surface,
             plugin=resolved.provider.plugin,
             billing_mode=resolved.provider.billing_mode.value,
@@ -1102,6 +1104,16 @@ async def redact_or_block(
     try:
         return await redactor.redact_request(messages, policy=policy)
     except ContentBlockedError as exc:
+        detail = build_detail(exc.findings or {}, policy, blocked=True)
+        if wants_redaction_summary(request):
+            # The 403 carries the summary too, so a caller that asked for one
+            # learns what refused it. Types and counts and the deciding rule;
+            # never a value, which `blocked` requests do not even collect.
+            exc.extra_payload = {
+                REDACTION_SUMMARY_FIELD: build_summary(
+                    request_id=request_id, detail=detail, blocked=True
+                )
+            }
         session.add(
             UsageRecord(
                 request_id=request_id,
@@ -1120,6 +1132,7 @@ async def redact_or_block(
                 redaction_engine=getattr(redactor, "name", None),
                 redaction_scope=policy.scope if policy else None,
                 redaction_rule_id=policy.rule_id if policy else None,
+                redaction_detail=detail,
                 error_code=exc.code,
                 # Safe by construction: ContentBlockedError never quotes the
                 # matched text, which is the whole point of its own docstring.
@@ -1128,6 +1141,52 @@ async def redact_or_block(
         )
         await session.commit()
         raise
+
+
+#: Opt-in headers for the per-response redaction summary (ADR 0112), and the
+#: body field it arrives in. Without the first, a response is byte for byte what
+#: it was before: an OpenAI client never sees a field it did not ask for.
+REDACTION_SUMMARY_HEADER = "x-pystino-redaction-summary"
+REDACTION_VALUES_HEADER = "x-pystino-redaction-values"
+REDACTION_SUMMARY_FIELD = "pystino_redaction"
+
+
+def _header_on(request: Request, name: str) -> bool:
+    return request.headers.get(name, "").strip().lower() in ("1", "true")
+
+
+def wants_redaction_summary(request: Request) -> bool:
+    return _header_on(request, REDACTION_SUMMARY_HEADER)
+
+
+def _is_interactive_sign_in(principal: Principal) -> bool:
+    """Whether the caller is the user's own sign-in, not a key somebody holds.
+
+    True for an external IdP access token (no key row) and for the house IdP's
+    session token, which is a key row minted at login (``minted_by`` set, ADR
+    0046). False for every standing key, which a person created
+    (``minted_by`` null): it may sit in a script whose output is logged.
+    """
+    return principal.api_key is None or principal.api_key.minted_by is not None
+
+
+def redaction_summary_for(
+    request: Request, *, principal: Principal, outcome: RedactionOutcome, request_id: str
+) -> dict[str, Any] | None:
+    """The ``pystino_redaction`` object for this response, or None to send nothing.
+
+    None unless the caller opted in **and** redaction was in force for the
+    request: absence is how a caller learns "no redaction configured". The
+    originals (``values``) need a second header and a user token: an API key may
+    belong to a script whose output is logged, and the values are the one thing
+    here that must not end up in a log. They are put in this response only.
+    """
+    if not wants_redaction_summary(request) or not outcome.in_force:
+        return None
+    values: list[dict[str, str]] | None = None
+    if _header_on(request, REDACTION_VALUES_HEADER) and _is_interactive_sign_in(principal):
+        values = list(outcome.values)
+    return build_summary(request_id=request_id, detail=outcome.detail, blocked=False, values=values)
 
 
 #: The header a caller labels a request with, and the longest label kept.

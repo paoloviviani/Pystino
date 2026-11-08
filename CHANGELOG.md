@@ -4,6 +4,9 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **Redaction visibility for users.** Users get a **Redactions** page next to Your usage: the administrators' rules in plain words (read-only), a log of requests where something was hidden or refused (what kind of value, how many, which rule decided; never the values), their own rules and a box to try text against all of them. A user's own rules fold in after the administrators' and can only tighten: a custom pattern (same RE2 engine and limits as an administrator's) and a stricter mode per entity type; no `off`, thresholds or exceptions, and a rule that is not stricter than the administrators' is saved and inert. `/api/me/redaction/{rules,in-force,test,events}`, and `GET /api/admin/redaction/events` for administrators (own-key requests left out). Migration `0080` adds `user_redaction_rules` and `usage_records.redaction_detail` (the log entry, on the usage row, so no extra write; retention is the request log's).
+- **Per-response redaction summary.** A request with `x-pystino-redaction-summary: 1` gets a top-level `pystino_redaction` object on `/v1/chat/completions` (in the body, or on the final stream chunk): whether redaction applied, per type the count, mode, deciding rule and where the value was. Absent when redaction is off; without the header responses are unchanged. With `x-pystino-redaction-values: 1` and the user's own sign-in token (an external IdP token or the bundled IdP's session token; never a standing API key) it also carries the substituted originals, in that response only and never stored. Not sent: a cost (settled after the response).
+
 ## v0.30.0 — 2026-11-08
 
 Paired with Cerea 0.45.0.

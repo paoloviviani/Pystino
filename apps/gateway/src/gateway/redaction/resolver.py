@@ -48,10 +48,18 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from gateway.config import EffectivePolicy, RedactionPolicy, RedactionSettings
-from gateway.models import RedactionConfig, RedactionRule, RedactionScope
+from gateway.config import (
+    Contributor,
+    EffectivePolicy,
+    EntityMode,
+    RedactionPolicy,
+    RedactionSettings,
+)
+from gateway.models import RedactionConfig, RedactionRule, RedactionScope, UserRedactionRule
+from gateway.redaction import user_rules
 from gateway.redaction.base import Redactor
 from gateway.redaction.registry import UnknownEngineError, resolve
+from gateway.redaction.user_rules import UserRule
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +92,26 @@ async def load_rules(session: AsyncSession) -> list[RedactionRule]:
                 .where(RedactionRule.is_active.is_(True))
                 .order_by(RedactionRule.updated_at.desc())
                 .limit(MAX_RULES + 1)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def load_user_rules(session: AsyncSession) -> list[UserRedactionRule]:
+    """Every user's own rules, oldest first so the fold order is stable.
+
+    **No global limit.** Each user is capped at ``MAX_RULES_PER_USER`` when they
+    save, so the table is bounded by users times that; a cap here would silently
+    switch off the newest users' protection once the table grew past it.
+    """
+    return list(
+        (
+            await session.execute(
+                select(UserRedactionRule).order_by(
+                    UserRedactionRule.created_at, UserRedactionRule.id
+                )
             )
         )
         .scalars()
@@ -167,6 +195,13 @@ class RedactionResolver:
         #: microseconds against a 65ms detection floor, but it runs on every
         #: request and the inputs repeat; cleared whenever the rules reload.
         self._folded: dict[tuple[uuid.UUID, ...], RedactionPolicy] = {}
+        #: Users' own rules, by user id (ADR 0112). Loaded in the same poll;
+        #: folded in after the administrators' answer.
+        self._user_rules: dict[uuid.UUID, tuple[UserRule, ...]] = {}
+        #: The folded result per (administrators' rule ids, user), cleared on reload.
+        self._user_folded: dict[
+            tuple[tuple[uuid.UUID, ...], uuid.UUID], tuple[RedactionPolicy, tuple[Contributor, ...]]
+        ] = {}
         #: The row this worker built from, or None while the environment decides.
         #: Compared by id, not by engine name: two rows naming the same engine are
         #: still two decisions, and an operator who switches away and back should
@@ -209,7 +244,54 @@ class RedactionResolver:
         user_id: uuid.UUID | None = None,
         api_key_id: uuid.UUID | None = None,
     ) -> EffectivePolicy:
-        """The policy governing one request, and which rule to blame for it.
+        """The policy governing one request: the administrators', then the user's own.
+
+        The administrators' answer is computed exactly as ever
+        (:meth:`admin_policy_for`); the requesting user's own rules, if they have
+        any, are folded in last and can only tighten it (ADR 0112). Zero queries,
+        like the rest: the user rules arrive on the same poll.
+        """
+        admin = self.admin_policy_for(
+            provider_id=provider_id,
+            model_id=model_id,
+            group_id=group_id,
+            user_id=user_id,
+            api_key_id=api_key_id,
+        )
+        own = self._user_rules.get(user_id) if user_id is not None else None
+        if not own:
+            return admin
+        assert user_id is not None
+        key = (tuple(c.id for c in admin.contributors if c.id is not None), user_id)
+        folded = self._user_folded.get(key)
+        if folded is None:
+            folded = (
+                user_rules.fold(admin.policy, own),
+                tuple(rule.contributor() for rule in own),
+            )
+            self._user_folded[key] = folded
+        policy, contributors = folded
+        return EffectivePolicy(
+            policy=policy,
+            scope=admin.scope,
+            rule_id=admin.rule_id,
+            contributors=(*admin.contributors, *contributors),
+        )
+
+    def user_rules_of(self, user_id: uuid.UUID) -> tuple[UserRule, ...]:
+        """The rules in force for one user, as this worker last loaded them."""
+        return self._user_rules.get(user_id, ())
+
+    def admin_policy_for(
+        self,
+        *,
+        provider_id: uuid.UUID | None = None,
+        model_id: uuid.UUID | None = None,
+        group_id: uuid.UUID | None = None,
+        user_id: uuid.UUID | None = None,
+        api_key_id: uuid.UUID | None = None,
+    ) -> EffectivePolicy:
+        """The administrators' policy for one request, and which rule to blame for it.
 
         Order matters and is widest first. ``combine`` takes the allow-list from
         the first policy alone, and the first is the catch-all rule when there is
@@ -239,7 +321,14 @@ class RedactionResolver:
             and (rule := self.rule_for(scope, _subject_id(subject))) is not None
         ]
         if not applicable:
-            return EffectivePolicy(policy=self._policy)
+            return EffectivePolicy(
+                policy=self._policy,
+                contributors=(
+                    Contributor(
+                        id=None, name="Deployment policy", owner="admin", policy=self._policy
+                    ),
+                ),
+            )
 
         key = tuple(rule.id for rule in applicable)
         folded = self._folded.get(key)
@@ -252,7 +341,15 @@ class RedactionResolver:
         # several rules names only this one; the others are visible on the rules
         # screen, and ADR 0038 says so rather than implying the trail is complete.
         narrowest = applicable[-1]
-        return EffectivePolicy(policy=folded, scope=narrowest.scope, rule_id=narrowest.id)
+        return EffectivePolicy(
+            policy=folded,
+            scope=narrowest.scope,
+            rule_id=narrowest.id,
+            contributors=tuple(
+                Contributor(id=rule.id, name=rule.name, owner="admin", policy=rule.policy)
+                for rule in applicable
+            ),
+        )
 
     @property
     def policy_source(self) -> str:
@@ -285,9 +382,11 @@ class RedactionResolver:
             async with self._session_factory() as session:
                 row = await current_engine(session)
                 rules = await load_rules(session)
+                mine = await load_user_rules(session)
                 row_id = row.id if row is not None else None
                 engine = row.engine if row is not None else self._settings.engine
                 changed = self._reload_rules(rules)
+                changed = self._reload_user_rules(mine) or changed
                 if row_id == self._config_id:
                     # Rules reloaded either way: they are a dictionary swap, not
                     # a redactor rebuild, so they cost nothing and must not wait
@@ -355,8 +454,37 @@ class RedactionResolver:
             return False
         self._rules = parsed
         self._folded.clear()
+        # A user's folded policy is built on the administrators' answer, which
+        # may have changed without any rule id doing so (an edit keeps the id).
+        self._user_folded.clear()
         logger.info("redaction rules reloaded: %d active", len(parsed))
         return True
+
+    def _reload_user_rules(self, rows: Sequence[UserRedactionRule]) -> bool:
+        """Swap the users' own rules in. True when they changed."""
+        parsed = _user_rules_of(rows)
+        if parsed == self._user_rules:
+            return False
+        self._user_rules = parsed
+        self._user_folded.clear()
+        logger.info("user redaction rules reloaded: %d users", len(parsed))
+        return True
+
+    def replace_user_rules(self, user_id: uuid.UUID, rows: Sequence[UserRedactionRule]) -> None:
+        """Take one user's edit at once on the worker that handled it.
+
+        The other workers learn on their next poll, like any rule edit; this
+        only spares the user who just saved a rule from a ten-second wait that
+        looks like the rule not working.
+        """
+        mine = _user_rules_of(rows).get(user_id)
+        if mine:
+            self._user_rules[user_id] = mine
+        else:
+            self._user_rules.pop(user_id, None)
+        self._user_folded = {
+            key: value for key, value in self._user_folded.items() if key[1] != user_id
+        }
 
     def start(self) -> None:
         """Begin polling. Idempotent."""
@@ -398,6 +526,8 @@ class _Rule:
     #: is not the same thing as a person's own policy, and only the author tells
     #: them apart — there is one row per subject (routers/me.py:_imposed_on).
     created_by: uuid.UUID | None = None
+    #: What the log calls it. The row's name, or a label for its scope.
+    name: str = ""
 
 
 def _subject_id(subject: object) -> uuid.UUID | None:
@@ -421,9 +551,41 @@ def _rules_of(rows: Sequence[RedactionRule]) -> dict[tuple[str, uuid.UUID | None
             logger.error("redaction rule %s has an unreadable policy; ignoring it", row.id)
             continue
         parsed[(str(row.scope), row.scope_id)] = _Rule(
-            id=row.id, scope=str(row.scope), policy=policy, created_by=row.created_by
+            id=row.id,
+            scope=str(row.scope),
+            policy=policy,
+            created_by=row.created_by,
+            name=row.name or _default_name(str(row.scope)),
         )
     return parsed
+
+
+def _default_name(scope: str) -> str:
+    """A rule saved without a name still has to be called something in a log."""
+    return "All requests" if scope == RedactionScope.ALL.value else f"Rule for a {scope}"
+
+
+def _user_rules_of(rows: Sequence[UserRedactionRule]) -> dict[uuid.UUID, tuple[UserRule, ...]]:
+    """Group users' rows by user, dropping any that no longer read."""
+    grouped: dict[uuid.UUID, list[UserRule]] = {}
+    for row in rows:
+        try:
+            mode = EntityMode(row.mode)
+            if mode is EntityMode.OFF:
+                raise ValueError("a user rule cannot be off")
+            if row.kind == "pattern":
+                if row.regex is None:
+                    raise ValueError("a pattern needs a regex")
+                # Through the administrators' own validation: a row edited by
+                # hand into something RE2 refuses is dropped, not served.
+                user_rules.validate_pattern(row.name, row.regex, mode)
+        except ValueError:
+            logger.error("user redaction rule %s is unreadable; ignoring it", row.id)
+            continue
+        grouped.setdefault(row.user_id, []).append(
+            UserRule(id=row.id, kind=row.kind, name=row.name, regex=row.regex, mode=mode)
+        )
+    return {user: tuple(rules) for user, rules in grouped.items()}
 
 
 async def _close_quietly(redactor: Redactor) -> None:

@@ -62,6 +62,7 @@ from gateway.routers import (
     identity_events,
     images,
     me,
+    me_redaction,
     messages,
     models,
     ocr,
@@ -304,6 +305,8 @@ async def init_app_state(
     # (a test builds a fresh app per test and must get a fresh limiter with
     # it).
     app.state.announce_limiter = SlidingWindowLimiter(max_calls=10, window_seconds=60)
+    # ADR 0112: the redaction test box runs the detector for each call.
+    app.state.redaction_test_limiter = SlidingWindowLimiter(max_calls=30, window_seconds=60)
     # ADR 0093 §9.3: retries a delete's chat call, exponential backoff,
     # never gives up. The inline try after a delete commits covers the
     # common case; this is what a chat that was down at that moment gets
@@ -490,6 +493,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(pystino.router)
     app.include_router(auth.router)
     app.include_router(me.router)
+    app.include_router(me_redaction.router)
+    app.include_router(me_redaction.admin_router)
     app.include_router(admin.router)
     app.include_router(admin.me_router)
     app.include_router(admin_byok.router)

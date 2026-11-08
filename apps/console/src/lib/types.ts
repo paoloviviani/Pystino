@@ -626,3 +626,20 @@ export type AuthMethods = Schemas["AuthMethods"];
 
 /** The caller's thresholds for one rule: percentages, arbitrary, user-owned. */
 export type MyNotificationThresholdsInput = Schemas["MyNotificationThresholdsRequest"];
+
+/** A user's own redaction rule (a pattern, or a stricter mode for one type). */
+export type UserRedactionRule = Schemas["UserRedactionRuleResponse"];
+
+/** What a user sends to add or change one. There is no `off` and no exception to send. */
+export type UserRedactionRuleInput = Schemas["UserRedactionRuleRequest"];
+
+/** The administrators' rules that can apply to a user, read-only, and the engine's state. */
+export type MyRedactionInForce = Schemas["MyRedactionInForce"];
+
+export type AdminRuleView = Schemas["AdminRuleView"];
+
+/** What the test box answers: where, what kind, which rule. Never the text. */
+export type RedactionTestResult = Schemas["RedactionTestResponse"];
+
+/** One request where redaction hid something or refused. No values. */
+export type RedactionEvent = Schemas["RedactionEventRow"];

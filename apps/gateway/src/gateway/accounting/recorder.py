@@ -155,6 +155,8 @@ class RequestContext:
     #: this one redacted" six weeks later, and that is the question asked.
     redaction_scope: str | None = None
     redaction_rule_id: uuid.UUID | None = None
+    #: The redaction log entry (no values, no offsets), written with the row.
+    redaction_detail: dict[str, Any] | None = None
     #: Which endpoint served the request. Selects how response frames are read
     #: — the surfaces disagree about where usage lives and what its keys mean.
     surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS
@@ -290,6 +292,7 @@ class RequestAccounting:
             redacted_entity_count=self._ctx.redacted_entity_count,
             redaction_scope=self._ctx.redaction_scope,
             redaction_rule_id=self._ctx.redaction_rule_id,
+            redaction_detail=self._ctx.redaction_detail,
         )
         async with self._session_factory() as session:
             session.add(record)
@@ -389,6 +392,7 @@ class RequestAccounting:
         entity_count: int = 0,
         scope: str | None = None,
         rule_id: uuid.UUID | None = None,
+        detail: dict[str, Any] | None = None,
     ) -> None:
         """Redaction facts discovered *after* the row was created.
 
@@ -404,6 +408,7 @@ class RequestAccounting:
         self._ctx.redacted_entity_count = max(0, entity_count)
         self._ctx.redaction_scope = scope
         self._ctx.redaction_rule_id = rule_id
+        self._ctx.redaction_detail = detail
         self._redaction_observed = True
 
     def observe_images(
@@ -882,6 +887,7 @@ class RequestAccounting:
                     "redacted_entity_count": self._ctx.redacted_entity_count,
                     "redaction_scope": self._ctx.redaction_scope,
                     "redaction_rule_id": self._ctx.redaction_rule_id,
+                    "redaction_detail": self._ctx.redaction_detail,
                 }
                 if self._redaction_observed
                 else {}

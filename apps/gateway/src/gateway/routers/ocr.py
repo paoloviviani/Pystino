@@ -60,6 +60,7 @@ from gateway.deps import (
 )
 from gateway.errors import BadRequestError, ContentBlockedError
 from gateway.models import ApiSurface, ModelDef
+from gateway.redaction.report import SOURCE_DOCUMENT, build_detail, relabel
 from gateway.routers import _metered
 from gateway.schemas import OcrRequest
 from gateway.upstream import UpstreamError
@@ -131,6 +132,9 @@ async def _redact_pages(
             engine=getattr(redactor, "name", None),
             scope=policy.scope if policy else None,
             rule_id=policy.rule_id if policy else None,
+            detail=build_detail(
+                exc.findings or {}, policy, blocked=True, relabel_sources=SOURCE_DOCUMENT
+            ),
         )
         await metered.completed(upstream_status=200)
         return JSONResponse(
@@ -154,6 +158,7 @@ async def _redact_pages(
         entity_count=outcome.entity_count,
         scope=outcome.scope,
         rule_id=outcome.rule_id,
+        detail=relabel(outcome.detail, SOURCE_DOCUMENT),
     )
     return None
 

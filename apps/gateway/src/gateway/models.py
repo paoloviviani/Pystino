@@ -1831,6 +1831,14 @@ class UsageRecord(Base):
     redaction_scope: Mapped[str | None] = mapped_column(String(32), default=None)
     redaction_rule_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
     redacted_entity_count: Mapped[int] = mapped_column(Integer, default=0)
+    #: The redaction log entry for this request (ADR 0112): per entity type the
+    #: count, the mode, the deciding rule and where the value was, and whether it
+    #: was blocked. **Never a value or a matched text**, and no offsets. Null when
+    #: redaction found nothing. Read only by the redaction log routes; the request
+    #: log's own query names its columns and never selects this.
+    redaction_detail: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON(none_as_null=True), default=None
+    )
 
     error_code: Mapped[str | None] = mapped_column(String(64), default=None)
     error_message: Mapped[str | None] = mapped_column(Text, default=None)
@@ -2794,6 +2802,45 @@ class RedactionRule(Base):
 
     def __repr__(self) -> str:
         return f"<RedactionRule {self.scope}:{self.scope_id} active={self.is_active}>"
+
+
+class UserRedactionRule(Base):
+    """One of a user's own redaction rules (ADR 0112).
+
+    Two kinds, both of which can only tighten what the administrators' rules
+    already say (``redaction.user_rules.fold``): a **pattern** (a custom RE2
+    regex, validated exactly as an administrator's is) and a **mode** for one
+    entity type. A user rule cannot be ``off`` and carries no threshold or
+    exception, which is why there is no column for either.
+
+    One row per rule, unique per user and name within a kind. Not a
+    ``redaction_rules`` row: that table has one row per subject and carries a
+    whole policy an administrator edits, with fields (allow-list, thresholds)
+    that must never be a user's.
+    """
+
+    __tablename__ = "user_redaction_rules"
+    __table_args__ = (
+        UniqueConstraint("user_id", "kind", "name", name="uq_user_redaction_rules_name"),
+        CheckConstraint(
+            "(kind = 'pattern' AND regex IS NOT NULL) OR (kind = 'mode' AND regex IS NULL)",
+            name="ck_user_redaction_rules_kind",
+        ),
+        CheckConstraint("mode <> 'off'", name="ck_user_redaction_rules_not_off"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    #: ``pattern`` or ``mode``.
+    kind: Mapped[str] = mapped_column(String(16))
+    #: A pattern's label, or the entity type a mode applies to (upper case).
+    name: Mapped[str] = mapped_column(String(64))
+    regex: Mapped[str | None] = mapped_column(String(512), default=None)
+    mode: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
 
 class QuotaReset(Base):

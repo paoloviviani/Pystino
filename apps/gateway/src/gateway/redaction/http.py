@@ -46,6 +46,13 @@ from gateway.errors import ContentBlockedError, GatewayError
 from gateway.models import ApiSurface
 from gateway.redaction.base import RedactionOutcome, TextRewriteStage
 from gateway.redaction.note import system_note
+from gateway.redaction.report import (
+    SOURCE_MESSAGE,
+    SOURCE_TOOL_RESULT,
+    EntityFinding,
+    build_detail,
+    record,
+)
 from gateway.sse.pipeline import StreamStage, passthrough
 
 logger = logging.getLogger(__name__)
@@ -174,13 +181,21 @@ class _JsonText:
 class _Target:
     """One string that is sent for detection, and where it lives."""
 
-    __slots__ = ("document", "holder", "key", "text")
+    __slots__ = ("document", "holder", "key", "source", "text")
 
-    def __init__(self, holder: Any, key: Any, document: _JsonText | None = None) -> None:
+    def __init__(
+        self,
+        holder: Any,
+        key: Any,
+        document: _JsonText | None = None,
+        source: str = SOURCE_MESSAGE,
+    ) -> None:
         self.holder = holder
         self.key = key
         self.text: str = holder[key]
         self.document = document
+        #: Where the string came from, for the redaction log only.
+        self.source = source
 
     def write(self, text: str) -> None:
         self.holder[self.key] = text
@@ -188,12 +203,19 @@ class _Target:
             self.document.changed = True
 
 
-def _text_targets(holder: dict[str, Any], key: str, out: list[_Target]) -> None:
+def _text_targets(
+    holder: dict[str, Any], key: str, out: list[_Target], source: str = SOURCE_MESSAGE
+) -> None:
     if isinstance(holder.get(key), str) and holder[key]:
-        out.append(_Target(holder, key))
+        out.append(_Target(holder, key, source=source))
 
 
-def _json_leaves(node: Any, document: _JsonText | None, out: list[_Target]) -> None:
+def _json_leaves(
+    node: Any,
+    document: _JsonText | None,
+    out: list[_Target],
+    source: str = SOURCE_MESSAGE,
+) -> None:
     """Every string value in a decoded JSON document (keys are not values)."""
     if isinstance(node, dict):
         children: Any = list(node.keys())
@@ -205,12 +227,14 @@ def _json_leaves(node: Any, document: _JsonText | None, out: list[_Target]) -> N
         value = node[key]
         if isinstance(value, str):
             if value:
-                out.append(_Target(node, key, document))
+                out.append(_Target(node, key, document, source))
         else:
-            _json_leaves(value, document, out)
+            _json_leaves(value, document, out, source)
 
 
-def _json_text_targets(holder: dict[str, Any], key: str, out: list[_Target]) -> None:
+def _json_text_targets(
+    holder: dict[str, Any], key: str, out: list[_Target], source: str = SOURCE_MESSAGE
+) -> None:
     """Targets for a field that holds JSON as text, or plain text if it is not."""
     raw = holder.get(key)
     if not isinstance(raw, str) or not raw:
@@ -220,13 +244,15 @@ def _json_text_targets(holder: dict[str, Any], key: str, out: list[_Target]) -> 
     except ValueError:
         root = None
     if isinstance(root, dict | list):
-        _json_leaves(root, _JsonText(holder, key, root), out)
+        _json_leaves(root, _JsonText(holder, key, root), out, source)
         return
     # Not JSON (a model can emit a broken call): the text itself is screened.
-    out.append(_Target(holder, key))
+    out.append(_Target(holder, key, source=source))
 
 
-def _content_targets(holder: dict[str, Any], key: str, out: list[_Target]) -> None:
+def _content_targets(
+    holder: dict[str, Any], key: str, out: list[_Target], source: str = SOURCE_MESSAGE
+) -> None:
     """A ``content``-like field: a string, or a list of blocks.
 
     Blocks may be text, a Messages ``tool_result`` (whose own ``content`` is a
@@ -234,18 +260,18 @@ def _content_targets(holder: dict[str, Any], key: str, out: list[_Target]) -> No
     """
     value = holder.get(key)
     if isinstance(value, str):
-        _text_targets(holder, key, out)
+        _text_targets(holder, key, out, source)
         return
     if not isinstance(value, list):
         return
     for part in value:
         if not isinstance(part, dict):
             continue
-        _text_targets(part, "text", out)
+        _text_targets(part, "text", out, source)
         if part.get("type") == "tool_result":
-            _content_targets(part, "content", out)
+            _content_targets(part, "content", out, SOURCE_TOOL_RESULT)
         if part.get("type") == "tool_use" and isinstance(part.get("input"), dict | list):
-            _json_leaves(part["input"], None, out)
+            _json_leaves(part["input"], None, out, source)
 
 
 def _message_targets(message: dict[str, Any]) -> list[_Target]:
@@ -260,7 +286,12 @@ def _message_targets(message: dict[str, Any]) -> list[_Target]:
     kind = message.get("type")
     if message.get("role") not in _TEXT_ROLES and kind not in _ITEM_TYPES:
         return out
-    _content_targets(message, "content", out)
+    _content_targets(
+        message,
+        "content",
+        out,
+        SOURCE_TOOL_RESULT if message.get("role") == "tool" else SOURCE_MESSAGE,
+    )
     for key in _REASONING_KEYS:
         _text_targets(message, key, out)
     for call in message.get("tool_calls") or []:
@@ -270,7 +301,7 @@ def _message_targets(message: dict[str, Any]) -> list[_Target]:
     if kind == "function_call":
         _json_text_targets(message, "arguments", out)
     elif kind == "function_call_output":
-        _content_targets(message, "output", out)
+        _content_targets(message, "output", out, SOURCE_TOOL_RESULT)
     elif kind == "reasoning":
         for field in ("summary", "content"):
             for block in message.get(field) or []:
@@ -279,20 +310,31 @@ def _message_targets(message: dict[str, Any]) -> list[_Target]:
     return out
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=4096)
 def _compiled(pattern: str) -> Any:
     """One compile per distinct pattern per process.
 
     Compiling is cheap and doing it per request is still waste on the hottest
     path there is. Bounded rather than unbounded because the key is operator
     input: a deployment editing rules in a loop must not grow this without end.
+    The bound is generous because users' own patterns (25 each) share it: a
+    small one would thrash across many active users, recompiling on the hot path.
     """
     import re2
 
     return re2.compile(pattern)
 
 
-def pattern_spans(text: str, policy: RedactionPolicy) -> list[EntitySpan]:
+PatternKey = tuple[str, str]
+
+
+def pattern_spans(
+    text: str,
+    policy: RedactionPolicy,
+    *,
+    only: frozenset[PatternKey] | None = None,
+    skip: frozenset[PatternKey] = frozenset(),
+) -> list[EntitySpan]:
     """Spans for the operator's own regexes.
 
     Produced in the gateway rather than asked of the detection service: no
@@ -304,16 +346,92 @@ def pattern_spans(text: str, policy: RedactionPolicy) -> list[EntitySpan]:
 
     Score 1.0: a pattern somebody wrote by hand is not a guess, so it outranks
     a model's opinion when the two overlap.
+
+    ``skip`` and ``only`` select patterns by ``(name, regex)``: a user's own
+    patterns are matched apart from the rest (:func:`eligible_for`) so that their
+    spans can only be added, never displace an administrator's.
     """
     spans: list[EntitySpan] = []
     for pattern in policy.patterns:
         if pattern.mode is EntityMode.OFF:
+            continue
+        key = (pattern.name, pattern.regex)
+        if key in skip or (only is not None and key not in only):
             continue
         for match in _compiled(pattern.regex).finditer(text):
             start, end = match.span()
             if end > start:
                 spans.append(EntitySpan(start=start, end=end, entity_type=pattern.name, score=1.0))
     return spans
+
+
+def eligible_spans(
+    text: str, spans: list[EntitySpan], policy: RedactionPolicy, default_threshold: float
+) -> list[EntitySpan]:
+    """The spans the policy acts on: not off, over its threshold, not allow-listed."""
+    return [
+        span
+        for span in spans
+        if policy.mode_for(span.entity_type) is not EntityMode.OFF
+        and span.score >= policy.threshold_for(span.entity_type, default_threshold)
+        and not policy.allows(span.slice_of(text))
+    ]
+
+
+def _overlaps(a: EntitySpan, b: EntitySpan) -> bool:
+    return a.start < b.end and b.start < a.end
+
+
+def eligible_for(
+    text: str,
+    detected: list[EntitySpan],
+    policy: RedactionPolicy,
+    default_threshold: float,
+    user_patterns: frozenset[PatternKey] = frozenset(),
+) -> list[EntitySpan]:
+    """Every span the policy acts on, with a user's own patterns held to "add only".
+
+    Overlap resolution prefers the higher score, and a pattern span scores 1.0,
+    so a user's pattern (``ar``, or ``\\b\\w``) would beat the detector's
+    ``Mario Rossi`` at 0.85 and shrink an administrator's redaction to the
+    letters the user chose, leaving the rest of the name to the provider. So a
+    user-owned span that overlaps any other eligible span is **dropped**: the
+    administrators' span stands whole, in the administrators' mode. A user span
+    that overlaps nothing adds protection, which is all a user rule is for.
+    Spans from several user patterns still compete with each other as usual.
+    """
+    base = eligible_spans(
+        text,
+        [*detected, *pattern_spans(text, policy, skip=user_patterns)],
+        policy,
+        default_threshold,
+    )
+    if not user_patterns:
+        return base
+    mine = eligible_spans(
+        text, pattern_spans(text, policy, only=user_patterns), policy, default_threshold
+    )
+    return [*base, *(span for span in mine if not any(_overlaps(span, other) for other in base))]
+
+
+def resolve_overlaps(text: str, eligible: list[EntitySpan]) -> list[EntitySpan]:
+    """Keep the highest-scoring, then the longest, of any overlapping spans."""
+    ordered = sorted(eligible, key=lambda span: (span.start, -span.score, -(span.end - span.start)))
+    chosen: list[EntitySpan] = []
+    for span in ordered:
+        if span.start >= span.end or span.end > len(text):
+            continue
+        if chosen and span.start < chosen[-1].end:
+            previous = chosen[-1]
+            better = (span.score, span.end - span.start) > (
+                previous.score,
+                previous.end - previous.start,
+            )
+            if better:
+                chosen[-1] = span
+            continue
+        chosen.append(span)
+    return chosen
 
 
 def apply_spans(
@@ -327,6 +445,10 @@ def apply_spans(
     scope: str | None = None,
     tally: Counter[str] | None = None,
     issued: dict[str, str] | None = None,
+    findings: dict[str, EntityFinding] | None = None,
+    source: str = SOURCE_MESSAGE,
+    issued_types: dict[str, str] | None = None,
+    user_patterns: frozenset[PatternKey] = frozenset(),
 ) -> tuple[str, int]:
     """Substitute placeholders for *spans* in *text*, according to *policy*.
 
@@ -361,16 +483,7 @@ def apply_spans(
     # Before the empty check too, and that is not a detail: a deployment whose
     # detector finds nothing still has its own patterns, and returning early on
     # `not spans` would have silently skipped every one of them.
-    spans = [*spans, *pattern_spans(text, policy)]
-    if not spans:
-        return text, 0
-    eligible = [
-        span
-        for span in spans
-        if policy.mode_for(span.entity_type) is not EntityMode.OFF
-        and span.score >= policy.threshold_for(span.entity_type, default_threshold)
-        and not policy.allows(span.slice_of(text))
-    ]
+    eligible = eligible_for(text, spans, policy, default_threshold, user_patterns)
     if not eligible:
         return text, 0
 
@@ -380,27 +493,18 @@ def apply_spans(
     blocked = [span for span in eligible if policy.mode_for(span.entity_type) is EntityMode.BLOCK]
     if blocked:
         kinds = sorted({span.entity_type for span in blocked})
+        if findings is not None:
+            # What the refusal was about, counted by type and never quoted: the
+            # caller attaches it to the error so the log can say which rule.
+            for span in blocked:
+                record(findings, span.entity_type, mode=EntityMode.BLOCK.value, source=source)
         where = f" by the {scope} policy" if scope else ""
         raise ContentBlockedError(
             f"This request was refused{where}: it contains "
             f"{', '.join(kinds)}, which this deployment does not send to a provider."
         )
 
-    ordered = sorted(eligible, key=lambda span: (span.start, -span.score, -(span.end - span.start)))
-    chosen: list[EntitySpan] = []
-    for span in ordered:
-        if span.start >= span.end or span.end > len(text):
-            continue
-        if chosen and span.start < chosen[-1].end:
-            previous = chosen[-1]
-            better = (span.score, span.end - span.start) > (
-                previous.score,
-                previous.end - previous.start,
-            )
-            if better:
-                chosen[-1] = span
-            continue
-        chosen.append(span)
+    chosen = resolve_overlaps(text, eligible)
 
     # What the caller wrote, before any of our own substitutions: a stand-in is
     # compared against that, not against text this loop has already rewritten,
@@ -431,6 +535,10 @@ def apply_spans(
             tally[mode.value] += 1
         if issued is not None:
             issued[original] = placeholder
+        if issued_types is not None:
+            issued_types[original] = span.entity_type
+        if findings is not None:
+            record(findings, span.entity_type, mode=mode.value, source=source)
 
     return text, len(chosen)
 
@@ -685,6 +793,8 @@ class HttpDetectionRedactor:
 
         scope = policy.scope if policy is not None else None
         rule_id = policy.rule_id if policy is not None else None
+        in_force = effective.is_active()
+        user_patterns = policy.user_pattern_keys() if policy is not None else frozenset()
         note = system_note(
             effective,
             restore_text=self._settings.restore_in_response,
@@ -693,7 +803,12 @@ class HttpDetectionRedactor:
         )
         if not texts:
             return RedactionOutcome(
-                messages=messages, engine=self.name, scope=scope, rule_id=rule_id, note=note
+                messages=messages,
+                engine=self.name,
+                scope=scope,
+                rule_id=rule_id,
+                note=note,
+                active=in_force,
             )
 
         found = await self.detect(texts, policy=effective)
@@ -704,18 +819,28 @@ class HttpDetectionRedactor:
 
         documents: dict[int, _JsonText] = {}
         issued: dict[str, str] = {}
+        issued_types: dict[str, str] = {}
+        findings: dict[str, EntityFinding] = {}
         for target, spans in zip(targets, found, strict=True):
-            redacted, count = apply_spans(
-                target.text,
-                spans,
-                key=self._key,
-                placeholders=placeholders,
-                policy=effective,
-                default_threshold=self._settings.score_threshold,
-                scope=scope,
-                tally=tally,
-                issued=issued,
-            )
+            try:
+                redacted, count = apply_spans(
+                    target.text,
+                    spans,
+                    key=self._key,
+                    placeholders=placeholders,
+                    policy=effective,
+                    default_threshold=self._settings.score_threshold,
+                    scope=scope,
+                    tally=tally,
+                    issued=issued,
+                    findings=findings,
+                    source=target.source,
+                    issued_types=issued_types,
+                    user_patterns=user_patterns,
+                )
+            except ContentBlockedError as exc:
+                exc.findings = findings
+                raise
             total += count
             if count:
                 target.write(redacted)
@@ -733,12 +858,19 @@ class HttpDetectionRedactor:
                 current = target.holder[target.key]
                 hits = 0
 
-                def swap(match: re.Match[str]) -> str:
+                def swap(match: re.Match[str], source: str = target.source) -> str:
                     nonlocal hits
                     original = match.group("known")
                     if original is None:
                         return match.group(0)
                     hits += 1
+                    kind = issued_types[original]
+                    record(
+                        findings,
+                        kind,
+                        mode=effective.mode_for(kind).value,
+                        source=source,
+                    )
                     return issued[original]
 
                 swapped = known.sub(swap, current)
@@ -749,6 +881,11 @@ class HttpDetectionRedactor:
                         documents[id(target.document)] = target.document
         for document in documents.values():
             document.commit()
+
+        values = [
+            {"type": issued_types[original], "original": original, "placeholder": placeholder}
+            for original, placeholder in issued.items()
+        ]
 
         return RedactionOutcome(
             messages=rewritten,
@@ -762,6 +899,9 @@ class HttpDetectionRedactor:
             same_length_substitutions=tally[SAME_LENGTH_KEY],
             restore_arguments=self._settings.restore_in_response
             and self._settings.restore_in_tool_arguments,
+            active=in_force,
+            detail=build_detail(findings, policy),
+            values=values,
         )
 
     def response_stage(

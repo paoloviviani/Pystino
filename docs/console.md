@@ -15,6 +15,7 @@ Each card says what the screen decides, not what it is called.
 |---|---|
 | **Overview** | where you stand this period, your quotas and the API keys you spend with (create and revoke them here; a person without the API-keys capability is told so instead of being offered Create) |
 | **Your usage** | what you spent, and what the figures rest on. Administrators have it too: their own spend is not administration |
+| **Redactions** | what was hidden from providers in your requests and which rule decided (never the values), the administrators' rules in plain words, your own rules (you can only make protection stricter) and a box to try a text. See [User rules](redaction.md#user-rules) |
 
 Money is shown to three decimal places and never rounds a real amount down to
 zero (it reads `< €0.001`). Administrators can switch to full precision with

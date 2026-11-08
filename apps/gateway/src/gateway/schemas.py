@@ -3105,3 +3105,151 @@ class ModelImportResponse(ResponseModel):
     @property
     def imported_count(self) -> int:
         return sum(1 for r in self.results if r.imported)
+
+
+# -- redaction visibility (ADR 0112) ------------------------------------------
+
+#: The modes a user may choose for their own rule: every mode but ``off``.
+UserRedactionMode = Literal["anonymise_restore", "anonymise", "redact", "block"]
+
+
+class UserRedactionRuleRequest(BaseModel):
+    """A user's own rule: a pattern, or a stricter mode for one entity type.
+
+    **There is no ``off``, no threshold, no allow-list and no placeholder style
+    here, and extra fields are refused**, so a rule that would loosen what the
+    administrators set cannot be expressed, let alone saved. A rule that is
+    merely not stricter than theirs is accepted and inert; the response says so.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["pattern", "mode"]
+    #: A pattern's label, or the entity type a mode applies to (``PERSON``).
+    name: str = Field(min_length=1, max_length=64)
+    #: The regex, RE2 syntax. For ``pattern`` only.
+    regex: str | None = Field(default=None, max_length=512)
+    mode: UserRedactionMode = "redact"
+
+    @model_validator(mode="after")
+    def _shape(self) -> UserRedactionRuleRequest:
+        if self.kind == "pattern" and not self.regex:
+            raise ValueError("a pattern needs a regex")
+        if self.kind == "mode" and self.regex is not None:
+            raise ValueError("a mode for an entity type takes no regex")
+        return self
+
+
+class UserRedactionRuleResponse(ResponseModel):
+    id: uuid.UUID
+    kind: Literal["pattern", "mode"]
+    name: str
+    regex: str | None = None
+    mode: str
+    #: ``adds_protection`` when the rule makes something stricter than the
+    #: administrators' rules already do for this user, ``covered`` when it does
+    #: not (theirs is as strict or stricter, so theirs applies).
+    status: Literal["adds_protection", "covered"]
+    #: What the administrators' rules already do with this type, for a mode rule.
+    admin_mode: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RedactionEntityView(ResponseModel):
+    entity_type: str
+    mode: str
+
+
+class RedactionPatternView(ResponseModel):
+    name: str
+    mode: str
+
+
+class AdminRuleView(ResponseModel):
+    """One administrator rule, as a user may read it.
+
+    Types and modes, not the regexes of its patterns (a pattern can name a
+    project that is itself confidential) and not its exceptions' values, only
+    how many there are.
+    """
+
+    id: uuid.UUID
+    name: str
+    scope: RedactionScopeName
+    #: The group, model, provider or key it names; null for everyone.
+    subject_label: str | None = None
+    default_mode: str
+    entities: list[RedactionEntityView]
+    patterns: list[RedactionPatternView]
+    exceptions: int
+
+
+class MyRedactionInForce(ResponseModel):
+    engine: str
+    #: False when the engine is ``noop``: nothing is screened, whatever rules exist.
+    engine_active: bool
+    rules: list[AdminRuleView]
+    max_user_rules: int
+
+
+class RedactionTestRequest(BaseModel):
+    """Text to try the rules on. Never logged."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=20_000)
+
+
+class RedactionTestRule(ResponseModel):
+    id: uuid.UUID | None = None
+    name: str
+    owner: Literal["admin", "user"]
+
+
+class RedactionTestSpan(ResponseModel):
+    """One thing that would be hidden: where, what kind, and which rule decided.
+
+    Offsets only. The text is the caller's own and is not echoed back.
+    """
+
+    entity_type: str
+    start: int
+    end: int
+    mode: str
+    rule: RedactionTestRule | None = None
+
+
+class RedactionTestResponse(ResponseModel):
+    engine_active: bool
+    spans: list[RedactionTestSpan]
+    blocked: bool = False
+    note: str | None = None
+
+
+class RedactionEventRule(ResponseModel):
+    id: uuid.UUID | None = None
+    name: str
+    owner: Literal["admin", "user"]
+
+
+class RedactionEventEntity(ResponseModel):
+    type: str
+    count: int
+    mode: str
+    rule: RedactionEventRule | None = None
+    sources: list[str]
+
+
+class RedactionEventRow(ResponseModel):
+    """One request where redaction hid something (or refused). No values."""
+
+    request_id: str
+    created_at: datetime
+    user_id: uuid.UUID | None = None
+    user_label: str | None = None
+    model: str
+    provider: str | None = None
+    byok: bool
+    blocked: bool
+    entities: list[RedactionEventEntity]

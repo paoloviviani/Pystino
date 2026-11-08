@@ -585,6 +585,16 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
   attempt raises `AttemptFailed`, after settling its own row; the last attempt
   answers the caller exactly as a direct call does. Stickiness is a table
   (`route_sessions`) keyed on a hash of caller and session key.
+- **The redaction log never holds a value.** `usage_records.redaction_detail`
+  (docs/redaction.md, "What users can see") is built from counts, modes, rule
+  names and sources only; the originals live in `RedactionOutcome.values` for the
+  one response that may carry them (`x-pystino-redaction-values`, OIDC token
+  only) and nothing that persists reads that field. A new reader of the outcome
+  or the log must keep it so (`test_redaction_visibility.py` scans every table).
+  A user's own rules (`user_redaction_rules`, `redaction/user_rules.py`) fold in
+  after the administrators' and may only tighten; do not route them through
+  `RedactionPolicy.combine`, which lets a scope lower a threshold or veto a
+  placeholder style.
 - **`InMemoryCounterStore` is atomic only because it never awaits.** It proves
   nothing about `MULTI`/`EXEC`, which is why `test_quota_race_live.py` exists.
 - **An abandoned stream is billed from our price table.** A client that hangs

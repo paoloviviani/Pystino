@@ -178,6 +178,12 @@ class ContentBlockedError(GatewayError):
     error_type = "invalid_request_error"
     code = "content_blocked"
 
+    #: What was refused, by entity type: counts, modes and sources, never the
+    #: matched text (``redaction.report.EntityFinding``). Set by the redactor on
+    #: the way out so the request that is about to be recorded as blocked can say
+    #: which rule decided. Not part of the response.
+    findings: Any = None
+
 
 class UpstreamUnavailableError(GatewayError):
     status_code = status.HTTP_502_BAD_GATEWAY
