@@ -282,6 +282,7 @@ uv run python scripts/test_pystino_usage_live.py     # GET /v1/pystino/usage und
 uv run python scripts/test_citations_live.py         # citation offsets after a real placeholder
 uv run python scripts/test_public_tls_live.py        # TLS, the IdP, a Secure cookie, nothing else exposed
 uv run python scripts/test_byok_live.py              # BYOK: grant, private provider, my/<name>, the guard, admin holds
+uv run python scripts/test_privacy_routing_live.py   # routing rules on /v1/embeddings and /v1/ocr, the log in PostgreSQL (needs the redaction profile)
 uv run python scripts/benchmark_live.py              # per-layer cost; see docs/performance.md
 ```
 
