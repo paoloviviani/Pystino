@@ -34,6 +34,20 @@ VERDICT_ENGINES = frozenset({"presidio", "patterns"})
 MAX_FALLBACK_DEPTH = 3
 
 
+class Undecidable(Exception):
+    """A condition that cannot be decided, on a rule where "treat it as a match" would fail open.
+
+    Raised for a negated condition ("no health data -> pass") or a rule that adds
+    nothing: assuming the condition holds there would let the very text it exists
+    to catch through. The caller refuses (503) naming the rule (ADR 0113, section 4).
+    """
+
+    def __init__(self, rule: Rule, why: str) -> None:
+        super().__init__(why)
+        self.rule = rule
+        self.why = why
+
+
 class State(enum.StrEnum):
     TRUE = "true"
     FALSE = "false"
@@ -242,24 +256,45 @@ class Evaluator:
         ev.verdicts["lang"] = ",".join(sorted(set(result.langs))) or None
         return result
 
+    def _undecided(
+        self, condition: Condition, rule: Rule, degraded: list[str], why: str
+    ) -> tuple[State, str]:
+        """What an undecidable condition counts as, so that it can only ever add protection.
+
+        A match on a protective rule whose condition is not negated (the rule then
+        acts). An observe-only rule takes no action, so it simply does not match.
+        Anything else (a negated condition, a rule that adds nothing) could let the
+        text through, so it is refused instead.
+        """
+        if rule.observe_only:
+            degraded.append(f"{why}; not matched.")
+            return State.FALSE, f"{why}; not matched."
+        if rule.protective and not condition.negate:
+            degraded.append(f"{why}; treated as a match.")
+            return State.TRUE, f"{why}; treated as a match."
+        raise Undecidable(rule, why)
+
     def _content(
-        self, condition: Condition, facts: Facts, ev: Evaluation, degraded: list[str]
+        self,
+        condition: Condition,
+        facts: Facts,
+        ev: Evaluation,
+        degraded: list[str],
+        rule: Rule,
     ) -> tuple[State, str]:
         decider = resolve_decider(condition.decide, self.profiles)
         if decider.fallback_used and decider.fallback_used not in ev.fallbacks:
             ev.fallbacks.append(decider.fallback_used)
         if decider.method == "unavailable":
-            # Fail closed: assume the condition holds, so a protective rule acts.
-            message = f"{decider.note or 'The detector is unavailable'}; treated as a match."
-            degraded.append(message)
-            return State.TRUE, message
+            return self._undecided(
+                condition, rule, degraded, decider.note or "The detector is unavailable"
+            )
         result = self._classification(facts, ev)
         if result.incomplete:
-            # Part of the text was not checked, so "clean" cannot be claimed:
-            # fail closed, as for an unavailable detector.
-            message = "The text was too large to check in full; treated as a match."
-            degraded.append(message)
-            return State.TRUE, message
+            # Part of the text was not checked, so "clean" cannot be claimed.
+            return self._undecided(
+                condition, rule, degraded, "The text was too large to check in full"
+            )
         if condition.key in ("health", "ids"):
             hit = bool(getattr(result, condition.key))
             shown = {"health": "health data", "ids": "identifiers"}[condition.key]
@@ -346,7 +381,7 @@ class Evaluator:
                 degraded.append(why)
             return state, why
         if condition.key in CONTENT_KEYS:
-            return self._content(condition, facts, ev, degraded)
+            return self._content(condition, facts, ev, degraded, rule)
         return State.FALSE, f"Unknown condition {condition.key}."
 
 

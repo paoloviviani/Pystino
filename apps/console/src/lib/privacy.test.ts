@@ -114,7 +114,7 @@ describe("scopeWords", () => {
         }),
         false,
       ),
-    ).toEqual(["Groups: Clinic", "All except OpenAI"]);
+    ).toEqual(["Billing groups: Clinic", "All except OpenAI"]);
   });
 
   it("is only me for a user's own", () => {

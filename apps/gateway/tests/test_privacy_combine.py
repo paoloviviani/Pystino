@@ -21,9 +21,10 @@ from gateway.config import (
     EntityPolicy,
     RedactionPolicy,
 )
+from gateway.errors import ServiceUnavailableError
 from gateway.models import PrivacyPipeline
 from gateway.privacy.combine import Retarget, plan
-from gateway.privacy.evaluate import Evaluator, Facts
+from gateway.privacy.evaluate import Evaluator, Facts, Profile, Undecidable
 from gateway.privacy.pipelines import (
     Pipeline,
     not_in_scope,
@@ -501,3 +502,212 @@ class TestWords:
             rules=[rule("Scans", [{"key": "scan"}], level="read_with", reader="builtin")],
         )
         assert summarize(p, {}) == ["reads scans with the built-in extractor"]
+
+
+class TestUndecidableConditionsNeverFailOpen:
+    """An undecidable condition matches only where that can only add protection."""
+
+    def down(self) -> Evaluator:
+        return Evaluator({"m": Profile(id="m", name="Medical", engine="gliner", available=False)})
+
+    @pytest.mark.parametrize("kind", ["embed", "chat"])
+    async def test_a_negated_condition_with_the_detector_down_is_refused_not_passed(
+        self, kind: str
+    ) -> None:
+        # "no health data -> pass", then "everything else -> refuse": assuming the
+        # negated condition holds would let the health text straight through.
+        p = pipe(
+            kind,
+            "P",
+            rules=[
+                rule(
+                    "No health, pass",
+                    [{"key": "health", "negate": True, "decide": "m"}],
+                    level="pass",
+                    redact_with=str(uuid.uuid4()),
+                )
+            ],
+            otherwise={"level": "refuse"},
+        )
+        with pytest.raises(ServiceUnavailableError) as raised:
+            await plan(self.down(), [p], facts(kind, text=HEALTH))
+        assert "No health, pass" in raised.value.message and "'P'" in raised.value.message
+        assert raised.value.code == "privacy_undecidable"
+
+    @pytest.mark.parametrize("kind", ["embed", "chat"])
+    async def test_incomplete_input_on_a_negated_condition_is_refused(
+        self, kind: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("gateway.privacy.evaluate.MAX_REQUEST_CHARS", 10)
+        p = pipe(
+            kind,
+            "P",
+            rules=[rule("No health, pass", [{"key": "health", "negate": True}], level="pass")],
+            otherwise={"level": "refuse"},
+        )
+        with pytest.raises(ServiceUnavailableError):
+            await plan(Evaluator(), [p], facts(kind, text=HEALTH * 3))
+
+    async def test_a_rule_that_adds_nothing_is_refused_too(self) -> None:
+        p = pipe(
+            "embed",
+            "P",
+            rules=[rule("Health, pass", [{"key": "health", "decide": "m"}], level="pass")],
+        )
+        with pytest.raises(ServiceUnavailableError):
+            await plan(self.down(), [p], facts("embed", text=HEALTH))
+
+    @pytest.mark.parametrize("kind", ["embed", "chat"])
+    async def test_a_protective_rule_on_a_plain_condition_still_acts(self, kind: str) -> None:
+        p = pipe(kind, "P", rules=[rule("Health", [{"key": "health", "decide": "m"}])])
+        combined = await plan(self.down(), [p], facts(kind, text="La riunione e lunedi."))
+        assert combined.refused
+
+    async def test_an_observe_only_rule_does_not_match_and_does_not_refuse(self) -> None:
+        watch = rule("Watch", [{"key": "health", "negate": True, "decide": "m"}])
+        watch["observe_only"] = True
+        p = pipe("embed", "P", rules=[watch])
+        combined = await plan(self.down(), [p], facts("embed", text=HEALTH))
+        assert combined.level == "pass" and combined.runs[0].evaluation.observed == []
+
+    def test_the_evaluator_raises_undecidable_with_the_rule(self) -> None:
+        assert issubclass(Undecidable, Exception)
+
+
+class TestAUserCannotLoosenThroughAnAdministratorsPolicy:
+    def state(self) -> tuple[PrivacyState, str, str]:
+        state = PrivacyState()
+        a, b = uuid.uuid4(), uuid.uuid4()
+        state.policies = {
+            str(a): PolicyRef(
+                a,
+                "Keys",
+                RedactionPolicy(entities={"EMAIL_ADDRESS": EntityPolicy(mode=EntityMode.REDACT)}),
+            ),
+            str(b): PolicyRef(
+                b,
+                "Picked",
+                RedactionPolicy(
+                    entities={"IBAN_CODE": EntityPolicy(mode=EntityMode.REDACT)},
+                    allow_list=["Mario Rossi"],
+                    default_mode=EntityMode.OFF,
+                ),
+            ),
+        }
+        return state, str(a), str(b)
+
+    async def test_the_allow_list_stays_the_administrators_whoever_ranks_first(self) -> None:
+        state, a, b = self.state()
+        # An administrator's pipeline scoped to a key: the widest-rank-last in the old order,
+        # and the user's own ranked before it. The administrator's must decide the allow-list.
+        key = uuid.uuid4()
+        admin = pipe(
+            "chat",
+            "Admin key",
+            otherwise={"level": "pass", "redact_with": a},
+            who={"mode": "keys", "ids": [str(key)]},
+        )
+        mine = pipe("chat", "Mine", owner=USER, otherwise={"level": "pass", "redact_with": b})
+        combined = await plan(Evaluator(), [mine, admin], facts("chat", api_key_id=str(key)))
+        effective = state.effective_policy(combined.policy_uses(), RedactionPolicy())
+        assert effective.policy.allow_list == []  # not ["Mario Rossi"]
+        assert effective.policy.mode_for("EMAIL_ADDRESS") is EntityMode.REDACT
+        assert effective.policy.mode_for("IBAN_CODE") is EntityMode.REDACT
+
+    async def test_picking_an_administrators_policy_does_not_replace_the_environments(self) -> None:
+        state, _, b = self.state()
+        env = RedactionPolicy(entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT)})
+        mine = pipe("chat", "Mine", owner=USER, otherwise={"level": "pass", "redact_with": b})
+        combined = await plan(Evaluator(), [mine], facts("chat"))
+        effective = state.effective_policy(combined.policy_uses(), env)
+        assert effective.policy.mode_for("PERSON") is EntityMode.REDACT  # not off
+        assert effective.policy.mode_for("IBAN_CODE") is EntityMode.REDACT
+        assert effective.policy.allow_list == []
+
+    async def test_a_picked_default_mode_is_a_floor(self) -> None:
+        state = PrivacyState()
+        pid = uuid.uuid4()
+        state.policies = {
+            str(pid): PolicyRef(pid, "All", RedactionPolicy(default_mode=EntityMode.REDACT))
+        }
+        mine = pipe(
+            "chat", "Mine", owner=USER, otherwise={"level": "pass", "redact_with": str(pid)}
+        )
+        combined = await plan(Evaluator(), [mine], facts("chat"))
+        effective = state.effective_policy(combined.policy_uses(), RedactionPolicy())
+        assert effective.policy.mode_for("ANYTHING") is EntityMode.REDACT
+
+
+class TestRerouteHops:
+    def pipelines(self, chain: list[str]) -> tuple[list[Pipeline], dict[str, str]]:
+        """P0 reads on any target with chain[0]; the pipeline guarding chain[i] says chain[i+1]."""
+        providers = {name: str(uuid.uuid4()) for name in chain}
+        first = pipe("read", "P0", otherwise={"level": "read_with", "reader": chain[0]})
+        out = [first]
+        for index, name in enumerate(chain[:-1]):
+            out.append(
+                pipe(
+                    "read",
+                    f"Guard {name}",
+                    otherwise={"level": "read_with", "reader": chain[index + 1]},
+                    target={"mode": "only", "providers": [providers[name]], "models": []},
+                    position=index + 1,
+                )
+            )
+        return out, providers
+
+    def retarget_for(self, providers: dict[str, str], impossible: set[str] = frozenset()) -> Any:  # type: ignore[assignment]
+        current = {"reader": None}
+
+        async def retarget(reader: str) -> Retarget:
+            if reader in impossible:
+                return Retarget(None, impossible=f"{reader} is not available")
+            if current["reader"] == reader:
+                return Retarget(None, same=True)
+            current["reader"] = reader
+            return Retarget(facts("read", provider_id=providers[reader]))
+
+        return retarget
+
+    async def test_a_pipeline_that_guards_the_current_reader_decides_the_next_hop(self) -> None:
+        pipes, providers = self.pipelines(["R", "R2"])
+        combined = await plan(
+            Evaluator(), pipes, facts("read"), retarget=self.retarget_for(providers)
+        )
+        assert combined.reader == "R2" and combined.impossible is None
+        assert [h.reader for h in combined.hops] == ["R", "R2"]
+
+    async def test_if_that_cannot_be_honoured_it_fails_closed(self) -> None:
+        pipes, providers = self.pipelines(["R", "R2"])
+        combined = await plan(
+            Evaluator(), pipes, facts("read"), retarget=self.retarget_for(providers, {"R2"})
+        )
+        assert combined.impossible == "R2 is not available"
+
+    async def test_a_users_later_hop_cannot_override_an_administrators_reader(self) -> None:
+        pipes, providers = self.pipelines(["R", "R2"])
+        # The guard pipeline is a user's: the administrator's earlier choice holds.
+        guard = pipes[1]
+        user_guard = pipe(
+            "read",
+            "My guard",
+            owner=USER,
+            otherwise={"level": "read_with", "reader": "R2"},
+            target={"mode": "only", "providers": [providers["R"]], "models": []},
+        )
+        del guard
+        combined = await plan(
+            Evaluator(),
+            [pipes[0], user_guard],
+            facts("read"),
+            retarget=self.retarget_for(providers),
+        )
+        assert combined.reader == "R"
+
+    async def test_running_out_of_hops_is_a_refusal_not_a_quiet_stop(self) -> None:
+        chain = ["R1", "R2", "R3", "R4", "R5", "R6"]
+        pipes, providers = self.pipelines(chain)
+        combined = await plan(
+            Evaluator(), pipes, facts("read"), retarget=self.retarget_for(providers)
+        )
+        assert combined.impossible is not None and "too many reroutes" in combined.impossible

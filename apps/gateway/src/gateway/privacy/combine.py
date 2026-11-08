@@ -29,8 +29,9 @@ import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
+from gateway.errors import ServiceUnavailableError
 from gateway.privacy import rules as rulelib
-from gateway.privacy.evaluate import Evaluation, Evaluator, Facts
+from gateway.privacy.evaluate import Evaluation, Evaluator, Facts, Undecidable
 from gateway.privacy.pipelines import Pipeline, not_in_scope
 from gateway.privacy.rules import KIND_READ, LEVEL_READ_WITH, LEVEL_REFUSE, Rule
 
@@ -127,9 +128,10 @@ class Combined:
     def policy_uses(self) -> list[PolicyUse]:
         """The policies to apply, widest scope first, each named once.
 
-        Not at all for a refused request. The order is the one ADR 0038's fold
-        always used (the broadest scope first), which matters for exactly one
-        field, the allow-list, taken from the first policy alone.
+        Not at all for a refused request. Every administrator pipeline's policy
+        comes before any user's, then the broadest scope first (the order ADR 0038's
+        fold always used), which matters for exactly one field, the allow-list,
+        taken from the first policy alone: a user's pipeline must never decide it.
         """
         if self.refused:
             return []
@@ -137,7 +139,7 @@ class Combined:
         seen: set[str] = set()
         for run in sorted(
             (r for r in self.runs if not r.pending),
-            key=lambda r: (r.pipeline.scope_rank, r.pipeline.is_user, r.pipeline.order),
+            key=lambda r: (r.pipeline.is_user, r.pipeline.scope_rank, r.pipeline.order),
         ):
             policy = run.rule.action.get("redact_with")
             if policy and str(policy) not in seen:
@@ -182,7 +184,14 @@ async def run_in_scope(
             skipped.append(Skipped(pipeline, why))
             continue
         seen.add(pipeline.id)
-        evaluation = await evaluator.evaluate(list(pipeline.rules), facts)
+        try:
+            evaluation = await evaluator.evaluate(list(pipeline.rules), facts)
+        except Undecidable as exc:
+            raise ServiceUnavailableError(
+                f"The privacy rule '{exc.rule.name}' (pipeline '{pipeline.name}') cannot be "
+                f"decided now ({exc.why}), so the request is refused rather than let through.",
+                code="privacy_undecidable",
+            ) from exc
         runs.append(run_of(pipeline, evaluation, hop))
     return runs, skipped
 
@@ -205,7 +214,13 @@ def combine(kind: str, runs: Sequence[PipelineRun]) -> Combined:
         withs = [
             r for r in combined.in_ladder_order() if not r.pending and r.level == LEVEL_READ_WITH
         ]
-        first = withs[0]
+        # An administrator's choice holds over a user's. Among those that may
+        # decide, the run from the latest hop wins: a pipeline that guards the
+        # reader the request has been re-pointed at gets the say on where it goes
+        # next, so a reroute can never walk past it.
+        admin_withs = [r for r in withs if not r.pipeline.is_user]
+        deciding = admin_withs or withs
+        first = max(deciding, key=lambda r: r.hop) if deciding else withs[0]
         combined.reader = str(first.rule.action.get("reader") or rulelib.BUILTIN_READER)
         combined.reader_run = first
         combined.overridden = [
@@ -259,14 +274,18 @@ async def plan(
         return combined
     hops: list[Hop] = []
     all_runs = list(runs)
+    settled = False
     for hop in range(1, MAX_HOPS + 1):
         if combined.pending or combined.level != LEVEL_READ_WITH or combined.reader is None:
+            settled = True
             break
         moved = await retarget(combined.reader)
         if moved.impossible is not None:
             combined.impossible = moved.impossible
+            settled = True
             break
         if moved.same or moved.facts is None:
+            settled = True
             break
         facts = moved.facts
         added, more_skipped = await run_in_scope(evaluator, pipelines, facts, seen=seen, hop=hop)
@@ -276,6 +295,20 @@ async def plan(
         combined = combine(facts.kind, all_runs)
         combined.skipped = skipped
         if not added:
+            settled = True
             break
+    if (
+        not settled
+        and combined.impossible is None
+        and not combined.pending
+        and combined.level == LEVEL_READ_WITH
+        and combined.reader is not None
+    ):
+        # Out of hops with the pipelines still asking for another reader than the
+        # one in charge: the request cannot be carried out, so it is refused
+        # rather than handled by a reader some pipeline did not choose.
+        probe = await retarget(combined.reader)
+        if not probe.same:
+            combined.impossible = "the pipelines keep re-pointing the file (too many reroutes)."
     combined.hops = hops
     return combined

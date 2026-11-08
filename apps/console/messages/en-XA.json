@@ -3206,14 +3206,14 @@
   "privacy.scope.me": "[Óńľý ḿé]",
   "privacy.scope.all_users": "[Áľľ úśéŕś]",
   "privacy.scope.users": "[Úśéŕś: {names}]",
-  "privacy.scope.groups": "[Ǧŕóúþś: {names}]",
+  "privacy.scope.groups": "[Ɓíľľíńǧ ǧŕóúþś: {names}]",
   "privacy.scope.keys": "[Ķéýś: {names}]",
   "privacy.scope.all_targets": "[Áľľ ťáŕǧéťś]",
   "privacy.scope.only": "[Óńľý {names}]",
   "privacy.scope.except": "[Áľľ éẋćéþť {names}]",
   "privacy.who.all": "[Áľľ]",
   "privacy.who.users": "[Úśéŕś]",
-  "privacy.who.groups": "[Ǧŕóúþś]",
+  "privacy.who.groups": "[Ɓíľľíńǧ ǧŕóúþś]",
   "privacy.who.keys": "[Ķéýś]",
   "privacy.target.all": "[Áľľ]",
   "privacy.target.only": "[Óńľý]",
@@ -3293,7 +3293,7 @@
   "privacy.edit.kind": "[Ķíńď]",
   "privacy.edit.kind_fixed": "[Ƒíẋéď óńćé ťȟé þíþéľíńé éẋíśťś.]",
   "privacy.edit.who": "[Ŵȟó]",
-  "privacy.edit.who_tip": "[Ŵȟíćȟ ŕéǫúéśťś ťȟíś þíþéľíńé śééś: éǚéŕýóńé, óŕ óńľý śóḿé úśéŕś, ǧŕóúþś (ťȟé ǧŕóúþ á ŕéǫúéśť íś ƀíľľéď ťó) óŕ ÁÞÍ ķéýś.]",
+  "privacy.edit.who_tip": "[Ŵȟíćȟ ŕéǫúéśťś ťȟíś þíþéľíńé śééś: éǚéŕýóńé, óŕ óńľý śóḿé úśéŕś, ƀíľľíńǧ ǧŕóúþś óŕ ÁÞÍ ķéýś. Á ǧŕóúþ ḿéáńś ťȟé ƀíľľíńǧ ǧŕóúþ á ŕéǫúéśť íś ćȟáŕǧéď ťó, śó á úśéŕ íń śéǚéŕáľ ǧŕóúþś íś ḿáťćȟéď ƀý ťȟé óńé ťȟé ŕéǫúéśť íś ƀíľľéď ťó.]",
   "privacy.edit.who_tip_own": "[Ƒíẋéď ťó ýóú. Ýóúŕ þíþéľíńéś ńéǚéŕ áþþľý ťó óťȟéŕ úśéŕś.]",
   "privacy.edit.target": "[Ťáŕǧéť]",
   "privacy.edit.target_tip": "[Ťȟé þŕóǚíďéŕ óŕ ḿóďéľ ťȟé ŕéǫúéśť ǧóéś ťó. Ťȟéŕé íś ńó \"ľóćáľ\": á þŕóǚíďéŕ íś á þŕóǚíďéŕ, áńď śćóþé ďéćíďéś.]",
@@ -3410,5 +3410,6 @@
   "privacy.test.owner_user": "[Úśéŕ]",
   "privacy.test.owner_admin": "[Áďḿíń]",
   "privacy.test.observed_mark": "[ŵóúľď ƒíŕé, óƀśéŕǚé óńľý]",
-  "privacy.test.file_placeholder": "[ŕéƒéŕťó_2026.þďƒ]"
+  "privacy.test.file_placeholder": "[ŕéƒéŕťó_2026.þďƒ]",
+  "privacy.policy.profile_later": "[Ďéťéćťóŕ þŕóƒíľéś óń þóľíćíéś ťáķé éƒƒéćť íń á ľáťéŕ ŕéľéáśé.]"
 }

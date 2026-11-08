@@ -246,6 +246,13 @@ def pipeline_response(
     issues: dict[uuid.UUID, list[rulelib.Issue]],
     reader_names: dict[str, str] | None = None,
 ) -> PipelineResponse:
+    # Only the names this pipeline itself uses: the labels were looked up for a
+    # whole list, and a pipeline must not carry the names of another's scope.
+    used = {*pipeline.who_ids, *pipeline.providers, *pipeline.models}
+    for rule in pipeline.all_rules():
+        if rule.action.get("redact_with"):
+            used.add(str(rule.action["redact_with"]))
+    labels = {k: v for k, v in labels.items() if k in used}
     return PipelineResponse(
         id=row.id,
         owner_id=row.owner_id,
@@ -309,9 +316,7 @@ async def granted_readers(
 ) -> dict[str, bool]:
     """The OCR models this user may use: name -> is the built-in extractor."""
     groups = (
-        list(group_ids)
-        if group_ids is not None
-        else ([user.default_billing_group_id] if user.default_billing_group_id else [])
+        list(group_ids) if group_ids is not None else ([g] if (g := request_group_id(user)) else [])
     )
     models = (
         (
@@ -401,6 +406,29 @@ def clean_entries(
     return out
 
 
+def request_group_id(user: User) -> uuid.UUID | None:
+    """The group a request of this user is billed to: the same resolution requests use."""
+    from gateway.deps import resolve_billing_group_or_none
+
+    try:
+        found = resolve_billing_group_or_none(user)
+    except Exception:  # a relationship not loaded here: fall back to the stored default
+        return user.default_billing_group_id
+    return found.id if found is not None else None
+
+
+def _visible_to(pipeline: Pipeline, user: User, group: uuid.UUID | None, keys: set[str]) -> bool:
+    if pipeline.is_user:
+        return pipeline.owner_id == user.id
+    if pipeline.who_mode == "users":
+        return str(user.id) in pipeline.who_ids
+    if pipeline.who_mode == "groups":
+        return group is not None and str(group) in pipeline.who_ids
+    if pipeline.who_mode == "keys":
+        return bool(pipeline.who_ids & keys)
+    return True
+
+
 # -- the dry run -----------------------------------------------------------------------
 
 
@@ -473,8 +501,14 @@ async def dry_run(
     settings: Settings,
     control_http: Any,
     redactor: object | None,
+    viewer_only: bool = False,
 ) -> DryRunResponse:
-    """The real combination over supplied facts: no side effects, nothing logged."""
+    """The real combination over supplied facts: no side effects, nothing logged.
+
+    ``viewer_only`` is a user's own box: other users' pipelines are dropped
+    entirely, and so are the administrator's whose who-scope excludes the caller,
+    so the answer never names a pipeline (or an owner) that is not theirs.
+    """
     # --- facts ---
     model: ModelDef | None = None
     provider: Provider | None = None
@@ -510,7 +544,7 @@ async def dry_run(
             raise BadRequestError(f"The file could not be read here: {exc}") from exc
         extractor, fallback_reason = read.extractor or None, read.fallback_reason or None
         is_scan = attribution.is_scan_from(read.extractor, read.kind.value, bool(read.page_images))
-    group = user.default_billing_group_id if user is not None else None
+    group = request_group_id(user) if user is not None else None
 
     def facts_for(m: ModelDef | None, p: Provider | None, scan: bool | None) -> Facts:
         return Facts(
@@ -572,6 +606,14 @@ async def dry_run(
         )
 
     pipelines = state.pipelines_of(payload.kind)
+    if viewer_only and user is not None:
+        own_keys = {
+            str(k)
+            for k in (await session.execute(select(ApiKey.id).where(ApiKey.user_id == user.id)))
+            .scalars()
+            .all()
+        }
+        pipelines = tuple(p for p in pipelines if _visible_to(p, user, group, own_keys))
     combined = await plan(
         state.evaluator,
         pipelines,
@@ -829,7 +871,11 @@ async def dry_run(
 
 
 async def summary_for(
-    session: AsyncSession, state: PrivacyState, user: User, group: uuid.UUID | None
+    session: AsyncSession,
+    state: PrivacyState,
+    user: User,
+    group: uuid.UUID | None,
+    key_id: uuid.UUID | None = None,
 ) -> tuple[
     list[tuple[ModelDef, list[str], list[str]]], list[tuple[ModelDef, list[str], list[str]]]
 ]:
@@ -866,13 +912,12 @@ async def summary_for(
                 p,
                 user_id=str(user.id),
                 group_id=str(group) if group else None,
-                key_id=None,
+                key_id=str(key_id) if key_id else None,
                 provider_id=str(model.provider_id) if model.provider_id else None,
                 model_id=str(model.id),
             )
-            if why or p.who_mode == "keys":
-                # A key-scoped pipeline applies to calls made with that key only:
-                # the summary does not claim it for every call.
+            if why:
+                # A key-scoped pipeline is in scope only for calls made with that key.
                 continue
             said = summarize(p, names)
             if said:

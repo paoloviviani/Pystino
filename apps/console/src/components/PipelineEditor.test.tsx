@@ -107,7 +107,7 @@ describe("Pipeline editor", () => {
     renderEditor(<AdminPipeline />, "/admin/privacy/pipelines/new?kind=embed");
     await screen.findByLabelText("Name");
 
-    await user.click(screen.getByRole("button", { name: "Groups" }));
+    await user.click(screen.getByRole("button", { name: "Billing groups" }));
     await user.click(screen.getByRole("button", { name: "Clinic" }));
     await user.click(screen.getByRole("button", { name: "All except" }));
     await user.click(screen.getByRole("button", { name: "OpenAI" }));
@@ -164,7 +164,7 @@ describe("Pipeline editor", () => {
     renderEditor(<MyPipeline />, "/privacy/pipelines/new?kind=embed");
 
     expect(await screen.findByText("Only me")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Groups" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Billing groups" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Add rule" }));
     const pass = screen.getAllByRole("radio", { name: /Pass/ })[0] as HTMLInputElement;
     // What happens anyway is not an addition: it cannot be picked once something else is.

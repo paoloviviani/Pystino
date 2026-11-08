@@ -167,6 +167,25 @@ CONFIGS: dict[str, Any] = {
             ("pattern", "PRJ", r"PRJ-\d+", "anonymise_restore"),
         ],
     ),
+    "env_policy_only": ([], [], {"entities": {"PERSON": E(mode=M.REDACT)}}),
+    "env_policy_and_user_rules": (
+        [],
+        [("mode", "EMAIL_ADDRESS", None, "redact")],
+        {"entities": {"PERSON": E(mode=M.REDACT)}, "allow_list": ["acme.test"]},
+    ),
+    "user_rules_next_to_a_key_scoped_admin_policy": (
+        [
+            (
+                "api_key",
+                "key",
+                {
+                    "entities": {"EMAIL_ADDRESS": E(mode=M.REDACT)},
+                    "allow_list": ["mario.rossi@acme.test"],
+                },
+            )
+        ],
+        [("mode", "PERSON", None, "redact"), ("pattern", "PRJ", r"PRJ-\d+", "redact")],
+    ),
     "inactive_rule": (
         [("all", None, {"entities": {"EMAIL_ADDRESS": E(mode=M.BLOCK)}, "_inactive": True})],
         [],
@@ -269,7 +288,7 @@ def _build_old_database(path: Path, name: str, subjects: dict[str, uuid.UUID]) -
     """A database at revision 0081 holding the configuration as it was written then."""
     url = f"sqlite+aiosqlite:///{path}"
     assert _alembic(url, "upgrade", "0081").returncode == 0
-    rules, user_rules = CONFIGS[name]
+    rules, user_rules, *_ = CONFIGS[name]
     with closing(sqlite3.connect(path)) as conn:
         for index, (scope, subject, kwargs) in enumerate(rules):
             policy, inactive = _old_policy(kwargs)
@@ -390,6 +409,8 @@ async def test_the_same_requests_come_out_byte_for_byte(
     await _load(session_factory, _migrated_rows(path))
     await app.state.privacy.refresh()
     assert app.state.privacy.bad_rows == []
+    if len(CONFIGS[name]) > 2:
+        app.state.redaction._policy = RedactionPolicy(**CONFIGS[name][2])
     app.state.redactor = FakeDetector(SPANS).redactor()
 
     got = await _run(app, client, seeded, session, fake_upstream)

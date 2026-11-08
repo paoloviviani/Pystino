@@ -19,7 +19,9 @@ import pytest
 from conftest import FakeUpstream, Seeded
 from gateway.config import EntityMode, EntityPolicy
 from gateway.models import (
+    ApiKey,
     DetectorProfile,
+    Group,
     GroupModelAccess,
     ModelDef,
     ModelKind,
@@ -1351,32 +1353,77 @@ class TestUserPipelines:
         assert app.state.privacy.pipelines == ()
         assert app.state.privacy.bad_rows
 
-    async def test_the_test_box_is_locked_to_the_user(
+    async def test_the_test_box_is_locked_to_the_user_and_leaks_nothing_of_others(
         self,
         app: Any,
         client: httpx.AsyncClient,
         seeded: Seeded,
+        session: AsyncSession,
         session_factory: Any,
     ) -> None:
         other = await _other_user(session_factory, seeded)
+        secret_group = Group(name="secret-oncology")
+        session.add(secret_group)
+        await session.commit()
         await add_pipeline(
             app,
             session_factory,
             "chat",
-            "Theirs",
+            "Theirs by user",
             who={"mode": "users", "ids": [str(other.id)]},
             otherwise={"level": "refuse"},
         )
+        await add_pipeline(
+            app,
+            session_factory,
+            "chat",
+            "Theirs by group",
+            who={"mode": "groups", "ids": [str(secret_group.id)]},
+            otherwise={"level": "refuse"},
+            position=1,
+        )
+        await add_pipeline(
+            app,
+            session_factory,
+            "chat",
+            "Another user's own",
+            owner=other.id,
+            otherwise={"level": "refuse"},
+            position=2,
+        )
+        await add_pipeline(app, session_factory, "chat", "For all", position=3)
         as_user(app, seeded.user)
         # Pretending to be the other user is not possible: user_id in the body is ignored.
-        result = (
+        result = await client.post(
+            "/api/me/privacy/test",
+            json={"kind": "chat", "user_id": str(other.id), "text": "x"},
+        )
+        body = result.json()
+        assert body["outcome"] == "pass"
+        assert [p["name"] for p in body["pipelines"]] == ["For all"]
+        # Neither run, nor "not in scope": other people's pipelines are not in the answer at all.
+        assert body["skipped"] == []
+        for hidden in (
+            "Theirs by user",
+            "Theirs by group",
+            "Another user's own",
+            "secret-oncology",
+        ):
+            assert hidden not in result.text
+
+    async def test_the_administrators_test_box_still_shows_everything(
+        self, app: Any, admin: None, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        other = await _other_user(session_factory, seeded)
+        await add_pipeline(
+            app, session_factory, "chat", "Not mine", who={"mode": "users", "ids": [str(other.id)]}
+        )
+        body = (
             await client.post(
-                "/api/me/privacy/test",
-                json={"kind": "chat", "user_id": str(other.id), "text": "x"},
+                "/api/admin/privacy/test", json={"kind": "chat", "user_id": str(seeded.user.id)}
             )
         ).json()
-        assert result["outcome"] == "pass"
-        assert [s["name"] for s in result["skipped"]] == ["Theirs"]
+        assert [s["name"] for s in body["skipped"]] == ["Not mine"]
 
     async def test_the_test_box_is_rate_limited(
         self, app: Any, client: httpx.AsyncClient, seeded: Seeded
@@ -1639,3 +1686,301 @@ class TestSummary:
 
     async def test_it_needs_a_credential(self, client: httpx.AsyncClient) -> None:
         assert (await client.get("/v1/pystino/privacy")).status_code == 401
+
+
+# -- review fixes ------------------------------------------------------------------------
+
+
+class TestUndecidableOnTheRequestPath:
+    async def pipeline_with_a_down_detector(
+        self, app: Any, session_factory: Any, kind: str
+    ) -> None:
+        async with session_factory() as db:
+            profile = DetectorProfile(name="Medical", engine="gliner", labels=[], fallback="refuse")
+            db.add(profile)
+            await db.commit()
+            profile_id = str(profile.id)
+        await add_pipeline(
+            app,
+            session_factory,
+            kind,
+            "Remote",
+            rules=[
+                rule(
+                    "No health, pass",
+                    [{"key": "health", "negate": True, "decide": profile_id}],
+                    level="pass",
+                )
+            ],
+            otherwise={"level": "refuse"},
+        )
+
+    async def test_embedding_with_the_detector_down_is_a_503_naming_the_rule(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: Any,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        await add_embedding_model(session, seeded)
+        await self.pipeline_with_a_down_detector(app, session_factory, "embed")
+        fake_upstream.set_json(embedding_body())
+        response = await embed(client, seeded, HEALTH_TEXT)
+        assert response.status_code == 503, response.text
+        assert response.json()["error"]["code"] == "privacy_undecidable"
+        assert "No health, pass" in response.text and "diabete" not in response.text
+        assert fake_upstream.bodies == []
+
+    async def test_chat_with_the_detector_down_is_a_503_not_a_pass(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: Any,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        await self.pipeline_with_a_down_detector(app, session_factory, "chat")
+        response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": seeded.model.name,
+                "messages": [{"role": "user", "content": HEALTH_TEXT}],
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 503, response.text
+        assert fake_upstream.bodies == []
+
+    async def test_oversized_input_on_a_negated_condition_is_a_503_for_embed_and_chat(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: Any,
+        fake_upstream: FakeUpstream,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("gateway.privacy.evaluate.MAX_REQUEST_CHARS", 10)
+        await add_embedding_model(session, seeded)
+        for kind in ("embed", "chat"):
+            await add_pipeline(
+                app,
+                session_factory,
+                kind,
+                f"Guard {kind}",
+                rules=[rule("No health, pass", [{"key": "health", "negate": True}], level="pass")],
+                otherwise={"level": "refuse"},
+            )
+        assert (await embed(client, seeded, HEALTH_TEXT * 2)).status_code == 503
+        chat = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": seeded.model.name,
+                "messages": [{"role": "user", "content": HEALTH_TEXT * 2}],
+            },
+            headers=seeded.auth,
+        )
+        assert chat.status_code == 503
+        assert fake_upstream.bodies == []
+
+
+class TestUserPickingAnAdministratorsPolicy:
+    async def test_chat_still_hides_what_the_environment_hides(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: Any,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        from helpers import completion_body
+
+        app.state.redactor = FakeDetector(
+            {"Mario Rossi": "PERSON", "a@b.test": "EMAIL_ADDRESS"}
+        ).redactor()
+        from gateway.config import RedactionPolicy
+
+        app.state.redaction._policy = RedactionPolicy(
+            entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT)}
+        )
+        picked = await add_policy(
+            app,
+            session_factory,
+            "Emails",
+            entities={"EMAIL_ADDRESS": EntityPolicy(mode=EntityMode.REDACT)},
+            allow_list=["Mario Rossi"],
+        )
+        await add_pipeline(
+            app,
+            session_factory,
+            "chat",
+            "Mine",
+            owner=seeded.user.id,
+            otherwise={"level": "pass", "redact_with": str(picked)},
+        )
+        fake_upstream.set_json(completion_body())
+        response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": seeded.model.name,
+                "messages": [{"role": "user", "content": "Mario Rossi a@b.test"}],
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200, response.text
+        sent = str(fake_upstream.bodies[-1])
+        assert "Mario Rossi" not in sent and "a@b.test" not in sent
+
+
+class TestPoliciesAndProfiles:
+    async def test_a_policy_cannot_name_a_non_default_profile_yet(
+        self, admin: None, client: httpx.AsyncClient
+    ) -> None:
+        default = (
+            await client.post(
+                "/api/admin/privacy/profiles", json={"name": "Fast", "engine": "presidio"}
+            )
+        ).json()
+        other = (
+            await client.post(
+                "/api/admin/privacy/profiles", json={"name": "Medical", "engine": "gliner"}
+            )
+        ).json()
+        # Not flagged default by the API: the seeded one is; make it so directly below.
+        assert default["is_default"] is False
+        refused = await client.post(
+            "/api/admin/privacy/policies",
+            json={"name": "P", "policy": {}, "profile_id": other["id"]},
+        )
+        assert refused.status_code == 422
+        assert "take effect in a later release" in refused.text
+
+    async def test_the_default_profile_is_fine(
+        self, admin: None, client: httpx.AsyncClient, session_factory: Any
+    ) -> None:
+        async with session_factory() as db:
+            fast = DetectorProfile(
+                name="Fast", engine="presidio", labels=[], fallback="refuse", is_default=True
+            )
+            db.add(fast)
+            await db.commit()
+            fid = str(fast.id)
+        ok = await client.post(
+            "/api/admin/privacy/policies", json={"name": "P", "policy": {}, "profile_id": fid}
+        )
+        assert ok.status_code == 201, ok.text
+
+    async def test_a_users_policy_cannot_either(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        async with session_factory() as db:
+            medical = DetectorProfile(
+                name="Medical", engine="gliner", labels=[], fallback="refuse", user_available=True
+            )
+            db.add(medical)
+            await db.commit()
+            mid = str(medical.id)
+        as_user(app, seeded.user)
+        refused = await client.post(
+            "/api/me/privacy/policies", json={"name": "Mine", "entries": [], "profile_id": mid}
+        )
+        assert refused.status_code == 422 and "later release" in refused.text
+
+    async def test_a_profile_must_name_a_known_engine(
+        self, admin: None, client: httpx.AsyncClient
+    ) -> None:
+        bad = await client.post(
+            "/api/admin/privacy/profiles", json={"name": "X", "engine": "nonsense"}
+        )
+        assert bad.status_code in (400, 422)
+        assert "Unknown engine" in bad.text
+
+    async def test_a_policy_in_use_cannot_be_deactivated(
+        self, app: Any, admin: None, client: httpx.AsyncClient, session_factory: Any
+    ) -> None:
+        pid = await add_policy(app, session_factory, "Default", entities={"PERSON": EntityPolicy()})
+        await add_pipeline(
+            app,
+            session_factory,
+            "chat",
+            "Chat",
+            otherwise={"level": "pass", "redact_with": str(pid)},
+        )
+        refused = await client.patch(
+            f"/api/admin/privacy/policies/{pid}", json={"is_active": False}
+        )
+        assert refused.status_code == 409 and "Chat" in refused.text
+        assert str(pid) in app.state.privacy.policies
+        free = await add_policy(app, session_factory, "Spare")
+        assert (
+            await client.patch(f"/api/admin/privacy/policies/{free}", json={"is_active": False})
+        ).status_code == 200
+
+
+class TestSummaryAndInForceLeaks:
+    async def test_the_summary_needs_loaded_pipelines_and_counts_the_callers_own_key(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: Any,
+    ) -> None:
+        await add_embedding_model(session, seeded)
+        await add_pipeline(
+            app,
+            session_factory,
+            "embed",
+            "Key only",
+            rules=[rule("Health", HEALTH)],
+            who={"mode": "keys", "ids": [str(seeded.api_key.id)]},
+        )
+        body = (await client.get("/v1/pystino/privacy", headers=seeded.auth)).json()
+        assert {m["model"]: m["summary"] for m in body["embedding"]}["embed-1"] == [
+            "refuses health data"
+        ]
+        app.state.privacy.loaded = False
+        refused = await client.get("/v1/pystino/privacy", headers=seeded.auth)
+        assert refused.status_code == 503
+
+    async def test_in_force_shows_only_the_callers_own_matches(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: Any,
+    ) -> None:
+        other = await _other_user(session_factory, seeded)
+        elsewhere = Group(name="secret-oncology")
+        session.add(elsewhere)
+        theirs = ApiKey(
+            user_id=other.id, prefix="gwk_zzzz", key_hash="f" * 64, name="their-secret-key"
+        )
+        session.add(theirs)
+        await session.commit()
+        await add_pipeline(
+            app,
+            session_factory,
+            "chat",
+            "By group",
+            who={"mode": "groups", "ids": [str(seeded.group.id), str(elsewhere.id)]},
+        )
+        await add_pipeline(
+            app,
+            session_factory,
+            "chat",
+            "By key",
+            who={"mode": "keys", "ids": [str(seeded.api_key.id), str(theirs.id)]},
+            position=1,
+        )
+        as_user(app, seeded.user)
+        response = await client.get("/api/me/privacy/in-force")
+        items = {p["name"]: p for p in response.json()["items"]}
+        assert set(items) == {"By group", "By key"}
+        assert items["By group"]["who"]["ids"] == [str(seeded.group.id)]
+        assert items["By key"]["who"]["ids"] == [str(seeded.api_key.id)]
+        assert "secret-oncology" not in response.text and "their-secret-key" not in response.text

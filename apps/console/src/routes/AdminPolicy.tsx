@@ -120,7 +120,9 @@ export function AdminPolicy() {
               />
               <Select
                 label={m["privacy.policy.profile"]()}
-                hint={m["privacy.policy.profile_hint"]()}
+                hint={m["privacy.policy.profile_later"]()}
+                title={m["privacy.policy.profile_later"]()}
+                disabled
                 value={profileId}
                 onChange={(event) => setProfileId(event.target.value)}
               >

@@ -3721,8 +3721,8 @@ export interface paths {
          *     reindex" prompt). Read-only, for the calling user, in short words ("refuses
          *     health data", "redacts with Default"): labels and names, never a pattern, an
          *     allow-list or another user's pipeline. Only the pipelines that cover this
-         *     caller and that model count; a pipeline scoped to one API key is left out
-         *     because it does not apply to every call.
+         *     caller and that model count; a pipeline scoped to an API key counts when the
+         *     call is made with that key. A worker that never loaded the pipelines answers 503.
          */
         get: operations["pystino_privacy_v1_pystino_privacy_get"];
         put?: never;

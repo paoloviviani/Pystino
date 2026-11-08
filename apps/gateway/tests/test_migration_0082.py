@@ -16,6 +16,8 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
+import pytest
+from gateway.config import RedactionPolicy
 from test_migration_0067 import _alembic
 
 T0 = "2026-11-08 12:00:00.000000"
@@ -251,3 +253,110 @@ def test_an_empty_deployment_migrates_to_nothing(tmp_path: Path) -> None:
     assert _rows(path, "redaction_policies") == []
     assert _rows(path, "privacy_pipelines") == []
     assert _rows(path, "user_policies") == []
+
+
+# -- the downgrade writes the data back, or refuses ---------------------------------
+
+
+def _sorted_old(path: Path) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]]]:
+    with closing(sqlite3.connect(path)) as conn:
+        rules = sorted(
+            (r[0], r[1], json.loads(r[2]), r[3])
+            for r in conn.execute("SELECT scope, scope_id, policy, is_active FROM redaction_rules")
+        )
+        users = [
+            tuple(r)
+            for r in conn.execute(
+                "SELECT kind, name, regex, mode FROM user_redaction_rules ORDER BY created_at, id"
+            )
+        ]
+    return rules, users
+
+
+def test_the_downgrade_round_trips_every_contract_configuration(tmp_path: Path) -> None:
+    from test_privacy_migration_contract import CONFIGS, _build_old_database
+
+    for name, config in CONFIGS.items():
+        subjects = {k: uuid.uuid4() for k in ("provider", "model", "group", "user", "key", "other")}
+        path = tmp_path / f"{name}.db"
+        _build_old_database(path, name, subjects)
+        down = _alembic(f"sqlite+aiosqlite:///{path}", "downgrade", "0081")
+        assert down.returncode == 0, (name, down.stderr[-1500:])
+        rules, users = _sorted_old(path)
+        want_rules = sorted(
+            (
+                scope,
+                None if subject is None else subjects[subject].hex,
+                RedactionPolicy(**{k: v for k, v in kwargs.items() if k != "_inactive"}).model_dump(
+                    mode="json"
+                ),
+                0 if kwargs.get("_inactive") else 1,
+            )
+            for scope, subject, kwargs in config[0]
+        )
+        assert rules == want_rules, name
+        assert users == [
+            (kind, rname, regex, "block" if mode == "block_never" else mode)
+            for kind, rname, regex, mode in config[1]
+        ], name
+
+
+def test_a_downgrade_that_would_lose_pipelines_is_refused_unless_allowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path, url = _old(tmp_path)
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute(
+            "INSERT INTO privacy_rules (id, kind, name, enabled, observe_only, position, conditions, action, created_at, updated_at) "
+            "VALUES (?, 'embed', 'R', 1, 0, 0, ?, ?, ?, ?)",
+            (
+                uuid.uuid4().hex,
+                json.dumps([{"key": "verdict", "values": ["health"], "negate": False}]),
+                json.dumps({"type": "refuse"}),
+                T0,
+                T0,
+            ),
+        )
+        conn.commit()
+    _upgrade(url)
+
+    refused = _alembic(url, "downgrade", "0081")
+    assert refused.returncode != 0
+    assert "PYSTINO_ALLOW_LOSSY_DOWNGRADE=1" in refused.stderr + refused.stdout
+    assert "Routing rules (embed)" in refused.stderr + refused.stdout
+    # Nothing was changed by the refusal.
+    assert _rows(path, "privacy_pipelines")
+
+    monkeypatch.setenv("PYSTINO_ALLOW_LOSSY_DOWNGRADE", "1")
+    allowed = _alembic(url, "downgrade", "0081")
+    assert allowed.returncode == 0, allowed.stderr[-1500:]
+
+
+def test_converted_rules_that_lost_a_condition_get_their_own_pipeline_and_none_vanish(
+    tmp_path: Path,
+) -> None:
+    path, url = _old(tmp_path)
+    with closing(sqlite3.connect(path)) as conn:
+        for index, (name, conditions) in enumerate(
+            [
+                # `local` cannot be said any more: the rule is kept, apart, so it can only add.
+                ("Cloud only", [{"key": "target", "values": ["cloud"], "negate": False}]),
+                # A verdict with no values asked nothing: it always holds, the rule must not vanish.
+                ("Empty verdict", [{"key": "verdict", "values": [], "negate": False}]),
+                ("Plain", []),
+            ]
+        ):
+            conn.execute(
+                "INSERT INTO privacy_rules (id, kind, name, enabled, observe_only, position, conditions, action, created_at, updated_at) "
+                "VALUES (?, 'embed', ?, 1, 0, ?, ?, '{\"type\": \"refuse\"}', ?, ?)",
+                (uuid.uuid4().hex, name, index, json.dumps(conditions), T0, T0),
+            )
+        conn.commit()
+    _upgrade(url)
+
+    pipelines = {p["name"]: p for p in _rows(path, "privacy_pipelines")}
+    assert "Cloud only" in pipelines
+    assert [r["name"] for r in json.loads(pipelines["Cloud only"]["rules"])] == ["Cloud only"]
+    shared = json.loads(pipelines["Routing rules (embed)"]["rules"])
+    assert [r["name"] for r in shared] == ["Empty verdict", "Plain"]
+    assert shared[0]["conditions"] == []

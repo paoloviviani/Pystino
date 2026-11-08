@@ -3206,14 +3206,14 @@
   "privacy.scope.me": "Only me",
   "privacy.scope.all_users": "All users",
   "privacy.scope.users": "Users: {names}",
-  "privacy.scope.groups": "Groups: {names}",
+  "privacy.scope.groups": "Billing groups: {names}",
   "privacy.scope.keys": "Keys: {names}",
   "privacy.scope.all_targets": "All targets",
   "privacy.scope.only": "Only {names}",
   "privacy.scope.except": "All except {names}",
   "privacy.who.all": "All",
   "privacy.who.users": "Users",
-  "privacy.who.groups": "Groups",
+  "privacy.who.groups": "Billing groups",
   "privacy.who.keys": "Keys",
   "privacy.target.all": "All",
   "privacy.target.only": "Only",
@@ -3293,7 +3293,7 @@
   "privacy.edit.kind": "Kind",
   "privacy.edit.kind_fixed": "Fixed once the pipeline exists.",
   "privacy.edit.who": "Who",
-  "privacy.edit.who_tip": "Which requests this pipeline sees: everyone, or only some users, groups (the group a request is billed to) or API keys.",
+  "privacy.edit.who_tip": "Which requests this pipeline sees: everyone, or only some users, billing groups or API keys. A group means the billing group a request is charged to, so a user in several groups is matched by the one the request is billed to.",
   "privacy.edit.who_tip_own": "Fixed to you. Your pipelines never apply to other users.",
   "privacy.edit.target": "Target",
   "privacy.edit.target_tip": "The provider or model the request goes to. There is no \"local\": a provider is a provider, and scope decides.",
@@ -3410,5 +3410,6 @@
   "privacy.test.owner_user": "User",
   "privacy.test.owner_admin": "Admin",
   "privacy.test.observed_mark": "would fire, observe only",
-  "privacy.test.file_placeholder": "referto_2026.pdf"
+  "privacy.test.file_placeholder": "referto_2026.pdf",
+  "privacy.policy.profile_later": "Detector profiles on policies take effect in a later release."
 }

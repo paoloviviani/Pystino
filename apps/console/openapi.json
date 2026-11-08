@@ -23439,7 +23439,7 @@
     },
     "/v1/pystino/privacy": {
       "get": {
-        "description": "What the privacy pipelines do for this caller, per embedding and per chat model.\n\nADR 0113: a client such as Cerea shows it beside the embedder choice, so the\nchoice is informed up front (there is no after-the-fact \"switch and\nreindex\" prompt). Read-only, for the calling user, in short words (\"refuses\nhealth data\", \"redacts with Default\"): labels and names, never a pattern, an\nallow-list or another user's pipeline. Only the pipelines that cover this\ncaller and that model count; a pipeline scoped to one API key is left out\nbecause it does not apply to every call.",
+        "description": "What the privacy pipelines do for this caller, per embedding and per chat model.\n\nADR 0113: a client such as Cerea shows it beside the embedder choice, so the\nchoice is informed up front (there is no after-the-fact \"switch and\nreindex\" prompt). Read-only, for the calling user, in short words (\"refuses\nhealth data\", \"redacts with Default\"): labels and names, never a pattern, an\nallow-list or another user's pipeline. Only the pipelines that cover this\ncaller and that model count; a pipeline scoped to an API key counts when the\ncall is made with that key. A worker that never loaded the pipelines answers 503.",
         "operationId": "pystino_privacy_v1_pystino_privacy_get",
         "responses": {
           "200": {

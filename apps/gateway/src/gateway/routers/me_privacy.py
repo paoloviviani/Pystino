@@ -164,7 +164,7 @@ async def _name_free(
 @router.get("/options", response_model=OptionsResponse)
 async def options(user: ManagementUserDep, session: SessionDep) -> OptionsResponse:
     """What this user may pick: their readers, policies, targets, types and profiles."""
-    group = user.default_billing_group_id
+    group = service.request_group_id(user)
     models = list(
         (
             await session.execute(
@@ -403,9 +403,15 @@ async def _policy_fields(
     except ValueError as exc:
         raise UnprocessableError(_message_of(exc)) from exc
     if payload.profile_id is not None:
-        allowed = {p.id for p in await service.profile_rows(session) if p.user_available}
-        if payload.profile_id not in allowed:
+        profile = next(
+            (p for p in await service.profile_rows(session) if p.id == payload.profile_id), None
+        )
+        if profile is None or not profile.user_available:
             raise UnprocessableError("That detector profile is not available to you.")
+        if not profile.is_default:
+            raise UnprocessableError(
+                "Detector profiles on policies take effect in a later release."
+            )
     return name, entries
 
 
@@ -492,7 +498,7 @@ async def in_force(user: ManagementUserDep, session: SessionDep) -> Page[Pipelin
     here. Rule names and what each does are shown; another user's pipelines
     never are, and a policy is shown by name.
     """
-    group = user.default_billing_group_id
+    group = service.request_group_id(user)
     keys = {
         str(k)
         for k in (await session.execute(select(ApiKey.id).where(ApiKey.user_id == user.id)))
@@ -511,13 +517,17 @@ async def in_force(user: ManagementUserDep, session: SessionDep) -> Page[Pipelin
         ) and row.enabled:
             rows.append(row)
     items = await service.views_for(session, rows)
-    # The scope's names are shown to the user it applies to, but who else is named
-    # in a list ("users: a, b") is not theirs to read.
+    # Only the caller's own matches are shown: who else a scope names (other users,
+    # other groups, other people's keys) is not theirs to read, neither the
+    # ids nor the names behind them.
+    mine = {"users": {str(user.id)}, "groups": {str(group)} if group else set(), "keys": keys}
     for item in items:
-        if item.who.mode == "users":
+        if item.who.mode in mine:
+            keep = [i for i in item.who.ids if str(i) in mine[item.who.mode]]
             for ident in item.who.ids:
-                if ident != user.id:
+                if ident not in keep:
                     item.labels.pop(str(ident), None)
+            item.who.ids = keep
     return Page(items=items, total=len(items), limit=max(1, min(MAX_LIMIT, len(items))), offset=0)
 
 
@@ -555,4 +565,5 @@ async def test_my_pipelines(
         settings=settings,
         control_http=control_http,
         redactor=getattr(request.app.state, "redactor", None),
+        viewer_only=True,
     )

@@ -34,10 +34,12 @@ Plain DDL plus Python-side row conversion, so it runs on SQLite as on PostgreSQL
 from __future__ import annotations
 
 import itertools
+import json
 import logging
+import os
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import sqlalchemy as sa
@@ -55,6 +57,10 @@ KIND_WORDS = {"read": "reading", "embed": "embedding", "chat": "chat"}
 BASE = {"read": "default", "embed": "pass", "chat": "pass"}
 #: The old fold's order, broadest first (ADR 0038).
 SCOPE_RANK = {"all": 0, "provider": 1, "model": 2, "group": 3, "user": 4, "api_key": 5}
+
+
+def _as_uuid(value: Any) -> uuid.UUID:
+    return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
 
 
 def _now() -> datetime:
@@ -370,8 +376,9 @@ def _lookup(bind: sa.Connection, table: str, column: str, value: str, extra: str
 
 def _scope_of(
     bind: sa.Connection, conditions: list[dict[str, Any]]
-) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], bool]:
-    """(who, target, the remaining conditions, whether the rule can ever fire)."""
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], bool, bool]:
+    """(who, target, the remaining conditions, can it ever fire, was a condition dropped)."""
+    dropped = False
     who: dict[str, Any] = {"mode": "all", "ids": []}
     target: dict[str, Any] = {"mode": "all", "providers": [], "models": []}
     rest: list[dict[str, Any]] = []
@@ -395,8 +402,9 @@ def _scope_of(
             elif groups and not users:
                 who = {"mode": "groups", "ids": groups}
             elif not users and not groups:
-                return who, target, rest, False
+                return who, target, rest, False, dropped
             else:
+                dropped = True
                 logger.warning("a routing rule names users and groups; its who is dropped")
         elif key == "target" and all(
             str(v).startswith(("provider:", "model:")) for v in values
@@ -416,17 +424,18 @@ def _scope_of(
             if not (providers or models):
                 if negate:
                     continue  # excludes nothing that exists
-                return who, target, rest, False
+                return who, target, rest, False, dropped
             target = {
                 "mode": "except" if negate else "only",
                 "providers": providers,
                 "models": models,
             }
         elif key in ("who", "target"):
+            dropped = True
             logger.warning("a routing rule's %s condition cannot be kept; it is dropped", key)
         else:
             rest.append(c)
-    return who, target, rest, True
+    return who, target, rest, True, dropped
 
 
 def _variants(conditions: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
@@ -447,6 +456,8 @@ def _variants(conditions: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
                 options.append([one])
             else:
                 alts: list[list[dict[str, Any]]] = []
+                if not plain and not scan:
+                    alts.append([])
                 if plain:
                     alts.append([{"key": "filetype", "values": plain, "negate": False}])
                 if scan:
@@ -458,13 +469,16 @@ def _variants(conditions: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
                 options.append(
                     [[{"key": v, "values": [], "negate": True, "decide": decide or "patterns"} for v in kept]]
                 )
-            else:
+            elif kept:
                 options.append(
                     [
                         [{"key": v, "values": [], "negate": False, "decide": decide or "patterns"}]
                         for v in kept
                     ]
                 )
+            else:
+                # No values: nothing was asked, so the condition always holds.
+                options.append([[]])
         else:
             options.append([[{**c, "values": values, "negate": negate}]])
     if not options:
@@ -481,7 +495,7 @@ def _convert_routing(bind: sa.Connection, table: Any, add_pipeline: Any) -> None
         kind = str(row.kind)
         if kind not in KINDS:
             continue
-        who, target, rest, live = _scope_of(bind, list(row.conditions or []))
+        who, target, rest, live, dropped = _scope_of(bind, list(row.conditions or []))
         if not live:
             logger.warning("routing rule %s names nothing that exists; it is not carried over", row.id)
             continue
@@ -499,7 +513,9 @@ def _convert_routing(bind: sa.Connection, table: Any, add_pipeline: Any) -> None
                     "action": _action(dict(row.action or {})),
                 }
             )
-        if who["mode"] == "all" and target["mode"] == "all":
+        # A rule that lost a condition goes in a pipeline of its own: there it can
+        # only add to what the other rules do, never shadow a later rule.
+        if who["mode"] == "all" and target["mode"] == "all" and not dropped:
             shared[kind].extend(converted)
             shared_made.setdefault(kind, row.created_at)
         else:
@@ -527,13 +543,191 @@ def _convert_routing(bind: sa.Connection, table: Any, add_pipeline: Any) -> None
         )
 
 
-def downgrade() -> None:
-    """Back to the shapes of 0081 and 0080, **empty**: the conversion is one way.
+_BASES = {"read": "default", "embed": "pass", "chat": "pass"}
 
-    Policies, pipelines and users' own policies are not turned back into scoped
-    rules (a pipeline can say what no single scoped rule can). The tables are
-    restored so the older code starts; what was in them is lost.
+
+def _pure(pipeline: Any, policy_id: str) -> bool:
+    """A pipeline that only says "everything else -> redact with this policy"."""
+    otherwise = pipeline.otherwise or {}
+    return (
+        not (pipeline.rules or [])
+        and otherwise.get("level") == _BASES.get(pipeline.kind)
+        and str(otherwise.get("redact_with")) == policy_id
+        and set(otherwise) <= {"level", "redact_with"}
+    )
+
+
+def _scope_back(pipeline: Any) -> tuple[str, str | None] | None:
+    who, target = pipeline.who or {}, pipeline.target or {}
+    wmode, tmode = who.get("mode", "all"), target.get("mode", "all")
+    wids, providers, models = who.get("ids") or [], target.get("providers") or [], target.get("models") or []
+    if wmode == "all" and tmode == "all":
+        return "all", None
+    if wmode == "all" and tmode == "only" and len(providers) == 1 and not models:
+        return "provider", str(providers[0])
+    if wmode == "all" and tmode == "only" and len(models) == 1 and not providers:
+        return "model", str(models[0])
+    if tmode == "all" and len(wids) == 1 and wmode in ("groups", "users", "keys"):
+        return {"groups": "group", "users": "user", "keys": "api_key"}[wmode], str(wids[0])
+    return None
+
+
+def _downgrade_plan(bind: sa.Connection) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    """The older rows this data can be written back as, and what cannot be."""
+    dt = sa.DateTime(timezone=True)
+    t_pol = sa.table(
+        "redaction_policies",
+        sa.column("id", sa.Uuid()),
+        sa.column("name", sa.String()),
+        sa.column("policy", sa.JSON()),
+        sa.column("is_active", sa.Boolean()),
+        sa.column("reason", sa.String()),
+        sa.column("created_by", sa.Uuid()),
+        sa.column("created_at", dt),
+        sa.column("updated_at", dt),
+    )
+    t_up = sa.table(
+        "user_policies",
+        sa.column("id", sa.Uuid()),
+        sa.column("user_id", sa.Uuid()),
+        sa.column("rules", sa.JSON()),
+        sa.column("created_at", dt),
+        sa.column("updated_at", dt),
+    )
+    t_pipe = sa.table(
+        "privacy_pipelines",
+        sa.column("id", sa.Uuid()),
+        sa.column("owner_id", sa.Uuid()),
+        sa.column("kind", sa.String()),
+        sa.column("name", sa.String()),
+        sa.column("enabled", sa.Boolean()),
+        sa.column("who", sa.JSON()),
+        sa.column("target", sa.JSON()),
+        sa.column("rules", sa.JSON()),
+        sa.column("otherwise", sa.JSON()),
+    )
+    t_set = sa.table("privacy_settings", sa.column("user_entity_types", sa.JSON()))
+    policies = bind.execute(sa.select(*t_pol.c)).mappings().all()
+    user_policies = bind.execute(sa.select(*t_up.c)).mappings().all()
+    raw = bind.execute(sa.select(*t_pipe.c)).mappings().all()
+    settings = bind.execute(sa.select(t_set.c.user_entity_types)).all()
+
+    def js(value: Any) -> Any:
+        return json.loads(value) if isinstance(value, str) else value
+
+    class P:
+        pass
+
+    pipelines = []
+    for r in raw:
+        p = P()
+        p.id, p.kind, p.name, p.owner_id = str(r["id"]), r["kind"], r["name"], r["owner_id"]
+        p.enabled = bool(r["enabled"])
+        p.who, p.target, p.rules, p.otherwise = (
+            js(r["who"]),
+            js(r["target"]),
+            js(r["rules"]),
+            js(r["otherwise"]),
+        )
+        pipelines.append(p)
+
+    def ident(value: Any) -> str:
+        return str(uuid.UUID(str(value)))
+
+    rules: list[dict[str, Any]] = []
+    user_rules: list[dict[str, Any]] = []
+    lost: list[str] = []
+    used: set[str] = set()
+    seen_scopes: set[tuple[str, str | None]] = set()
+    for pol in policies:
+        pid = ident(pol["id"])
+        mine = [p for p in pipelines if p.owner_id is None and str(p.otherwise.get("redact_with")) == pid]
+        scopes = {_scope_back(p) for p in mine}
+        pure = bool(mine) and all(_pure(p, pid) for p in mine)
+        if (
+            not pure
+            or {p.kind for p in mine} != set(_BASES)
+            or len(mine) != 3
+            or len(scopes) != 1
+            or None in scopes
+        ):
+            lost.append(f"policy '{pol['name']}' (it is not applied by exactly three plain pipelines on one scope)")
+            continue
+        scope = next(iter(scopes))
+        assert scope is not None
+        if scope in seen_scopes:
+            lost.append(f"policy '{pol['name']}' (another policy has the same scope)")
+            continue
+        seen_scopes.add(scope)
+        used.update(p.id for p in mine)
+        rules.append(
+            {
+                "id": pol["id"],
+                "name": pol["name"],
+                "scope": scope[0],
+                "scope_id": uuid.UUID(scope[1]) if scope[1] else None,
+                "policy": js(pol["policy"]),
+                "is_active": bool(pol["is_active"]) and all(p.enabled for p in mine),
+                "reason": pol["reason"] or "",
+                "created_by": pol["created_by"],
+                "created_at": pol["created_at"],
+                "updated_at": pol["updated_at"],
+            }
+        )
+    by_user: dict[str, list[Any]] = {}
+    for up in user_policies:
+        by_user.setdefault(str(up["user_id"]), []).append(up)
+    for user_id, owned in by_user.items():
+        up = owned[0]
+        pid = ident(up["id"])
+        mine = [p for p in pipelines if p.owner_id is not None and str(p.otherwise.get("redact_with")) == pid]
+        if len(owned) != 1 or not (
+            len(mine) == 3 and {p.kind for p in mine} == set(_BASES) and all(_pure(p, pid) for p in mine)
+        ):
+            lost.append(f"user policy for user {user_id} (not one policy applied by three plain pipelines)")
+            continue
+        used.update(p.id for p in mine)
+        for index, entry in enumerate(js(up["rules"]) or []):
+            user_rules.append(
+                {
+                    "id": uuid.uuid4(),
+                    "user_id": up["user_id"],
+                    "kind": entry["kind"],
+                    "name": entry["name"],
+                    "regex": entry.get("regex"),
+                    "mode": entry["mode"],
+                    "created_at": up["created_at"] + timedelta(seconds=index),
+                    "updated_at": up["updated_at"],
+                }
+            )
+    for p in pipelines:
+        if p.id not in used:
+            lost.append(f"pipeline '{p.name}' ({p.kind}; it has rules or a scope the older model cannot say)")
+    if settings and settings[0][0] is not None:
+        lost.append("the entity types users may name")
+    return rules, user_rules, lost
+
+
+def downgrade() -> None:
+    """Back to the shapes of 0081 and 0080, writing the data back where it can be.
+
+    A policy plus the three plain pipelines that only say "everything else -> redact
+    with it" becomes the scoped rule it came from (same id); a user's policy and its
+    three plain pipelines become their ``user_redaction_rules``. Anything the older
+    model cannot say (pipelines with rules, a scope that is not one of the old five,
+    two policies on one scope, a limit on users' entity types) is **refused**, so a
+    downgrade never silently stops hiding what a pipeline was hiding. Set
+    ``PYSTINO_ALLOW_LOSSY_DOWNGRADE=1`` to drop those anyway.
     """
+    bind = op.get_bind()
+    rules, user_rules, lost = _downgrade_plan(bind)
+    if lost and os.environ.get("PYSTINO_ALLOW_LOSSY_DOWNGRADE") != "1":
+        raise RuntimeError(
+            "Downgrading 0082 would lose what the older model cannot express: "
+            + "; ".join(lost)
+            + ". Nothing was changed. Remove or simplify them first, or set "
+            "PYSTINO_ALLOW_LOSSY_DOWNGRADE=1 to drop them."
+        )
     with op.batch_alter_table("providers", schema=None) as batch_op:
         batch_op.add_column(
             sa.Column("is_local", sa.Boolean(), server_default=sa.false(), nullable=False)
@@ -605,6 +799,34 @@ def downgrade() -> None:
     op.create_index(
         "ix_redaction_rules_lookup", "redaction_rules", ["is_active", "scope", "scope_id"]
     )
+    old_rules = sa.table(
+        "redaction_rules",
+        sa.column("id", sa.Uuid()),
+        sa.column("name", sa.String()),
+        sa.column("scope", sa.String()),
+        sa.column("scope_id", sa.Uuid()),
+        sa.column("policy", sa.JSON()),
+        sa.column("is_active", sa.Boolean()),
+        sa.column("reason", sa.String()),
+        sa.column("created_by", sa.Uuid()),
+        sa.column("created_at", sa.DateTime(timezone=True)),
+        sa.column("updated_at", sa.DateTime(timezone=True)),
+    )
+    old_user_rules = sa.table(
+        "user_redaction_rules",
+        sa.column("id", sa.Uuid()),
+        sa.column("user_id", sa.Uuid()),
+        sa.column("kind", sa.String()),
+        sa.column("name", sa.String()),
+        sa.column("regex", sa.String()),
+        sa.column("mode", sa.String()),
+        sa.column("created_at", sa.DateTime(timezone=True)),
+        sa.column("updated_at", sa.DateTime(timezone=True)),
+    )
+    if rules:
+        op.bulk_insert(old_rules, [{**r, "id": _as_uuid(r["id"])} for r in rules])
+    if user_rules:
+        op.bulk_insert(old_user_rules, user_rules)
     op.drop_table("privacy_settings")
     op.drop_index("ix_privacy_pipelines_kind", table_name="privacy_pipelines")
     op.drop_index("ix_privacy_pipelines_owner_id", table_name="privacy_pipelines")

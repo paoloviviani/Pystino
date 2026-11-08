@@ -61,8 +61,10 @@ pipeline's **scope**.
 
 ## Scope
 
-- **Who**: all, users, groups or keys. *Groups* means the group the request is
-  billed to (as redaction scopes always did). A user's own pipeline is fixed to
+- **Who**: all, users, groups or keys. *Groups* means the **billing group**: the
+  group the request is billed to (as redaction scopes always did), so a user in
+  several groups is matched by the one this request is charged to, resolved the
+  same way for requests, the Test box and the user's "set by your administrator" list. A user's own pipeline is fixed to
   that user.
 - **Target**: all, only, or all except, over providers and models. For a read the
   target is the OCR model or provider named in the request.
@@ -91,6 +93,14 @@ appears at most once per rule.
   leaves the deployment for that), then judge again. If no built-in reader is
   available to the caller, or the document is a link, the request is refused
   (fail closed), naming the rule that was waiting.
+- **A condition that cannot be decided never fails open.** When the detector a
+  condition decides with is unavailable, or the input is too large to check in
+  full, the condition counts as a match only on a rule that protects (a level above
+  the base, or a policy) and whose condition is not negated: then the rule acts.
+  A negated condition ("no health data -> pass") or a rule that adds nothing could
+  let the text it exists to catch through, so the request is refused with a 503
+  (`privacy_undecidable`) naming the rule and its pipeline. An observe-only rule
+  simply does not match.
 - **Unknown name or type fails closed.** A link's name and extension are taken
   from its path. When a file still has no name or no known type, a rule that
   protects (refuses, reads elsewhere, redacts) treats its `filename` and
@@ -142,7 +152,10 @@ profile's method and records it as a weakening.
   reader is not available to the caller (not granted, switched off).
 - **After a reroute, the pipelines whose target scope covers the new reader also
   run**, so a reroute can never escape a pipeline that guards that reader. The
-  loop is bounded (three hops).
+  loop is bounded (three hops). A pipeline that guards the reader the request was
+  re-pointed at decides the next hop (an administrator's choice still holds over
+  a user's); if it cannot be honoured, or the hops run out with the pipelines still
+  asking for another reader, the request is refused (fail closed).
 - **Whole files leave whole.** A file sent to a remote reader leaves as it is.
   Redaction only screens the text that comes back.
 
@@ -183,7 +196,10 @@ request-time scope check holds it again).
 - **Their actions only tighten**: read with a reader, refuse, redact with a
   policy, choose an engine. There is no "default reader" or "pass" action for a
   rule (that is what happens anyway), though "everything else" may add nothing.
-- **Policies**: an administrator's, or their own. A user's own policy is an ordered
+- **Policies**: an administrator's, or their own. A user pipeline's policies are
+  folded **after** every administrator pipeline's, as tighten-only additions (modes
+  and patterns; never the allow-list, thresholds or placeholder styles), and never
+  replace the environment's policy: picking an administrator's policy can only add. A user's own policy is an ordered
   list of custom patterns (the administrators' own RE2 validation) and stricter
   modes for entity types the administrator has made available; no `off`, no
   threshold, no allow-list. It is folded after the administrators' answer and can
@@ -240,6 +256,13 @@ Under `/api/admin/privacy` (administrators only, audited as `privacy_pipeline.*`
 A user's are under `/api/me/privacy` (`pipelines`, `policies`, `in-force`,
 `options`, `test`, cookie session): the same shapes, enforced as above.
 
+## Detector profiles on policies
+
+A policy may name only the default detector profile for now (the API refuses any
+other with "Detector profiles on policies take effect in a later release", and the
+console disables the picker): detection runs on the deployment's one detector, so
+another profile would look applied and not be. Profile engine names are validated.
+
 ## Migration
 
 Migration `0082` rewrites what an existing deployment had and handles requests
@@ -263,6 +286,8 @@ exactly as before.
   adjacent rules, which keeps first-match meaning. A `local` action becomes
   `refuse` (it failed closed without a local model).
 - `providers.is_local` is dropped.
+- A routing rule that lost a condition (a `local`/`cloud` target, a mixed who) goes in a pipeline of its own so it can only add; a verdict condition with no values always holds.
+- **Downgrading** writes a policy plus its three plain pipelines back as the scoped rule, and a user's policy back as their rules. If anything cannot be said in the older model (pipelines with rules, an unusual scope, two policies on one scope, a limit on users' entity types) the downgrade is **refused** with the list; `PYSTINO_ALLOW_LOSSY_DOWNGRADE=1` drops it anyway.
 
 A deployment migrated from redaction rules logs as it always did: only a request
 where something was hidden leaves an entry, until a pipeline does real routing

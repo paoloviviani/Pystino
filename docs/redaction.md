@@ -187,9 +187,11 @@ so nothing changes on upgrade. Set it to `false` and a caller for whom an
 *active* redaction rule applies is refused with a 403
 (`transcription_not_allowed_under_redaction`) before anything is reserved or
 sent. "Active" means the engine is not `noop` and the folded policy for that
-caller (the deployment policy plus every rule that names them, their group, the
-model or its provider) has some entity type, the default, or a custom pattern in
-a mode other than `off`. A rule that only lists types as `off` does not count.
+caller (the policies of the chat pipelines in scope for them, judged without
+content, or the deployment policy) has some entity type, the default, or a custom
+pattern in a mode other than `off`, **or** a chat pipeline in scope refuses them
+(audio has no text for a pipeline to judge, so a refusal that names the caller
+counts as much as a policy). A policy that only lists types as `off` does not count.
 Leave it `true` only if you accept that audio from those callers reaches the
 provider unscreened, although the same words typed as text would have been
 substituted or blocked by their rule. If you do not accept that, set it to
@@ -454,7 +456,8 @@ the user, and answers with the pipelines in scope, the ladder and the policy tab
 It never echoes the text and never logs it, and it is limited to 30 calls a minute
 per user (per worker); the 31st is a 429. `GET /api/me/privacy/in-force` lists the
 administrators' pipelines that cover the user, read-only (rule names and what each
-does; policies by name).
+does; policies by name), showing only the caller's own matches (not other groups',
+users' or people's keys).
 
 ## What users can see
 

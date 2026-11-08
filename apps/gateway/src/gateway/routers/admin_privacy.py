@@ -527,9 +527,22 @@ async def _load_policy(session: SessionDep, policy_id: uuid.UUID) -> RedactionPo
     return row
 
 
+PROFILE_LATER = "Detector profiles on policies take effect in a later release."
+
+
 async def _check_profile(session: SessionDep, profile_id: uuid.UUID | None) -> None:
-    if profile_id is not None and await session.get(DetectorProfile, profile_id) is None:
+    """A policy may name only the default profile for now.
+
+    Detection still runs on the deployment's one detector, so a policy that named
+    another profile would look like it was detected differently and not be.
+    """
+    if profile_id is None:
+        return
+    row = await session.get(DetectorProfile, profile_id)
+    if row is None:
         raise UnprocessableError("The detector profile does not exist.")
+    if not row.is_default:
+        raise UnprocessableError(PROFILE_LATER)
 
 
 async def _name_free(session: SessionDep, name: str, ignore: uuid.UUID | None = None) -> None:
@@ -622,6 +635,13 @@ async def update_policy(
         await _check_profile(session, payload.profile_id)
         row.profile_id = payload.profile_id
     if payload.is_active is not None:
+        if payload.is_active is False and row.is_active:
+            users = (await _used_by(session)).get(str(row.id), [])
+            if users:
+                raise ConflictError(
+                    f"'{row.name}' is applied by: {', '.join(users)}. Change those pipelines "
+                    "first, or it would silently stop hiding what they were written to hide."
+                )
         row.is_active = payload.is_active
     if payload.reason is not None:
         row.reason = payload.reason.strip()

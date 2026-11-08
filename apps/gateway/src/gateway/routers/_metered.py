@@ -1105,21 +1105,6 @@ def policy_names_of(request: Request, combined: Combined) -> list[str]:
     return [n for use in combined.policy_uses() if (n := privacy.policy_name(use.policy_id))]
 
 
-async def redaction_policy(
-    request: Request, *, principal: Principal, model: ModelDef | None = None
-) -> EffectivePolicy | None:
-    """The policy a caller's chat pipelines apply, for callers with no text to judge.
-
-    Used where only "is anything hidden for this caller" matters (the audio
-    switch). Pipelines whose conditions need text see none, so they judge an
-    empty request.
-    """
-    if model is None:
-        return None
-    _, combined = await plan_privacy(request, kind="chat", principal=principal, model=model)
-    return effective_policy_of(request, combined)
-
-
 def _routing_for(
     request: Request,
     facts: Facts,

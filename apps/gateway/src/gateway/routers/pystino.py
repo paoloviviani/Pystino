@@ -82,14 +82,17 @@ async def pystino_privacy(
     reindex" prompt). Read-only, for the calling user, in short words ("refuses
     health data", "redacts with Default"): labels and names, never a pattern, an
     allow-list or another user's pipeline. Only the pipelines that cover this
-    caller and that model count; a pipeline scoped to one API key is left out
-    because it does not apply to every call.
+    caller and that model count; a pipeline scoped to an API key counts when the
+    call is made with that key. A worker that never loaded the pipelines answers 503.
     """
+    state = state_of(request)
+    state.ensure_loaded()
     embedding, chat = await privacy_service.summary_for(
         session,
-        state_of(request),
+        state,
         principal.user,
         principal.billing_group.id if principal.billing_group else None,
+        principal.api_key.id if principal.api_key is not None else None,
     )
 
     def shown(rows: Sequence[tuple[object, list[str], list[str]]], kind: str) -> list[ModelSummary]:

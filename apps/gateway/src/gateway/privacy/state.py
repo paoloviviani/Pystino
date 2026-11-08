@@ -114,6 +114,32 @@ def user_rule_of(raw: dict[str, Any], rule_id: uuid.UUID) -> UserRule:
     )
 
 
+def policy_as_user_rules(ref: PolicyRef) -> list[UserRule]:
+    """An administrator's policy as tighten-only additions (a user picked it).
+
+    Only what can add protection survives: a mode for a type, a pattern. The
+    thresholds, placeholder styles and the allow-list of the policy are not
+    carried (they are administrator-only fields, and ``user_rules.fold`` has no
+    place for them); its default mode is applied as a floor by the caller.
+    """
+    out: list[UserRule] = []
+    for name, entry in ref.policy.entities.items():
+        if entry.mode is not EntityMode.OFF:
+            out.append(UserRule(uuid.uuid5(ref.id, f"mode:{name}"), "mode", name, None, entry.mode))
+    for pattern in ref.policy.patterns:
+        if pattern.mode is not EntityMode.OFF:
+            out.append(
+                UserRule(
+                    uuid.uuid5(ref.id, f"pattern:{pattern.name}:{pattern.regex}"),
+                    "pattern",
+                    pattern.name,
+                    pattern.regex,
+                    pattern.mode,
+                )
+            )
+    return out
+
+
 def user_policy_of(row: UserPolicy) -> UserPolicyRef:
     rules = tuple(
         user_rule_of(raw, uuid.uuid5(row.id, f"{index}:{raw.get('name')}"))
@@ -213,11 +239,17 @@ class PrivacyState:
         queries: everything here arrived on the poll.
         """
         admin_refs: list[tuple[PolicyRef, PolicyUse]] = []
+        #: Administrator policies a *user's* pipeline chose, and the user's own.
+        user_picked: list[PolicyRef] = []
         own: list[UserPolicyRef] = []
         for use in uses:
             ref = self.policies.get(use.policy_id)
+            by_user = use.run.pipeline.is_user
             if ref is not None:
-                admin_refs.append((ref, use))
+                if by_user:
+                    user_picked.append(ref)
+                else:
+                    admin_refs.append((ref, use))
                 continue
             mine = self.user_policies.get(use.policy_id)
             if mine is not None and mine.user_id == use.run.pipeline.owner_id:
@@ -250,15 +282,40 @@ class PrivacyState:
                     for ref, _ in admin_refs
                 ),
             )
-        rules = tuple(rule for policy in own for rule in policy.rules)
-        if not rules:
+        # What a user's pipelines add comes after, as tighten-only additions to the
+        # administrators' answer (or the environment's): a user's choice never
+        # decides the allow-list and never replaces the environment's policy.
+        rules = tuple(
+            [r for ref in user_picked for r in policy_as_user_rules(ref)]
+            + [rule for policy in own for rule in policy.rules]
+        )
+        if not rules and not user_picked:
             return admin
-        ukey = (*(str(c.id) for c in admin.contributors), "|", *(str(p.id) for p in own))
+        ukey = (
+            *(str(c.id) for c in admin.contributors),
+            "|",
+            *(str(p.id) for p in user_picked),
+            "|",
+            *(str(p.id) for p in own),
+        )
         cached = self._user_folded.get(ukey)
         if cached is None:
+            folded_user = user_rules.fold(admin.policy, rules)
+            floor = max(
+                [admin.policy.default_mode, *(ref.policy.default_mode for ref in user_picked)],
+                key=list(EntityMode).index,
+            )
+            if floor is not folded_user.default_mode:
+                folded_user = folded_user.model_copy(update={"default_mode": floor})
             cached = (
-                user_rules.fold(admin.policy, rules),
-                tuple(rule.contributor() for rule in rules),
+                folded_user,
+                (
+                    *(
+                        Contributor(id=ref.id, name=ref.name, owner="admin", policy=ref.policy)
+                        for ref in user_picked
+                    ),
+                    *(rule.contributor() for policy in own for rule in policy.rules),
+                ),
             )
             self._user_folded[ukey] = cached
         policy, contributors = cached

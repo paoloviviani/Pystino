@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from gateway.config import RedactionPolicy
 from gateway.response_model import ResponseModel
@@ -309,6 +309,12 @@ class ProfileResponse(ResponseModel):
     updated_at: datetime
 
 
+#: Engines a profile may name. A profile of an engine that is not installed is
+#: allowed (it shows "not installed" and follows its fallback); a name nobody
+#: could ever install is a typo.
+KNOWN_ENGINES = ("presidio", "patterns", "gliner")
+
+
 class ProfileCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -319,6 +325,13 @@ class ProfileCreateRequest(BaseModel):
     fallback: Literal["refuse", "fallback_to"] = "refuse"
     fallback_profile_id: uuid.UUID | None = None
     user_available: bool = False
+
+    @field_validator("engine")
+    @classmethod
+    def _known_engine(cls, value: str) -> str:
+        if value not in KNOWN_ENGINES:
+            raise ValueError(f"Unknown engine '{value}'. Use one of: {', '.join(KNOWN_ENGINES)}.")
+        return value
 
 
 class ProfileUpdateRequest(BaseModel):

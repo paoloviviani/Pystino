@@ -115,6 +115,23 @@ def redaction_in_force(effective: EffectivePolicy | None, settings: Settings) ->
     return any(pattern.mode is not EntityMode.OFF for pattern in policy.patterns)
 
 
+async def _audio_is_screened(
+    request: Request, *, principal: Any, model: Any, settings: Settings
+) -> bool:
+    """Whether a chat pipeline would act on this caller's text: it would hide or refuse it.
+
+    Chat pipelines are judged without content (there is none to read), so a
+    refusal scoped to the caller, or a last rule that refuses, counts as much as a
+    policy: audio cannot be refused or screened by what it says.
+    """
+    _, combined = await _metered.plan_privacy(
+        request, kind="chat", principal=principal, model=model
+    )
+    return combined.refused or redaction_in_force(
+        _metered.effective_policy_of(request, combined), settings
+    )
+
+
 def _text(form: Any, name: str) -> str | None:
     value = form.get(name)
     if value is None or isinstance(value, UploadFile):
@@ -253,8 +270,8 @@ async def _serve(
     model = resolved.model
     upstream = await _metered.resolve_upstream(providers, resolved)
 
-    if not settings.transcription.allowed_under_redaction and redaction_in_force(
-        await _metered.redaction_policy(request, principal=principal, model=model), settings
+    if not settings.transcription.allowed_under_redaction and await _audio_is_screened(
+        request, principal=principal, model=model, settings=settings
     ):
         raise PermissionError_(
             "A redaction rule applies to this request, and audio cannot be screened "

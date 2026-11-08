@@ -147,7 +147,7 @@ describe("Pipelines", () => {
 
     const embed = await screen.findByRole("region", { name: "Embedding" });
     expect(within(embed).getByText("Remote embeddings")).toBeInTheDocument();
-    expect(within(embed).getByText("Groups: Clinic")).toBeInTheDocument();
+    expect(within(embed).getByText("Billing groups: Clinic")).toBeInTheDocument();
     expect(within(embed).getByText("Only OpenAI")).toBeInTheDocument();
     expect(within(embed).getByText("it contains health data → refuse")).toBeInTheDocument();
     // The fixed last rule is always shown, and names the policy it applies.
