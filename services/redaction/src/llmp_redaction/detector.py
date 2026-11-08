@@ -64,7 +64,18 @@ PATTERN_ONLY_ENTITIES = frozenset(
 )
 
 # Entity types that come from the NLP engine and therefore need a language model.
-MODEL_BACKED_ENTITIES = frozenset({"PERSON", "LOCATION", "NRP", "ORGANIZATION"})
+MODEL_BACKED_ENTITIES = frozenset(
+    {
+        "PERSON",
+        "LOCATION",
+        "NRP",
+        "ORGANIZATION",
+        # Only produced by the opt-in GLiNER engine (REDACTION_NLP_ENGINE=gliner).
+        "HEALTH_INSURANCE_ID",
+        "MEDICAL_CONDITION",
+        "MEDICATION",
+    }
+)
 MODEL_BACKED_UPPER = frozenset(entity.upper() for entity in MODEL_BACKED_ENTITIES)
 
 

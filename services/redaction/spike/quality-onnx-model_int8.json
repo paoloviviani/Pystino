@@ -1,0 +1,349 @@
+{
+ "label": "onnx-model_int8",
+ "threshold": 0.5,
+ "stats": {
+  "PERSON": {
+   "gold": 15
+  },
+  "LOCATION": {
+   "gold": 10
+  },
+  "ORGANIZATION": {
+   "gold": 12
+  },
+  "DATE_TIME": {
+   "gold": 6,
+   "tp": 3,
+   "exact": 3,
+   "pred": 3
+  },
+  "IT_FISCAL_CODE": {
+   "gold": 4,
+   "tp": 4,
+   "exact": 4,
+   "pred": 4
+  },
+  "HEALTH_INSURANCE_ID": {
+   "gold": 2
+  },
+  "MEDICAL_CONDITION": {
+   "gold": 10
+  },
+  "MEDICATION": {
+   "gold": 10
+  }
+ },
+ "misses": [
+  [
+   "PERSON",
+   "Maria Rossi",
+   []
+  ],
+  [
+   "LOCATION",
+   "Torino",
+   []
+  ],
+  [
+   "PERSON",
+   "Giuseppe De Luca",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "Ospedale San Camillo",
+   []
+  ],
+  [
+   "LOCATION",
+   "Roma",
+   []
+  ],
+  [
+   "PERSON",
+   "Dott.ssa Francesca Di Marco",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "Cardiologia",
+   []
+  ],
+  [
+   "DATE_TIME",
+   "3 novembre 2025",
+   []
+  ],
+  [
+   "LOCATION",
+   "Via Giuseppe Garibaldi 45, 10121 Torino",
+   []
+  ],
+  [
+   "HEALTH_INSURANCE_ID",
+   "80380000123456789012",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "ASL Città di Torino",
+   []
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "ipertensione arteriosa",
+   []
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "diabete mellito di tipo 2",
+   []
+  ],
+  [
+   "MEDICATION",
+   "metformina",
+   []
+  ],
+  [
+   "MEDICATION",
+   "ramipril",
+   []
+  ],
+  [
+   "PERSON",
+   "Luca Bianchi Ferrari",
+   []
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "fibrillazione atriale parossistica",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "Azienda Ospedaliero-Universitaria Careggi",
+   []
+  ],
+  [
+   "LOCATION",
+   "Firenze",
+   []
+  ],
+  [
+   "PERSON",
+   "Anna Maria Da Ponte",
+   []
+  ],
+  [
+   "MEDICATION",
+   "atorvastatina",
+   []
+  ],
+  [
+   "MEDICATION",
+   "acido acetilsalicilico",
+   []
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "scompenso cardiaco",
+   []
+  ],
+  [
+   "PERSON",
+   "Prof. Alessandro Colombo",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "Ospedale Niguarda",
+   []
+  ],
+  [
+   "LOCATION",
+   "Milano",
+   []
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "carcinoma mammario",
+   []
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "polmonite lobare",
+   []
+  ],
+  [
+   "MEDICATION",
+   "amoxicillina",
+   []
+  ],
+  [
+   "PERSON",
+   "Chiara Pellegrini",
+   []
+  ],
+  [
+   "LOCATION",
+   "Corso Vittorio Emanuele II, 120, Napoli",
+   []
+  ],
+  [
+   "PERSON",
+   "Dott. Roberto D'Angelo",
+   []
+  ],
+  [
+   "LOCATION",
+   "Via Roma 8, Bologna",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "ASL Roma 1",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "Diabetologia",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "Policlinico Gemelli",
+   []
+  ],
+  [
+   "HEALTH_INSURANCE_ID",
+   "80380001234567890123",
+   []
+  ],
+  [
+   "PERSON",
+   "Marta Ferrari",
+   []
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "asma bronchiale",
+   []
+  ],
+  [
+   "MEDICATION",
+   "penicillina",
+   []
+  ],
+  [
+   "MEDICATION",
+   "salbutamolo",
+   []
+  ],
+  [
+   "MEDICATION",
+   "budesonide",
+   []
+  ],
+  [
+   "PERSON",
+   "Dott. Stefano Costa",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "Ospedale Maggiore",
+   []
+  ],
+  [
+   "LOCATION",
+   "Parma",
+   []
+  ],
+  [
+   "PERSON",
+   "Mr John Smith",
+   []
+  ],
+  [
+   "DATE_TIME",
+   "14 May 1971",
+   []
+  ],
+  [
+   "LOCATION",
+   "22 Baker Street, London",
+   []
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "chronic kidney disease",
+   []
+  ],
+  [
+   "MEDICATION",
+   "furosemide",
+   []
+  ],
+  [
+   "PERSON",
+   "Dr. Emily Carter",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "St Mary's Hospital",
+   []
+  ],
+  [
+   "DATE_TIME",
+   "2 October 2025",
+   []
+  ],
+  [
+   "PERSON",
+   "Giovanna Pellizzari",
+   []
+  ],
+  [
+   "LOCATION",
+   "Cagliari",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "Neurologia",
+   []
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "cefalea cronica",
+   []
+  ],
+  [
+   "PERSON",
+   "Antonio Lo Presti",
+   []
+  ],
+  [
+   "MEDICATION",
+   "warfarin",
+   []
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "trombosi venosa profonda",
+   []
+  ],
+  [
+   "PERSON",
+   "Dott.ssa Elena Moretti",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "ASL Napoli 2 Nord",
+   []
+  ]
+ ],
+ "fps": []
+}

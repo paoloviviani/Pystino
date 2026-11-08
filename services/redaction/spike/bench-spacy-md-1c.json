@@ -1,0 +1,37 @@
+{
+ "label": "spacy-md-1c",
+ "load_s": 6.2,
+ "rss_loaded_mb": 711,
+ "sizes": {
+  "35": {
+   "tokens": 51.5,
+   "p50_ms": 14,
+   "ms_per_tok": 0.274,
+   "cpu_s": 0.01,
+   "reps": 12
+  },
+  "300": {
+   "tokens": 312.5,
+   "p50_ms": 57,
+   "ms_per_tok": 0.183,
+   "cpu_s": 0.06,
+   "reps": 8
+  },
+  "1100": {
+   "tokens": 1118,
+   "p50_ms": 194,
+   "ms_per_tok": 0.174,
+   "cpu_s": 0.19,
+   "reps": 5
+  },
+  "4500": {
+   "tokens": 4519,
+   "p50_ms": 838,
+   "ms_per_tok": 0.185,
+   "cpu_s": 0.84,
+   "reps": 3
+  }
+ },
+ "rss_end_mb": 717,
+ "rss_peak_mb": 784
+}

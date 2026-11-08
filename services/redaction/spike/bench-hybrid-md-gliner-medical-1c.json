@@ -1,0 +1,37 @@
+{
+ "label": "hybrid-md-gliner-medical-1c",
+ "load_s": 20.7,
+ "rss_loaded_mb": 2941,
+ "sizes": {
+  "35": {
+   "tokens": 56,
+   "p50_ms": 858,
+   "ms_per_tok": 15.329,
+   "cpu_s": 0.86,
+   "reps": 5
+  },
+  "300": {
+   "tokens": 313,
+   "p50_ms": 3463,
+   "ms_per_tok": 11.065,
+   "cpu_s": 3.46,
+   "reps": 3
+  },
+  "1100": {
+   "tokens": 1110.0,
+   "p50_ms": 11272,
+   "ms_per_tok": 10.155,
+   "cpu_s": 11.27,
+   "reps": 2
+  },
+  "4500": {
+   "tokens": 4503,
+   "p50_ms": 47299,
+   "ms_per_tok": 10.504,
+   "cpu_s": 47.28,
+   "reps": 1
+  }
+ },
+ "rss_end_mb": 2963,
+ "rss_peak_mb": 4444
+}

@@ -1,0 +1,37 @@
+{
+ "label": "gliner-onnx-1c",
+ "load_s": 18.6,
+ "rss_loaded_mb": 2930,
+ "sizes": {
+  "35": {
+   "tokens": 56,
+   "p50_ms": 200,
+   "ms_per_tok": 3.563,
+   "cpu_s": 0.97,
+   "reps": 5
+  },
+  "300": {
+   "tokens": 313,
+   "p50_ms": 1059,
+   "ms_per_tok": 3.384,
+   "cpu_s": 5.09,
+   "reps": 3
+  },
+  "1100": {
+   "tokens": 1110.0,
+   "p50_ms": 4302,
+   "ms_per_tok": 3.876,
+   "cpu_s": 18.76,
+   "reps": 2
+  },
+  "4500": {
+   "tokens": 4503,
+   "p50_ms": 17111,
+   "ms_per_tok": 3.8,
+   "cpu_s": 76.13,
+   "reps": 1
+  }
+ },
+ "rss_end_mb": 3084,
+ "rss_peak_mb": 3950
+}

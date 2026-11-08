@@ -71,6 +71,27 @@ RUN set -eux; \
             "https://github.com/explosion/spacy-models/releases/download/${model}-${version}/${model}-${version}-py3-none-any.whl"; \
     done
 
+# SPIKE (spike/gliner-engine): optional GLiNER engine. Empty (default) installs
+# nothing. Set GLINER_MODEL (e.g. urchade/gliner_multi_pii-v1, Apache-2.0) to add
+# CPU-only PyTorch, the gliner package (Apache-2.0) and the weights, fetched at
+# build time so the running container never needs the network. Select it at
+# runtime with REDACTION_NLP_ENGINE=gliner (replaces spaCy NER) or, with a spaCy
+# engine, REDACTION_GLINER_MODEL=<same id> (spaCy plus GLiNER side by side).
+ARG GLINER_MODEL=""
+ARG GLINER_REVISION="main"
+# GLiNER loads its tokenizer from the encoder it was built on (MIT), not from its own
+# repository, so that one is baked in as well or HF_HUB_OFFLINE would break startup.
+ARG GLINER_TOKENIZER_BASE="microsoft/mdeberta-v3-base"
+ENV HF_HOME=/opt/hf
+COPY services/redaction/scripts/fetch_gliner.py /tmp/fetch_gliner.py
+RUN set -eux; \
+    if [ -n "${GLINER_MODEL}" ]; then \
+        VIRTUAL_ENV=/opt/venv uv pip install --no-cache --index-url https://download.pytorch.org/whl/cpu torch; \
+        VIRTUAL_ENV=/opt/venv uv pip install --no-cache "gliner>=0.2.30,<0.3"; \
+        /opt/venv/bin/python /tmp/fetch_gliner.py "${GLINER_MODEL}" "${GLINER_REVISION}" "${GLINER_TOKENIZER_BASE}"; \
+    fi
+RUN mkdir -p /opt/hf
+
 # Recorded in the image so the running service reports exactly what it loaded,
 # and cannot claim a language whose weights are not present.
 RUN set -eux; \
@@ -99,6 +120,8 @@ RUN groupadd --system --gid 1001 detect \
     && useradd --system --uid 1001 --gid detect --no-create-home detect
 
 COPY --from=builder --chown=detect:detect /opt/venv /opt/venv
+# Empty unless built with GLINER_MODEL; HF_HUB_OFFLINE keeps the runtime off the network.
+COPY --from=builder --chown=detect:detect /opt/hf /opt/hf
 COPY --chown=detect:detect services/redaction/src /app/src
 # The contract package is installed into the venv as an editable path
 # dependency, so the path it points at has to exist here too. Copied rather than
@@ -109,6 +132,8 @@ COPY --chown=detect:detect packages/shared-py /src/packages/shared-py
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONPATH="/app/src" \
     PYTHONUNBUFFERED=1 \
+    HF_HOME=/opt/hf \
+    HF_HUB_OFFLINE=1 \
     REDACTION_PORT=8080
 
 # Baked at build time from the models actually installed above.

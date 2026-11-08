@@ -1,0 +1,127 @@
+{
+ "label": "gliner-multi-pii-domains-v1",
+ "threshold": 0.5,
+ "stats": {
+  "PERSON": {
+   "gold": 15,
+   "tp": 15,
+   "exact": 14,
+   "pred": 17,
+   "fp": 2
+  },
+  "LOCATION": {
+   "gold": 10,
+   "tp": 9,
+   "exact": 5,
+   "pred": 13
+  },
+  "ORGANIZATION": {
+   "gold": 12,
+   "tp": 10,
+   "exact": 8,
+   "pred": 10
+  },
+  "DATE_TIME": {
+   "gold": 6,
+   "tp": 4,
+   "exact": 4,
+   "pred": 4
+  },
+  "IT_FISCAL_CODE": {
+   "gold": 4,
+   "tp": 4,
+   "exact": 4,
+   "pred": 4
+  },
+  "HEALTH_INSURANCE_ID": {
+   "gold": 2,
+   "tp": 2,
+   "exact": 1,
+   "pred": 2
+  },
+  "MEDICAL_CONDITION": {
+   "gold": 10,
+   "tp": 9,
+   "exact": 9,
+   "pred": 13,
+   "fp": 4
+  },
+  "MEDICATION": {
+   "gold": 10,
+   "tp": 9,
+   "pred": 9,
+   "exact": 1
+  }
+ },
+ "misses": [
+  [
+   "DATE_TIME",
+   "3 novembre 2025",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "Diabetologia",
+   []
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "asma bronchiale",
+   []
+  ],
+  [
+   "MEDICATION",
+   "penicillina",
+   []
+  ],
+  [
+   "LOCATION",
+   "Parma",
+   [
+    "ORGANIZATION"
+   ]
+  ],
+  [
+   "DATE_TIME",
+   "2 October 2025",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "ASL Napoli 2 Nord",
+   []
+  ]
+ ],
+ "fps": [
+  [
+   "MEDICAL_CONDITION",
+   "dolore toracico",
+   0.94
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "ritmo sinusale",
+   0.55
+  ],
+  [
+   "PERSON",
+   "paziente",
+   0.73
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "Ecografia addominale",
+   0.89
+  ],
+  [
+   "PERSON",
+   "He",
+   0.76
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "Peso stabile",
+   0.53
+  ]
+ ]
+}

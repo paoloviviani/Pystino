@@ -1,0 +1,30 @@
+{
+ "label": "probe",
+ "load_s": 19.8,
+ "rss_loaded_mb": 2481,
+ "sizes": {
+  "35": {
+   "tokens": 58,
+   "p50_ms": 840,
+   "ms_per_tok": 14.482,
+   "cpu_s": 0.84,
+   "reps": 3
+  },
+  "300": {
+   "tokens": 320.5,
+   "p50_ms": 3360,
+   "ms_per_tok": 10.484,
+   "cpu_s": 3.36,
+   "reps": 2
+  },
+  "1100": {
+   "tokens": 1126,
+   "p50_ms": 12013,
+   "ms_per_tok": 10.669,
+   "cpu_s": 12.01,
+   "reps": 1
+  }
+ },
+ "rss_end_mb": 2500,
+ "rss_peak_mb": 4218
+}

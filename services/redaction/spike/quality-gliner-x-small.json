@@ -1,0 +1,187 @@
+{
+ "label": "gliner-x-small",
+ "threshold": 0.5,
+ "stats": {
+  "PERSON": {
+   "gold": 15,
+   "tp": 15,
+   "exact": 15,
+   "pred": 15
+  },
+  "LOCATION": {
+   "gold": 10,
+   "tp": 7,
+   "exact": 5,
+   "pred": 9
+  },
+  "ORGANIZATION": {
+   "gold": 12,
+   "tp": 11,
+   "pred": 12,
+   "exact": 6,
+   "fp": 1
+  },
+  "DATE_TIME": {
+   "gold": 6,
+   "tp": 4,
+   "exact": 4,
+   "pred": 4
+  },
+  "IT_FISCAL_CODE": {
+   "gold": 4,
+   "tp": 4,
+   "exact": 4,
+   "pred": 4
+  },
+  "HEALTH_INSURANCE_ID": {
+   "gold": 2
+  },
+  "MEDICAL_CONDITION": {
+   "gold": 10,
+   "tp": 10,
+   "exact": 9,
+   "pred": 22,
+   "fp": 12
+  },
+  "MEDICATION": {
+   "gold": 10,
+   "tp": 8,
+   "pred": 8
+  }
+ },
+ "misses": [
+  [
+   "LOCATION",
+   "Roma",
+   [
+    "ORGANIZATION"
+   ]
+  ],
+  [
+   "DATE_TIME",
+   "3 novembre 2025",
+   []
+  ],
+  [
+   "HEALTH_INSURANCE_ID",
+   "80380000123456789012",
+   [
+    "IT_DRIVER_LICENSE"
+   ]
+  ],
+  [
+   "LOCATION",
+   "Firenze",
+   [
+    "ORGANIZATION"
+   ]
+  ],
+  [
+   "HEALTH_INSURANCE_ID",
+   "80380001234567890123",
+   [
+    "IT_DRIVER_LICENSE"
+   ]
+  ],
+  [
+   "MEDICATION",
+   "penicillina",
+   [
+    "MEDICAL_CONDITION"
+   ]
+  ],
+  [
+   "LOCATION",
+   "Parma",
+   [
+    "ORGANIZATION"
+   ]
+  ],
+  [
+   "DATE_TIME",
+   "2 October 2025",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "Neurologia",
+   [
+    "MEDICAL_CONDITION"
+   ]
+  ],
+  [
+   "MEDICATION",
+   "warfarin",
+   [
+    "MEDICAL_CONDITION"
+   ]
+  ]
+ ],
+ "fps": [
+  [
+   "MEDICAL_CONDITION",
+   "dolore toracico",
+   0.76
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "ECG",
+   0.75
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "ritmo sinusale",
+   0.78
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "segni",
+   0.53
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "Anamnesi",
+   0.61
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "allergia alla penicillina",
+   0.71
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "bisogno",
+   0.55
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "Ecografia addominale",
+   0.69
+  ],
+  [
+   "ORGANIZATION",
+   "Radiologia",
+   0.82
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "Neurologia",
+   0.74
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "warfarin",
+   0.77
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "Pressione arteriosa 130/80 mmHg",
+   0.54
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "Peso stabile",
+   0.63
+  ]
+ ]
+}

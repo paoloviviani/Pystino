@@ -1,0 +1,37 @@
+{
+ "label": "gliner-torch-4c",
+ "load_s": 19.9,
+ "rss_loaded_mb": 2482,
+ "sizes": {
+  "35": {
+   "tokens": 56,
+   "p50_ms": 366,
+   "ms_per_tok": 6.535,
+   "cpu_s": 1.38,
+   "reps": 5
+  },
+  "300": {
+   "tokens": 313,
+   "p50_ms": 1446,
+   "ms_per_tok": 4.621,
+   "cpu_s": 5.18,
+   "reps": 3
+  },
+  "1100": {
+   "tokens": 1110.0,
+   "p50_ms": 4592,
+   "ms_per_tok": 4.137,
+   "cpu_s": 16.42,
+   "reps": 2
+  },
+  "4500": {
+   "tokens": 4503,
+   "p50_ms": 18815,
+   "ms_per_tok": 4.178,
+   "cpu_s": 68.0,
+   "reps": 1
+  }
+ },
+ "rss_end_mb": 2513,
+ "rss_peak_mb": 4218
+}

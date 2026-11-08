@@ -1,0 +1,136 @@
+{
+ "label": "onnx-model",
+ "threshold": 0.5,
+ "stats": {
+  "PERSON": {
+   "gold": 15,
+   "tp": 15,
+   "exact": 15,
+   "pred": 19,
+   "fp": 4
+  },
+  "LOCATION": {
+   "gold": 10,
+   "tp": 7,
+   "exact": 7,
+   "pred": 7
+  },
+  "ORGANIZATION": {
+   "gold": 12,
+   "tp": 11,
+   "pred": 11,
+   "exact": 8
+  },
+  "DATE_TIME": {
+   "gold": 6,
+   "tp": 4,
+   "exact": 4,
+   "pred": 4
+  },
+  "IT_FISCAL_CODE": {
+   "gold": 4,
+   "tp": 4,
+   "exact": 4,
+   "pred": 4
+  },
+  "HEALTH_INSURANCE_ID": {
+   "gold": 2,
+   "tp": 2,
+   "exact": 1,
+   "pred": 2
+  },
+  "MEDICAL_CONDITION": {
+   "gold": 10,
+   "tp": 10,
+   "exact": 9,
+   "pred": 13,
+   "fp": 3
+  },
+  "MEDICATION": {
+   "gold": 10,
+   "tp": 9,
+   "pred": 9,
+   "exact": 1
+  }
+ },
+ "misses": [
+  [
+   "LOCATION",
+   "Roma",
+   [
+    "ORGANIZATION"
+   ]
+  ],
+  [
+   "DATE_TIME",
+   "3 novembre 2025",
+   []
+  ],
+  [
+   "LOCATION",
+   "Firenze",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "Diabetologia",
+   []
+  ],
+  [
+   "MEDICATION",
+   "penicillina",
+   [
+    "MEDICAL_CONDITION"
+   ]
+  ],
+  [
+   "LOCATION",
+   "Parma",
+   [
+    "ORGANIZATION"
+   ]
+  ],
+  [
+   "DATE_TIME",
+   "2 October 2025",
+   []
+  ]
+ ],
+ "fps": [
+  [
+   "PERSON",
+   "Gentile collega",
+   0.85
+  ],
+  [
+   "PERSON",
+   "paziente",
+   0.57
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "dolore toracico",
+   0.96
+  ],
+  [
+   "PERSON",
+   "Il paziente",
+   0.97
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "allergia alla penicillina",
+   0.6
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "Ecografia addominale",
+   0.77
+  ],
+  [
+   "PERSON",
+   "He",
+   0.97
+  ]
+ ]
+}

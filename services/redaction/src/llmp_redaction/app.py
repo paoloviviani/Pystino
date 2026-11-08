@@ -49,16 +49,55 @@ DEFAULT_MODELS = {"en": "en_core_web_lg"}
 # to what can actually be found.
 DEFAULT_NLP_ENGINE = "spacy"
 DISABLED_NLP_ENGINE = "disabled"
+# Spike: GLiNER as the NER engine instead of spaCy. Presidio's pattern and
+# checksum recognisers stay active; PERSON / LOCATION / ORGANIZATION and the
+# medical types come from one zero-shot span model. Opt-in, see the
+# REDACTION_GLINER_* variables below.
+GLINER_NLP_ENGINE = "gliner"
+
+DEFAULT_GLINER_MODEL = "urchade/gliner_multi_pii-v1"
+# GLiNER label (what the model is asked for) -> Presidio entity type. The label
+# text matters to a zero-shot model, so it is plain English whatever the
+# document language; the mapping is what the gateway sees.
+DEFAULT_GLINER_LABELS = {
+    "person": "PERSON",
+    "address": "LOCATION",
+    "city": "LOCATION",
+    "organization": "ORGANIZATION",
+    "date of birth": "DATE_TIME",
+    "health insurance number": "HEALTH_INSURANCE_ID",
+    "medical condition": "MEDICAL_CONDITION",
+    "medication": "MEDICATION",
+}
 
 
 def _nlp_engine_name() -> str:
     value = os.getenv("REDACTION_NLP_ENGINE", DEFAULT_NLP_ENGINE).strip().lower()
-    if value not in {DEFAULT_NLP_ENGINE, DISABLED_NLP_ENGINE}:
+    allowed = {DEFAULT_NLP_ENGINE, DISABLED_NLP_ENGINE, GLINER_NLP_ENGINE}
+    if value not in allowed:
         raise ValueError(
-            f"REDACTION_NLP_ENGINE must be '{DEFAULT_NLP_ENGINE}' or '{DISABLED_NLP_ENGINE}', "
-            f"not {value!r}"
+            f"REDACTION_NLP_ENGINE must be one of {', '.join(sorted(allowed))}, not {value!r}"
         )
     return value
+
+
+def _gliner_labels() -> dict[str, str]:
+    """``REDACTION_GLINER_LABELS``: ``label`` or ``label=ENTITY`` pairs, comma separated.
+
+    A bare label maps to its upper-cased, underscored form (``medication`` ->
+    ``MEDICATION``). Unset means :data:`DEFAULT_GLINER_LABELS`.
+    """
+    raw = os.getenv("REDACTION_GLINER_LABELS", "").strip()
+    if not raw:
+        return dict(DEFAULT_GLINER_LABELS)
+    labels: dict[str, str] = {}
+    for part in raw.split(","):
+        label, _, entity = part.partition("=")
+        label = label.strip()
+        if not label:
+            continue
+        labels[label] = entity.strip().upper() or label.upper().replace(" ", "_")
+    return labels or dict(DEFAULT_GLINER_LABELS)
 
 
 def _configured_models() -> dict[str, str]:
@@ -143,6 +182,41 @@ def _phone_regions() -> tuple[str, ...]:
     return regions or DEFAULT_PHONE_REGIONS
 
 
+def _build_gliner_recognizers(languages: list[str], model_name: str) -> list[Any]:
+    """One GLiNER recogniser per language, sharing a single loaded model.
+
+    The checkpoint is multilingual, so loading it once per language would
+    multiply a gigabyte of weights by the number of languages for nothing.
+    """
+    from presidio_analyzer.predefined_recognizers import GLiNERRecognizer
+
+    mapping = _gliner_labels()
+    onnx_file = os.getenv("REDACTION_GLINER_ONNX_FILE", "").strip()
+    threshold = float(os.getenv("REDACTION_GLINER_THRESHOLD", "0.5"))
+    # Characters per chunk. The default recogniser chunks at 250, which is a lot
+    # of forward passes on a long document; the model reads ~384 words.
+    chunk_size = int(os.getenv("REDACTION_GLINER_CHUNK_CHARS", "1200"))
+    recognizers: list[Any] = []
+    for language in languages:
+        recognizer = GLiNERRecognizer(
+            supported_language=language,
+            entity_mapping=mapping,
+            model_name=model_name,
+            threshold=threshold,
+            map_location="cpu",
+            chunk_size=chunk_size,
+            chunk_overlap=max(chunk_size // 6, 1),
+            load_onnx_model=bool(onnx_file),
+            onnx_model_file=onnx_file or "model.onnx",
+        )
+        if recognizers:
+            recognizer.gliner = recognizers[0].gliner
+        else:
+            recognizer.load()
+        recognizers.append(recognizer)
+    return recognizers
+
+
 def build_detector() -> Detector:
     """Load Presidio. Slow (seconds) and done once, at startup."""
     from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
@@ -152,9 +226,11 @@ def build_detector() -> Detector:
     nlp_engine_name = _nlp_engine_name()
     started = time.monotonic()
 
-    if nlp_engine_name == DISABLED_NLP_ENGINE:
-        # No model is loaded or needed: the languages stand alone, and every
-        # entity the engine then reports is one a pattern can actually find.
+    if nlp_engine_name in {DISABLED_NLP_ENGINE, GLINER_NLP_ENGINE}:
+        # No spaCy model is loaded or needed: the languages stand alone. With
+        # ``disabled`` every entity reported is one a pattern can find; with
+        # ``gliner`` the model-backed ones come from the GLiNER recogniser added
+        # below.
         languages = _configured_languages()
         from presidio_analyzer.nlp_engine import NoOpNlpEngine
 
@@ -165,6 +241,9 @@ def build_detector() -> Detector:
         )
         nlp_engine.load()
         models: dict[str, str] = {}
+        if nlp_engine_name == GLINER_NLP_ENGINE:
+            gliner_model = os.getenv("REDACTION_GLINER_MODEL", DEFAULT_GLINER_MODEL).strip()
+            models = dict.fromkeys(languages, gliner_model)
     else:
         models = _configured_models() or dict(DEFAULT_MODELS)
         languages = list(models)
@@ -187,12 +266,23 @@ def build_detector() -> Detector:
     # PERSON/LOCATION/... in `get_supported_entities` while nothing could ever
     # find them: exactly the lie the capabilities report exists to prevent.
     registry.load_predefined_recognizers(languages=languages, nlp_engine=nlp_engine)
-    if nlp_engine_name == DISABLED_NLP_ENGINE:
+    if nlp_engine_name in {DISABLED_NLP_ENGINE, GLINER_NLP_ENGINE}:
         from presidio_analyzer.predefined_recognizers import SpacyRecognizer
 
         for existing in list(registry.recognizers):
             if isinstance(existing, SpacyRecognizer):
                 registry.remove_recognizer(type(existing).__name__)
+    if nlp_engine_name == GLINER_NLP_ENGINE:
+        for gliner_recognizer in _build_gliner_recognizers(languages, next(iter(models.values()))):
+            registry.add_recognizer(gliner_recognizer)
+    elif nlp_engine_name == DEFAULT_NLP_ENGINE and os.getenv("REDACTION_GLINER_MODEL", "").strip():
+        # Hybrid: spaCy keeps PERSON / LOCATION / ORGANIZATION, and GLiNER is
+        # added alongside for whatever REDACTION_GLINER_LABELS asks of it
+        # (typically only the medical labels). Both run on every request.
+        for gliner_recognizer in _build_gliner_recognizers(
+            languages, os.environ["REDACTION_GLINER_MODEL"].strip()
+        ):
+            registry.add_recognizer(gliner_recognizer)
     for name in EXTRA_PATTERN_RECOGNIZERS:
         recognizer_class = getattr(recognizers, name, None)
         if recognizer_class is None:
@@ -218,7 +308,7 @@ def build_detector() -> Detector:
     # (gateway/redaction/http.py), so a policy that wants phones kept still
     # keeps them.
     phone_recognizer_class = recognizers.PhoneRecognizer
-    if nlp_engine_name == DISABLED_NLP_ENGINE:
+    if nlp_engine_name in {DISABLED_NLP_ENGINE, GLINER_NLP_ENGINE}:
 
         class NoNerPhoneRecognizer(phone_recognizer_class):  # type: ignore[misc, valid-type]
             SCORE = 0.4 + 0.35  # Presidio's base + context_similarity_factor

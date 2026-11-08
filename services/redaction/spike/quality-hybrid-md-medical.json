@@ -1,0 +1,196 @@
+{
+ "label": "hybrid-md-medical",
+ "threshold": 0.5,
+ "stats": {
+  "PERSON": {
+   "gold": 15,
+   "tp": 15,
+   "exact": 15,
+   "pred": 24,
+   "fp": 9
+  },
+  "LOCATION": {
+   "gold": 10,
+   "tp": 10,
+   "exact": 4,
+   "pred": 23,
+   "fp": 9
+  },
+  "ORGANIZATION": {
+   "gold": 12,
+   "tp": 11,
+   "pred": 12,
+   "exact": 8,
+   "fp": 1
+  },
+  "DATE_TIME": {
+   "gold": 6,
+   "tp": 4,
+   "exact": 4,
+   "pred": 4
+  },
+  "IT_FISCAL_CODE": {
+   "gold": 4,
+   "tp": 4,
+   "exact": 4,
+   "pred": 4
+  },
+  "HEALTH_INSURANCE_ID": {
+   "gold": 2,
+   "tp": 2,
+   "exact": 1,
+   "pred": 2
+  },
+  "MEDICAL_CONDITION": {
+   "gold": 10,
+   "tp": 10,
+   "exact": 10,
+   "pred": 13,
+   "fp": 3
+  },
+  "MEDICATION": {
+   "gold": 10,
+   "tp": 9,
+   "pred": 9,
+   "exact": 2
+  }
+ },
+ "misses": [
+  [
+   "DATE_TIME",
+   "3 novembre 2025",
+   []
+  ],
+  [
+   "ORGANIZATION",
+   "Diabetologia",
+   [
+    "LOCATION"
+   ]
+  ],
+  [
+   "MEDICATION",
+   "penicillina",
+   [
+    "MEDICAL_CONDITION"
+   ]
+  ],
+  [
+   "DATE_TIME",
+   "2 October 2025",
+   []
+  ]
+ ],
+ "fps": [
+  [
+   "PERSON",
+   "Gentile",
+   0.85
+  ],
+  [
+   "PERSON",
+   "Gentile collega",
+   0.83
+  ],
+  [
+   "LOCATION",
+   "RSSMRA80A01H501U",
+   0.85
+  ],
+  [
+   "LOCATION",
+   "Ospedale San Camillo",
+   0.85
+  ],
+  [
+   "PERSON",
+   "paziente",
+   0.55
+  ],
+  [
+   "LOCATION",
+   "Torino",
+   0.85
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "dolore toracico",
+   0.95
+  ],
+  [
+   "PERSON",
+   "DVRGPP62D15L219G.",
+   0.85
+  ],
+  [
+   "PERSON",
+   "Eseguito",
+   0.85
+  ],
+  [
+   "LOCATION",
+   "Ospedale Niguarda",
+   0.85
+  ],
+  [
+   "PERSON",
+   "Vittorio Emanuele II",
+   0.85
+  ],
+  [
+   "PERSON",
+   "Il paziente",
+   0.98
+  ],
+  [
+   "LOCATION",
+   "Diabetologia dell'Policlinico Gemelli",
+   0.85
+  ],
+  [
+   "LOCATION",
+   "Tessera",
+   0.85
+  ],
+  [
+   "ORGANIZATION",
+   "FRRMRT90C60A944O.",
+   0.85
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "allergia alla penicillina",
+   0.64
+  ],
+  [
+   "MEDICAL_CONDITION",
+   "Ecografia addominale",
+   0.86
+  ],
+  [
+   "LOCATION",
+   "Radiologia",
+   0.85
+  ],
+  [
+   "PERSON",
+   "He",
+   0.98
+  ],
+  [
+   "LOCATION",
+   "C.F. PLLNNA88S45D612B",
+   0.85
+  ],
+  [
+   "PERSON",
+   "Neurologia",
+   0.85
+  ],
+  [
+   "LOCATION",
+   "Napoli",
+   0.85
+  ]
+ ]
+}

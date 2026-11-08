@@ -1,0 +1,23 @@
+{
+ "label": "gliner-torch-1c-sse42",
+ "load_s": 39.9,
+ "rss_loaded_mb": 2477,
+ "sizes": {
+  "35": {
+   "tokens": 58,
+   "p50_ms": 916,
+   "ms_per_tok": 15.793,
+   "cpu_s": 0.91,
+   "reps": 3
+  },
+  "300": {
+   "tokens": 322,
+   "p50_ms": 3854,
+   "ms_per_tok": 11.969,
+   "cpu_s": 3.85,
+   "reps": 3
+  }
+ },
+ "rss_end_mb": 2497,
+ "rss_peak_mb": 4213
+}
