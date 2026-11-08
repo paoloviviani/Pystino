@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useSearchParams } from "react-router";
 import { Message } from "../components/Message";
-import { fetchAuthMethods, loginWith } from "../lib/api";
+import { fetchAuthMethods, loginWith, safeNextPath } from "../lib/api";
 import { FORM_STACK, LOGIN_CARD, LOGIN_CENTRE } from "../lib/layout";
 import { m } from "../paraglide/messages.js";
 
@@ -23,9 +23,26 @@ import { m } from "../paraglide/messages.js";
  * There is no password form: every person signs in through a provider, and a
  * deployment with no administrator recovers with `pystino admin grant`.
  */
+/**
+ * Where the browser comes back to after signing in.
+ *
+ * The `?next` a link carried, when it is a safe path; otherwise the page the
+ * reader is on, because the console renders this page in place of any route
+ * once the session is gone, and that is where they were going. Never the
+ * origin root: on a kit `/` belongs to the chat app, so "/" sent a reader who
+ * had followed a console link back into the chat after signing in.
+ */
+function returnPath(param: string | null): string {
+  const asked = param ? safeNextPath(param) : null;
+  if (asked && asked !== "/") return asked;
+  const here = window.location.pathname + window.location.search;
+  const onConsole = /^\/console(\/|$|\?)/.test(here) && !/^\/console\/login(\/|$|\?)/.test(here);
+  return onConsole ? here : "/console";
+}
+
 export function Login() {
   const [searchParams] = useSearchParams();
-  const next = searchParams.get("next") ?? "/";
+  const next = returnPath(searchParams.get("next"));
   const methods = useQuery({
     queryKey: ["auth-methods"],
     queryFn: fetchAuthMethods,
