@@ -570,9 +570,6 @@ export function ProviderDialog({
     "own_prices" | "provider_reported"
   >("own_prices");
   const [prefix, setPrefix] = useState("");
-  // An administrator's statement that the endpoint runs on this deployment's
-  // own infrastructure; what a privacy routing rule means by "local".
-  const [isLocal, setIsLocal] = useState(false);
   // The catalogue entry this row is an instance of ("" for none). Linking copies
   // nothing into the row: on create it pre-fills the fields below, which stay
   // the operator's to change; on edit it only sets the link.
@@ -592,7 +589,6 @@ export function ProviderDialog({
     setPlugin(provider?.plugin ?? "");
     setBillingMode(provider?.billing_mode ?? "own_prices");
     setPrefix(provider?.prefix ?? "");
-    setIsLocal(provider?.is_local ?? false);
     setCatalogueId(provider?.catalogue_id ?? "");
   }
 
@@ -725,7 +721,6 @@ export function ProviderDialog({
           kind: chosen?.kind ?? "provider",
           billing_mode: effectiveMode,
           prefix,
-          ...(isLocal !== provider.is_local ? { is_local: isLocal } : {}),
           // Only when it changed, so saving something else never rewrites the link.
           ...(catalogueId !== (provider.catalogue_id ?? "")
             ? { catalogue_id: catalogueId }
@@ -756,7 +751,6 @@ export function ProviderDialog({
           kind: chosen?.kind ?? "provider",
           billing_mode: effectiveMode,
           prefix,
-          ...(isLocal ? { is_local: true } : {}),
           ...(catalogueId ? { catalogue_id: catalogueId } : {}),
           ...(apiKey ? { api_key: apiKey } : {}),
         },
@@ -839,21 +833,6 @@ export function ProviderDialog({
           example: prefix ? `${prefix}deep` : "deep",
         })}
       />
-
-      <label className="flex items-start gap-2 text-body">
-        <input
-          type="checkbox"
-          className="mt-1"
-          checked={isLocal}
-          onChange={(event) => setIsLocal(event.target.checked)}
-        />
-        <span>
-          {m["admin_providers.field.is_local"]()}
-          <span className="block text-small text-ink-muted">
-            {m["admin_providers.field.is_local_hint"]()}
-          </span>
-        </span>
-      </label>
 
       {llmForm ? (
         <Select

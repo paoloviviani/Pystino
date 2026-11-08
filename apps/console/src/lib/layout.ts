@@ -231,7 +231,8 @@ const WIDE_ROUTES = new Set([
   "/admin/groups",
   "/admin/quotas",
   "/admin/quota-usage",
-  "/admin/privacy/hidden",
+  "/admin/privacy",
+  "/admin/privacy/policies",
   "/admin/requests",
   "/admin/audit",
   "/admin/users",
@@ -255,11 +256,11 @@ export const WIDE_LAYOUT_MAX_WIDTH = "104rem";
 export const NARROW_CONTENT_MAX_WIDTH = "57rem";
 
 /**
- * One rule's page (new, edit, clone) is not a listing, but it is wide for the
- * listing's reason: the rule form sits beside a summary and a test box, and two
+ * One policy's page (new, edit, clone) is not a listing, but it is wide for the
+ * listing's reason: the policy form sits beside a summary and a test box, and two
  * columns need more than the 76rem that keeps a single column's lines readable.
  */
-const WIDE_PATTERNS = [/^\/admin\/privacy\/hidden\/rules\/[^/]+$/, /^\/admin\/quota-usage\/[^/]+$/];
+const WIDE_PATTERNS = [/^\/admin\/privacy\/policies\/[^/]+$/, /^\/admin\/quota-usage\/[^/]+$/];
 
 export function isWideRoute(pathname: string): boolean {
   const path = pathname.replace(/\/+$/, "") || "/";

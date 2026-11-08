@@ -1,40 +1,17 @@
-import {
-  Badge,
-  Button,
-  Card,
-  Dialog,
-  Notice,
-  Spinner,
-  Tooltip,
-  Stat,
-  SummaryStrip,
-  Table,
-  RowActions,
-} from "@llmp/ui";
+import { Badge, Button, Card, Dialog, Notice, Stat, Table } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
-import { Link, useNavigate } from "react-router";
-import {
-  useDeleteRedactionRule,
-  useRedactionStatus,
-  useRedactionRules,
-  useSetRedactionEngine,
-  useUpdateRedactionRule,
-} from "../lib/admin";
-import { entityLabel, modeLabel, summarisePolicy } from "../lib/entities";
+import { useSetRedactionEngine } from "../lib/admin";
+import { entityLabel, modeLabel } from "../lib/entities";
 import { useOptionalToast } from "../lib/toast";
 import type {
   RedactionEngineOption,
   RedactionPreview,
   RedactionPreviewSpan,
-  RedactionScope,
   RedactionStatus,
-  RedactionRule,
 } from "../lib/types";
-import { PrivacyHeader } from "../components/PrivacyHeader";
 import { formatNumber, formatDateTime } from "../lib/format";
 import { m } from "../paraglide/messages.js";
-import { scopeNoun } from "../components/SubjectPicker";
 import {
   CHIPS,
   CODE,
@@ -52,8 +29,6 @@ import {
   FORM,
   MUTED,
   NOWRAP,
-  PAGE,
-  ROW_ACTIONS,
   SAMPLE,
   STATS,
 } from "../lib/layout";
@@ -82,50 +57,6 @@ import {
  * is the engine's own, and re-deriving it here would mean the browser knowing
  * which settings each engine needs.
  */
-/** Step 3 of the Privacy area: what gets hidden. The rules list, and nothing about engines. */
-export function AdminHidden() {
-  const status = useRedactionStatus();
-
-  return (
-    <div className={PAGE}>
-      <PrivacyHeader tab="hidden" />
-      <p className={`m-0 flex flex-wrap items-center gap-2 text-small ${MUTED}`}>
-        {m["privacy.hidden.where"]()}
-        <Tooltip label={m["privacy.hidden.scopes_tip"]()}>
-          <button
-            type="button"
-            aria-label={m["privacy.hidden.scopes_label"]()}
-            className="inline-flex size-5 cursor-help items-center justify-center rounded-full border border-line-strong bg-transparent p-0 text-dense text-ink-muted"
-          >
-            ?
-          </button>
-        </Tooltip>
-      </p>
-
-      {status.isPending && <Spinner label={m["admin_redaction.loading"]()} />}
-      {status.error ? (
-        <Notice tone="danger" title={m["admin_redaction.load_error.title"]()}>
-          {/* i18n: server text — the API's own error message. */}
-          {status.error instanceof Error
-            ? status.error.message
-            : m["admin_redaction.unknown_error"]()}
-        </Notice>
-      ) : null}
-
-      {status.data && (
-        <>
-          <Warnings status={status.data} />
-          <RulesList
-            service={status.data.service}
-            patterns={status.data.presidio_pattern_matching ?? null}
-            ner={status.data.presidio_ner ?? null}
-          />
-        </>
-      )}
-    </div>
-  );
-}
-
 function Warnings({ status }: { status: RedactionStatus }) {
   return (
     <>
@@ -392,259 +323,6 @@ function Detail({ status }: { status: RedactionStatus }) {
  * it is the one that can protect *less*, and that is what the reason field is
  * for.
  */
-/**
- * Every rule, in force order, with the catch-all first.
- *
- * This is the whole answer to "what does this deployment redact", which is why
- * it is the first thing on the screen after the engine. The previous shape had a
- * deployment policy edited here and rules edited elsewhere, so the screen showed
- * half the answer and gave no sign that the other half existed — reported from
- * the live console, twice.
- *
- * Configuration is a page per rule, not a dialog: a policy is thirty entity
- * types, a set of patterns and an allow-list.
- */
-function RulesList({
-  service,
-  patterns,
-  ner,
-}: {
-  service: RedactionStatus["service"];
-  patterns: boolean | null;
-  ner: boolean | null;
-}) {
-  const rules = useRedactionRules({ limit: 200 });
-  const update = useUpdateRedactionRule();
-  const remove = useDeleteRedactionRule();
-  const navigate = useNavigate();
-  // The detector's effective entity list, already narrowed to the enabled
-  // families by the API. Null when the service cannot be asked, in which case
-  // no per-rule warning is drawn rather than a guessed one.
-  const supported =
-    service !== null && service.reachable
-      ? new Set(service.entities.map((entity) => entity.toUpperCase()))
-      : null;
-
-  // The catch-all first, then the narrower scopes in the order they are folded.
-  // Reading order is fold order, so the screen matches how a request is decided.
-  const order: RedactionScope[] = ["all", "provider", "model", "group", "user", "api_key"];
-  const items = [...(rules.data?.items ?? [])].sort(
-    (a, b) => order.indexOf(a.scope) - order.indexOf(b.scope),
-  );
-  const hasCatchAll = items.some((rule) => rule.scope === "all" && rule.is_active);
-
-  const columns: Column<RedactionRule>[] = [
-    {
-      key: "subject",
-      header: m["admin_redaction.rules.column.applies_to"](),
-      render: (rule) => (
-        <>
-          <div>
-            <Link to={`/admin/privacy/hidden/rules/${rule.id}`}>
-              {rule.scope === "all"
-                ? m["admin_redaction.rules.every_request"]()
-                : // i18n: server text — the subject's own label.
-                  (rule.subject_label ?? m["admin_redaction.rules.deleted_subject"]())}
-            </Link>
-          </div>
-          <div className={MUTED}>
-            {scopeNoun(rule.scope)}
-            {rule.name ? ` · ${rule.name}` : ""}
-          </div>
-        </>
-      ),
-    },
-    {
-      key: "policy",
-      header: m["admin_redaction.rules.column.policy"](),
-      render: (rule) => (
-        <>
-          <div>{summarisePolicy(rule.policy)}</div>
-          <RuleCoverageWarning rule={rule} supported={supported} patterns={patterns} ner={ner} />
-        </>
-      ),
-    },
-    {
-      key: "state",
-      header: m["admin_redaction.rules.column.state"](),
-      render: (rule) =>
-        rule.is_active ? (
-          <Badge tone="ok">{m["admin_redaction.badge.active"]()}</Badge>
-        ) : (
-          <Badge>{m["admin_redaction.badge.inactive"]()}</Badge>
-        ),
-    },
-    {
-      key: "actions",
-      header: "",
-      render: (rule) => (
-        <div className={ROW_ACTIONS}>
-          <Button variant="secondary" onClick={() => navigate(`/admin/privacy/hidden/rules/${rule.id}`)}>
-            {m["admin_redaction.action.edit"]()}
-          </Button>
-          <RowActions
-            label={m["table.row_actions"]({ name: rule.name })}
-            actions={[
-              {
-                key: "clone",
-                label: m["admin_redaction.action.clone"](),
-                onSelect: () => navigate("/admin/privacy/hidden/rules/new", { state: { cloneFrom: rule } }),
-              },
-              {
-                key: "toggle",
-                label: rule.is_active
-                  ? m["admin_redaction.action.deactivate"]()
-                  : m["admin_redaction.action.activate"](),
-                onSelect: () => update.mutate({ id: rule.id, is_active: !rule.is_active }),
-                disabled: update.isPending && update.variables?.id === rule.id,
-              },
-              {
-                key: "delete",
-                label: m["admin_redaction.action.delete"](),
-                onSelect: () => remove.mutate(rule.id),
-                destructive: true,
-                disabled: remove.isPending && remove.variables === rule.id,
-              },
-            ]}
-          />
-        </div>
-      ),
-    },
-  ];
-
-  return (
-    <>
-      {/* Not a warning: a deployment that redacts nothing may be the intended
-          one. It is stated because the alternative is a screen that looks
-          configured and is not. */}
-      {!rules.isPending && !hasCatchAll && (
-        <Notice tone="info" title={m["admin_redaction.rules.no_catchall_title"]()}>
-          {m["admin_redaction.rules.no_catchall_body"]()}
-        </Notice>
-      )}
-      <Card
-        title={m["admin_redaction.rules.card"]()}
-        description={m["admin_redaction.rules.description"]()}
-        flush
-      >
-        {rules.isPending ? (
-          <Spinner label={m["admin_redaction.rules.loading"]()} />
-        ) : rules.error ? (
-          <Notice tone="danger" title={m["admin_redaction.rules.load_error.title"]()}>
-            {/* i18n: server text — the API's own error message. */}
-            {rules.error instanceof Error ? rules.error.message : m["admin_redaction.unknown_error"]()}
-          </Notice>
-        ) : (
-          <>
-            {/* Count, coverage state and the creation action in one strip: the
-                catch-all is the fact this table exists to establish, so it
-                sits above the rows rather than three screens away in prose.
-                The button moves here from the card header rather than
-                duplicating it. */}
-            <div className="p-5">
-              <SummaryStrip
-                headline={m["admin_redaction.rules.count"]({ count: items.length })}
-                detail={
-                  hasCatchAll
-                    ? m["admin_redaction.rules.covered"]()
-                    : m["admin_redaction.rules.not_covered"]()
-                }
-                active={items.length > 0}
-                actions={
-                  <Button
-                    variant="primary"
-                    onClick={() => navigate("/admin/privacy/hidden/rules/new")}
-                  >
-                    {m["admin_redaction.rules.new_rule"]()}
-                  </Button>
-                }
-              />
-            </div>
-            <Table
-              columns={columns}
-              rows={items}
-              rowKey={(rule) => rule.id}
-              empty={m["admin_redaction.rules.empty"]()}
-              caption={m["admin_redaction.rules.caption"]()}
-            />
-          </>
-        )}
-      </Card>
-    </>
-  );
-}
-
-
-/**
- * The warning sign beside a rule that names something no longer detected.
- *
- * Disabling a detector family does not refuse, deactivate or rewrite rules —
- * everything keeps working, and a rule whose types cannot be found is inert
- * rather than dangerous. But "inert" looks exactly like "working" on this
- * screen, so the affected rule carries the warning instead: the named types
- * below are protected by this rule and undetectable while their family is off,
- * meaning matching values reach providers unprotected.
- *
- * Only explicitly named types with a mode other than off are listed. A rule
- * whose default mode is on gets the generic form instead, since its covered
- * set cannot be enumerated here.
- */
-function RuleCoverageWarning({
-  rule,
-  supported,
-  patterns,
-  ner,
-}: {
-  rule: RedactionRule;
-  supported: Set<string> | null;
-  patterns: boolean | null;
-  ner: boolean | null;
-}) {
-  if (!rule.is_active || supported === null) return null;
-  const unserved = Object.entries(rule.policy.entities)
-    .filter(([type, entry]) => entry.mode !== "off" && !supported.has(type.toUpperCase()))
-    .map(([type]) => type);
-  if (unserved.length > 0) {
-    return (
-      <div className="mt-1">
-        <span title={m["admin_redaction.coverage.unserved_title"]()}>
-          <Badge tone="warn">
-            {m["admin_redaction.coverage.unserved_badge"]({ types: unserved.join(", ") })}
-          </Badge>
-        </span>
-      </div>
-    );
-  }
-  if (rule.policy.default_mode !== "off" && (patterns === false || ner === false)) {
-    return (
-      <div className="mt-1">
-        <span title={m["admin_redaction.coverage.default_title"]()}>
-        <Badge tone="warn">{m["admin_redaction.coverage.default_badge"]()}</Badge>
-      </span>
-      </div>
-    );
-  }
-  return null;
-}
-
-/**
- * What the provider would actually receive.
- *
- * The one place an operator can see what the detector does, which until now was
- * findable only by reading an upstream request body — that is how the Italian
- * bug was found, and it took a packet capture to find a verb read as a person.
- *
- * Three things are shown rather than one, because the rewritten text alone
- * explains nothing: the spans say *why* each substitution happened, the mode
- * says which rule decided, and a block is a state of its own — nothing is
- * rewritten in that case, so there is no text to show and echoing the sample
- * back would read as "this is what would be sent".
- */
-/**
- * What the provider would receive, and why each span was replaced. `sample` is
- * the text that was sent: the API reports offsets into it, and slicing the live
- * textarea would mislabel every match once a character is typed after a run.
- */
 export function RedactionPreviewResult({
   result,
   sample,
@@ -717,9 +395,7 @@ export function RedactionPreviewResult({
             <p className={MUTED}>
               {m["admin_redaction.preview.summary_replaced"]({ count: result.entity_count })} ·{" "}
               {m["admin_redaction.preview.summary_engine"]({ engine: result.engine })} ·{" "}
-              {result.scope === null
-                ? m["admin_redaction.preview.summary_policy"]()
-                : m["admin_redaction.preview.summary_rule"]({ scope: scopeNoun(result.scope) })}
+              {m["admin_redaction.preview.summary_policy"]()}
             </p>
 
             <div className="overflow-x-auto">

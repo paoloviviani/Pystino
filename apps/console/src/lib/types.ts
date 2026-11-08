@@ -413,12 +413,9 @@ export type RedactionStatus = Narrow<
   }
 >;
 
-/** The five subjects a redaction rule can name (ADR 0038). */
-export type RedactionScope =
-  "all" | "provider" | "model" | "group" | "user" | "api_key";
-
-export type RedactionRule = Narrow<
-  Schemas["RedactionRuleResponse"],
+/** A named redaction policy: what to hide, with no scope (ADR 0113). */
+export type RedactionPolicyRecord = Narrow<
+  Schemas["PolicyResponse"],
   {
     policy: RedactionPolicy;
   }
@@ -627,40 +624,34 @@ export type AuthMethods = Schemas["AuthMethods"];
 /** The caller's thresholds for one rule: percentages, arbitrary, user-owned. */
 export type MyNotificationThresholdsInput = Schemas["MyNotificationThresholdsRequest"];
 
-/** A user's own redaction rule (a pattern, or a stricter mode for one type). */
-export type UserRedactionRule = Schemas["UserRedactionRuleResponse"];
-
-/** What a user sends to add or change one. There is no `off` and no exception to send. */
-export type UserRedactionRuleInput = Schemas["UserRedactionRuleRequest"];
-
-/** The administrators' rules that can apply to a user, read-only, and the engine's state. */
-export type MyRedactionInForce = Schemas["MyRedactionInForce"];
-
-export type AdminRuleView = Schemas["AdminRuleView"];
-
-/** What the test box answers: where, what kind, which rule. Never the text. */
-export type RedactionTestResult = Schemas["RedactionTestResponse"];
-
 /** One request where redaction hid something or refused. No values. */
 export type RedactionEvent = Schemas["RedactionEventRow"];
 
-// -- privacy routing (ADR 0113) ------------------------------------------------
+// -- privacy pipelines (ADR 0113) ----------------------------------------------
 
-/** Kinds an administrator writes rules for today; chat arrives in a later release. */
-export type PrivacyKind = "read" | "embed";
-
-export type PrivacyRule = Schemas["RuleResponse"];
-/** What a rule says, as written (the request side: `decide` and `reader` optional). */
+export type PrivacyKind = "read" | "embed" | "chat";
+export type PrivacyPipeline = Schemas["PipelineResponse"];
+export type PrivacyRuleView = Schemas["RuleView"];
+/** A rule as written: what the save sends. */
+export type PrivacyRuleBody = Schemas["RuleBody"];
 export type PrivacyCondition = Schemas["ConditionBody"];
 export type PrivacyAction = Schemas["ActionBody"];
 export type PrivacyIssue = Schemas["IssueView"];
-export type PrivacyRuleInput = Schemas["RuleCreateRequest"];
-export type PrivacyRuleUpdate = Schemas["RuleUpdateRequest"];
-export type PrivacyRuleCheck = Schemas["RuleCheckResponse"];
+export type PrivacyWho = Schemas["WhoBody"];
+export type PrivacyTarget = Schemas["TargetBody"];
+export type PrivacyPipelineInput = Schemas["PipelineCreateRequest"];
+export type PrivacyPipelineUpdate = Schemas["PipelineUpdateRequest"];
+export type PrivacyPipelineCheck = Schemas["PipelineCheckResponse"];
 export type PrivacyProfile = Schemas["ProfileResponse"];
 export type PrivacyProfileInput = Schemas["ProfileCreateRequest"];
 export type PrivacyProfileUpdate = Schemas["ProfileUpdateRequest"];
-export type PrivacyTestInput = Schemas["RuleTestRequest"];
-export type PrivacyTestResult = Schemas["RuleTestResponse"];
+export type PrivacyOptions = Schemas["OptionsResponse"];
+export type PrivacySettings = Schemas["SettingsResponse"];
+export type PrivacyTestInput = Schemas["DryRunRequest"];
+export type PrivacyTestResult = Schemas["DryRunResponse"];
+export type UserPolicy = Schemas["UserPolicyResponse"];
+export type UserPolicyInput = Schemas["UserPolicyRequest"];
+export type UserPolicyEntry = Schemas["UserEntryBody"];
+export type PrivacySummary = Schemas["PrivacySummaryResponse"];
 /** The `routing` block of a log entry: what was observed and what handled it. */
 export type RoutingInfo = Schemas["RoutingInfo"];

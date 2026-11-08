@@ -94,19 +94,18 @@ describe("an allowlist the gateway ignores", () => {
 
 describe("isWideRoute", () => {
   it("is wide for the list and for one rule's page, new or edit", () => {
-    expect(isWideRoute("/admin/privacy/hidden")).toBe(true);
+    expect(isWideRoute("/admin/privacy/policies")).toBe(true);
     // Usage and summary pages match the listing pages' width.
     expect(isWideRoute("/reports")).toBe(true);
     expect(isWideRoute("/admin/reports")).toBe(true);
     expect(isWideRoute("/")).toBe(true);
     expect(isWideRoute("/admin/settings")).toBe(false);
-    expect(isWideRoute("/admin/privacy/hidden/rules/new")).toBe(true);
-    expect(isWideRoute("/admin/privacy/hidden/rules/3f2c/")).toBe(true);
+    expect(isWideRoute("/admin/privacy/policies/new")).toBe(true);
+    expect(isWideRoute("/admin/privacy/policies/3f2c/")).toBe(true);
   });
 
   it("is not wide for a form elsewhere", () => {
     expect(isWideRoute("/admin/settings")).toBe(false);
-    expect(isWideRoute("/admin/privacy/hidden/rules")).toBe(false);
-    expect(isWideRoute("/admin/privacy/hidden/rules/a/b")).toBe(false);
+    expect(isWideRoute("/admin/privacy/policies/a/b")).toBe(false);
   });
 });

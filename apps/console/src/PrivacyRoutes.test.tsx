@@ -4,7 +4,7 @@ import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
-/** Old Redaction and Privacy routing links keep working; Privacy is one area with four tabs. */
+/** Old Redaction and Privacy routing links keep working; Privacy is one area with four tabs (Pipelines, Redaction policies, Detectors, Test). */
 
 function Where() {
   const loc = useLocation();
@@ -64,9 +64,13 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("Privacy routes", () => {
   it.each([
-    ["/admin/redaction", "/admin/privacy/hidden"],
-    ["/admin/redaction/rules/abc", "/admin/privacy/hidden/rules/abc"],
-    ["/admin/redaction/rules/new", "/admin/privacy/hidden/rules/new"],
+    // A redaction rule is now a policy under the same id, so an old link lands on the same thing.
+    ["/admin/redaction", "/admin/privacy/policies"],
+    ["/admin/redaction/rules/abc", "/admin/privacy/policies/abc"],
+    ["/admin/redaction/rules/new", "/admin/privacy/policies/new"],
+    ["/admin/privacy/hidden", "/admin/privacy/policies"],
+    ["/admin/privacy/hidden/rules/abc", "/admin/privacy/policies/abc"],
+    ["/admin/privacy/rules/abc", "/admin/privacy"],
     ["/admin/privacy/profiles", "/admin/privacy/detectors"],
     ["/admin/privacy/anything-else", "/admin/privacy"],
   ])("redirects %s to %s", async (from, to) => {

@@ -15,10 +15,11 @@ import { AdminQuotaUsage } from "./routes/AdminQuotaUsage";
 import { AdminQuotas } from "./routes/AdminQuotas";
 import { AdminPrivacy } from "./routes/AdminPrivacy";
 import { AdminPrivacyProfiles } from "./routes/AdminPrivacyProfiles";
-import { AdminPrivacyRule } from "./routes/AdminPrivacyRule";
 import { AdminPrivacyTest } from "./routes/AdminPrivacyTest";
-import { AdminHidden } from "./routes/AdminRedaction";
-import { AdminRedactionRule } from "./routes/AdminRedactionRule";
+import { AdminPolicies } from "./routes/AdminPolicies";
+import { AdminPolicy } from "./routes/AdminPolicy";
+import { AdminPipeline, MyPipeline } from "./components/PipelineEditor";
+import { MyPrivacy, MyPrivacyTest } from "./routes/MyPrivacy";
 import { Admin } from "./routes/Admin";
 import { AdminReports } from "./routes/AdminReports";
 import { AdminRequests } from "./routes/AdminRequests";
@@ -34,10 +35,13 @@ import { NotFound } from "./routes/NotFound";
 import { Overview } from "./routes/Overview";
 import { Reports } from "./routes/Reports";
 
-/** `/admin/redaction/rules/:id`, moved under the Privacy area. */
+/**
+ * `/admin/redaction/rules/:id` and `/admin/privacy/hidden/rules/:id`: a redaction rule
+ * is now a policy, and it kept its id, so an old link lands on the same thing.
+ */
 function RedirectRedactionRule() {
   const { ruleId } = useParams();
-  return <Navigate to={`/admin/privacy/hidden/rules/${ruleId ?? "new"}`} replace />;
+  return <Navigate to={`/admin/privacy/policies/${ruleId ?? "new"}`} replace />;
 }
 
 export function App() {
@@ -90,6 +94,10 @@ export function App() {
         {/* What redaction hid from providers, the rules in force and the user's
             own. Not admin-gated: it is their own requests. */}
         <Route path="/redactions" element={<MyRedactions />} />
+        {/* The user's own privacy pipelines, their policies, and a test box locked to them. */}
+        <Route path="/privacy" element={<MyPrivacy />} />
+        <Route path="/privacy/pipelines/:id" element={<MyPipeline />} />
+        <Route path="/privacy/test" element={<MyPrivacyTest />} />
         {/* Bring your own key. Not admin-gated and not capability-gated in the
             router: the page itself explains a missing capability, so a
             bookmarked link says why rather than reading as a broken deploy. */}
@@ -142,10 +150,27 @@ export function App() {
           }
         />
         <Route
-          path="/admin/privacy/rules/:ruleId"
+          path="/admin/privacy/pipelines/:id"
           element={
             <RequireAdmin me={me_}>
-              <AdminPrivacyRule />
+              <AdminPipeline />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/privacy/policies"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminPolicies />
+            </RequireAdmin>
+          }
+        />
+        {/* One redaction policy; `new` shares the route, as it cannot collide with a uuid. */}
+        <Route
+          path="/admin/privacy/policies/:policyId"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminPolicy />
             </RequireAdmin>
           }
         />
@@ -165,30 +190,14 @@ export function App() {
             </RequireAdmin>
           }
         />
-        <Route
-          path="/admin/privacy/hidden"
-          element={
-            <RequireAdmin me={me_}>
-              <AdminHidden />
-            </RequireAdmin>
-          }
-        />
-        {/* One redaction rule, reached by clicking it in the list on the
-            What gets hidden tab. `new` shares the route: it cannot collide
-            with a uuid, and a second route would duplicate every line of the
-            form. */}
-        <Route
-          path="/admin/privacy/hidden/rules/:ruleId"
-          element={
-            <RequireAdmin me={me_}>
-              <AdminRedactionRule />
-            </RequireAdmin>
-          }
-        />
-        {/* Old links keep working: Redaction and the Privacy routing pages were
-            one area split in two. */}
+        {/* Old links keep working (ADR 0113): redaction rules became policies under the
+            same ids, "What gets hidden" became Redaction policies, and the routing rules
+            became pipelines. */}
         <Route path="/admin/privacy/profiles" element={<Navigate to="/admin/privacy/detectors" replace />} />
-        <Route path="/admin/redaction" element={<Navigate to="/admin/privacy/hidden" replace />} />
+        <Route path="/admin/privacy/hidden" element={<Navigate to="/admin/privacy/policies" replace />} />
+        <Route path="/admin/privacy/hidden/rules/:ruleId" element={<RedirectRedactionRule />} />
+        <Route path="/admin/privacy/rules/:ruleId" element={<Navigate to="/admin/privacy" replace />} />
+        <Route path="/admin/redaction" element={<Navigate to="/admin/privacy/policies" replace />} />
         <Route path="/admin/redaction/rules/:ruleId" element={<RedirectRedactionRule />} />
         <Route path="/admin/privacy/*" element={<Navigate to="/admin/privacy" replace />} />
         <Route

@@ -48,8 +48,6 @@ import type {
   UserQuotaUsage,
   RedactionPolicy,
   RedactionPreview,
-  RedactionRule,
-  RedactionScope,
   RedactionStatus,
   EmailSettings,
   EmailTestResult,
@@ -113,7 +111,6 @@ function makeKeys(root: string) {
       [root, "identity-providers", id, "directory"] as const,
     oidcPolicy: [root, "oidc-policy"] as const,
     redaction: [root, "redaction"] as const,
-    redactionRules: [root, "redaction", "rules"] as const,
     providerPlugins: [root, "provider-plugins"] as const,
     providerCatalogue: [root, "provider-catalogue"] as const,
     byokProviders: [root, "byok", "providers"] as const,
@@ -301,97 +298,6 @@ export function useSetRedactionEngine() {
 // at a 404 is worse than no hook: the next person to need this would have
 // wired it up and got a mystery.
 
-// -- scoped redaction rules --------------------------------------------------
-
-/**
- * The rules, a page at a time.
- *
- * Keyed under `redaction` and never invalidated by the status mutations: a rule
- * and the deployment policy are folded together at request time but are stored
- * apart, so changing one leaves the other's cache honest.
- */
-export function useRedactionRules(
-  query: PageQuery = { limit: MAX_LIMIT },
-  filters: { scope?: string; is_active?: string } = {},
-) {
-  const search = pageParams(query, {
-    scope: filters.scope ?? "",
-    is_active: filters.is_active ?? "",
-  });
-  return useQuery({
-    queryKey: pagedKey(adminKeys.redactionRules, search),
-    queryFn: () =>
-      request<Page<RedactionRule>>(`/api/admin/redaction/rules?${search}`),
-    ...pagedOptions,
-  });
-}
-
-export interface RedactionRuleInput {
-  name?: string;
-  scope: RedactionScope;
-  /** Null for the catch-all scope, whose subject is every request. */
-  scope_id: string | null;
-  policy: RedactionPolicy;
-  is_active?: boolean;
-  reason?: string;
-}
-
-export function useCreateRedactionRule() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (input: RedactionRuleInput) =>
-      request<RedactionRule>("/api/admin/redaction/rules", {
-        method: "POST",
-        body: input,
-      }),
-    onSuccess: () =>
-      client.invalidateQueries({ queryKey: adminKeys.redactionRules }),
-  });
-}
-
-/**
- * Everything about a rule can change, subject included.
- *
- * The subject travels only when it actually changed: the gateway validates a
- * subject it is given, and revalidating one that has since been deleted —
- * which the admin cannot help, since ``scope_id`` is not a foreign key — would
- * turn an innocent name edit into a 404. Changed, it is sent whole, because
- * the two fields decide one thing together.
- */
-export function useUpdateRedactionRule() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      id,
-      ...body
-    }: {
-      id: string;
-      name?: string;
-      scope?: RedactionScope;
-      scope_id?: string | null;
-      policy?: RedactionPolicy;
-      is_active?: boolean;
-      reason?: string;
-    }) =>
-      request<RedactionRule>(`/api/admin/redaction/rules/${id}`, {
-        method: "PATCH",
-        body,
-      }),
-    onSuccess: () =>
-      client.invalidateQueries({ queryKey: adminKeys.redactionRules }),
-  });
-}
-
-export function useDeleteRedactionRule() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      request<void>(`/api/admin/redaction/rules/${id}`, { method: "DELETE" }),
-    onSuccess: () =>
-      client.invalidateQueries({ queryKey: adminKeys.redactionRules }),
-  });
-}
-
 /**
  * Run the real redaction path over a sample.
  *
@@ -403,13 +309,10 @@ export function usePreviewRedaction() {
   return useMutation({
     mutationFn: (body: {
       text: string;
-      scope?: RedactionScope;
-      scope_id?: string;
-      /**
-       * A rule that is not saved yet, previewed as the form stands. The
-       * gateway folds it onto the catch-all as it would a saved rule.
-       */
+      /** A policy that is not saved yet, previewed as the form stands. */
       policy?: RedactionPolicy;
+      /** A saved policy. Neither: the environment's policy. */
+      policy_id?: string;
     }) =>
       request<RedactionPreview>("/api/admin/redaction/preview", {
         method: "POST",

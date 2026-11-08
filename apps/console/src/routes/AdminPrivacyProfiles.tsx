@@ -5,10 +5,13 @@ import { PrivacyHeader } from "../components/PrivacyHeader";
 import { useRedactionStatus } from "../lib/admin";
 import { EngineDetails, EngineSettings } from "./AdminRedaction";
 import { MUTED, PAGE } from "../lib/layout";
+import { Tip } from "../components/Tip";
 import {
   useCreatePrivacyProfile,
   useDeletePrivacyProfile,
   usePrivacyProfiles,
+  usePrivacySettings,
+  useSavePrivacySettings,
   useUpdatePrivacyProfile,
 } from "../lib/privacy";
 import type { PrivacyProfile, RedactionStatus } from "../lib/types";
@@ -113,6 +116,17 @@ function ProfileCard({
         {profile.fallback === "fallback_to" && (
           <Notice tone="warn">{m["privacy.profile.weakens"]()}</Notice>
         )}
+        <label className="flex items-center gap-2 text-body">
+          <input
+            type="checkbox"
+            checked={profile.user_available}
+            onChange={(event) =>
+              update.mutate({ id: profile.id, body: { user_available: event.target.checked } })
+            }
+          />
+          {m["privacy.profile.user_available"]()}
+          <Tip text={m["privacy.profile.user_available_tip"]()} />
+        </label>
         {redaction && <EngineSettings status={redaction} />}
         {error && (
           <Notice tone="danger">
@@ -199,6 +213,54 @@ function AddProfile() {
   );
 }
 
+/**
+ * What users may add to their own policies: the entity types they may name
+ * (patterns are always theirs). Blank means every type the detector offers.
+ */
+function UserTypes() {
+  const settings = usePrivacySettings();
+  const save = useSavePrivacySettings();
+  const [text, setText] = useState<string | null>(null);
+  const current = settings.data?.user_entity_types ?? null;
+  const shown = text ?? (current ? current.join(", ") : "");
+  return (
+    <Card title={m["privacy.user_types.title"]()} description={m["privacy.user_types.hint"]()}>
+      <div className="flex flex-col gap-3">
+        <Input
+          label={m["privacy.user_types.label"]()}
+          hint={m["privacy.user_types.field_hint"]()}
+          value={shown}
+          onChange={(event) => setText(event.target.value)}
+        />
+        {save.error && (
+          <Notice tone="danger">
+            {/* i18n: server text, the API's own message. */}
+            {save.error instanceof Error ? save.error.message : m["privacy.error.unknown"]()}
+          </Notice>
+        )}
+        <div>
+          <Button
+            variant="primary"
+            busy={save.isPending}
+            onClick={() => {
+              const types = shown
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean);
+              save.mutate(
+                { user_entity_types: types.length ? types : null },
+                { onSuccess: () => setText(null) },
+              );
+            }}
+          >
+            {m["privacy.user_types.save"]()}
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export function AdminPrivacyProfiles() {
   const profiles = usePrivacyProfiles();
   const redaction = useRedactionStatus();
@@ -231,6 +293,7 @@ export function AdminPrivacyProfiles() {
         </Notice>
       ) : null}
       {profiles.data && <AddProfile />}
+      {profiles.data && <UserTypes />}
       {redaction.data && <EngineDetails status={redaction.data} />}
     </div>
   );

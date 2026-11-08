@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { chooseRowAction } from "../test-helpers";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
@@ -7,11 +6,9 @@ import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   RedactionEngineOption,
-  RedactionRule,
   RedactionStatus,
 } from "../lib/types";
 import type { PrivacyProfile } from "../lib/types";
-import { AdminHidden } from "./AdminRedaction";
 import { AdminPrivacyProfiles } from "./AdminPrivacyProfiles";
 
 /**
@@ -189,6 +186,7 @@ const FAST = {
   decides: true,
   cost_hint: "instant",
   rules_using: 2,
+  user_available: false,
   created_at: "2026-11-08T10:00:00Z",
   updated_at: "2026-11-08T10:00:00Z",
 } as PrivacyProfile;
@@ -215,12 +213,7 @@ function renderDetectors() {
   return renderScreen(<AdminPrivacyProfiles />);
 }
 
-/** What gets hidden tab: the rules. */
-function renderHidden() {
-  return renderScreen(<AdminHidden />);
-}
-
-describe("Detectors and What gets hidden (the former Redaction screen)", () => {
+describe("Detectors (the former Redaction screen)", () => {
   it("says whether redaction is on, and which engine", async () => {
     vi.stubGlobal("fetch", respondWith(status()));
     renderDetectors();
@@ -441,182 +434,6 @@ describe("Detectors and What gets hidden (the former Redaction screen)", () => {
       expect(
         screen.getByRole("switch", { name: "Named-entity recognition" }),
       ).toHaveAttribute("aria-checked", "true"),
-    );
-  });
-
-  it("warns beside a rule that names a type its disabled family cannot find", async () => {
-    // Disabling a family never refuses, deactivates or rewrites rules — the
-    // rule keeps working, and the types it can no longer detect are flagged
-    // beside it instead. A rule about an undetectable type is inert, and
-    // "inert" looks exactly like "working" without the sign.
-    const narrowed = status({
-      presidio_pattern_matching: true,
-      presidio_ner: false,
-      service: {
-        ...status().service!,
-        entities: ["EMAIL_ADDRESS"],
-        pattern_entities: ["EMAIL_ADDRESS"],
-        model_entities: ["PERSON"],
-      },
-    });
-    const named: RedactionRule = {
-      id: "r1",
-      name: "research handles patient data",
-      scope: "group",
-      scope_id: "g1",
-      subject_label: "research",
-      policy: {
-        default_mode: "off",
-        entities: {
-          PERSON: { mode: "redact", threshold: null },
-          EMAIL_ADDRESS: { mode: "anonymise_restore", threshold: null },
-        },
-        patterns: [],
-        allow_list: [],
-      },
-      is_active: true,
-      reason: "",
-      created_by: null,
-      created_by_email: null,
-      created_at: "2026-08-27T10:00:00Z",
-      updated_at: "2026-08-27T10:00:00Z",
-    };
-    const stub = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      const payload = url.includes("/redaction/rules")
-        ? { items: [named], total: 1, limit: 200, offset: 0 }
-        : narrowed;
-      return new Response(JSON.stringify(payload), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    });
-    vi.stubGlobal("fetch", stub as unknown as typeof fetch);
-    renderHidden();
-
-    // PERSON is protected by the rule and undetectable with NER off;
-    // EMAIL_ADDRESS is still served, so it must not be listed.
-    await waitFor(() =>
-      expect(screen.getByText("Detection off: PERSON")).toBeInTheDocument(),
-    );
-    expect(screen.queryByText(/EMAIL_ADDRESS/)).not.toBeInTheDocument();
-  });
-
-  it("says nothing when every named type is still detected", async () => {
-    const named: RedactionRule = {
-      id: "r1",
-      name: "",
-      scope: "all",
-      scope_id: null,
-      subject_label: null,
-      policy: {
-        default_mode: "off",
-        entities: { EMAIL_ADDRESS: { mode: "redact", threshold: null } },
-        patterns: [],
-        allow_list: [],
-      },
-      is_active: true,
-      reason: "",
-      created_by: null,
-      created_by_email: null,
-      created_at: "2026-08-27T10:00:00Z",
-      updated_at: "2026-08-27T10:00:00Z",
-    };
-    const stub = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      const payload = url.includes("/redaction/rules")
-        ? { items: [named], total: 1, limit: 200, offset: 0 }
-        : status();
-      return new Response(JSON.stringify(payload), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    });
-    vi.stubGlobal("fetch", stub as unknown as typeof fetch);
-    renderHidden();
-
-    // The subject cell renders "Every request" twice (link and scope noun),
-    // so this only waits for the rules table itself.
-    await waitFor(() =>
-      expect(screen.getAllByText("Every request").length).toBeGreaterThan(0),
-    );
-    expect(screen.queryByText(/Detection off:/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/disabled family/)).not.toBeInTheDocument();
-  });
-
-  it("clones a rule from its row, into a fresh rule page", async () => {
-    // Clone is a row action like Edit, and it lands on the new-rule page with
-    // the source in router state — the page, not the list, owns the prefill.
-    const source: RedactionRule = {
-      id: "r1",
-      name: "research group",
-      scope: "group",
-      scope_id: "g1",
-      subject_label: "research",
-      policy: { default_mode: "off", entities: {}, patterns: [], allow_list: [] },
-      is_active: true,
-      reason: "",
-      created_by: null,
-      created_by_email: null,
-      created_at: "2026-08-27T10:00:00Z",
-      updated_at: "2026-08-27T10:00:00Z",
-    };
-    const stub = vi.fn(async (input: RequestInfo | URL) => {
-      const payload = String(input).includes("/redaction/rules")
-        ? { items: [source], total: 1, limit: 200, offset: 0 }
-        : status();
-      return new Response(JSON.stringify(payload), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    });
-    vi.stubGlobal("fetch", stub as unknown as typeof fetch);
-    const user = userEvent.setup();
-    renderHidden();
-
-    await chooseRowAction(user, "Clone");
-
-    await waitFor(() => expect(location.pathname).toBe("/admin/privacy/hidden/rules/new"));
-  });
-
-  it("warns a default-on rule when a family is switched off, without touching it", async () => {
-    // A default mode of on protects unnamed types too, and those cannot be
-    // enumerated — so the warning is generic, and the rule is still left
-    // exactly as the admin wrote it.
-    const named: RedactionRule = {
-      id: "r1",
-      name: "",
-      scope: "all",
-      scope_id: null,
-      subject_label: null,
-      policy: {
-        default_mode: "anonymise_restore",
-        entities: {},
-        patterns: [],
-        allow_list: [],
-      },
-      is_active: true,
-      reason: "",
-      created_by: null,
-      created_by_email: null,
-      created_at: "2026-08-27T10:00:00Z",
-      updated_at: "2026-08-27T10:00:00Z",
-    };
-    const stub = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      const payload = url.includes("/redaction/rules")
-        ? { items: [named], total: 1, limit: 200, offset: 0 }
-        : status({ presidio_pattern_matching: true, presidio_ner: false });
-      return new Response(JSON.stringify(payload), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    });
-    vi.stubGlobal("fetch", stub as unknown as typeof fetch);
-    renderHidden();
-
-    await waitFor(() =>
-      expect(screen.getByText("Default covers a disabled family")).toBeInTheDocument(),
     );
   });
 
@@ -861,16 +678,5 @@ describe("Detectors: the profile cards", () => {
       method: "PATCH",
       body: { fallback: "fallback_to", fallback_profile_id: "p1" },
     });
-  });
-});
-
-describe("What gets hidden", () => {
-  it("says where it sits in the pipeline, and how its rules combine", async () => {
-    vi.stubGlobal("fetch", respondWith(status()));
-    renderHidden();
-    expect(
-      await screen.findByText(/Step 3\. Runs on what leaves: chat messages and tool results/),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "How redaction rules apply" })).toBeInTheDocument();
   });
 });

@@ -4,7 +4,7 @@ import { usePreviewRedaction } from "../lib/admin";
 import { entityLabel } from "../lib/entities";
 import { CODE, MUTED } from "../lib/layout";
 import { summariseRule } from "../lib/ruleSummary";
-import type { RedactionPolicy, RedactionPreview, RedactionScope } from "../lib/types";
+import type { RedactionPolicy, RedactionPreview } from "../lib/types";
 import { m } from "../paraglide/messages.js";
 
 /**
@@ -17,8 +17,6 @@ export const PREVIEW_DEBOUNCE_MS = 500;
 export interface RulePanelProps {
   /** The form as it stands, saved or not. */
   policy: RedactionPolicy;
-  scope: RedactionScope | "";
-  scopeId: string;
   /** The gateway will not use this rule's allowlist; see `summariseRule`. */
   allowListIgnored?: boolean;
 }
@@ -36,30 +34,20 @@ export interface RulePanelProps {
  * prompt is real personal data, and the gateway makes the same promise on its
  * side.
  */
-export function RulePanel({ policy, scope, scopeId, allowListIgnored = false }: RulePanelProps) {
+export function RulePanel({ policy, allowListIgnored = false }: RulePanelProps) {
   const preview = usePreviewRedaction();
   const [text, setText] = useState("");
 
-  // Which subject to test as. The catch-all stands alone; a narrower scope is
-  // sent only once its subject is chosen, and until then the draft is tested on
-  // top of the catch-all, which is what any narrower rule would sit on.
-  const subject =
-    scope === "all"
-      ? { scope: "all" as const }
-      : scope !== "" && scopeId !== ""
-        ? { scope, scope_id: scopeId }
-        : {};
-
-  const signature = JSON.stringify({ text, policy, subject });
+  const signature = JSON.stringify({ text, policy });
   const { mutate, reset } = preview;
   useEffect(() => {
     if (text.trim() === "") {
       reset();
       return;
     }
-    const timer = setTimeout(() => mutate({ text, policy, ...subject }), PREVIEW_DEBOUNCE_MS);
+    const timer = setTimeout(() => mutate({ text, policy }), PREVIEW_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-    // `signature` stands for text, policy and subject together: depending on the
+    // `signature` stands for text and policy together: depending on the
     // objects themselves would restart the timer on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature]);
