@@ -33,10 +33,12 @@ import { m } from "../paraglide/messages.js";
  * had followed a console link back into the chat after signing in.
  */
 function returnPath(param: string | null): string {
+  const root = /^\/($|[?#])/;
+  const loginPage = /^\/console\/login(\/|$|[?#])/;
   const asked = param ? safeNextPath(param) : null;
-  if (asked && asked !== "/") return asked;
+  if (asked && !root.test(asked) && !loginPage.test(asked)) return asked;
   const here = window.location.pathname + window.location.search;
-  const onConsole = /^\/console(\/|$|\?)/.test(here) && !/^\/console\/login(\/|$|\?)/.test(here);
+  const onConsole = /^\/console(\/|$|\?)/.test(here) && !loginPage.test(here);
   return onConsole ? here : "/console";
 }
 

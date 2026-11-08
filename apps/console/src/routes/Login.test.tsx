@@ -33,16 +33,18 @@ const METHODS = (providers: string[]) =>
   );
 
 let assign: ReturnType<typeof vi.fn>;
+const originalLocation = window.location;
 
 beforeEach(() => {
   assign = vi.fn();
   Object.defineProperty(window, "location", {
     writable: true,
-    value: { ...window.location, assign },
+    value: { ...originalLocation, assign },
   });
 });
 
 afterEach(() => {
+  Object.defineProperty(window, "location", { writable: true, value: originalLocation });
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -103,6 +105,23 @@ describe("Login", () => {
     at("/console/login");
     vi.stubGlobal("fetch", vi.fn(async () => METHODS(["authelia"])));
     renderLogin("/login?next=%2F%2Fevil.test");
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith("/auth/login?next=%2Fconsole&provider=authelia"),
+    );
+  });
+  it("never returns to the login page or a root path with a query", async () => {
+    at("/console/login");
+    vi.stubGlobal("fetch", vi.fn(async () => METHODS(["authelia"])));
+    renderLogin("/login?next=%2Fconsole%2Flogin%3Fx%3D1");
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith("/auth/login?next=%2Fconsole&provider=authelia"),
+    );
+  });
+
+  it("treats /?x as the origin root", async () => {
+    at("/console/login");
+    vi.stubGlobal("fetch", vi.fn(async () => METHODS(["authelia"])));
+    renderLogin("/login?next=%2F%3Fx");
     await waitFor(() =>
       expect(assign).toHaveBeenCalledWith("/auth/login?next=%2Fconsole&provider=authelia"),
     );
