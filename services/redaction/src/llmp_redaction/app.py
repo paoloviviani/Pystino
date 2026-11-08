@@ -179,7 +179,7 @@ def build_detector() -> Detector:
         )
         nlp_engine = provider.create_engine()
 
-    registry = RecognizerRegistry()
+    registry = RecognizerRegistry(supported_languages=languages)
     # The NLP recogniser (SpacyRecognizer) is added by this call whenever it can
     # resolve one — Presidio raises outright if handed the no-op engine here —
     # so in no-NER mode it is loaded *without* an engine and the SpacyRecognizer
