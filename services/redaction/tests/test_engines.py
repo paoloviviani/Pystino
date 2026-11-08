@@ -129,7 +129,7 @@ def test_the_ocr_reader_without_the_weights_says_so_and_reads_as_markitdown(
 ) -> None:
     """A routing rule asking for `ocr` on a build without OCR must be told, not
     quietly given a text-layer read (ADR 0113)."""
-    monkeypatch.setattr("llmp_redaction.documents.ocr.available", lambda config=None: False)
+    monkeypatch.setattr(ocr, "available", lambda config=None: False)
     result = extract(docx_bytes("Plain paragraph"), media_type=DOCX, engine="ocr")
     assert result.kind is ExtractionKind.TEXT
     assert result.extractor == "markitdown"
@@ -147,7 +147,7 @@ def test_the_ocr_reader_switches_ocr_on_for_one_request(
         seen.append(config.ocr)  # type: ignore[attr-defined]
         return ExtractionResponse(kind=ExtractionKind.TEXT, text="read", extractor="rapidocr")
 
-    monkeypatch.setattr(documents.ocr, "available", lambda config=None: True)
+    monkeypatch.setattr(ocr, "available", lambda config=None: True)
     monkeypatch.setattr(documents, "_pdf_by_page", by_page)
     pdf = _blank_pdf(200)
     # EXTRACTOR_OCR is unset, so a plain request does not use the OCR path...

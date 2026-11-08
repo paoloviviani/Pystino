@@ -26,6 +26,7 @@ function provider(overrides: Partial<AdminProvider> = {}): AdminProvider {
     extra_headers: {},
     is_active: true,
     prefix: "",
+    is_local: false,
     plugin: null,
     kind: "provider",
     plugin_kind: "provider",
@@ -372,6 +373,39 @@ describe("AdminProviders", () => {
     expect((captured.bodies[0]?.body as Record<string, unknown>).api_key).toBe(
       "",
     );
+  });
+
+  it("says a provider is local only when the administrator ticks it (ADR 0113)", async () => {
+    const user = userEvent.setup();
+    const captured: Captured = { bodies: [] };
+    vi.stubGlobal("fetch", routes([provider()], captured));
+    renderScreen(<AdminProviders />);
+
+    await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    const box = within(dialog).getByLabelText(/Runs on this deployment's own infrastructure/);
+    expect(box).not.toBeChecked();
+    await user.click(box);
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    expect((captured.bodies[0]?.body as Record<string, unknown>).is_local).toBe(true);
+  });
+
+  it("does not send is_local when it was left alone", async () => {
+    const user = userEvent.setup();
+    const captured: Captured = { bodies: [] };
+    vi.stubGlobal("fetch", routes([provider()], captured));
+    renderScreen(<AdminProviders />);
+
+    await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    expect("is_local" in (captured.bodies[0]?.body as Record<string, unknown>)).toBe(false);
   });
 
   it("sends a typed key as the replacement", async () => {

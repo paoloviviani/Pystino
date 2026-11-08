@@ -1240,6 +1240,144 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/privacy/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Profiles */
+        get: operations["list_profiles_api_admin_privacy_profiles_get"];
+        put?: never;
+        /** Create Profile */
+        post: operations["create_profile_api_admin_privacy_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/profiles/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Profile */
+        delete: operations["delete_profile_api_admin_privacy_profiles__profile_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Profile */
+        patch: operations["update_profile_api_admin_privacy_profiles__profile_id__patch"];
+        trace?: never;
+    };
+    "/api/admin/privacy/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Rules
+         * @description Every rule, grouped by kind and in order, each with its warnings.
+         */
+        get: operations["list_rules_api_admin_privacy_rules_get"];
+        put?: never;
+        /** Create Rule */
+        post: operations["create_rule_api_admin_privacy_rules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/rules/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Rule
+         * @description The warnings a draft would get if saved now, for the editor to show as it is written.
+         */
+        post: operations["check_rule_api_admin_privacy_rules_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/rules/reorder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reorder Rules
+         * @description Put a kind's rules in a new order. Must name every rule of the kind once.
+         */
+        post: operations["reorder_rules_api_admin_privacy_rules_reorder_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/rules/{rule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Rule */
+        delete: operations["delete_rule_api_admin_privacy_rules__rule_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Rule */
+        patch: operations["update_rule_api_admin_privacy_rules__rule_id__patch"];
+        trace?: never;
+    };
+    "/api/admin/privacy/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Rules
+         * @description Which rule would fire for these facts, why the earlier ones did not, and the outcome.
+         *
+         *     Reads the rules as saved. The text and the file are judged in memory and never
+         *     stored or logged; the answer carries labels and names, not content. Rate limited.
+         */
+        post: operations["test_rules_api_admin_privacy_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/provider-catalogue": {
         parameters: {
             query?: never;
@@ -3640,6 +3778,24 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActionBody */
+        ActionBody: {
+            /** Model */
+            model?: string | null;
+            /** Reader */
+            reader?: ("markitdown" | "ocr" | "docling") | null;
+            /** Type */
+            type: string;
+        };
+        /** ActionView */
+        ActionView: {
+            /** Model */
+            model: string | null;
+            /** Reader */
+            reader: string | null;
+            /** Type */
+            type: string;
+        };
         /** AdminAuditEventResponse */
         AdminAuditEventResponse: {
             /** Action */
@@ -4519,6 +4675,37 @@ export interface components {
             title: string;
         };
         /**
+         * ConditionBody
+         * @description One condition: a key, values (any of them), and ``negate`` ("is not").
+         */
+        ConditionBody: {
+            /** Decide */
+            decide?: string | null;
+            /** Key */
+            key: string;
+            /**
+             * Negate
+             * @default false
+             */
+            negate?: boolean;
+            /** Values */
+            values: string[];
+        };
+        /** ConditionView */
+        ConditionView: {
+            /** Decide */
+            decide: string | null;
+            /** Key */
+            key: string;
+            /**
+             * Negate
+             * @default false
+             */
+            negate: boolean;
+            /** Values */
+            values: string[];
+        };
+        /**
          * CustomPattern
          * @description A regex an operator wrote, treated as one more entity type.
          *
@@ -4733,6 +4920,17 @@ export interface components {
             placeholder?: components["schemas"]["PlaceholderStyle"];
             /** Threshold */
             threshold?: number | null;
+        };
+        /** FiredRule */
+        FiredRule: {
+            action: components["schemas"]["ActionView"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
         };
         /** GroupAdminResponse */
         GroupAdminResponse: {
@@ -5134,6 +5332,20 @@ export interface components {
             /** Sign In Url */
             sign_in_url: string;
             user: components["schemas"]["UserAdminResponse"];
+        };
+        /**
+         * IssueView
+         * @description A save-time warning. Never blocks saving.
+         */
+        IssueView: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Rule Id */
+            rule_id: string | null;
+            /** Rule Name */
+            rule_name: string | null;
         };
         /** LimitRuleCreateRequest */
         LimitRuleCreateRequest: {
@@ -6073,6 +6285,17 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** Page[ProfileResponse] */
+        Page_ProfileResponse_: {
+            /** Items */
+            items: components["schemas"]["ProfileResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /** Page[ProviderResponse] */
         Page_ProviderResponse_: {
             /** Items */
@@ -6121,6 +6344,17 @@ export interface components {
         Page_RequestLogRow_: {
             /** Items */
             items: components["schemas"]["RequestLogRow"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** Page[RuleResponse] */
+        Page_RuleResponse_: {
+            /** Items */
+            items: components["schemas"]["RuleResponse"][];
             /** Limit */
             limit: number;
             /** Offset */
@@ -6312,6 +6546,94 @@ export interface components {
             /** Source */
             source: string;
         };
+        /** ProfileCreateRequest */
+        ProfileCreateRequest: {
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Engine */
+            engine: string;
+            /**
+             * Fallback
+             * @default refuse
+             * @enum {string}
+             */
+            fallback?: "refuse" | "fallback_to";
+            /** Fallback Profile Id */
+            fallback_profile_id?: string | null;
+            /**
+             * Labels
+             * @default []
+             */
+            labels?: string[];
+            /** Name */
+            name: string;
+        };
+        /** ProfileResponse */
+        ProfileResponse: {
+            /** Cost Hint */
+            cost_hint: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Decides */
+            decides: boolean;
+            /** Description */
+            description: string;
+            /** Engine */
+            engine: string;
+            /**
+             * Fallback
+             * @enum {string}
+             */
+            fallback: "refuse" | "fallback_to";
+            /** Fallback Profile Id */
+            fallback_profile_id: string | null;
+            /** Fallback Profile Name */
+            fallback_profile_name: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Default */
+            is_default: boolean;
+            /** Labels */
+            labels: string[];
+            /** Name */
+            name: string;
+            /** Rules Using */
+            rules_using: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "available" | "down" | "not_installed";
+            /** Status Detail */
+            status_detail: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ProfileUpdateRequest */
+        ProfileUpdateRequest: {
+            /** Description */
+            description?: string | null;
+            /** Fallback */
+            fallback?: ("refuse" | "fallback_to") | null;
+            /** Fallback Profile Id */
+            fallback_profile_id?: string | null;
+            /** Labels */
+            labels?: string[] | null;
+            /** Name */
+            name?: string | null;
+        };
         /** ProviderCreateRequest */
         ProviderCreateRequest: {
             /** Api Key */
@@ -6337,6 +6659,11 @@ export interface components {
              * @default true
              */
             is_active?: boolean;
+            /**
+             * Is Local
+             * @default false
+             */
+            is_local?: boolean;
             /**
              * Kind
              * @default provider
@@ -6441,6 +6768,11 @@ export interface components {
             /** Is Active */
             is_active: boolean;
             /**
+             * Is Local
+             * @default false
+             */
+            is_local: boolean;
+            /**
              * Kind
              * @default provider
              */
@@ -6516,6 +6848,8 @@ export interface components {
             } | null;
             /** Is Active */
             is_active?: boolean | null;
+            /** Is Local */
+            is_local?: boolean | null;
             /** Kind */
             kind?: ("provider" | "router" | "search") | null;
             /** Name */
@@ -6789,6 +7123,7 @@ export interface components {
             provider: string | null;
             /** Request Id */
             request_id: string;
+            routing: components["schemas"]["RoutingInfo"] | null;
             /** User Id */
             user_id: string | null;
             /** User Label */
@@ -7202,6 +7537,16 @@ export interface components {
             /** Start */
             start: number;
         };
+        /** ReorderRequest */
+        ReorderRequest: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "read" | "embed" | "chat";
+            /** Order */
+            order: string[];
+        };
         /**
          * RequestLogRow
          * @description One request, as the request log shows it: metadata only.
@@ -7315,6 +7660,307 @@ export interface components {
             stream?: boolean;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * RoutingHandled
+         * @description What handled it: the reader, why it was not the one asked for, the rule.
+         */
+        RoutingHandled: {
+            /** Extractor */
+            extractor: string | null;
+            /** Fallback Reason */
+            fallback_reason: string | null;
+            /**
+             * Profile
+             * @default default
+             */
+            profile: string;
+            /** Reader */
+            reader: string | null;
+            routing_rule: components["schemas"]["RoutingRule"] | null;
+        };
+        /**
+         * RoutingInfo
+         * @description The ``routing`` block of a log entry and of the per-response summary.
+         */
+        RoutingInfo: {
+            /** Degraded */
+            degraded: string[];
+            /** Fallbacks */
+            fallbacks: string[];
+            handled: components["schemas"]["RoutingHandled"];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "read" | "embed" | "chat";
+            observed: components["schemas"]["RoutingObserved"];
+            /** Observed Rules */
+            observed_rules: components["schemas"]["RoutingRule"][];
+            /**
+             * Outcome
+             * @default default
+             */
+            outcome: string;
+        };
+        /**
+         * RoutingObserved
+         * @description What Pystino saw in the request (ADR 0113). Labels and names, never content.
+         */
+        RoutingObserved: {
+            /** Filename */
+            filename: string | null;
+            /** Filetype */
+            filetype: string | null;
+            /** Groups */
+            groups: string[];
+            /** Is Scan */
+            is_scan: boolean | null;
+            /** Mime */
+            mime: string | null;
+            target: components["schemas"]["RoutingTarget"];
+            verdicts: components["schemas"]["RoutingVerdicts"] | null;
+        };
+        /** RoutingRule */
+        RoutingRule: {
+            /** Id */
+            id: string | null;
+            /** Name */
+            name: string;
+        };
+        /** RoutingTarget */
+        RoutingTarget: {
+            /** Alias */
+            alias: string | null;
+            /** Local */
+            local: boolean | null;
+            /** Model */
+            model: string | null;
+            /** Provider */
+            provider: string | null;
+        };
+        /** RoutingVerdicts */
+        RoutingVerdicts: {
+            /** Health */
+            health: boolean | null;
+            /** Ids */
+            ids: boolean | null;
+            /** Lang */
+            lang: string | null;
+            /**
+             * Method
+             * @default patterns
+             */
+            method: string;
+        };
+        /**
+         * RuleCheckRequest
+         * @description A draft, to be checked as it would sit in the list if saved.
+         */
+        RuleCheckRequest: {
+            action: components["schemas"]["ActionBody"];
+            /**
+             * Conditions
+             * @default []
+             */
+            conditions?: components["schemas"]["ConditionBody"][];
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled?: boolean;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "read" | "embed" | "chat";
+            /**
+             * Name
+             * @default Draft
+             */
+            name?: string;
+            /**
+             * Observe Only
+             * @default false
+             */
+            observe_only?: boolean;
+            /** Rule Id */
+            rule_id?: string | null;
+        };
+        /** RuleCheckResponse */
+        RuleCheckResponse: {
+            /** Error */
+            error: string | null;
+            /** Issues */
+            issues: components["schemas"]["IssueView"][];
+            /** Soft Cap */
+            soft_cap: number;
+        };
+        /** RuleCreateRequest */
+        RuleCreateRequest: {
+            action: components["schemas"]["ActionBody"];
+            /**
+             * Conditions
+             * @default []
+             */
+            conditions?: components["schemas"]["ConditionBody"][];
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled?: boolean;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "read" | "embed" | "chat";
+            /** Name */
+            name: string;
+            /**
+             * Observe Only
+             * @default false
+             */
+            observe_only?: boolean;
+            /** Position */
+            position?: number | null;
+        };
+        /** RuleResponse */
+        RuleResponse: {
+            action: components["schemas"]["ActionView"];
+            /** Conditions */
+            conditions: components["schemas"]["ConditionView"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Issues */
+            issues: components["schemas"]["IssueView"][];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "read" | "embed" | "chat";
+            /** Name */
+            name: string;
+            /** Observe Only */
+            observe_only: boolean;
+            /** Position */
+            position: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * RuleTestRequest
+         * @description Facts to judge, or a file or text to derive them from. Nothing is stored or logged.
+         */
+        RuleTestRequest: {
+            /** File Base64 */
+            file_base64?: string | null;
+            /** Filename */
+            filename?: string | null;
+            /**
+             * Groups
+             * @default []
+             */
+            groups?: string[];
+            /** Is Scan */
+            is_scan?: boolean | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "read" | "embed" | "chat";
+            /** Mime */
+            mime?: string | null;
+            /** Target Local */
+            target_local?: boolean | null;
+            /** Target Model */
+            target_model?: string | null;
+            /** Target Provider */
+            target_provider?: string | null;
+            /** Text */
+            text?: string | null;
+            /** User */
+            user?: string | null;
+        };
+        /** RuleTestResponse */
+        RuleTestResponse: {
+            /** Degraded */
+            degraded: string[];
+            /** Extractor */
+            extractor: string | null;
+            /** Facts */
+            facts: {
+                [key: string]: unknown;
+            };
+            /** Fallback Reason */
+            fallback_reason: string | null;
+            /** Fallbacks */
+            fallbacks: string[];
+            fired: components["schemas"]["FiredRule"] | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "read" | "embed" | "chat";
+            /** Needs */
+            needs: string | null;
+            /** Observed */
+            observed: components["schemas"]["FiredRule"][];
+            /** Outcome */
+            outcome: string;
+            /** Outcome Text */
+            outcome_text: string;
+            /** Steps */
+            steps: components["schemas"]["RuleTestStep"][];
+            /** Verdicts */
+            verdicts: {
+                [key: string]: unknown;
+            };
+        };
+        /** RuleTestStep */
+        RuleTestStep: {
+            /** Degraded */
+            degraded: string[];
+            /** Name */
+            name: string;
+            /** Position */
+            position: number;
+            /** Reasons */
+            reasons: string[];
+            /** Result */
+            result: string;
+            /**
+             * Rule Id
+             * Format: uuid
+             */
+            rule_id: string;
+        };
+        /**
+         * RuleUpdateRequest
+         * @description Every field optional. The kind is fixed once saved.
+         */
+        RuleUpdateRequest: {
+            action?: components["schemas"]["ActionBody"] | null;
+            /** Conditions */
+            conditions?: components["schemas"]["ConditionBody"][] | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Name */
+            name?: string | null;
+            /** Observe Only */
+            observe_only?: boolean | null;
         };
         /**
          * SearchBackendDeleteResponse
@@ -9981,6 +10627,350 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OidcPolicyPreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_profiles_api_admin_privacy_profiles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ProfileResponse_"];
+                };
+            };
+        };
+    };
+    create_profile_api_admin_privacy_profiles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_profile_api_admin_privacy_profiles__profile_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_profile_api_admin_privacy_profiles__profile_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_rules_api_admin_privacy_rules_get: {
+        parameters: {
+            query?: {
+                kind?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_RuleResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_rule_api_admin_privacy_rules_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuleCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_rule_api_admin_privacy_rules_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuleCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleCheckResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reorder_rules_api_admin_privacy_rules_reorder_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReorderRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_RuleResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_rule_api_admin_privacy_rules__rule_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_rule_api_admin_privacy_rules__rule_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuleUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_rules_api_admin_privacy_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuleTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleTestResponse"];
                 };
             };
             /** @description Validation Error */

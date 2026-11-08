@@ -13,6 +13,10 @@ import { AdminProviders } from "./routes/AdminProviders";
 import { AdminSearch } from "./routes/AdminSearch";
 import { AdminQuotaUsage } from "./routes/AdminQuotaUsage";
 import { AdminQuotas } from "./routes/AdminQuotas";
+import { AdminPrivacy } from "./routes/AdminPrivacy";
+import { AdminPrivacyProfiles } from "./routes/AdminPrivacyProfiles";
+import { AdminPrivacyRule } from "./routes/AdminPrivacyRule";
+import { AdminPrivacyTest } from "./routes/AdminPrivacyTest";
 import { AdminRedaction } from "./routes/AdminRedaction";
 import { AdminRedactionRule } from "./routes/AdminRedactionRule";
 import { Admin } from "./routes/Admin";
@@ -120,6 +124,38 @@ export function App() {
           element={
             <RequireAdmin me={me_}>
               <AdminByok />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/privacy"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminPrivacy />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/privacy/rules/:ruleId"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminPrivacyRule />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/privacy/test"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminPrivacyTest />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/privacy/profiles"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminPrivacyProfiles />
             </RequireAdmin>
           }
         />

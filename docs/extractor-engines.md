@@ -45,7 +45,7 @@ OCR on the markitdown path is serialised the same way.
 | Setting | Meaning |
 |---|---|
 | `EXTRACTOR_ENGINE` | `markitdown` (default) or `docling`. |
-| `X-Extractor-Engine` request header | `markitdown` or `docling` for this one request; anything else is ignored. The gateway does not send it yet: it is the seam a routing rule (by caller, by document type or size) would use without changing the response shape. |
+| `X-Extractor-Engine` request header | `markitdown`, `ocr` (markitdown with OCR switched on for this one request; `fallback_reason` says `ocr unavailable` on a build without the weights) or `docling`; anything else is ignored. The gateway sends it when a [privacy routing rule](privacy-routing.md) chooses a reader, and never otherwise. |
 | `EXTRACTOR_OCR` | `rapidocr` or `none`. Default: on in the `-ocr` and `-docling` images, off elsewhere. Docling always uses RapidOCR for scans. |
 | `EXTRACTOR_THREADS` | Intra-op threads for ONNX and torch. Default: the cores this container may use (the CPU-affinity mask, which follows `--cpuset` and not a CPU quota: set it explicitly with `cpus:` limits). |
 | `EXTRACTOR_MAX_PAGES` | Pages read by OCR or Docling per document (default 200). Further pages are not read and the response says `truncated`. Pages are counted by pdfium (pdfminer as a fallback); when neither can count, the cap is still passed to Docling. A page is drawn for OCR at 200 DPI but never larger than 2600 pixels on its long side, so a 200-inch page cannot become a multi-gigabyte bitmap. |

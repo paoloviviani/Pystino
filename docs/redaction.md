@@ -452,7 +452,9 @@ whether the request was blocked.
 
 **It never holds a value.** Not the original, not the matched text, and no
 character offsets. A request where redaction ran and found nothing leaves no
-entry. The entry lives on the usage row, so it costs no extra write and its
+entry, unless privacy routing is configured: then every request of a known kind
+leaves one, with an empty `entities` list and the `routing` block described
+below. The entry lives on the usage row, so it costs no extra write and its
 retention is the request log's (which keeps rows; only the reply text has a
 sweep, see `GATEWAY_TRANSCRIPT_RETENTION_HOURS`). With accounting switched off
 there is no request log and so no redaction log.
@@ -492,19 +494,76 @@ a separate event.
 }
 ```
 
-- The object is **absent** when redaction is off for the request: the engine is
-  `noop`, or no rule applies. `applied` is `false` with an empty `entities` when
-  redaction ran and found nothing.
+- The object is **absent** when redaction is off for the request (the engine is
+  `noop`, or no rule applies) and no routing rule is configured. `applied` is
+  `false` with an empty `entities` when redaction ran and found nothing.
 - `rule.id` is `null` for the deployment's own policy, which has no row.
 - A blocked request is a 403; with the header its error body also carries the
   object, with `blocked: true`.
 - `request_id` is the id the request was logged under. (The gateway otherwise
   never returns the id it uses; this is the one place it does, because the
   caller asked.)
-- Only chat completions carry it. `/v1/responses` and `/v1/messages` do not yet.
+- Chat completions carry it, as do `/v1/ocr` and `/v1/embeddings` (top level of
+  the JSON body). `/v1/responses` and `/v1/messages` do not yet.
+- `routing` (new, optional) says what Pystino observed and what handled the
+  request; see "Routing attribution" below. Clients that ignore unknown fields
+  need no change.
 - **No cost.** `pystino_cost` is not sent: the cost of a request is settled
   after the response is sent, so it is not known when the object is built. Read
   it from `GET /v1/pystino/usage` once the request is over.
+
+### Routing attribution
+
+Since ADR 0113 the log entry and the summary also carry a `routing` object: what
+Pystino itself observed in the request, and what handled it. It is present on
+every chat completion, response and message (kind `chat`), every `/v1/embeddings`
+call (`embed`) and every `/v1/ocr` call (`read`). It lives in the same place as
+the entities: `usage_records.redaction_detail["routing"]` (so no extra column
+and no extra write), and `pystino_redaction["routing"]` in the opt-in summary.
+The log entry itself is written for every request once at least one routing rule
+is enabled, even when nothing was hidden; with no rules configured the entry is
+written only when something was hidden, as before.
+
+```json
+{
+  "v": 1,
+  "kind": "read",
+  "observed": {
+    "groups": ["Clinic"],
+    "target": {"alias": "reader", "model": "local-reader", "provider": "onsite", "local": true},
+    "filename": "referto-rossi.pdf", "mime": "application/pdf",
+    "filetype": "pdf", "is_scan": true,
+    "verdicts": {"health": true, "ids": false, "lang": "it", "method": "patterns"}
+  },
+  "handled": {
+    "extractor": "docling", "fallback_reason": "docling busy", "reader": "docling",
+    "profile": "default",
+    "routing_rule": {"id": "6c1e...", "name": "Medical PDFs"}
+  },
+  "outcome": "rule",
+  "observed_rules": [{"id": "...", "name": "Trial"}],
+  "degraded": [], "fallbacks": []
+}
+```
+
+- `observed.filename`, `mime`, `filetype` and `is_scan` are only for `read`;
+  `verdicts` only when a rule asked for the text's content. `is_scan` is what the
+  extractor reported, so it is `null` for a document that was never read here.
+- The **file name** is the one text field: a base name the user chose, at most 120
+  characters, never a path. It is in the log because rules match on it and an
+  administrator reading "why was this refused" needs it; keep that in mind
+  before giving file names to people who may not see them. Everything else is a
+  label, a group or model name, or a count.
+- `handled.extractor` and `fallback_reason` come from the extractor's own answer.
+  `profile` is `default` until chat detector profiles (phase 2). `routing_rule`
+  is the rule that applied, or `null`.
+- `outcome` is `default` (no rule applied), `rule`, `rerouted`, `refused`, or
+  `blocked` (redaction refused it).
+- `observed_rules` lists observe-only rules that would have applied.
+- `degraded` and `fallbacks` appear when a detector a rule needed was
+  unavailable, and say how that was handled (see [Privacy routing](privacy-routing.md)).
+- The console's **Redactions** page shows these fields compactly in a "Handled
+  by" column, and lists requests where nothing was hidden when routing is on.
 
 **The values.** With a second header, `x-pystino-redaction-values: 1`, *and* a
 caller that authenticated with the user's own sign-in (an external IdP access token, or the bundled IdP's session token, which is a key minted at login), never a key the user or anyone created, the object

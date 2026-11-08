@@ -58,6 +58,7 @@ function event(overrides: Partial<RedactionEvent> = {}): RedactionEvent {
     provider: "openrouter",
     byok: false,
     blocked: false,
+    routing: null,
     entities: [
       {
         type: "PERSON",
@@ -319,6 +320,53 @@ describe("My redactions", () => {
     expect(screen.getByText("Your rule: US_SSN")).toBeInTheDocument();
     expect(screen.getByText("Refused")).toBeInTheDocument();
     expect(screen.getByText("Own key")).toBeInTheDocument();
+  });
+
+  it("shows what Pystino saw and what handled the request, compactly", async () => {
+    vi.stubGlobal(
+      "fetch",
+      api([], {
+        events: [
+          event({
+            entities: [],
+            routing: {
+              v: 1,
+              kind: "read",
+              outcome: "rule",
+              observed: {
+                groups: ["Clinic"],
+                target: { alias: null, model: "local-reader", provider: "local", local: true },
+                filename: "referto-rossi.pdf",
+                mime: "application/pdf",
+                filetype: "pdf",
+                is_scan: true,
+                verdicts: null,
+              },
+              handled: {
+                extractor: "docling",
+                fallback_reason: "docling busy",
+                reader: "docling",
+                profile: "default",
+                routing_rule: { id: "r1", name: "Medical PDFs" },
+              },
+              observed_rules: [],
+              degraded: [],
+              fallbacks: [],
+            } as never,
+          }),
+        ],
+      }),
+    );
+    renderPage();
+
+    expect(await screen.findByText("Reading a file · Rule Medical PDFs")).toBeInTheDocument();
+    expect(screen.getByText("Read with docling")).toBeInTheDocument();
+    expect(screen.getByText("pdf · scan · local model")).toBeInTheDocument();
+    // A fallback is a warning, not a footnote.
+    expect(screen.getByText("Fell back: docling busy")).toBeInTheDocument();
+    // A request where nothing was hidden is still in the log, and says so.
+    expect(screen.getByText("Nothing hidden")).toBeInTheDocument();
+    expect(screen.getByText("Checked")).toBeInTheDocument();
   });
 
   it("filters the log by request id", async () => {

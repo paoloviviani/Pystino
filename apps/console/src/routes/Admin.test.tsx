@@ -55,6 +55,7 @@ describe("Admin", () => {
       "/admin/private-providers",
       // Privacy.
       "/admin/redaction",
+      "/admin/privacy",
       // People.
       "/admin/users",
       "/admin/groups",

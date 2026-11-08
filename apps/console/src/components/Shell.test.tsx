@@ -316,6 +316,7 @@ describe("Shell: the sidebar", () => {
       "/admin/search",
       "/admin/private-providers",
       "/admin/redaction",
+      "/admin/privacy",
       "/admin/users",
       "/admin/groups",
       "/admin/audit",

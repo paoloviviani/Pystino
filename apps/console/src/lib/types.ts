@@ -643,3 +643,24 @@ export type RedactionTestResult = Schemas["RedactionTestResponse"];
 
 /** One request where redaction hid something or refused. No values. */
 export type RedactionEvent = Schemas["RedactionEventRow"];
+
+// -- privacy routing (ADR 0113) ------------------------------------------------
+
+/** Kinds an administrator writes rules for today; chat arrives in a later release. */
+export type PrivacyKind = "read" | "embed";
+
+export type PrivacyRule = Schemas["RuleResponse"];
+/** What a rule says, as written (the request side: `decide` and `reader` optional). */
+export type PrivacyCondition = Schemas["ConditionBody"];
+export type PrivacyAction = Schemas["ActionBody"];
+export type PrivacyIssue = Schemas["IssueView"];
+export type PrivacyRuleInput = Schemas["RuleCreateRequest"];
+export type PrivacyRuleUpdate = Schemas["RuleUpdateRequest"];
+export type PrivacyRuleCheck = Schemas["RuleCheckResponse"];
+export type PrivacyProfile = Schemas["ProfileResponse"];
+export type PrivacyProfileInput = Schemas["ProfileCreateRequest"];
+export type PrivacyProfileUpdate = Schemas["ProfileUpdateRequest"];
+export type PrivacyTestInput = Schemas["RuleTestRequest"];
+export type PrivacyTestResult = Schemas["RuleTestResponse"];
+/** The `routing` block of a log entry: what was observed and what handled it. */
+export type RoutingInfo = Schemas["RoutingInfo"];

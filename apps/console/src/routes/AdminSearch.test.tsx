@@ -36,6 +36,7 @@ function backend(overrides: Partial<AdminProvider> = {}): AdminProvider {
     extra_headers: {},
     is_active: true,
     prefix: "",
+    is_local: false,
     plugin: "linkup",
     kind: "search",
     plugin_kind: "search",

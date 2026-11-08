@@ -595,6 +595,19 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
   after the administrators' and may only tighten; do not route them through
   `RedactionPolicy.combine`, which lets a scope lower a threshold or veto a
   placeholder style.
+- **Privacy routing is stateless and query-free** (ADR 0113, `gateway/privacy/`,
+  docs/privacy-routing.md). Rules, detector profiles and the names of local
+  models are read by `PrivacyState` on the ten-second poll (the redaction
+  resolver's design), so a request adds no query (`test_query_counts.py`); an
+  admin write refreshes the worker that served it. Evaluation is first match
+  per kind, observe-only rules continue, and anything a protective rule needs
+  and cannot have (a local model, a detector that is down with fallback
+  `refuse`) fails closed with a 403 naming the rule, never the content or the
+  file name. A `scan` condition is only known after reading, so the OCR route
+  reads once on the local extractor and judges again. `routing` (what was
+  observed, what handled it) rides in `redaction_detail["routing"]` and the
+  `pystino_redaction` summary: labels and names only, the one text field being a
+  file's base name. `providers.is_local` is admin-only (never BYOK).
 - **`InMemoryCounterStore` is atomic only because it never awaits.** It proves
   nothing about `MULTI`/`EXEC`, which is why `test_quota_race_live.py` exists.
 - **An abandoned stream is billed from our price table.** A client that hangs

@@ -3,6 +3,7 @@ import type { Column } from "@llmp/ui";
 import { useState } from "react";
 
 import { PageHeader } from "../components/PageHeader";
+import { kindLabel } from "../lib/privacy";
 import { entityLabel, modeLabel } from "../lib/entities";
 import { formatDateTime } from "../lib/format";
 import { FIELD, FIELD_LABEL, FORM, FORM_ROW, MUTED, NOWRAP, PAGE, TEXTAREA } from "../lib/layout";
@@ -425,7 +426,56 @@ function TestBox() {
   );
 }
 
+/**
+ * What Pystino saw and what handled it, in one compact cell (ADR 0113): the
+ * kind, the administrator's rule if one applied, the reader that ran and, in
+ * a warning, why it was not the one asked for.
+ */
+function RoutingCell({ routing }: { routing: RedactionEvent["routing"] }) {
+  if (!routing) return <span className={MUTED}>{m["my_redaction.routing.none"]()}</span>;
+  const rule = routing.handled.routing_rule;
+  const observed = routing.observed;
+  const seen = [
+    observed.filetype,
+    observed.is_scan ? m["my_redaction.routing.scan"]() : null,
+    observed.target.local === true ? m["my_redaction.routing.local"]() : null,
+    observed.target.local === false ? m["my_redaction.routing.cloud"]() : null,
+  ].filter(Boolean);
+  return (
+    <span className="flex flex-col gap-0.5">
+      <span>
+        {kindLabel(routing.kind)}
+        {" · "}
+        {rule
+          ? m["my_redaction.routing.rule"]({ name: rule.name })
+          : m["my_redaction.routing.no_rule"]()}
+      </span>
+      {routing.handled.extractor && (
+        <span className="text-small">
+          {m["my_redaction.routing.reader"]({ name: routing.handled.extractor })}
+        </span>
+      )}
+      {seen.length > 0 && <span className={`text-small ${MUTED}`}>{seen.join(" · ")}</span>}
+      {routing.handled.fallback_reason && (
+        <span className="text-small">
+          <Badge tone="warn">
+            {m["my_redaction.routing.fallback"]({ reason: routing.handled.fallback_reason })}
+          </Badge>
+        </span>
+      )}
+      {routing.outcome === "refused" && (
+        <span className="text-small">
+          <Badge tone="danger">{m["my_redaction.routing.refused"]()}</Badge>
+        </span>
+      )}
+    </span>
+  );
+}
+
 function entitySummary(event: RedactionEvent) {
+  if (event.entities.length === 0) {
+    return <span className={MUTED}>{m["my_redaction.log.nothing_hidden"]()}</span>;
+  }
   return event.entities.map((entity) => (
     <span key={entity.type} className="block">
       {m["my_redaction.log.entity"]({
@@ -478,6 +528,11 @@ function Log() {
       render: (event) => entitySummary(event),
     },
     {
+      key: "handled",
+      header: m["my_redaction.log.column.handled"](),
+      render: (event) => <RoutingCell routing={event.routing} />,
+    },
+    {
       key: "rule",
       header: m["my_redaction.log.column.rule"](),
       hideBelow: "md",
@@ -507,6 +562,8 @@ function Log() {
       render: (event) =>
         event.blocked ? (
           <Badge tone="danger">{m["my_redaction.log.blocked"]()}</Badge>
+        ) : event.entities.length === 0 ? (
+          <Badge>{m["my_redaction.log.seen"]()}</Badge>
         ) : (
           <Badge tone="ok">{m["my_redaction.log.hidden"]()}</Badge>
         ),

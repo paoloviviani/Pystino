@@ -1,3 +1,4 @@
+# ruff: noqa: S608, E501  (fixed SQL built from test constants)
 """Migration 0081: privacy routing tables and the provider ``is_local`` flag (ADR 0113).
 
 On SQLite: the default "Fast" profile is seeded once, existing providers are not
@@ -40,7 +41,9 @@ def test_the_tables_the_default_profile_and_the_flag_arrive(tmp_path: Path) -> N
     with closing(sqlite3.connect(path)) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         # An existing provider is "cloud" until an administrator says otherwise.
-        assert conn.execute("SELECT is_local FROM providers WHERE name = 'old'").fetchall() == [(0,)]
+        assert conn.execute("SELECT is_local FROM providers WHERE name = 'old'").fetchall() == [
+            (0,)
+        ]
         profiles = conn.execute(
             "SELECT name, engine, fallback, is_default FROM detector_profiles"
         ).fetchall()
