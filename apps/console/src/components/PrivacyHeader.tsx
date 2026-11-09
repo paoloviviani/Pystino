@@ -1,4 +1,7 @@
+import { Notice } from "@llmp/ui";
 import { Link } from "react-router";
+
+import { useRedactionStatus } from "../lib/admin";
 
 import { PageHeader } from "./PageHeader";
 import { HowItWorks } from "./HowItWorks";
@@ -17,7 +20,7 @@ const TABS: { tab: PrivacyTab; to: string; label: () => string }[] = [
   { tab: "pipelines", to: "/admin/privacy", label: m["privacy.tab.pipelines"] },
   { tab: "policies", to: "/admin/privacy/policies", label: m["privacy.tab.policies"] },
   { tab: "classifiers", to: "/admin/privacy/classifiers", label: m["privacy.tab.classifiers"] },
-  { tab: "service", to: "/admin/privacy/service", label: m["privacy.tab.service"] },
+  { tab: "service", to: "/admin/privacy/detectors", label: m["privacy.tab.service"] },
   { tab: "test", to: "/admin/privacy/test", label: m["privacy.tab.test"] },
 ];
 
@@ -28,8 +31,19 @@ export function PrivacyHeader({
   tab: PrivacyTab;
   actions?: React.ReactNode;
 }) {
+  const status = useRedactionStatus();
   return (
     <div className="flex flex-col gap-3">
+      {/* Across the whole Privacy area while it is off: strictly false, so a status
+          that has not loaded (or is not shaped like one) never raises it. */}
+      {status.data?.enabled === false && (
+        <Notice tone="danger" title={m["privacy.off_banner.title"]()}>
+          {m["privacy.off_banner.body"]()}{" "}
+          <Link to="/admin/privacy" className="underline">
+            {m["privacy.off_banner.link"]()}
+          </Link>
+        </Notice>
+      )}
       <PageHeader
         title={m["privacy.area.title"]()}
         actions={

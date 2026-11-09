@@ -13,6 +13,8 @@ import { PolicyFields, seededPolicy } from "./PolicyFields";
 const ENGINES: PrivacyEngines = {
   reachable: true,
   detail: "",
+  patterns_enabled: true,
+  patterns_used_by: [],
   pattern_entities: ["EMAIL_ADDRESS", "URL"],
   engines: [
     {
@@ -22,6 +24,8 @@ const ENGINES: PrivacyEngines = {
       entities: ["PERSON", "LOCATION"],
       custom_labels: false,
       labels: [],
+      enabled: true,
+      used_by: [],
       ms_per_token: 0.1,
       languages: ["en", "it"],
     },
@@ -32,6 +36,8 @@ const ENGINES: PrivacyEngines = {
       entities: ["PERSON", "ORGANIZATION"],
       custom_labels: true,
       labels: [],
+      enabled: true,
+      used_by: [],
       ms_per_token: 5,
       languages: ["en"],
     },
@@ -272,7 +278,7 @@ describe("PolicyFields", () => {
       expect(written().engine).toBeNull();
     });
 
-    it("disables an engine the service reports as unavailable", () => {
+    it("offers only an engine the service reports as available", () => {
       render(
         <Harness
           engines={{
@@ -282,7 +288,7 @@ describe("PolicyFields", () => {
         />,
       );
       const picker = screen.getByLabelText("Engine");
-      expect(within(picker).getByRole("option", { name: "gliner (unavailable)" })).toBeDisabled();
+      expect(within(picker).queryByRole("option", { name: /gliner/ })).not.toBeInTheDocument();
       expect(within(picker).getByRole("option", { name: "spacy (default)" })).toBeEnabled();
     });
 
@@ -302,7 +308,7 @@ describe("PolicyFields", () => {
     });
 
     it("keeps an engine the policy names on screen when the service no longer reports it", () => {
-      render(<Harness initial={{ ...seededPolicy(), engine: "gliner" }} engines={{ ...ENGINES, engines: [] }} />);
+      render(<Harness initial={{ ...seededPolicy(), engine: "gliner" }} engines={{ ...ENGINES, engines: [ENGINES.engines[0]!] }} />);
       expect(screen.getByLabelText("Engine")).toHaveValue("gliner");
     });
   });
@@ -377,6 +383,44 @@ describe("PolicyFields", () => {
       expect(screen.queryByLabelText(/^Placeholder for/)).not.toBeInTheDocument();
     });
 
+    it("is offered on every built-in format row and written back", async () => {
+      const user = userEvent.setup({ delay: null });
+      render(
+        <Harness
+          initial={{
+            ...seededPolicy(),
+            formats: { EMAIL_ADDRESS: { mode: "anonymise", threshold: null } },
+          }}
+        />,
+      );
+      const select = screen.getByLabelText(/^Placeholder for .*EMAIL_ADDRESS|^Placeholder for Email/);
+      expect(select).toBeEnabled();
+      await user.selectOptions(select, "same_length");
+      expect(written().formats.EMAIL_ADDRESS?.placeholder).toBe("same_length");
+    });
+
+    it("appears on a keyword list and a custom entity once the action writes a token", async () => {
+      const user = userEvent.setup({ delay: null });
+      render(
+        <Harness
+          initial={{
+            ...seededPolicy(),
+            engine: "gliner",
+            keywords: [{ name: "CODES", words: ["falcon"], case_sensitive: false, mode: "redact" }],
+            custom_entities: [{ name: "PROJECT", label: "project", mode: "redact", threshold: null }],
+          }}
+        />,
+      );
+      expect(screen.queryByLabelText("Keyword list 1 placeholder")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Custom type 1 placeholder")).not.toBeInTheDocument();
+      await user.selectOptions(screen.getByLabelText("Keyword list 1 action"), "anonymise");
+      await user.selectOptions(screen.getByLabelText("Custom type 1 action"), "anonymise_restore");
+      await user.selectOptions(screen.getByLabelText("Keyword list 1 placeholder"), "same_length");
+      await user.selectOptions(screen.getByLabelText("Custom type 1 placeholder"), "same_length");
+      expect(written().keywords[0]?.placeholder).toBe("same_length");
+      expect(written().custom_entities[0]?.placeholder).toBe("same_length");
+    });
+
     it("keeps the choice when the mode changes", async () => {
       const user = userEvent.setup({ delay: null });
       render(
@@ -413,5 +457,144 @@ describe("PolicyFields", () => {
       await user.selectOptions(screen.getByLabelText("Pattern 1 placeholder"), "same_length");
       expect(written().patterns[0]?.placeholder).toBe("same_length");
     });
+  });
+});
+
+
+/** A service whose image has no NER model: the engines are listed and expose nothing. */
+const PATTERN_ONLY: PrivacyEngines = {
+  reachable: true,
+  detail: "",
+  patterns_enabled: true,
+  patterns_used_by: [],
+  pattern_entities: ["EMAIL_ADDRESS", "IBAN_CODE"],
+  engines: [
+    {
+      name: "spacy",
+      available: false,
+      default: true,
+      entities: [],
+      custom_labels: false,
+      labels: [],
+      enabled: true,
+      used_by: [],
+      ms_per_token: null,
+      languages: [],
+    },
+    {
+      name: "gliner",
+      available: false,
+      default: false,
+      entities: [],
+      custom_labels: true,
+      labels: [],
+      enabled: true,
+      used_by: [],
+      ms_per_token: null,
+      languages: [],
+    },
+  ],
+};
+
+describe("PolicyFields against a pattern-only service", () => {
+  it("hides the entities section and says why, with a link to the docs", () => {
+    render(<Harness engines={PATTERN_ONLY} />);
+    expect(
+      screen.getByText(/No NER engine is installed in the redaction service; entities need one\./),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "How to enable it" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/redaction/"),
+    );
+    expect(screen.getByText(/\.\/configure --redaction/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Engine")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Add a type")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add custom type" })).not.toBeInTheDocument();
+    // The patterns half is untouched.
+    expect(screen.getByLabelText("Add a format")).toBeInTheDocument();
+  });
+
+  it("keeps entity items the policy already lists, and says so", () => {
+    render(
+      <Harness
+        engines={PATTERN_ONLY}
+        initial={{ ...seededPolicy(), entities: { PERSON: { mode: "redact", threshold: null } } }}
+      />,
+    );
+    expect(screen.getByText(/still lists 1 entity items/)).toBeInTheDocument();
+    expect(JSON.parse(screen.getByTestId("policy").textContent ?? "{}").entities.PERSON.mode).toBe(
+      "redact",
+    );
+  });
+
+  it("shows the section again when the service has an engine", () => {
+    render(<Harness engines={ENGINES} />);
+    expect(screen.queryByTestId("no-ner")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Engine")).toBeInTheDocument();
+  });
+
+  it("offers custom entities only when GLiNER is available", () => {
+    const spacyOnly = { ...ENGINES, engines: [ENGINES.engines[0]!] };
+    render(<Harness engines={spacyOnly} />);
+    expect(screen.queryByRole("button", { name: "Add custom type" })).not.toBeInTheDocument();
+  });
+});
+
+describe("a format the service does not list (AGE)", () => {
+  it("is kept, turned off and flagged, never dropped", () => {
+    render(
+      <Harness
+        initial={{
+          ...seededPolicy(),
+          formats: { AGE: { mode: "anonymise", threshold: null } },
+        }}
+      />,
+    );
+    const policy = JSON.parse(screen.getByTestId("policy").textContent ?? "{}");
+    expect(policy.formats.AGE.mode).toBe("off");
+    expect(screen.getByText(/no longer offers these formats.*AGE/)).toBeInTheDocument();
+    expect(screen.getByText("Not offered by the redaction service. Kept off.")).toBeInTheDocument();
+  });
+
+  it("moves to the entities when the engine finds it", () => {
+    const withAge: PrivacyEngines = {
+      ...ENGINES,
+      engines: [{ ...ENGINES.engines[0]!, entities: ["PERSON", "AGE"] }, ENGINES.engines[1]!],
+    };
+    render(
+      <Harness
+        engines={withAge}
+        initial={{ ...seededPolicy(), formats: { AGE: { mode: "redact", threshold: null } } }}
+      />,
+    );
+    const policy = JSON.parse(screen.getByTestId("policy").textContent ?? "{}");
+    expect(policy.formats.AGE).toBeUndefined();
+    expect(policy.entities.AGE.mode).toBe("redact");
+    expect(screen.getByText(/Moved from formats to entities.*AGE/)).toBeInTheDocument();
+  });
+});
+
+describe("PolicyFields follows the detectors switched on", () => {
+  it("offers no formats when the patterns are switched off", () => {
+    render(<Harness engines={{ ...ENGINES, patterns_enabled: false }} />);
+    expect(screen.getByLabelText("Add a format")).toBeDisabled();
+  });
+
+  it("offers only the engines that are switched on, and the entities of the one in force", () => {
+    const gliner = { ...ENGINES.engines[1]!, enabled: false };
+    render(<Harness engines={{ ...ENGINES, engines: [ENGINES.engines[0]!, gliner] }} />);
+    const picker = screen.getByLabelText("Engine");
+    expect(within(picker).queryByRole("option", { name: /gliner/ })).not.toBeInTheDocument();
+    expect(within(picker).getByRole("option", { name: "spacy (default)" })).toBeEnabled();
+  });
+
+  it("hides the entities, with the reason, when every NER engine is switched off", () => {
+    const off = ENGINES.engines.map((e) => ({ ...e, enabled: false }));
+    render(<Harness engines={{ ...ENGINES, engines: off }} />);
+    expect(screen.getByTestId("no-ner")).toBeInTheDocument();
+    // Installed but switched off: the message says so, and does not claim they are missing.
+    expect(screen.getByText(/switched off on the Detectors tab/)).toBeInTheDocument();
+    expect(screen.queryByText(/No NER engine is installed/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Engine")).not.toBeInTheDocument();
   });
 });

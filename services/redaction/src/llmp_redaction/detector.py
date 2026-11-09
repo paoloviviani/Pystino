@@ -168,6 +168,46 @@ def _ner_entities_of(capabilities: Capabilities) -> list[str]:
     return list(capabilities.model_entities)
 
 
+def _is_model_recognizer(recognizer: Any) -> bool:
+    """True for a recogniser backed by a statistical model (spaCy, GLiNER, transformers).
+
+    Presidio keeps those under ``predefined_recognizers.ner`` (and the NLP-engine
+    ``SpacyRecognizer``); everything else (pattern, checksum, phonenumbers) is
+    deterministic and needs no model.
+    """
+    for klass in type(recognizer).__mro__:
+        module = getattr(klass, "__module__", "")
+        if ".ner." in module or ".nlp_engine." in module or klass.__name__ == "SpacyRecognizer":
+            return True
+    return False
+
+
+def _partition_registry(recognizers: Any) -> tuple[list[str], list[str]]:
+    """(pattern entities, model entities) read from the recognisers actually loaded.
+
+    A recogniser that is not loaded advertises nothing. A model recogniser
+    advertises everything it can produce, except the spaCy one, whose Presidio
+    mapping also lists labels (ID, AGE, EMAIL, PHONE_NUMBER, DATE_TIME) that the
+    stock models never emit: for it only the real NER vocabulary counts.
+    """
+    pattern: set[str] = set()
+    model: set[str] = set()
+    for recognizer in recognizers:
+        if not getattr(recognizer, "is_loaded", True):
+            continue
+        supported = list(getattr(recognizer, "supported_entities", None) or [])
+        if not _is_model_recognizer(recognizer):
+            pattern.update(supported)
+        elif any(
+            klass.__name__ in ("SpacyRecognizer", "TransformersRecognizer")
+            for klass in type(recognizer).__mro__
+        ):
+            model.update(e for e in supported if e.upper() in MODEL_BACKED_UPPER)
+        else:
+            model.update(supported)
+    return sorted(pattern), sorted(model)
+
+
 class Detector:
     """Runs detection and converts Presidio's results into contract spans.
 
@@ -254,18 +294,22 @@ class Detector:
         ``IT_FISCAL_CODE``. A capability report that cannot be wrong about the
         registry is worth more than one that reads well.
         """
-        try:
-            entities = sorted(analyzer.get_supported_entities())
-        except Exception:
-            logger.warning("could not read supported entities from the analyzer", exc_info=True)
-            entities = []
         degraded = [language for language in languages if language not in models]
-        model_entities = sorted(
-            entity for entity in entities if entity.upper() in MODEL_BACKED_UPPER
-        )
-        pattern_entities = sorted(
-            entity for entity in entities if entity.upper() not in MODEL_BACKED_UPPER
-        )
+        registry = getattr(analyzer, "registry", None)
+        recognizers = getattr(registry, "recognizers", None)
+        if recognizers is not None:
+            pattern_entities, model_entities = _partition_registry(recognizers)
+            entities = sorted(set(pattern_entities) | set(model_entities))
+        else:
+            # An analyzer with no registry to inspect (a test double, or an
+            # operator's own): fall back to the entity-name vocabulary.
+            try:
+                entities = sorted(analyzer.get_supported_entities())
+            except Exception:
+                logger.warning("could not read supported entities from the analyzer", exc_info=True)
+                entities = []
+            model_entities = sorted(e for e in entities if e.upper() in MODEL_BACKED_UPPER)
+            pattern_entities = sorted(e for e in entities if e.upper() not in MODEL_BACKED_UPPER)
         return Capabilities(
             languages=list(languages),
             models=dict(models),

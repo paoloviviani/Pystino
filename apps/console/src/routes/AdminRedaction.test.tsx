@@ -8,7 +8,7 @@ import type {
   RedactionEngineOption,
   RedactionStatus,
 } from "../lib/types";
-import { AdminPrivacyService } from "./AdminPrivacyService";
+import { AdminPrivacyDetectors } from "./AdminPrivacyDetectors";
 
 /**
  * The screen exists to answer "is redaction on, and is it working". So what is
@@ -50,6 +50,10 @@ function status(overrides: Partial<RedactionStatus> = {}): RedactionStatus {
     configured: null,
     presidio_pattern_matching: null,
     presidio_ner: null,
+    restore_engine: "http",
+    patterns_enabled: true,
+    spacy_enabled: true,
+    gliner_enabled: true,
     propagation_seconds: 10,
     fail_open: false,
     restore_in_response: true,
@@ -109,49 +113,49 @@ function Probe() {
   return null;
 }
 
+const ENGINES_BODY = {
+  reachable: true,
+  detail: "ok",
+  patterns_enabled: true,
+  patterns_used_by: [],
+  pattern_entities: ["EMAIL_ADDRESS"],
+  engines: [
+    {
+      name: "spacy",
+      available: true,
+      default: true,
+      enabled: true,
+      used_by: [],
+      entities: ["PERSON"],
+      custom_labels: false,
+      labels: [],
+      ms_per_token: 0.3,
+      languages: ["en"],
+    },
+    {
+      name: "gliner",
+      available: false,
+      default: false,
+      enabled: true,
+      used_by: [],
+      entities: [],
+      custom_labels: true,
+      labels: [],
+      ms_per_token: null,
+      languages: [],
+    },
+  ],
+};
+
 function respondWith(body: RedactionStatus) {
-  return vi.fn(
-    async () =>
-      new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-  );
-}
-
-interface Captured {
-  puts: { url: string; body: unknown }[];
-}
-
-/**
- * A fetch stub that records the PUTs and answers them with *after*.
- *
- * The route returns the whole status document, so the screen updates from the
- * response rather than refetching — which is what this has to model, or the test
- * would pass against a screen that quietly showed stale state.
- */
-function withEngineChange(
-  before: RedactionStatus,
-  after: RedactionStatus,
-): { fetch: typeof fetch; captured: Captured } {
-  const captured: Captured = { puts: [] };
-  const stub = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    if (init?.method === "PUT") {
-      captured.puts.push({ url, body: JSON.parse(String(init.body)) });
-      return new Response(JSON.stringify(after), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }
-    return new Response(JSON.stringify(before), {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const payload = String(input).includes("/privacy/engines") ? ENGINES_BODY : body;
+    return new Response(JSON.stringify(payload), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
   });
-  return { fetch: stub as unknown as typeof fetch, captured };
 }
-
 
 /**
  * A preview result, and a stub that answers the POST with it.
@@ -175,7 +179,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 /** The Redaction service tab: the engine choice and the detection families, with no profile cards. */
 function renderDetectors() {
-  return renderScreen(<AdminPrivacyService />);
+  return renderScreen(<AdminPrivacyDetectors />);
 }
 
 describe("Redaction service (the former Redaction screen)", () => {
@@ -215,223 +219,6 @@ describe("Redaction service (the former Redaction screen)", () => {
     expect(screen.getByText(/is not enabled/)).toBeInTheDocument();
   });
 
-  it("lists every installed engine with what it does, not just its name", async () => {
-    // A name is not a choice: "http" and "noop" say nothing about which one
-    // leaves personal data in a prompt. The description is what is being chosen.
-    vi.stubGlobal("fetch", respondWith(status()));
-    renderDetectors();
-
-    await waitFor(() =>
-      expect(screen.getByText("Presidio (detection service)")).toBeInTheDocument(),
-    );
-    expect(screen.getByText("Off (noop)")).toBeInTheDocument();
-    expect(screen.getByText("Nothing is removed.")).toBeInTheDocument();
-    expect(screen.getByText("In force")).toBeInTheDocument();
-    expect(screen.getByText("Redacts nothing")).toBeInTheDocument();
-  });
-
-  it("will not offer an engine the API would refuse", async () => {
-    // blocked_reason is computed server-side precisely so the button cannot be
-    // offered and then rejected.
-    vi.stubGlobal(
-      "fetch",
-      respondWith(
-        status({
-          engine: "noop",
-          enabled: false,
-          engines: [
-            engine({
-              name: "http",
-              blocked_reason: "No detection endpoint is configured. Set GATEWAY_REDACTION__ENDPOINT",
-            }),
-            engine({ name: "noop", redacts: false, is_active: true }),
-          ],
-        }),
-      ),
-    );
-    renderDetectors();
-
-    await waitFor(() => expect(screen.getByText(/Cannot be enabled/)).toBeInTheDocument());
-    expect(screen.getByText(/GATEWAY_REDACTION__ENDPOINT/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Enable" })).toBeDisabled();
-  });
-
-  it("enables a redacting engine in one click", async () => {
-    // No confirmation for turning protection *on*: a justification prompt with
-    // no reader is friction.
-    const off = status({
-      engine: "noop",
-      enabled: false,
-      engines: [
-        engine({ name: "http", label: "Presidio (detection service)" }),
-        engine({ name: "noop", redacts: false, is_active: true }),
-      ],
-    });
-    const { fetch, captured } = withEngineChange(off, status());
-    vi.stubGlobal("fetch", fetch);
-    const user = userEvent.setup();
-    renderDetectors();
-
-    await user.click(await screen.findByRole("button", { name: "Enable" }));
-
-    await waitFor(() => expect(captured.puts.length).toBe(1));
-    expect(captured.puts[0]!.url).toContain("/api/admin/redaction/engine");
-    expect(captured.puts[0]!.body).toEqual({ engine: "http", reason: "" });
-  });
-
-  it.each(["noop", "regex"])(
-    "dims the detection families and disables the switches when %s is in force",
-    async (name) => {
-      vi.stubGlobal("fetch", respondWith(status({ engine: name, enabled: name !== "noop" })));
-      renderDetectors();
-
-      const patterns = await screen.findByRole("switch", { name: "Pattern matching" });
-      const ner = screen.getByRole("switch", { name: "Named-entity recognition" });
-      for (const sw of [patterns, ner]) {
-        expect(sw).toBeDisabled();
-        expect(sw).toHaveAttribute("aria-disabled", "true");
-        // Stored values stay shown.
-        expect(sw).toHaveAttribute("aria-checked", "true");
-      }
-      expect(
-        screen.getByText("Used only when Presidio is the engine in force. Enable it above."),
-      ).toBeInTheDocument();
-      expect(screen.getAllByText("(Presidio only)").length).toBeGreaterThan(0);
-    },
-  );
-
-  it("keeps the detection families live when Presidio is in force", async () => {
-    vi.stubGlobal("fetch", respondWith(status()));
-    renderDetectors();
-
-    const patterns = await screen.findByRole("switch", { name: "Pattern matching" });
-    expect(patterns).toBeEnabled();
-    expect(patterns).not.toHaveAttribute("aria-disabled");
-    expect(screen.queryByText(/Used only when Presidio is the engine in force/)).toBeNull();
-    expect(screen.queryByText("(Presidio only)")).toBeNull();
-  });
-
-  it("saves each detector family with a big switch, immediately", async () => {
-    // The detector families are independent console decisions, not a rebuild:
-    // flipping a switch writes the row at once, with no separate save step and
-    // no third "default" state to pick.
-    const before = status({ presidio_pattern_matching: null, presidio_ner: null });
-    const after = status({ presidio_pattern_matching: true, presidio_ner: false });
-    const { fetch, captured } = withEngineChange(before, after);
-    vi.stubGlobal("fetch", fetch);
-    const user = userEvent.setup({ delay: null });
-    renderDetectors();
-
-    const patterns = await screen.findByRole("switch", { name: "Pattern matching" });
-    const entities = screen.getByRole("switch", { name: "Named-entity recognition" });
-    expect(patterns).toHaveAttribute("aria-checked", "true");
-    expect(entities).toHaveAttribute("aria-checked", "true");
-
-    await user.click(entities);
-
-    await waitFor(() => expect(captured.puts).toHaveLength(1));
-    expect(captured.puts[0]!.body).toEqual({
-      engine: "http",
-      reason: "",
-      presidio_pattern_matching: true,
-      presidio_ner: false,
-    });
-    // The response becomes the new starting position.
-    await waitFor(() =>
-      expect(
-        screen.getByRole("switch", { name: "Named-entity recognition" }),
-      ).toHaveAttribute("aria-checked", "false"),
-    );
-  });
-
-  it("starts the switches from the deployment default", async () => {
-    // No console choice saved yet, and the detector build offers no NER model:
-    // the model switch starts off rather than pretending names are detected.
-    // The pattern switch starts on, because patterns are installed.
-    vi.stubGlobal(
-      "fetch",
-      respondWith(
-        status({
-          presidio_pattern_matching: null,
-          presidio_ner: null,
-          service: {
-            ...status().service!,
-            entities: ["EMAIL_ADDRESS"],
-            pattern_entities: ["EMAIL_ADDRESS"],
-            model_entities: [],
-          },
-        }),
-      ),
-    );
-    renderDetectors();
-
-    expect(
-      await screen.findByRole("switch", { name: "Pattern matching" }),
-    ).toHaveAttribute("aria-checked", "true");
-    expect(
-      screen.getByRole("switch", { name: "Named-entity recognition" }),
-    ).toHaveAttribute("aria-checked", "false");
-  });
-
-  it("reverts a switch when the save fails", async () => {
-    // An optimistic flip that the API refuses must not sit showing a state
-    // that is not in force.
-    const stub = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      if (init?.method === "PUT") {
-        return new Response(JSON.stringify({ error: { message: "nope" } }), {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify(status()), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    });
-    vi.stubGlobal("fetch", stub as unknown as typeof fetch);
-    const user = userEvent.setup({ delay: null });
-    renderDetectors();
-
-    const entities = await screen.findByRole("switch", { name: "Named-entity recognition" });
-    await user.click(entities);
-
-    await waitFor(() =>
-      expect(
-        screen.getByRole("switch", { name: "Named-entity recognition" }),
-      ).toHaveAttribute("aria-checked", "true"),
-    );
-  });
-
-  it("stops and asks before turning redaction off, and asks for nothing", async () => {
-    // Still the one change that makes the system quietly stop protecting
-    // anything, so it still confirms. It no longer demands a written reason:
-    // that was dropped deliberately, on the grounds that a sentence typed to
-    // get past a dialog is not an audit trail, and the row records the engine,
-    // who chose it and when regardless.
-    const { fetch, captured } = withEngineChange(
-      status(),
-      status({ engine: "noop", enabled: false }),
-    );
-    vi.stubGlobal("fetch", fetch);
-    const user = userEvent.setup();
-    renderDetectors();
-
-    await user.click(await screen.findByRole("button", { name: "Turn redaction off" }));
-
-    const dialog = within(await screen.findByRole("dialog"));
-    // What the change does is still said, in red, before anything is sent.
-    expect(
-      dialog.getByText(/prompts will reach providers exactly as callers sent them/i),
-    ).toBeInTheDocument();
-    expect(dialog.queryByLabelText("Reason")).not.toBeInTheDocument();
-    expect(captured.puts.length).toBe(0);
-
-    await user.click(dialog.getByRole("button", { name: "Turn it off" }));
-
-    await waitFor(() => expect(captured.puts.length).toBe(1));
-    expect(captured.puts[0]!.body).toEqual({ engine: "noop", reason: "" });
-  });
-
   it("says whether the environment or this console decided the engine", async () => {
     // Otherwise an environment variable that no longer takes effect looks like
     // a broken one.
@@ -445,6 +232,8 @@ describe("Redaction service (the former Redaction screen)", () => {
             reason: "turned back on after the migration",
             changed_at: "2026-08-24T09:00:00Z",
             changed_by: "dave@example.org",
+            spacy_enabled: null,
+            gliner_enabled: null,
             presidio_ner: null,
             presidio_pattern_matching: null,
           },
@@ -577,22 +366,23 @@ describe("Redaction service: what is left of the detector profiles", () => {
           new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
         calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : null });
         if (url.includes("/privacy/settings")) return json({ user_entity_types: ["PERSON"] });
+        if (url.includes("/privacy/engines")) return json(ENGINES_BODY);
         return json(status());
       }),
     );
   }
 
-  it("hosts the engine choice and the families directly, with no profile cards", async () => {
+  it("shows one card per detector, with no engine list and no profile cards", async () => {
     const calls: { method: string; url: string; body: unknown }[] = [];
     stubService(calls);
-    renderScreen(<AdminPrivacyService />);
+    renderScreen(<AdminPrivacyDetectors />);
 
-    expect(await screen.findByText("Presidio (detection service)")).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "Pattern matching" })).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "Named-entity recognition" })).toBeInTheDocument();
-    expect(screen.queryByText("Add a profile")).toBeNull();
+    expect(await screen.findByTestId("detector-patterns")).toBeInTheDocument();
+    expect(screen.getByTestId("detector-spacy")).toBeInTheDocument();
+    expect(screen.getByTestId("detector-gliner")).toBeInTheDocument();
+    expect(screen.queryByText("Presidio (detection service)")).toBeNull();
+    expect(screen.queryByText("Pattern matching")).toBeNull();
     expect(screen.queryByText(/profile/i)).toBeNull();
-    // Profiles are gone from the API, so nothing asks for them.
     expect(calls.some((c) => c.url.includes("/privacy/profiles"))).toBe(false);
   });
 
@@ -600,7 +390,7 @@ describe("Redaction service: what is left of the detector profiles", () => {
     const user = userEvent.setup({ delay: null });
     const calls: { method: string; url: string; body: unknown }[] = [];
     stubService(calls);
-    renderScreen(<AdminPrivacyService />);
+    renderScreen(<AdminPrivacyDetectors />);
 
     const field = await screen.findByLabelText("Entity types users may name");
     await waitFor(() => expect(field).toHaveValue("PERSON"));

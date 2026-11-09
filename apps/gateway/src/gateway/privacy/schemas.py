@@ -355,6 +355,11 @@ class NerEngineView(ResponseModel):
     labels: list[str] = Field(default_factory=list)
     ms_per_token: float | None = None
     languages: list[str]
+    #: The administrator's switch (Detectors tab). An engine that is not enabled cannot be
+    #: chosen by a policy, whatever the service reports.
+    enabled: bool = True
+    #: Names of the active policies that read with this engine.
+    used_by: list[str] = Field(default_factory=list)
 
 
 class EnginesResponse(ResponseModel):
@@ -364,6 +369,9 @@ class EnginesResponse(ResponseModel):
     #: The built-in pattern formats the service's recognisers find.
     pattern_entities: list[str]
     engines: list[NerEngineView]
+    #: The administrator's switch for the pattern recognisers, and the active policies using them.
+    patterns_enabled: bool = True
+    patterns_used_by: list[str] = Field(default_factory=list)
 
 
 # -- the try-it box ---------------------------------------------------------------
@@ -452,6 +460,13 @@ class OptionsResponse(ResponseModel):
     classifiers: list[NamedId]
     #: Entity types a user's own policy may name; null means any.
     entity_types: list[str] | None = None
+    #: Whether the redaction service has an NER engine (None: not known). False means
+    #: entity types only a model finds are not offered and a policy naming one is refused.
+    ner_available: bool | None = None
+    ner_note: str | None = None
+    #: Every type the redaction service finds now (pattern formats if switched on, and the
+    #: entities of NER engines that are on); null when the service cannot be asked.
+    offered_types: list[str] | None = None
     engines: list[str]
 
 

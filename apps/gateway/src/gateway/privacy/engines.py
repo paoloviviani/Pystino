@@ -16,6 +16,8 @@ import logging
 from typing import Any
 
 import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.config import NER_ENGINES, Settings
 from gateway.privacy.schemas import EnginesResponse, NerEngineView
@@ -87,6 +89,54 @@ async def fetch_engines(http: httpx.AsyncClient, settings: Settings) -> EnginesR
     return EnginesResponse(reachable=True, detail="ok", pattern_entities=patterns, engines=engines)
 
 
+#: What the console and the API say when the redaction service has no NER model at all.
+NO_NER_MESSAGE = (
+    "No NER engine is installed in the redaction service; entities need one. "
+    "Run the NER image with REDACTION_NLP_ENGINE=spacy (with the Cerea kit: "
+    './configure --redaction), see the Redaction guide, section "Deploying less of it".'
+)
+
+
+#: When the service has NER engines but every one is switched off on the Detectors tab.
+NER_OFF_MESSAGE = (
+    "The NER engines are switched off on the Detectors tab; entities need one switched on."
+)
+
+
+def ner_state(report: EnginesResponse) -> str | None:
+    """``ok`` (an engine can find entities), ``off`` (installed but switched off), ``none``
+    (no engine has a model), or None when the service cannot be asked."""
+    if not report.reachable:
+        return None
+    if any(e.available and e.enabled and e.entities for e in report.engines):
+        return "ok"
+    if any(e.entities and not e.enabled for e in report.engines):
+        return "off"
+    return "none"
+
+
+def no_ner_message(report: EnginesResponse) -> str:
+    """The reason there is no NER engine to use: switched off, or not installed."""
+    return NER_OFF_MESSAGE if ner_state(report) == "off" else NO_NER_MESSAGE
+
+
+def has_ner(report: EnginesResponse) -> bool | None:
+    """Whether any engine of the service can find entities; None when that is not known."""
+    if not report.reachable:
+        return None
+    return any(engine.available and engine.enabled and engine.entities for engine in report.engines)
+
+
+def ner_type_names(report: EnginesResponse) -> set[str]:
+    """Every model-backed type any engine reports, plus the first service's four."""
+    from gateway.config import LEGACY_NER_TYPES
+
+    names = set(LEGACY_NER_TYPES)
+    for engine in report.engines:
+        names.update(entity.upper() for entity in engine.entities)
+    return names
+
+
 def engine_problem(report: EnginesResponse, policy_engine: str | None, labels: bool) -> str | None:
     """Why a policy's engine cannot be chosen against this report, or None when it can."""
     if policy_engine is None:
@@ -101,8 +151,142 @@ def engine_problem(report: EnginesResponse, policy_engine: str | None, labels: b
             "checked. Save with the default engine, or try again when it answers."
         )
     found = next((e for e in report.engines if e.name == policy_engine), None)
+    if found is not None and not found.enabled:
+        return f"The NER engine '{policy_engine}' is switched off on the Detectors tab."
     if found is None or not found.available:
         return f"The NER engine '{policy_engine}' is not available in the redaction service."
     if labels and not found.custom_labels:
         return f"The engine '{policy_engine}' does not take custom entity types: choose GLiNER."
     return None
+
+
+class Switches:
+    """What the Detectors tab has switched on: the patterns and each NER engine."""
+
+    __slots__ = ("gliner", "patterns", "spacy")
+
+    def __init__(self, patterns: bool = True, spacy: bool = True, gliner: bool = True) -> None:
+        self.patterns = patterns
+        self.spacy = spacy
+        self.gliner = gliner
+
+    def engine(self, name: str) -> bool:
+        return self.gliner if name == "gliner" else self.spacy
+
+
+def switches_from(row: Any, settings: Settings) -> Switches:
+    """The switches in force: the newest stored row over the deployment defaults.
+
+    A per-engine switch left undecided follows the older ``presidio_ner`` switch, so a
+    row written before the Detectors tab means what it always did.
+    """
+    config = settings.redaction
+
+    def pick(stored: bool | None, fallback: bool | None) -> bool:
+        if stored is not None:
+            return stored
+        return True if fallback is None else fallback
+
+    ner = pick(getattr(row, "presidio_ner", None), config.presidio_ner)
+    return Switches(
+        patterns=pick(
+            getattr(row, "presidio_pattern_matching", None), config.presidio_pattern_matching
+        ),
+        spacy=pick(getattr(row, "spacy_enabled", None), ner),
+        gliner=pick(getattr(row, "gliner_enabled", None), ner),
+    )
+
+
+async def current_switches(session: AsyncSession, settings: Settings) -> Switches:
+    from gateway.models import RedactionConfig
+
+    row = (
+        await session.execute(
+            select(RedactionConfig).order_by(RedactionConfig.created_at.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
+    return switches_from(row, settings)
+
+
+def users_of_detectors(
+    policies: list[tuple[str, Any]],
+    default_engine: str | None,
+    user_policies: list[tuple[str, Any]] = (),  # type: ignore[assignment]
+    engine_types: dict[str, set[str]] | None = None,
+) -> dict[str, list[str]]:
+    """Which active policies use which detector: ``patterns``, ``spacy``, ``gliner``.
+
+    A policy uses the patterns when it lists a format that is not off, and an engine when
+    it lists an entity (or, for GLiNER, a custom entity) that is not off. A policy that
+    names no engine reads with the deployment's default. A user's own policy
+    (``user_policies``: name and its stored entries) counts too: a type entry that an
+    engine exposes uses that engine (the default one first), any other type entry uses the
+    patterns, and a pattern entry of theirs uses nothing the console switches.
+    """
+    from gateway.config import EntityMode, RedactionPolicy
+
+    used: dict[str, list[str]] = {"patterns": [], "spacy": [], "gliner": []}
+    for name, raw in policies:
+        policy = RedactionPolicy.model_validate(raw or {})
+        if any(item.mode is not EntityMode.OFF for item in policy.formats.values()):
+            used["patterns"].append(name)
+        engine = policy.engine or default_engine
+        reads = any(item.mode is not EntityMode.OFF for item in policy.entities.values()) or any(
+            c.mode is not EntityMode.OFF for c in policy.custom_entities
+        )
+        if reads and engine in ("spacy", "gliner"):
+            used[engine].append(name)
+    types = engine_types or {}
+    order = sorted(types, key=lambda e: e != default_engine)
+    for name, entries in user_policies:
+        label = f"{name} (user policy)"
+        for entry in entries or []:
+            if not isinstance(entry, dict) or entry.get("kind") != "mode":
+                continue
+            wanted = str(entry.get("name", "")).upper()
+            engine = next((e for e in order if wanted in types[e]), None)
+            target = engine if engine is not None else "patterns"
+            if label not in used[target]:
+                used[target].append(label)
+    return used
+
+
+async def effective_engines(
+    session: AsyncSession, http: httpx.AsyncClient, settings: Settings
+) -> EnginesResponse:
+    """What the service reports, with the switches and who uses each detector."""
+    from gateway.models import RedactionPolicyRecord, UserPolicy
+
+    report = await fetch_engines(http, settings)
+    switches = await current_switches(session, settings)
+    rows = (
+        await session.execute(
+            select(RedactionPolicyRecord.name, RedactionPolicyRecord.policy).where(
+                RedactionPolicyRecord.is_active.is_(True)
+            )
+        )
+    ).all()
+    default = next((e.name for e in report.engines if e.default), "spacy")
+    users = (await session.execute(select(UserPolicy.name, UserPolicy.rules))).all()
+    types = {e.name: {t.upper() for t in e.entities} for e in report.engines}
+    used = users_of_detectors(
+        [(r[0], r[1]) for r in rows], default, [(u[0], u[1]) for u in users], types
+    )
+    report.patterns_enabled = switches.patterns
+    report.patterns_used_by = sorted(used["patterns"])
+    for engine in report.engines:
+        engine.enabled = switches.engine(engine.name)
+        engine.used_by = sorted(used.get(engine.name, []))
+    return report
+
+
+def usable(report: EnginesResponse) -> EnginesResponse:
+    """The report as a policy may use it: a switched-off detector offers nothing."""
+    copy = report.model_copy(deep=True)
+    if not copy.patterns_enabled:
+        copy.pattern_entities = []
+    for engine in copy.engines:
+        # Entities stay, so a message can tell "switched off" from "not installed".
+        if not engine.enabled:
+            engine.available = False
+    return copy

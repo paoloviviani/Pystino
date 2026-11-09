@@ -5379,6 +5379,13 @@ export interface components {
             engines: components["schemas"]["NerEngineView"][];
             /** Pattern Entities */
             pattern_entities: string[];
+            /**
+             * Patterns Enabled
+             * @default true
+             */
+            patterns_enabled: boolean;
+            /** Patterns Used By */
+            patterns_used_by: string[];
             /** Reachable */
             reachable: boolean;
         };
@@ -6511,6 +6518,11 @@ export interface components {
             custom_labels: boolean;
             /** Default */
             default: boolean;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
             /** Entities */
             entities: string[];
             /** Labels */
@@ -6521,6 +6533,8 @@ export interface components {
             ms_per_token: number | null;
             /** Name */
             name: string;
+            /** Used By */
+            used_by: string[];
         };
         /**
          * OcrDocument
@@ -6743,6 +6757,12 @@ export interface components {
             keys: components["schemas"]["NamedId"][];
             /** Models */
             models: components["schemas"]["ModelOption"][];
+            /** Ner Available */
+            ner_available: boolean | null;
+            /** Ner Note */
+            ner_note: string | null;
+            /** Offered Types */
+            offered_types: string[] | null;
             /** Own Policies */
             own_policies: components["schemas"]["NamedId"][];
             /** Policies */
@@ -7758,12 +7778,16 @@ export interface components {
             changed_by: string | null;
             /** Engine */
             engine: string;
+            /** Gliner Enabled */
+            gliner_enabled: boolean | null;
             /** Presidio Ner */
             presidio_ner: boolean | null;
             /** Presidio Pattern Matching */
             presidio_pattern_matching: boolean | null;
             /** Reason */
             reason: string;
+            /** Spacy Enabled */
+            spacy_enabled: boolean | null;
         };
         /**
          * RedactionEngineOption
@@ -7811,6 +7835,8 @@ export interface components {
         RedactionEngineRequest: {
             /** Engine */
             engine: string;
+            /** Gliner Enabled */
+            gliner_enabled?: boolean | null;
             /** Presidio Ner */
             presidio_ner?: boolean | null;
             /** Presidio Pattern Matching */
@@ -7820,6 +7846,8 @@ export interface components {
              * @default
              */
             reason?: string;
+            /** Spacy Enabled */
+            spacy_enabled?: boolean | null;
         };
         /** RedactionEventEntity */
         RedactionEventEntity: {
@@ -8074,10 +8102,20 @@ export interface components {
             entity_types: string[] | null;
             /** Fail Open */
             fail_open: boolean;
+            /**
+             * Gliner Enabled
+             * @default true
+             */
+            gliner_enabled: boolean;
             /** Installed Engines */
             installed_engines: string[];
             /** Language */
             language: string;
+            /**
+             * Patterns Enabled
+             * @default true
+             */
+            patterns_enabled: boolean;
             /** Placeholder Key Set */
             placeholder_key_set: boolean;
             policy: components["schemas"]["RedactionPolicy"];
@@ -8095,6 +8133,8 @@ export interface components {
              * @default 0
              */
             propagation_seconds: number;
+            /** Restore Engine */
+            restore_engine: string | null;
             /** Restore In Response */
             restore_in_response: boolean;
             /** Restore In Tool Arguments */
@@ -8107,6 +8147,11 @@ export interface components {
              * @default environment
              */
             source: string;
+            /**
+             * Spacy Enabled
+             * @default true
+             */
+            spacy_enabled: boolean;
             /** Timeout Seconds */
             timeout_seconds: number;
             /** Warnings */

@@ -141,7 +141,7 @@ describe("Pipelines", () => {
       "Pipelines",
       "Redaction policies",
       "Classifiers",
-      "Redaction service",
+      "Detectors",
       "Test",
     ]);
     expect(screen.queryByText(/local/i)).toBeNull();

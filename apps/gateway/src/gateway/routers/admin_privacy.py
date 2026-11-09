@@ -28,6 +28,7 @@ from fastapi import APIRouter, Request, status
 from sqlalchemy import func, select
 
 from gateway.admin_audit import record_audit
+from gateway.config import EntityMode, RedactionPolicy
 from gateway.deps import (
     AdminUserDep,
     ControlHttpDep,
@@ -49,7 +50,13 @@ from gateway.models import (
 from gateway.pagination import MAX_LIMIT, Page
 from gateway.privacy import rules as rulelib
 from gateway.privacy import service
-from gateway.privacy.engines import engine_problem, fetch_engines
+from gateway.privacy.engines import (
+    effective_engines,
+    engine_problem,
+    ner_state,
+    no_ner_message,
+    usable,
+)
 from gateway.privacy.pipelines import Pipeline, pipeline_from_row, validate_pipeline
 from gateway.privacy.schemas import (
     ActionBody,
@@ -462,7 +469,9 @@ async def check_pipeline(
     except UnprocessableError as exc:
         return PipelineCheckResponse(error=exc.message, issues=[], soft_cap=rulelib.SOFT_CAP)
     draft = _draft(payload.kind, clean, payload.enabled)
-    found = service.issues_of(draft, state_of(request), await fetch_engines(control_http, settings))
+    found = service.issues_of(
+        draft, state_of(request), usable(await effective_engines(session, control_http, settings))
+    )
     issues: list[IssueView] = []
     for rule_issues in found.values():
         issues.extend(service.issue_views(rule_issues))
@@ -514,7 +523,6 @@ def _policy_response(
     email: str | None,
     engines: EnginesResponse | None = None,
 ) -> PolicyResponse:
-    from gateway.config import RedactionPolicy
 
     # A stored policy that no longer parses is not replaced with an empty one
     # here: the listing is where an operator would find out the state is
@@ -576,13 +584,23 @@ def _check_engine(policy: Any, engines: EnginesResponse) -> None:
         (e for e in engines.engines if e.name == policy.engine),
         next((e for e in engines.engines if e.default), None),
     )
-    if chosen is not None and policy.entities and not chosen.entities:
-        # An engine that reports no entity types has no NER model (a pattern-only image, or
-        # a model that failed to load): every entity item would be unserved, and a
-        # condition that counts them could never answer.
+    needs_ner = bool(policy.entities or policy.custom_entities)
+    if chosen is not None and needs_ner and not (chosen.available and chosen.entities):
+        # The engine in force (named, or the default when none is named) cannot find entities:
+        # switched off, not installed, or a pattern-only image. Every entity item would be
+        # unserved, and a condition that counts them could never answer.
+        if not chosen.enabled:
+            raise UnprocessableError(
+                f"The engine '{chosen.name}' is switched off on the Detectors tab."
+            )
+        state = ner_state(engines)
+        if state in ("none", "off"):
+            raise UnprocessableError(no_ner_message(engines))
         raise UnprocessableError(
-            f"The engine '{chosen.name}' reports no entity types (it has no NER model), so "
-            f"it cannot find: {', '.join(sorted(policy.entities))}."
+            f"The engine '{chosen.name}' reports no entity types "
+            f"(it has no NER model), so it cannot find: "
+            f"{', '.join(sorted({*policy.entities, *(c.name for c in policy.custom_entities)}))}. "
+            "Choose an engine that has one."
         )
     if chosen is not None and chosen.entities:
         unknown = sorted(set(policy.entities) - {e.upper() for e in chosen.entities})
@@ -599,11 +617,20 @@ def _check_engine(policy: Any, engines: EnginesResponse) -> None:
                 f"The label {', '.join(repr(t) for t in taken)} is one the engine '{chosen.name}' "
                 "already uses for its own types: choose another description."
             )
-    if engines.pattern_entities:
-        unknown = sorted(set(policy.formats) - {e.upper() for e in engines.pattern_entities})
+    if engines.pattern_entities or not engines.patterns_enabled:
+        # A format the service no longer lists (AGE, ID, EMAIL were advertised by the
+        # spaCy recogniser's label map, never by a pattern) may stay in a policy as
+        # long as it is off: kept and visible, never silently dropped, and not asked.
+        known = {e.upper() for e in engines.pattern_entities}
+        unknown = sorted(
+            name
+            for name, entry in policy.formats.items()
+            if name not in known and entry.mode is not EntityMode.OFF
+        )
         if unknown:
             raise UnprocessableError(
-                f"The redaction service has no built-in format: {', '.join(unknown)}."
+                f"The redaction service has no built-in format: {', '.join(unknown)}. "
+                "Set it to Off to keep it in the policy, or remove it."
             )
 
 
@@ -710,17 +737,19 @@ def _policy_audit(row: RedactionPolicyRecord) -> dict[str, Any]:
 
 @router.get("/engines", response_model=EnginesResponse)
 async def engines(
-    admin: AdminUserDep, settings: SettingsDep, control_http: ControlHttpDep
+    admin: AdminUserDep, session: SessionDep, settings: SettingsDep, control_http: ControlHttpDep
 ) -> EnginesResponse:
     """What the redaction service offers: pattern formats and the NER engines (spaCy, GLiNER)."""
-    return await fetch_engines(control_http, settings)
+    return await effective_engines(session, control_http, settings)
 
 
 @router.get("/policies", response_model=Page[PolicyResponse])
 async def list_policies(
     admin: AdminUserDep, session: SessionDep, settings: SettingsDep, control_http: ControlHttpDep
 ) -> Page[PolicyResponse]:
-    items = await _policy_page(session, await fetch_engines(control_http, settings))
+    items = await _policy_page(
+        session, usable(await effective_engines(session, control_http, settings))
+    )
     return Page(items=items, total=len(items), limit=max(1, min(MAX_LIMIT, len(items))), offset=0)
 
 
@@ -737,7 +766,7 @@ async def create_policy(
     if not name:
         raise UnprocessableError("Give the policy a name.")
     await _name_free(session, name)
-    report = await fetch_engines(control_http, settings)
+    report = usable(await effective_engines(session, control_http, settings))
     _check_engine(payload.policy, report)
     if payload.is_active:
         await _check_label_budget(session, payload.policy, report)
@@ -778,7 +807,7 @@ async def update_policy(
 ) -> PolicyResponse:
     row = await _load_policy(session, policy_id)
     before = _policy_audit(row)
-    report = await fetch_engines(control_http, settings)
+    report = usable(await effective_engines(session, control_http, settings))
     if payload.name is not None:
         name = payload.name.strip()
         if not name:
@@ -809,6 +838,9 @@ async def update_policy(
                     "first, or it would silently stop hiding what they were written to hide."
                 )
         if payload.is_active and not row.is_active:
+            # Turning a policy on checks it against what the service offers now: it was saved
+            # against what it offered then.
+            _check_engine(RedactionPolicy.model_validate(row.policy or {}), report)
             # Turning a policy on brings its custom types in with the others'.
             await _check_label_budget(session, dict(row.policy or {}), report, ignore=row.id)
         elif payload.is_active and payload.policy is not None:
