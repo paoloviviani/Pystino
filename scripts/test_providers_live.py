@@ -14,7 +14,7 @@ Usage:
     docker compose --env-file deploy/.env \\
       -f deploy/compose.yaml -f deploy/dev/smoke.yml up -d --wait
     docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/dev/smoke.yml \\
-      exec -T gateway gateway seed --model smoke-model --upstream-model smoke-model
+      exec -T gateway gateway seed --model smoke-model --upstream-model upstream/smoke-model
     set -a; . deploy/.env; set +a; python3 scripts/test_providers_live.py
 """
 
@@ -28,7 +28,16 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from live_session import GATEWAY, admin_credentials, check, login, request, skip, user_credentials
+from live_session import (
+    GATEWAY,
+    admin_credentials,
+    check,
+    grant_model,
+    login,
+    request,
+    skip,
+    user_credentials,
+)
 
 FAILURES: list[str] = []
 
@@ -218,6 +227,7 @@ def main() -> int:
         alice = login(*user)
         if alice is None:
             return 1
+        grant_model(dave, alice)
     else:
         skip(
             "a completion is routed and billed to a member",
@@ -290,13 +300,28 @@ def main() -> int:
         print()
         print("=== embeddings ===")
         models = api(dave, "/api/admin/models")[1]["items"]
-        embedding = next((m for m in models if m["kind"] == "embedding"), None)
-        if embedding is None:
-            print("  no embedding model catalogued here; skipping")
-        else:
-            import urllib.error
-            import urllib.request
+        import urllib.error
+        import urllib.request
 
+        # One this key may reach: the catalogue also holds models other checks left
+        # behind for other groups, and those answer 404 here, correctly.
+        reachable = {
+            m["id"]
+            for m in json.loads(
+                urllib.request.urlopen(
+                    urllib.request.Request(
+                        f"{GATEWAY}/v1/models", headers={"authorization": f"Bearer {secret}"}
+                    ),
+                    timeout=30,
+                ).read()
+            ).get("data", [])
+        }
+        embedding = next(
+            (m for m in models if m["kind"] == "embedding" and m["name"] in reachable), None
+        )
+        if embedding is None:
+            print("  no embedding model this key may reach; skipping")
+        else:
             req = urllib.request.Request(
                 f"{GATEWAY}/v1/embeddings",
                 data=json.dumps({"model": embedding["name"], "input": ["one", "two"]}).encode(),

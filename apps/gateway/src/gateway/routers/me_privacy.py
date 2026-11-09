@@ -420,7 +420,20 @@ async def _policy_fields(
     settings_row = await service.settings_row(session)
     try:
         entries = service.clean_entries(
-            payload.entries, allowed_types=settings_row.user_entity_types
+            payload.entries,
+            allowed_types=settings_row.user_entity_types,
+            reserved={
+                *(settings_row.user_entity_types or ()),
+                *(
+                    name
+                    for row in await service.policy_rows(session)
+                    for table in (
+                        (row.policy or {}).get("formats"),
+                        (row.policy or {}).get("entities"),
+                    )
+                    for name in (table or {})
+                ),
+            },
         )
     except ValueError as exc:
         raise UnprocessableError(_message_of(exc)) from exc

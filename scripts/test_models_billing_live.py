@@ -88,7 +88,7 @@ def origin() -> str:
     if host:
         port = os.environ.get("HTTPS_PORT", "443")
         return f"https://{host}:{port}"
-    return "http://127.0.0.1:8000"
+    raise SystemExit("set PUBLIC_ORIGIN (source the stack's deploy/.env): no default gateway")
 
 
 def ca_bundle() -> str | None:

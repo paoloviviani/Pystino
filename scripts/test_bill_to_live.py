@@ -51,15 +51,21 @@ def skip(label: str, reason: str) -> None:
 
 
 def origin() -> str:
+    # The deployment's own variable first (as test_models_billing_live.py does): with
+    # only the old PUBLIC_HOST fallback, a stack on any other port sent this check to
+    # whatever answers on 127.0.0.1:8000, which may be another stack.
+    public = os.environ.get("PUBLIC_ORIGIN")
+    if public:
+        return public.rstrip("/")
     host = os.environ.get("PUBLIC_HOST")
     if host:
         port = os.environ.get("HTTPS_PORT", "443")
         return f"https://{host}:{port}"
-    return "http://127.0.0.1:8000"
+    raise SystemExit("set PUBLIC_ORIGIN (source the stack's deploy/.env): no default gateway")
 
 
 def ca_bundle() -> str | None:
-    path = "deploy/tls/caddy-root.crt"
+    path = os.environ.get("GATEWAY_CA_BUNDLE") or "deploy/tls/caddy-root.crt"
     return path if os.path.exists(path) else None
 
 

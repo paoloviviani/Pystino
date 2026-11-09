@@ -36,6 +36,7 @@ from live_session import (
     GATEWAY,
     admin_credentials,
     check,
+    grant_model,
     login,
     request,
     user_credentials,
@@ -75,6 +76,7 @@ def main() -> int:
     if user is None:
         print("user login failed")
         return 1
+    grant_model(session, user)
     secret = key_for(user, "web-search-live")
     if secret is None:
         return 1

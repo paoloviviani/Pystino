@@ -463,15 +463,22 @@ async def validation_context(session: AsyncSession, *, owner: User | None) -> Va
 
 
 def clean_entries(
-    entries: Sequence[Any], *, allowed_types: Sequence[str] | None
+    entries: Sequence[Any],
+    *,
+    allowed_types: Sequence[str] | None,
+    reserved: Collection[str] = (),
 ) -> list[dict[str, Any]]:
     """A user's policy entries, clean, under the administrators' own validation.
 
     Raises ``ValueError`` with a message for the user. A mode for an entity
     type must be one an administrator made available; a pattern's label is a
-    pattern, not a type, so it is not limited.
+    pattern, not a type, so it is not limited, except that it may not be *named* like a
+    type (``reserved`` and the detectors' own names): labels and types share one name
+    space, and a pattern called PERSON would stand for persons.
     """
     from gateway.redaction import user_rules
+
+    taken = {t.upper() for t in reserved} | user_rules.RESERVED_TYPES
 
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -487,6 +494,10 @@ def clean_entries(
         if entry.kind == "pattern":
             if not entry.regex:
                 raise ValueError("A pattern needs a regular expression.")
+            if name in taken:
+                raise ValueError(
+                    f"'{name}' is the name of an entity type; give your pattern another name."
+                )
             user_rules.validate_pattern(name, entry.regex, mode)
             regex: str | None = entry.regex
         else:
