@@ -76,24 +76,32 @@ class TestAsks:
         )
         assert effective.asks() == [NerAsk(None, (), ())]
 
-    def test_a_name_that_is_a_pattern_or_a_keyword_list_anywhere_is_never_asked(self) -> None:
-        # Whatever a contributor lists under `entities`, if another contributor (or the same
-        # one) defines that name as a pattern or a keyword list, it is evaluated here.
-        a = RedactionPolicy(
-            entities={"LIVE_PROJECT": EntityPolicy(mode=M.REDACT), "PERSON": EntityPolicy()}
+    def test_a_pattern_or_keyword_list_named_like_a_type_never_stops_that_type_being_asked(
+        self,
+    ) -> None:
+        # Labels share a name space with types. A pattern (a user's, say) or an `off`
+        # keyword list called PERSON must not drop PERSON from what is asked of the NER
+        # service: that would leave persons unhidden without a word.
+        admin = RedactionPolicy(
+            entities={"PERSON": EntityPolicy(mode=M.REDACT)},
+            formats={"EMAIL_ADDRESS": EntityPolicy(mode=M.REDACT)},
         )
-        b = RedactionPolicy(patterns=[Pattern(name="LIVE_PROJECT", regex="PRJ-[0-9]+")])
-        c = RedactionPolicy(entities={"CODES": EntityPolicy(mode=M.REDACT)})
-        d = RedactionPolicy(keywords=[KeywordList(name="CODES", words=["Falcon"])])
+        users = RedactionPolicy(
+            patterns=[
+                Pattern(name="PERSON", regex="Mario"),
+                Pattern(name="EMAIL_ADDRESS", regex="@x"),
+            ]
+        )
+        off = RedactionPolicy(keywords=[KeywordList(name="PERSON", words=["Mario"], mode=M.OFF)])
         effective = EffectivePolicy(
-            policy=RedactionPolicy.combine([a, b, c, d]),
+            policy=RedactionPolicy.combine([admin, users, off]),
             contributors=tuple(
                 Contributor(id=uuid.uuid4(), name=n, owner="admin", policy=p)
-                for n, p in (("A", a), ("B", b), ("C", c), ("D", d))
+                for n, p in (("Admin", admin), ("Mine", users), ("Off", off))
             ),
         )
-        (ask,) = effective.asks()  # one call, the default engine
-        assert ask.types == ("PERSON",)
+        (ask,) = effective.asks()
+        assert ask.types == ("EMAIL_ADDRESS", "PERSON")
 
 
 class TestStrictDetection:
@@ -153,3 +161,53 @@ class TestStrictDetection:
 
 def json_types_of(payload: dict[str, Any]) -> list[str]:
     return list(payload.get("entity_types") or [])
+
+
+class TestSavingAUserPolicy:
+    async def test_a_pattern_named_like_an_entity_type_is_refused_at_save(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
+    ) -> None:
+        as_user(app, seeded.user)
+        for name in ("PERSON", "person", "email address"):
+            refused = await client.post(
+                "/api/me/privacy/policies",
+                json={
+                    "name": f"p-{name}",
+                    "entries": [{"kind": "pattern", "name": name, "regex": "x+", "mode": "redact"}],
+                },
+            )
+            assert refused.status_code == 422, (name, refused.text)
+            assert "name of an entity type" in refused.text
+        ok = await client.post(
+            "/api/me/privacy/policies",
+            json={
+                "name": "fine",
+                "entries": [
+                    {
+                        "kind": "pattern",
+                        "name": "LIVE_PROJECT",
+                        "regex": "PRJ-[0-9]+",
+                        "mode": "redact",
+                    }
+                ],
+            },
+        )
+        assert ok.status_code == 201, ok.text
+
+    async def test_a_name_an_administrator_policy_uses_is_refused_too(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        from privacy_helpers import add_policy
+
+        await add_policy(app, session_factory, "Admin", entities={"CODENAME": EntityPolicy()})
+        as_user(app, seeded.user)
+        refused = await client.post(
+            "/api/me/privacy/policies",
+            json={
+                "name": "mine",
+                "entries": [
+                    {"kind": "pattern", "name": "CODENAME", "regex": "x+", "mode": "redact"}
+                ],
+            },
+        )
+        assert refused.status_code == 422, refused.text
