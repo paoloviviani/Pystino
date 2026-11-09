@@ -766,3 +766,43 @@ class TestPatternOnlyService:
             },
         )
         assert ok.status_code == 201
+
+
+class TestSwitchedOffDetectors:
+    async def test_the_report_carries_the_switches_and_policies_follow_them(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        service = FakeService()
+        app.state.settings.redaction.engine = "http"
+        app.state.settings.redaction.endpoint = "http://detector:8080"
+        app.state.control_http = service.client()
+        app.state.redactor = service.redactor()
+        app.state.redaction = None
+        off = await client.put(
+            "/api/admin/redaction/engine",
+            json={
+                "engine": "noop",
+                "presidio_pattern_matching": False,
+                "spacy_enabled": True,
+                "gliner_enabled": False,
+            },
+        )
+        assert off.status_code == 200, off.text
+        body = (await client.get("/api/admin/privacy/engines")).json()
+        assert body["patterns_enabled"] is False
+        assert {e["name"]: e["enabled"] for e in body["engines"]} == {
+            "spacy": True,
+            "gliner": False,
+        }
+        # The raw capabilities are still reported, for the Detectors cards.
+        assert body["pattern_entities"] == ["EMAIL_ADDRESS", "IBAN_CODE", "CREDIT_CARD"]
+        refused = await client.post(
+            "/api/admin/privacy/policies", json={"name": "G", "policy": {"engine": "gliner"}}
+        )
+        assert refused.status_code == 422 and "not available" in refused.text
+        no_format = await client.post(
+            "/api/admin/privacy/policies",
+            json={"name": "F", "policy": {"formats": {"IBAN_CODE": {"mode": "redact"}}}},
+        )
+        assert no_format.status_code == 422 and "no built-in format" in no_format.text

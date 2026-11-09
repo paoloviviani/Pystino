@@ -44,7 +44,13 @@ from gateway.models import (
 from gateway.pagination import MAX_LIMIT, Page
 from gateway.privacy import rules as rulelib
 from gateway.privacy import service
-from gateway.privacy.engines import NO_NER_MESSAGE, fetch_engines, has_ner, ner_type_names
+from gateway.privacy.engines import (
+    NO_NER_MESSAGE,
+    effective_engines,
+    has_ner,
+    ner_type_names,
+    usable,
+)
 from gateway.privacy.pipelines import Pipeline, pipeline_from_row, validate_pipeline
 from gateway.privacy.schemas import (
     DryRunRequest,
@@ -199,7 +205,7 @@ async def options(
     mine = await service.user_policy_rows(session, user.id)
     settings_row = await service.settings_row(session)
     builtin = any(readers.values())
-    report = await fetch_engines(control_http, settings)
+    report = usable(await effective_engines(session, control_http, settings))
     ner = has_ner(report)
     entity_types = settings_row.user_entity_types
     if ner is False and entity_types is not None:
@@ -473,7 +479,11 @@ async def create_my_policy(
     if count >= MAX_POLICIES_PER_USER:
         raise ConflictError(f"You can keep at most {MAX_POLICIES_PER_USER} policies.")
     name, entries = await _policy_fields(
-        session, user, payload, None, await fetch_engines(control_http, settings)
+        session,
+        user,
+        payload,
+        None,
+        usable(await effective_engines(session, control_http, settings)),
     )
     row = UserPolicy(id=uuid.uuid4(), user_id=user.id, name=name, rules=entries)
     session.add(row)
@@ -494,7 +504,11 @@ async def update_my_policy(
 ) -> UserPolicyResponse:
     row = await _own_policy(session, user, policy_id)
     name, entries = await _policy_fields(
-        session, user, payload, row.id, await fetch_engines(control_http, settings)
+        session,
+        user,
+        payload,
+        row.id,
+        usable(await effective_engines(session, control_http, settings)),
     )
     row.name = name
     row.rules = entries

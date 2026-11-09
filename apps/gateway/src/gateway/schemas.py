@@ -2704,6 +2704,8 @@ class RedactionConfigChange(ResponseModel):
     #: Null leaves the Presidio sidecar's deployment default unchanged.
     presidio_pattern_matching: bool | None = None
     presidio_ner: bool | None = None
+    spacy_enabled: bool | None = None
+    gliner_enabled: bool | None = None
     reason: str
     changed_at: datetime
     #: Null once a user has been erased. The record of the change survives them,
@@ -2728,6 +2730,10 @@ class RedactionEngineRequest(BaseModel):
     #: Independently enable Presidio named-entity recognition. Null preserves the
     #: detector deployment's default for compatibility.
     presidio_ner: bool | None = None
+    #: The Detectors tab's switches for each NER engine. Null leaves it undecided.
+    #: ``presidio_ner`` is then derived: on when either engine is on.
+    spacy_enabled: bool | None = None
+    gliner_enabled: bool | None = None
     #: Optional for every engine, `noop` included; recorded when given.
     reason: str = Field(default="", max_length=500)
 
@@ -2775,6 +2781,10 @@ class RedactionStatusResponse(ResponseModel):
     score_threshold: float
     presidio_pattern_matching: bool | None = None
     presidio_ner: bool | None = None
+    #: What is in force for each detector, after the stored decision and the defaults.
+    patterns_enabled: bool = True
+    spacy_enabled: bool = True
+    gliner_enabled: bool = True
     #: Null means "everything the engine offers" rather than "none". Superseded
     #: by ``policy`` and still reported, because a deployment that sets it is
     #: entitled to see the value it set.

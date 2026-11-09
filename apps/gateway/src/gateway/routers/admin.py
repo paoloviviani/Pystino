@@ -26,6 +26,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any, Literal, Protocol, cast, runtime_checkable
 from urllib.parse import quote, urlsplit
 
@@ -6638,6 +6639,9 @@ async def _redaction_response(
         else config.presidio_ner
     )
     service = _effective_detector_entities(service, pattern_matching=pattern_matching, ner=ner)
+    from gateway.privacy.engines import switches_from
+
+    switches = switches_from(stored, settings)
 
     return RedactionStatusResponse(
         engine=engine,
@@ -6651,6 +6655,8 @@ async def _redaction_response(
                 engine=stored.engine,
                 presidio_pattern_matching=stored.presidio_pattern_matching,
                 presidio_ner=stored.presidio_ner,
+                spacy_enabled=stored.spacy_enabled,
+                gliner_enabled=stored.gliner_enabled,
                 reason=stored.reason,
                 changed_at=stored.created_at,
                 changed_by=changed_by,
@@ -6666,6 +6672,9 @@ async def _redaction_response(
         score_threshold=config.score_threshold,
         presidio_pattern_matching=pattern_matching,
         presidio_ner=ner,
+        patterns_enabled=switches.patterns,
+        spacy_enabled=switches.spacy,
+        gliner_enabled=switches.gliner,
         entity_types=list(config.entity_types) if config.entity_types else None,
         # From the resolver, not from the environment: the policy in force may be
         # a stored one, and reporting the setting instead would describe a
@@ -6711,6 +6720,48 @@ async def redaction_status(
         http=http,
         window_seconds=window_seconds,
     )
+
+
+async def _refuse_switching_off_a_used_detector(
+    session: AsyncSession, settings: Settings, proposed: Any
+) -> None:
+    """A detector an active policy reads with cannot be switched off (409, naming the policies).
+
+    The same rule as deactivating a policy a pipeline applies: nothing that is in use
+    is removed from under it.
+    """
+    from gateway.models import RedactionPolicyRecord
+    from gateway.privacy.engines import current_switches, switches_from, users_of_detectors
+
+    now = await current_switches(session, settings)
+    then = switches_from(proposed, settings)
+    turning_off = [
+        name
+        for name, was, will in (
+            ("patterns", now.patterns, then.patterns),
+            ("spacy", now.spacy, then.spacy),
+            ("gliner", now.gliner, then.gliner),
+        )
+        if was and not will
+    ]
+    if not turning_off:
+        return
+    rows = (
+        await session.execute(
+            select(RedactionPolicyRecord.name, RedactionPolicyRecord.policy).where(
+                RedactionPolicyRecord.is_active.is_(True)
+            )
+        )
+    ).all()
+    # A policy with no engine reads with the deployment's default, spaCy unless said otherwise.
+    used = users_of_detectors([(r[0], r[1]) for r in rows], "spacy")
+    labels = {"patterns": "The patterns", "spacy": "spaCy", "gliner": "GLiNER"}
+    for name in turning_off:
+        if used[name]:
+            raise ConflictError(
+                f"{labels[name]} cannot be switched off: used by {', '.join(sorted(used[name]))}. "
+                "Deactivate those policies or remove the items that need it first."
+            )
 
 
 @router.put("/redaction/engine", response_model=RedactionStatusResponse)
@@ -6800,11 +6851,30 @@ async def set_redaction_engine(
                 f"enabled: {probe.detail}."
             )
 
+    pattern_matching = payload.presidio_pattern_matching
+    ner = payload.presidio_ner
+    spacy, gliner = payload.spacy_enabled, payload.gliner_enabled
+    if ner is None and (spacy is not None or gliner is not None):
+        # The family switch the detection service understands: on while either engine is.
+        ner = spacy is not False or gliner is not False
+    await _refuse_switching_off_a_used_detector(
+        session,
+        settings,
+        SimpleNamespace(
+            presidio_pattern_matching=pattern_matching,
+            presidio_ner=ner,
+            spacy_enabled=spacy,
+            gliner_enabled=gliner,
+        ),
+    )
+
     session.add(
         RedactionConfig(
             engine=engine,
-            presidio_pattern_matching=payload.presidio_pattern_matching,
-            presidio_ner=payload.presidio_ner,
+            presidio_pattern_matching=pattern_matching,
+            presidio_ner=ner,
+            spacy_enabled=spacy,
+            gliner_enabled=gliner,
             reason=reason,
             created_by=admin.id,
         )

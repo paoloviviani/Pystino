@@ -50,7 +50,13 @@ from gateway.models import (
 from gateway.pagination import MAX_LIMIT, Page
 from gateway.privacy import rules as rulelib
 from gateway.privacy import service
-from gateway.privacy.engines import NO_NER_MESSAGE, engine_problem, fetch_engines, has_ner
+from gateway.privacy.engines import (
+    NO_NER_MESSAGE,
+    effective_engines,
+    engine_problem,
+    has_ner,
+    usable,
+)
 from gateway.privacy.pipelines import Pipeline, pipeline_from_row, validate_pipeline
 from gateway.privacy.schemas import (
     ActionBody,
@@ -463,7 +469,9 @@ async def check_pipeline(
     except UnprocessableError as exc:
         return PipelineCheckResponse(error=exc.message, issues=[], soft_cap=rulelib.SOFT_CAP)
     draft = _draft(payload.kind, clean, payload.enabled)
-    found = service.issues_of(draft, state_of(request), await fetch_engines(control_http, settings))
+    found = service.issues_of(
+        draft, state_of(request), usable(await effective_engines(session, control_http, settings))
+    )
     issues: list[IssueView] = []
     for rule_issues in found.values():
         issues.extend(service.issue_views(rule_issues))
@@ -603,7 +611,7 @@ def _check_engine(policy: Any, engines: EnginesResponse) -> None:
                 f"The label {', '.join(repr(t) for t in taken)} is one the engine '{chosen.name}' "
                 "already uses for its own types: choose another description."
             )
-    if engines.pattern_entities:
+    if engines.pattern_entities or not engines.patterns_enabled:
         # A format the service no longer lists (AGE, ID, EMAIL were advertised by the
         # spaCy recogniser's label map, never by a pattern) may stay in a policy as
         # long as it is off: kept and visible, never silently dropped, and not asked.
@@ -723,17 +731,19 @@ def _policy_audit(row: RedactionPolicyRecord) -> dict[str, Any]:
 
 @router.get("/engines", response_model=EnginesResponse)
 async def engines(
-    admin: AdminUserDep, settings: SettingsDep, control_http: ControlHttpDep
+    admin: AdminUserDep, session: SessionDep, settings: SettingsDep, control_http: ControlHttpDep
 ) -> EnginesResponse:
     """What the redaction service offers: pattern formats and the NER engines (spaCy, GLiNER)."""
-    return await fetch_engines(control_http, settings)
+    return await effective_engines(session, control_http, settings)
 
 
 @router.get("/policies", response_model=Page[PolicyResponse])
 async def list_policies(
     admin: AdminUserDep, session: SessionDep, settings: SettingsDep, control_http: ControlHttpDep
 ) -> Page[PolicyResponse]:
-    items = await _policy_page(session, await fetch_engines(control_http, settings))
+    items = await _policy_page(
+        session, usable(await effective_engines(session, control_http, settings))
+    )
     return Page(items=items, total=len(items), limit=max(1, min(MAX_LIMIT, len(items))), offset=0)
 
 
@@ -750,7 +760,7 @@ async def create_policy(
     if not name:
         raise UnprocessableError("Give the policy a name.")
     await _name_free(session, name)
-    report = await fetch_engines(control_http, settings)
+    report = usable(await effective_engines(session, control_http, settings))
     _check_engine(payload.policy, report)
     if payload.is_active:
         await _check_label_budget(session, payload.policy, report)
@@ -791,7 +801,7 @@ async def update_policy(
 ) -> PolicyResponse:
     row = await _load_policy(session, policy_id)
     before = _policy_audit(row)
-    report = await fetch_engines(control_http, settings)
+    report = usable(await effective_engines(session, control_http, settings))
     if payload.name is not None:
         name = payload.name.strip()
         if not name:

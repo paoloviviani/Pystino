@@ -355,6 +355,11 @@ class NerEngineView(ResponseModel):
     labels: list[str] = Field(default_factory=list)
     ms_per_token: float | None = None
     languages: list[str]
+    #: The administrator's switch (Detectors tab). An engine that is not enabled cannot be
+    #: chosen by a policy, whatever the service reports.
+    enabled: bool = True
+    #: Names of the active policies that read with this engine.
+    used_by: list[str] = Field(default_factory=list)
 
 
 class EnginesResponse(ResponseModel):
@@ -364,6 +369,9 @@ class EnginesResponse(ResponseModel):
     #: The built-in pattern formats the service's recognisers find.
     pattern_entities: list[str]
     engines: list[NerEngineView]
+    #: The administrator's switch for the pattern recognisers, and the active policies using them.
+    patterns_enabled: bool = True
+    patterns_used_by: list[str] = Field(default_factory=list)
 
 
 # -- the try-it box ---------------------------------------------------------------

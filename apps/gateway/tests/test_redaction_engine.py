@@ -405,3 +405,74 @@ class TestTheResolver:
         resolver._session_factory = broken  # type: ignore[assignment]
         assert await resolver.refresh() is False
         assert resolver.redactor.name == "noop"
+
+
+class TestDetectorSwitches:
+    """The Detectors tab's switches: the patterns and each NER engine (migration 0084)."""
+
+    async def test_the_switches_are_recorded_and_reported(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: object,
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))  # type: ignore[arg-type]
+        response = await client.put(
+            ENGINE_URL,
+            json={"engine": "noop", "spacy_enabled": True, "gliner_enabled": False},
+        )
+        assert response.status_code == 200, response.text
+        row = (await session.execute(select(RedactionConfig))).scalar_one()
+        assert (row.spacy_enabled, row.gliner_enabled) == (True, False)
+        # The family switch the detection service understands is derived: on while either is.
+        assert row.presidio_ner is True
+        body = response.json()
+        assert (body["patterns_enabled"], body["spacy_enabled"], body["gliner_enabled"]) == (
+            True,
+            True,
+            False,
+        )
+
+    async def test_a_row_without_the_new_switches_means_what_it_always_did(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: object,
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))  # type: ignore[arg-type]
+        body = (await client.put(ENGINE_URL, json={"engine": "noop", "presidio_ner": False})).json()
+        assert body["spacy_enabled"] is False and body["gliner_enabled"] is False
+        assert body["patterns_enabled"] is True
+
+    async def test_a_detector_an_active_policy_uses_cannot_be_switched_off(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: object,
+    ) -> None:
+        from privacy_helpers import add_policy
+
+        as_user(app, await make_admin(session_factory, seeded))  # type: ignore[arg-type]
+        await add_policy(
+            app,
+            session_factory,
+            "Names",
+            engine="spacy",
+            entities={"PERSON": {"mode": "redact"}},
+            formats={"IBAN_CODE": {"mode": "redact"}},
+        )
+        refused = await client.put(ENGINE_URL, json={"engine": "noop", "spacy_enabled": False})
+        assert refused.status_code == 409
+        assert "spaCy" in refused.text and "Names" in refused.text
+        patterns = await client.put(
+            ENGINE_URL, json={"engine": "noop", "presidio_pattern_matching": False}
+        )
+        assert patterns.status_code == 409 and "Names" in patterns.text
+        # GLiNER is not used by it, so that one may go.
+        assert (
+            await client.put(ENGINE_URL, json={"engine": "noop", "gliner_enabled": False})
+        ).status_code == 200
