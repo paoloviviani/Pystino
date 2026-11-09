@@ -26,7 +26,7 @@ import base64
 import binascii
 import uuid
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from llmp_shared import EntitySpan
@@ -394,6 +394,9 @@ class ValidationContext:
     finds_policy_ids: set[str]
     classifier_ids: set[str]
     readers: set[str]
+    #: Names of OCR models that are the built-in extractor (the seeded "markitdown" model):
+    #: a rule naming one is saved as naming the Built-in extractor.
+    builtin_aliases: set[str] = field(default_factory=set)
 
 
 async def validation_context(session: AsyncSession, *, owner: User | None) -> ValidationContext:
@@ -401,14 +404,42 @@ async def validation_context(session: AsyncSession, *, owner: User | None) -> Va
     admin = [p for p in await policy_rows(session) if p.is_active]
     if owner is None:
         policies = {str(p.id) for p in admin}
-        readers = set(await deployment_readers(session))
+        deployment = await deployment_readers(session)
+        readers = set(deployment)
+        aliases = {name for name, (_, builtin) in deployment.items() if builtin}
         classifiers = {str(c.id) for c in await classifier_rows(session)}
     else:
         policies = {str(p.id) for p in admin if p.shared_with_users}
         policies |= {str(p.id) for p in await user_policy_rows(session, owner.id)}
-        readers = set(await granted_readers(session, owner))
+        granted = await granted_readers(session, owner)
+        readers = set(granted)
+        aliases = {name for name, builtin in granted.items() if builtin}
         classifiers = set()
-    return ValidationContext(policies, set(policies), classifiers, readers)
+    return ValidationContext(policies, set(policies), classifiers, readers, aliases)
+
+
+def normalise_readers(
+    rules: list[dict[str, Any]], otherwise: dict[str, Any] | None, aliases: set[str]
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Rules that name the built-in extractor's own model name the Built-in extractor.
+
+    Both were ever the same reader under two names; only the Built-in extractor is
+    offered now, and an older rule (or a client that still sends the model name) keeps
+    working as that.
+    """
+    if not aliases:
+        return rules, otherwise
+
+    def fix(action: Any) -> Any:
+        if isinstance(action, dict) and action.get("reader") in aliases:
+            return {**action, "reader": rulelib.BUILTIN_READER}
+        return action
+
+    fixed = [
+        {**rule, "action": fix(rule.get("action"))} if isinstance(rule, dict) else rule
+        for rule in rules
+    ]
+    return fixed, fix(otherwise) if otherwise is not None else None
 
 
 # -- user policies --------------------------------------------------------------------

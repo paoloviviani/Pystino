@@ -190,6 +190,9 @@ and name, scan) have held.
 | **read with** a reader | any configured `/v1/ocr` model: the **built-in extractor** (`builtin`; the first extractor model the caller may use), or another OCR provider such as a facility reader. It **overrides the model the caller named**. |
 | refuse | 403 with `routing_refused`, naming the rule and its pipeline. Never the content or the file's name |
 
+- The reader picker lists the **Built-in extractor** once (the seeded extractor model, "markitdown",
+  is that same reader) and every other OCR model by name. A rule that names the extractor's
+  model is saved as the Built-in extractor; migration 0083 renames existing ones.
 - The built-in extractor may name an **engine** (`markitdown`, `ocr`, `docling`;
   passed as `X-Extractor-Engine`). The engine is quality, not privacy, so it is
   not on the ladder. An administrator pipeline's engine holds, then a user's, then

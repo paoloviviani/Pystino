@@ -346,7 +346,8 @@ class TestAdminApi:
         options = (await client.get("/api/admin/privacy/options")).json()
         assert seeded.group.name in [g["name"] for g in options["groups"]]
         readers = {r["id"]: r for r in options["readers"]}
-        assert readers["builtin"]["builtin"] is True and "local-reader" in readers
+        # The extractor's own model is the Built-in extractor, listed once, not by its model name.
+        assert readers["builtin"]["builtin"] is True and "local-reader" not in readers
         assert options["engines"] == ["markitdown", "ocr", "docling"]
 
     async def test_there_is_no_local_flag_on_a_provider(

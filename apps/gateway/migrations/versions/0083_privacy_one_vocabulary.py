@@ -36,6 +36,10 @@ real rows everywhere: nothing is dropped silently.
     is also made observe-only so enabling it cannot loosen anything. Every such
     rule is named in the migration log.
 
+* **One name for the built-in extractor.** A rule that reads with the extractor's own
+  OCR model (the seeded "markitdown") now reads with the "builtin" reader, the one the
+  console offers; other OCR models keep their names.
+
 Plain DDL plus Python-side row conversion, so it runs on SQLite as on PostgreSQL. The
 downgrade writes the rows back where the older shape can say it, and refuses
 (``PYSTINO_ALLOW_LOSSY_DOWNGRADE=1`` drops them) where it cannot.
@@ -196,6 +200,64 @@ def convert_rules(
     return out, used_ids, log
 
 
+def _name_the_builtin_extractor(bind: sa.Connection, pipelines: Any) -> list[str]:
+    """A rule that reads with the extractor's own OCR model (the seeded "markitdown") reads
+    with the "builtin" reader: one reader, one name. The model itself is untouched."""
+    models = sa.table(
+        "models",
+        sa.column("name", sa.String()),
+        sa.column("kind", sa.String()),
+        sa.column("provider_id", sa.Uuid()),
+    )
+    providers = sa.table("providers", sa.column("id", sa.Uuid()), sa.column("plugin", sa.String()))
+    names = {
+        str(r.name)
+        for r in bind.execute(
+            sa.select(models.c.name)
+            .join(providers, providers.c.id == models.c.provider_id)
+            .where(models.c.kind == "ocr", providers.c.plugin == "extractor")
+        )
+    }
+    log: list[str] = []
+    if not names:
+        return log
+
+    def fix(action: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+        reader = action.get("reader")
+        if reader in names:
+            return {**action, "reader": "builtin"}, str(reader)
+        return action, None
+
+    for row in bind.execute(
+        sa.select(pipelines.c.id, pipelines.c.name, pipelines.c.rules, pipelines.c.otherwise)
+    ).all():
+        changed = False
+        rules = []
+        for rule in row.rules or []:
+            action, was = fix(dict(rule.get("action") or {}))
+            if was:
+                changed = True
+                log.append(
+                    f"pipeline '{row.name}', rule '{rule.get('name')}': the reader '{was}' is the "
+                    "built-in extractor and is now named that."
+                )
+            rules.append({**rule, "action": action})
+        otherwise, was = fix(dict(row.otherwise or {}))
+        if was:
+            changed = True
+            log.append(
+                f"pipeline '{row.name}', last rule: the reader '{was}' is the built-in "
+                "extractor and is now named that."
+            )
+        if changed:
+            bind.execute(
+                pipelines.update()
+                .where(pipelines.c.id == row.id)
+                .values(rules=rules, otherwise=otherwise)
+            )
+    return log
+
+
 def _convert(bind: sa.Connection) -> None:
     policies = sa.table(
         "redaction_policies",
@@ -243,6 +305,7 @@ def _convert(bind: sa.Connection) -> None:
     ids_policy = uuid.uuid4()
     used_by_admin = used_by_user = False
     log: list[str] = []
+    log.extend(_name_the_builtin_extractor(bind, pipelines))
     for row in bind.execute(
         sa.select(
             pipelines.c.id,
