@@ -284,7 +284,18 @@ class PrivacyState:
                 if all(mine.id != m.id for m in own):
                     own.append(mine)
                 continue
-            logger.warning("a pipeline names policy %s, which is not loaded", use.policy_id)
+            # The policy a pipeline chose cannot be read (stored rows over the current limits,
+            # a policy turned off by hand): refusing is the only answer that cannot let
+            # through what it was written to hide.
+            logger.error("a pipeline names policy %s, which is not loaded", use.policy_id)
+            from gateway.errors import ServiceUnavailableError
+
+            raise ServiceUnavailableError(
+                f"The pipeline '{use.run.pipeline.name}' applies a redaction policy that cannot "
+                "be loaded (it is unreadable or switched off), so the request is refused "
+                "rather than sent without it. An administrator must fix or replace the policy.",
+                code="privacy_policy_unavailable",
+            )
         if not admin_refs:
             admin = EffectivePolicy(
                 policy=environment,

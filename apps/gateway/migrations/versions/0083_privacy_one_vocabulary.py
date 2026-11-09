@@ -448,6 +448,12 @@ def _downgrade_rows(bind: sa.Connection) -> tuple[list[dict[str, Any]], list[dic
                     entry["mode"] = "off"
                 merged[name] = entry
         old = {k: v for k, v in raw.items() if k in ("default_mode", "patterns", "allow_list")}
+        # A pattern at detect_only is a mode the older code cannot parse (it would drop the
+        # whole policy); it hid nothing, so it is written as off.
+        old["patterns"] = [
+            {**p, "mode": "off"} if p.get("mode") == "detect_only" else p
+            for p in raw.get("patterns") or []
+        ]
         old["entities"] = merged
         new_policies.append({"id": row.id, "policy": old})
 

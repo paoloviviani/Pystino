@@ -114,7 +114,26 @@ class Evaluation:
     #: How strict the strictest later enabled rule of the pipeline is (set while a rule is
     #: judged): an undecided condition may stand in for a match only on a rule at least as
     #: strict, or the rule would fire in place of a stricter one it was shadowing.
-    later_strictness: tuple[int, bool] = (0, False)
+    later_rules: tuple[Rule, ...] = ()
+
+
+def covers(rule: Rule, later: Sequence[Rule]) -> bool:
+    """Whether ``rule`` is at least as strict as every rule in ``later``.
+
+    Equal strictness on a rule that redacts counts only for the same policy: another policy
+    may redact more (or block), so the rule would shadow it."""
+    mine = strictness(rule)
+    for other in later:
+        theirs = strictness(other)
+        if mine < theirs:
+            return False
+        if (
+            mine == theirs
+            and mine[1]
+            and rule.action.get("redact_with") != other.action.get("redact_with")
+        ):
+            return False
+    return True
 
 
 def strictness(rule: Rule) -> tuple[int, bool]:
@@ -185,7 +204,7 @@ class Evaluator:
         if rule.observe_only:
             degraded.append(f"{why}; not matched.")
             return State.FALSE, f"{why}; not matched."
-        if rule.protective and not condition.negate and strictness(rule) >= ev.later_strictness:
+        if rule.protective and not condition.negate and covers(rule, ev.later_rules):
             degraded.append(f"{why}; treated as a match.")
             return State.TRUE, f"{why}; treated as a match."
         raise Undecidable(rule, why)
@@ -259,7 +278,9 @@ class Evaluator:
             return State.TRUE, text
         return State.FALSE, text
 
-    async def evaluate(self, rules: Sequence[Rule], facts: Facts) -> Evaluation:
+    async def evaluate(
+        self, rules: Sequence[Rule], facts: Facts, otherwise: Rule | None = None
+    ) -> Evaluation:
         ev = Evaluation(kind=facts.kind)
         for rule in sorted(rules, key=lambda r: r.position):
             if ev.fired is not None:
@@ -273,13 +294,11 @@ class Evaluator:
             items: dict[str, list[Item]] = {}
             unknown = False
             matched = True
-            ev.later_strictness = max(
-                (
-                    strictness(later)
-                    for later in rules
-                    if later.position > rule.position and later.enabled and not later.observe_only
-                ),
-                default=(0, False),
+            # The "Everything else" rule is always last and always enabled.
+            ev.later_rules = tuple(
+                later
+                for later in (*rules, *([otherwise] if otherwise is not None else []))
+                if later.position > rule.position and later.enabled and not later.observe_only
             )
             for condition in _ordered(rule.conditions):
                 state, why = await self._condition(condition, facts, ev, degraded, rule, items)
