@@ -46,7 +46,14 @@ from dataclasses import dataclass
 from typing import Any
 
 PUBLIC_ORIGIN = os.environ.get("PUBLIC_ORIGIN", "").rstrip("/")
-GATEWAY = (os.environ.get("GATEWAY_URL") or PUBLIC_ORIGIN or "http://localhost:8000").rstrip("/")
+GATEWAY = (os.environ.get("GATEWAY_URL") or PUBLIC_ORIGIN).rstrip("/")
+if not GATEWAY:
+    # No default host, on purpose: these checks write (policies, grants, passwords), and a
+    # guessed localhost:8000 may be another stack on the same machine, a live one.
+    raise SystemExit(
+        "set PUBLIC_ORIGIN (source the stack's deploy/.env) or GATEWAY_URL: the live "
+        "checks never guess which gateway to talk to"
+    )
 
 # A trial stack's public name usually has no DNS; resolve it to the proxy the
 # way a hosts-file entry would, so URLs, Host headers, SNI and cookie domains
@@ -239,6 +246,30 @@ def check(label: str, condition: bool, detail: str = "") -> bool:
 
 def skip(label: str, reason: str) -> None:
     print(f"  [skip] {label} — {reason}")
+
+
+def grant_model(admin: Any, member: Any, model: str = "smoke-model") -> bool:
+    """Let *member*'s default billing group use *model*.
+
+    `gateway seed` grants its model to the `research` group only, while a member
+    created through the console lands in the deployment's default group
+    (`OIDC_DEFAULT_GROUP`, `users`), which grants no model by itself. A key minted
+    by that member would get a 404 for `smoke-model`, so a check that calls it
+    grants the model first. Idempotent; False when the model is not catalogued.
+
+    It grants to the user's *default group*, so never point ``PYSTINO_LIVE_USER`` at a
+    real person: every member of that group gains the model.
+    """
+    _, _, raw = request(member, f"{GATEWAY}/api/me")
+    group = (json.loads(raw).get("default_billing_group") or {}).get("id")
+    _, _, listing = request(admin, f"{GATEWAY}/api/admin/models?limit=200")
+    found = next((m for m in json.loads(listing)["items"] if m["name"] == model), None)
+    if group is None or found is None:
+        return False
+    status, _, _ = request(
+        admin, f"{GATEWAY}/api/admin/groups/{group}/models/{found['id']}", method="PUT"
+    )
+    return status in (200, 204)
 
 
 def _provider(opener: urllib.request.OpenerDirector) -> str:

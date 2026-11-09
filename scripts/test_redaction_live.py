@@ -29,7 +29,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from live_session import GATEWAY, check, user_credentials
+from live_session import GATEWAY, check, grant_model, user_credentials
 
 UPSTREAM = "http://localhost:8081"
 # Seeded by `gateway seed` in the smoke stack; overridable for another deployment.
@@ -102,6 +102,26 @@ PATTERN_PII = (
 
 
 def main() -> int:
+    from live_session import admin_credentials, login
+
+    credentials = admin_credentials()
+    admin = login(*credentials) if credentials else None
+    if admin is None:
+        print("FAILED: PYSTINO_LIVE_ADMIN_PASSWORD is not set (see scripts/live_session.py)")
+        return 1
+    try:
+        credentials = user_credentials()
+        member = login(*credentials) if credentials else None
+        if member is not None and not grant_model(admin, member, MODEL):
+            expect(f"{MODEL} is catalogued for the member's group", False, "see grant_model")
+        if not install_admin_redaction(admin):
+            return 1
+        return check_redaction()
+    finally:
+        remove_admin_redaction(admin)
+
+
+def check_redaction() -> int:
     print("=== the detection service is up and says what it can do ===")
     status, _health = get(f"{GATEWAY}/healthz")
     expect("gateway is up", status == 200, f"HTTP {status}")
@@ -282,74 +302,160 @@ def visibility(auth: dict[str, str]) -> None:
         expect("the summary quotes no value", "luca.bianchi" not in json.dumps(summary))
 
     print()
-    print("=== a user's own rule, the test box and the log ===")
+    print("=== a user's own policy and pipeline, the test box and the log ===")
     credentials = user_credentials()
     session = login(*credentials) if credentials is not None else None
     if session is None:
-        expect("a member session for the user's own rules", False, "no member credentials")
+        expect("a member session for the user's own policy", False, "no member credentials")
         return
+    mine = f"{GATEWAY}/api/me/privacy"
     status, _, body = request(
         session,
-        f"{GATEWAY}/api/me/redaction/rules",
+        f"{mine}/policies",
         json_body={
-            "kind": "pattern",
-            "name": "live_project",
-            "regex": "PRJ-[0-9]+",
-            "mode": "redact",
+            "name": "live-check mine",
+            "entries": [
+                {"kind": "pattern", "name": "live_project", "regex": "PRJ-[0-9]+", "mode": "redact"}
+            ],
         },
         method="POST",
     )
-    expect("a user pattern is accepted", status == 201, f"HTTP {status}: {body[:200]!r}")
+    expect("a user policy is accepted", status == 201, f"HTTP {status}: {body[:200]!r}")
+    policy_id = json.loads(body).get("id") if status == 201 else None
     status, _, body = request(
         session,
-        f"{GATEWAY}/api/me/redaction/rules",
-        json_body={"kind": "pattern", "name": "bad", "regex": "(?=x)x", "mode": "redact"},
+        f"{mine}/policies",
+        json_body={
+            "name": "live-check bad",
+            "entries": [{"kind": "pattern", "name": "bad", "regex": "(?=x)x", "mode": "redact"}],
+        },
         method="POST",
     )
-    expect("a pattern RE2 refuses is refused", status == 400, f"HTTP {status}")
+    expect("a pattern RE2 refuses is refused", status in (400, 422), f"HTTP {status}")
     status, _, body = request(
         session,
-        f"{GATEWAY}/api/me/redaction/rules",
-        json_body={"kind": "mode", "name": "PERSON", "mode": "off"},
+        f"{mine}/policies",
+        json_body={
+            "name": "live-check off",
+            "entries": [{"kind": "mode", "name": "PERSON", "mode": "off"}],
+        },
         method="POST",
     )
-    expect("a rule cannot be off", status == 400, f"HTTP {status}")
-    status, _, body = request(
-        session,
-        f"{GATEWAY}/api/me/redaction/test",
-        json_body={"text": "ticket PRJ-42"},
-        method="POST",
-    )
-    result = json.loads(body) if status == 200 else {}
-    expect(
-        "the test box finds the user's pattern and names the rule",
-        any(
-            span.get("entity_type") == "LIVE_PROJECT"
-            and (span.get("rule") or {}).get("owner") == "user"
-            for span in result.get("spans", [])
-        ),
-        body[:300] if isinstance(body, str) else str(body)[:300],
-    )
-    expect("the test box does not echo the text", "PRJ-42" not in str(body))
+    expect("a user policy cannot switch a type off", status in (400, 422), f"HTTP {status}")
+    if policy_id is None:
+        return
+    pipeline_id = None
+    try:
+        status, _, body = request(
+            session,
+            f"{mine}/pipelines",
+            json_body={
+                "kind": "chat",
+                "name": "live-check mine",
+                "rules": [],
+                "otherwise": {"level": "pass", "redact_with": policy_id},
+            },
+            method="POST",
+        )
+        expect("a user chat pipeline applies it", status == 201, f"HTTP {status}: {body[:200]!r}")
+        pipeline_id = json.loads(body).get("id") if status == 201 else None
+        status, _, body = request(
+            session,
+            f"{mine}/test",
+            json_body={"kind": "chat", "text": "ticket PRJ-42"},
+            method="POST",
+        )
+        result = json.loads(body) if status == 200 else {}
+        expect("the test box answers", status == 200, f"HTTP {status}: {body[:200]!r}")
+        expect(
+            "the test box says the user's policy redacts",
+            result.get("outcome") == "redact"
+            and "live-check mine" in json.dumps(result.get("policies")),
+            str(result)[:300],
+        )
+        expect("the test box does not echo the text", "PRJ-42" not in str(body))
 
-    import time
+        import time
 
-    time.sleep(12)  # the other workers learn on the resolver's ten-second poll
-    _status, _redacted = post(
-        f"{GATEWAY}/v1/chat/completions",
-        {"model": MODEL, "messages": [{"role": "user", "content": "see PRJ-42"}], "stream": False},
-        auth,
+        time.sleep(12)  # the other workers learn on the resolver's ten-second poll
+        post(
+            f"{GATEWAY}/v1/chat/completions",
+            {
+                "model": MODEL,
+                "messages": [{"role": "user", "content": "see PRJ-42"}],
+                "stream": False,
+            },
+            auth,
+        )
+        _, seen = get(f"{UPSTREAM}/_last_request")
+        expect(
+            "the user's pattern redacts their request",
+            "PRJ-42" not in json.dumps(seen),
+            str(seen)[:200],
+        )
+        status, _, body = request(session, f"{GATEWAY}/api/me/redaction/events", method="GET")
+        events = json.loads(body) if status == 200 else {}
+        expect("the log lists requests where something was hidden", events.get("total", 0) >= 1)
+        expect(
+            "the log holds no value", "luca.bianchi" not in str(body) and "PRJ-42" not in str(body)
+        )
+    finally:
+        if pipeline_id:
+            request(session, f"{mine}/pipelines/{pipeline_id}", method="DELETE")
+        request(session, f"{mine}/policies/{policy_id}", method="DELETE")
+
+
+ADMIN_POLICY = "live-check redaction"
+ADMIN_FORMATS = ("CREDIT_CARD", "IBAN_CODE", "EMAIL_ADDRESS", "IT_VAT_CODE", "PHONE_NUMBER")
+
+
+def install_admin_redaction(admin: Any, formats: tuple[str, ...] = ADMIN_FORMATS) -> bool:
+    """Write the administrator's policy and chat pipeline this check relies on.
+
+    The shipped default protects nothing (ADR 0113): a fresh stack redacts nothing
+    until an administrator writes a policy and a pipeline that applies it. So the
+    check writes its own, and :func:`remove_admin_redaction` takes it away again.
+    """
+    from test_providers_live import api
+
+    remove_admin_redaction(admin)
+    status, policy = api(
+        admin,
+        "/api/admin/privacy/policies",
+        json_body={
+            "name": ADMIN_POLICY,
+            "policy": {"formats": {name: {"mode": "anonymise_restore"} for name in formats}},
+            "shared_with_users": True,
+        },
+        method="POST",
     )
-    _, seen = get(f"{UPSTREAM}/_last_request")
-    expect(
-        "the user's pattern redacts their request",
-        "PRJ-42" not in json.dumps(seen),
-        str(seen)[:200],
+    expect("an administrator's policy saves", status == 201, f"HTTP {status}: {policy}")
+    if status != 201:
+        return False
+    status, pipe = api(
+        admin,
+        "/api/admin/privacy/pipelines",
+        json_body={
+            "kind": "chat",
+            "name": ADMIN_POLICY,
+            "rules": [],
+            "otherwise": {"level": "pass", "redact_with": policy["id"]},
+        },
+        method="POST",
     )
-    status, _, body = request(session, f"{GATEWAY}/api/me/redaction/events", method="GET")
-    events = json.loads(body) if status == 200 else {}
-    expect("the log lists requests where something was hidden", events.get("total", 0) >= 1)
-    expect("the log holds no value", "luca.bianchi" not in str(body) and "PRJ-42" not in str(body))
+    expect("a chat pipeline on everything applies it", status == 201, f"HTTP {status}: {pipe}")
+    return status == 201
+
+
+def remove_admin_redaction(admin: Any) -> None:
+    from test_providers_live import api
+
+    for item in api(admin, "/api/admin/privacy/pipelines?limit=200")[1].get("items", []):
+        if item["name"] == ADMIN_POLICY:
+            api(admin, f"/api/admin/privacy/pipelines/{item['id']}", method="DELETE")
+    for item in api(admin, "/api/admin/privacy/policies?limit=200")[1].get("items", []):
+        if item["name"] == ADMIN_POLICY:
+            api(admin, f"/api/admin/privacy/policies/{item['id']}", method="DELETE")
 
 
 def _placeholders(text: str) -> set[str]:
