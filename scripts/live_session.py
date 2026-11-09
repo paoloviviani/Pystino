@@ -46,7 +46,14 @@ from dataclasses import dataclass
 from typing import Any
 
 PUBLIC_ORIGIN = os.environ.get("PUBLIC_ORIGIN", "").rstrip("/")
-GATEWAY = (os.environ.get("GATEWAY_URL") or PUBLIC_ORIGIN or "http://localhost:8000").rstrip("/")
+GATEWAY = (os.environ.get("GATEWAY_URL") or PUBLIC_ORIGIN).rstrip("/")
+if not GATEWAY:
+    # No default host, on purpose: these checks write (policies, grants, passwords), and a
+    # guessed localhost:8000 may be another stack on the same machine, a live one.
+    raise SystemExit(
+        "set PUBLIC_ORIGIN (source the stack's deploy/.env) or GATEWAY_URL: the live "
+        "checks never guess which gateway to talk to"
+    )
 
 # A trial stack's public name usually has no DNS; resolve it to the proxy the
 # way a hosts-file entry would, so URLs, Host headers, SNI and cookie domains
@@ -249,6 +256,9 @@ def grant_model(admin: Any, member: Any, model: str = "smoke-model") -> bool:
     (`OIDC_DEFAULT_GROUP`, `users`), which grants no model by itself. A key minted
     by that member would get a 404 for `smoke-model`, so a check that calls it
     grants the model first. Idempotent; False when the model is not catalogued.
+
+    It grants to the user's *default group*, so never point ``PYSTINO_LIVE_USER`` at a
+    real person: every member of that group gains the model.
     """
     _, _, raw = request(member, f"{GATEWAY}/api/me")
     group = (json.loads(raw).get("default_billing_group") or {}).get("id")

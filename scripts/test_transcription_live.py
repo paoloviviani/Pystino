@@ -20,7 +20,7 @@ exactly), once per format, and prints each response and the spend the gateway
 recorded around it. Silence usually transcribes to an empty string or a stock
 phrase, which is fine: the point is the metering, not the words.
 
-    export GATEWAY_URL=https://gateway.example      # default http://127.0.0.1:8000
+    export GATEWAY_URL=https://gateway.example      # required
     export GATEWAY_KEY=...                           # an API key or a bearer token
     export TRANSCRIPTION_MODEL=whisper-large-v3      # a transcription model it may use
     # Optional: print the ledger's own aggregate for the model (audio_seconds,
@@ -41,7 +41,9 @@ import wave
 
 import httpx
 
-GATEWAY = os.environ.get("GATEWAY_URL", "http://127.0.0.1:8000").rstrip("/")
+GATEWAY = os.environ.get("GATEWAY_URL", "").rstrip("/")
+if not GATEWAY:
+    raise SystemExit("set GATEWAY_URL: no default gateway")
 
 
 def silence_wav(seconds: float, rate: int = 16000) -> bytes:
