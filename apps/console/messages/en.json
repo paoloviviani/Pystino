@@ -3199,8 +3199,6 @@
   "privacy.kind.chat_hint": "Chat and the other chat surfaces. Pipelines see who asked, where it goes and what the messages contain.",
   "privacy.delete.cancel": "Cancel",
   "privacy.delete.confirm": "Delete",
-  "privacy.row.turn_off": "Turn off",
-  "privacy.row.turn_on": "Turn on",
   "privacy.row.delete": "Delete",
   "privacy.row.duplicate": "Duplicate",
   "privacy.scope.me": "Only me",
@@ -3411,5 +3409,8 @@
   "privacy.test.owner_admin": "Admin",
   "privacy.test.observed_mark": "would fire, observe only",
   "privacy.test.file_placeholder": "referto_2026.pdf",
-  "privacy.policy.profile_later": "Detector profiles on policies take effect in a later release."
+  "privacy.policy.profile_later": "Detector profiles on policies take effect in a later release.",
+  "privacy.row.switch": "Pipeline {name} on or off",
+  "privacy.row.on": "On",
+  "privacy.row.off": "Off"
 }

@@ -190,7 +190,9 @@ describe("Pipelines", () => {
     renderPage();
     await screen.findByText("Remote embeddings");
 
-    await user.click(screen.getByRole("button", { name: "Turn off" }));
+    const toggle = screen.getByRole("switch", { name: "Pipeline Remote embeddings on or off" });
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    await user.click(toggle);
     await waitFor(() =>
       expect(seen.find((c) => c.method === "PATCH")?.body).toEqual({ enabled: false }),
     );

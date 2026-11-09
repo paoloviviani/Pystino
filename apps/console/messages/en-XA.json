@@ -3199,8 +3199,6 @@
   "privacy.kind.chat_hint": "[Ćȟáť áńď ťȟé óťȟéŕ ćȟáť śúŕƒáćéś. Þíþéľíńéś śéé ŵȟó áśķéď, ŵȟéŕé íť ǧóéś áńď ŵȟáť ťȟé ḿéśśáǧéś ćóńťáíń.]",
   "privacy.delete.cancel": "[Ćáńćéľ]",
   "privacy.delete.confirm": "[Ďéľéťé]",
-  "privacy.row.turn_off": "[Ťúŕń óƒƒ]",
-  "privacy.row.turn_on": "[Ťúŕń óń]",
   "privacy.row.delete": "[Ďéľéťé]",
   "privacy.row.duplicate": "[Ďúþľíćáťé]",
   "privacy.scope.me": "[Óńľý ḿé]",
@@ -3411,5 +3409,8 @@
   "privacy.test.owner_admin": "[Áďḿíń]",
   "privacy.test.observed_mark": "[ŵóúľď ƒíŕé, óƀśéŕǚé óńľý]",
   "privacy.test.file_placeholder": "[ŕéƒéŕťó_2026.þďƒ]",
-  "privacy.policy.profile_later": "[Ďéťéćťóŕ þŕóƒíľéś óń þóľíćíéś ťáķé éƒƒéćť íń á ľáťéŕ ŕéľéáśé.]"
+  "privacy.policy.profile_later": "[Ďéťéćťóŕ þŕóƒíľéś óń þóľíćíéś ťáķé éƒƒéćť íń á ľáťéŕ ŕéľéáśé.]",
+  "privacy.row.switch": "[Þíþéľíńé {name} óń óŕ óƒƒ]",
+  "privacy.row.on": "[Óń]",
+  "privacy.row.off": "[Óƒƒ]"
 }

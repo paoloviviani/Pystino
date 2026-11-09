@@ -1,4 +1,4 @@
-import { Badge, Button, Card } from "@llmp/ui";
+import { Badge, Button, Card, Switch, buttonClasses } from "@llmp/ui";
 import { Link } from "react-router";
 
 import { MUTED } from "../lib/layout";
@@ -44,7 +44,7 @@ export function PipelineCard({
             <strong>{pipeline.name}</strong>
             <Badge tone="neutral">{who}</Badge>
             <Badge tone="neutral">{target}</Badge>
-            {!pipeline.enabled && <Badge tone="neutral">{m["privacy.badge.off"]()}</Badge>}
+            {!pipeline.enabled && !onToggle && <Badge tone="neutral">{m["privacy.badge.off"]()}</Badge>}
             {warn && <Badge tone="warn">{m["privacy.badge.check"]()}</Badge>}
           </div>
           {editTo && (
@@ -70,14 +70,19 @@ export function PipelineCard({
                 </>
               )}
               {onToggle && (
-                <Button size="sm" onClick={() => onToggle(!pipeline.enabled)}>
-                  {pipeline.enabled ? m["privacy.row.turn_off"]() : m["privacy.row.turn_on"]()}
-                </Button>
+                <label className="mr-1 flex items-center gap-2 text-dense">
+                  <Switch
+                    size="sm"
+                    label={m["privacy.row.switch"]({ name: pipeline.name })}
+                    checked={pipeline.enabled}
+                    onChange={onToggle}
+                  />
+                  <span aria-hidden className={pipeline.enabled ? "" : MUTED}>
+                    {pipeline.enabled ? m["privacy.row.on"]() : m["privacy.row.off"]()}
+                  </span>
+                </label>
               )}
-              <Link
-                to={editTo}
-                className="inline-flex items-center rounded-lg border border-line px-3 py-1 text-dense no-underline"
-              >
+              <Link to={editTo} className={buttonClasses("secondary", "sm")}>
                 {m["privacy.row.edit"]()}
               </Link>
               {onDelete && (

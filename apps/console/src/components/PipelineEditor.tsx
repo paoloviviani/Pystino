@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Input, Notice, Spinner } from "@llmp/ui";
+import { Badge, Button, Card, Input, Notice, Spinner, Switch } from "@llmp/ui";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
@@ -776,10 +776,10 @@ export function PipelineEditorPage({ area }: { area: Area }) {
               )}
             </div>
           </div>
-          <label className="flex items-center gap-2 text-body">
-            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-            {m["privacy.edit.enabled"]()}
-          </label>
+          <div className="flex items-center gap-2 text-body">
+            <Switch label={m["privacy.edit.enabled"]()} checked={enabled} onChange={setEnabled} />
+            <span aria-hidden>{m["privacy.edit.enabled"]()}</span>
+          </div>
         </div>
       </Card>
 
@@ -871,14 +871,15 @@ export function PipelineEditorPage({ area }: { area: Area }) {
                       {m["privacy.edit.observe"]()}
                       <Tip text={m["privacy.edit.observe_tip"]()} />
                     </label>
-                    <label className="flex items-center gap-2 text-body">
-                      <input
-                        type="checkbox"
+                    <div className="flex items-center gap-2 text-body">
+                      <Switch
+                        size="sm"
+                        label={m["privacy.edit.rule_enabled"]()}
                         checked={rule.enabled}
-                        onChange={(e) => patchRule(rule.uid, { enabled: e.target.checked })}
+                        onChange={(next) => patchRule(rule.uid, { enabled: next })}
                       />
-                      {m["privacy.edit.rule_enabled"]()}
-                    </label>
+                      <span aria-hidden>{m["privacy.edit.rule_enabled"]()}</span>
+                    </div>
                   </div>
                 )}
               </li>
