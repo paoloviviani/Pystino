@@ -72,6 +72,11 @@ class MergeRuleKind(enum.StrEnum):
     #: names this person -- the same column also carries group, provider,
     #: model and api-key scoped rows a merge has no opinion about.
     SCOPE_ID_USER = "scope_id_user"
+    #: `privacy_pipelines.who`: an administrator's pipeline that names this
+    #: person among its users (ADR 0113). Re-pointed at the target, so the merged
+    #: person stays inside the scope the source was in and a merge cannot lift a
+    #: pipeline off them.
+    JSON_WHO_USERS = "json_who_users"
     #: `user_identities`: see `_classify_identities` and `_apply_identities`.
     #: The primary `(issuer, subject)` on `users` itself moves or drops by
     #: the same rule, which is why this is its own category rather than
@@ -109,12 +114,13 @@ MERGE_RULES: tuple[MergeRule, ...] = (
         MergeRuleKind.SCOPE_ID_USER,
         duplicate_key_columns=("metric", "window_seconds", "period"),
     ),
-    MergeRule("redaction_rules", "scope_id", MergeRuleKind.SCOPE_ID_USER),
+    MergeRule("privacy_pipelines", "who", MergeRuleKind.JSON_WHO_USERS),
     MergeRule("email_settings", "updated_by", MergeRuleKind.REASSIGN),
     MergeRule("identity_providers", "created_by", MergeRuleKind.REASSIGN),
     MergeRule("oidc_config", "created_by", MergeRuleKind.REASSIGN),
     MergeRule("redaction_config", "created_by", MergeRuleKind.REASSIGN),
-    MergeRule("redaction_rules", "created_by", MergeRuleKind.REASSIGN),
+    MergeRule("redaction_policies", "created_by", MergeRuleKind.REASSIGN),
+    MergeRule("privacy_pipelines", "created_by", MergeRuleKind.REASSIGN),
     MergeRule("directory_sync_runs", "started_by", MergeRuleKind.REASSIGN),
     MergeRule("quota_resets", "created_by", MergeRuleKind.REASSIGN),
     # A per-user reset is dropped, not moved: moving it would hand the surviving
@@ -140,11 +146,12 @@ MERGE_RULES: tuple[MergeRule, ...] = (
     # RESTRICT. Prices and anything hanging off a model go with it by ON DELETE.
     MergeRule("models", "owner_id", MergeRuleKind.DELETE),
     MergeRule("providers", "owner_id", MergeRuleKind.DELETE),
-    # A user's own redaction rules (ADR 0112): the surviving account keeps its
-    # own, the merged-away account's are dropped. Moving them would have to
-    # settle same-name collisions, and a rule only ever adds protection, so the
-    # cost of dropping is the person re-adding one, never a leak.
-    MergeRule("user_redaction_rules", "user_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE),
+    # A user's own policies and pipelines (ADR 0112, 0113): the surviving account
+    # keeps its own, the merged-away account's are dropped. Moving them would
+    # have to settle same-name collisions, and they only ever add protection, so
+    # the cost of dropping is the person re-adding one, never a leak.
+    MergeRule("user_policies", "user_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE),
+    MergeRule("privacy_pipelines", "owner_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE),
     MergeRule("quota_notification_settings", "user_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE),
     MergeRule("quota_notification_state", "user_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE),
 )
@@ -349,6 +356,30 @@ async def _count(session: AsyncSession, rule: MergeRule, source_id: uuid.UUID) -
     return (await session.execute(stmt)).scalar_one()
 
 
+async def _pipelines_naming(session: AsyncSession, user_id: uuid.UUID) -> list[Any]:
+    """Administrator pipelines whose who names this person among its users."""
+    table = Base.metadata.tables["privacy_pipelines"]
+    rows = (await session.execute(select(table).where(table.c.owner_id.is_(None)))).all()
+    wanted = str(user_id)
+    return [
+        r
+        for r in rows
+        if (r.who or {}).get("mode") == "users" and wanted in [str(i) for i in r.who.get("ids", [])]
+    ]
+
+
+async def _repoint_pipeline_users(
+    session: AsyncSession, source_id: uuid.UUID, target_id: uuid.UUID
+) -> int:
+    table = Base.metadata.tables["privacy_pipelines"]
+    rows = await _pipelines_naming(session, source_id)
+    for row in rows:
+        ids = [str(target_id) if str(i) == str(source_id) else str(i) for i in row.who["ids"]]
+        who = {"mode": "users", "ids": list(dict.fromkeys(ids))}
+        await session.execute(update(table).where(table.c.id == row.id).values(who=who))
+    return len(rows)
+
+
 async def _scope_id_user_partition(
     session: AsyncSession, rule: MergeRule, source_id: uuid.UUID, target_id: uuid.UUID
 ) -> tuple[list[uuid.UUID], list[uuid.UUID]]:
@@ -440,6 +471,11 @@ async def compute_merge_preview(
             )
             counts[rule.table] = counts.get(rule.table, 0) + len(rule_moving)
             duplicate_rules_dropped += len(rule_dropping)
+            continue
+        if rule.kind is MergeRuleKind.JSON_WHO_USERS:
+            named = len(await _pipelines_naming(session, source.id))
+            if named:
+                counts["privacy_pipelines_scope"] = named
             continue
         counts[rule.table] = counts.get(rule.table, 0) + await _count(session, rule, source.id)
     counts["user_identities"] = len(identities)
@@ -586,6 +622,10 @@ async def merge_users(
             moved, rule_dropped = await _apply_scope_id_user(session, rule, source.id, target.id)
             counts[rule.table] = counts.get(rule.table, 0) + moved
             duplicate_rules_dropped += rule_dropped
+        elif rule.kind is MergeRuleKind.JSON_WHO_USERS:
+            moved_scope = await _repoint_pipeline_users(session, source.id, target.id)
+            if moved_scope:
+                counts["privacy_pipelines_scope"] = moved_scope
         else:
             counts[rule.table] = counts.get(rule.table, 0) + await _apply_generic(
                 session, rule, source.id, target.id

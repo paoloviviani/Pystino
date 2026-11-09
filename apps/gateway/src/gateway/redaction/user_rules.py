@@ -30,9 +30,11 @@ from typing import Literal
 
 from gateway.config import (
     Contributor,
+    CustomEntity,
     CustomPattern,
     EntityMode,
     EntityPolicy,
+    KeywordList,
     PlaceholderStyle,
     RedactionPolicy,
 )
@@ -88,28 +90,72 @@ def _named_mode(policy: RedactionPolicy, name: str) -> tuple[EntityMode, Placeho
     An entity entry or a pattern of that name: a pattern with a fresh label
     collides with nothing and keeps the mode it was written with.
     """
-    entry = policy.entities.get(name)
-    if entry is not None:
-        return entry.mode, entry.placeholder
-    for pattern in policy.patterns:
-        if pattern.name == name:
-            return pattern.mode, pattern.placeholder
-    return None
+    found = policy._named(name)
+    return (found[0], found[1]) if found is not None else None
 
 
-def fold(base: RedactionPolicy, rules: Sequence[UserRule]) -> RedactionPolicy:
-    """*base* with the user's rules applied. Never weaker than *base*."""
+def fold(
+    base: RedactionPolicy,
+    rules: Sequence[UserRule],
+    *,
+    keywords: Sequence[KeywordList] = (),
+    custom_entities: Sequence[CustomEntity] = (),
+) -> RedactionPolicy:
+    """*base* with the user's rules applied. Never weaker than *base*.
+
+    ``keywords`` and ``custom_entities`` are what an administrator policy a user's
+    pipeline applies adds beyond modes and regexes (a user's own entries have neither):
+    more words to find and more types to ask for can only tighten, and a name that is
+    already there keeps the stricter mode.
+    """
     entities = dict(base.entities)
     patterns = list(base.patterns)
+    held_keywords = list(base.keywords)
+    for item in keywords:
+        if item.mode is EntityMode.OFF:
+            continue
+        same = next(
+            (
+                i
+                for i, k in enumerate(held_keywords)
+                if (k.name, k.words, k.case_sensitive)
+                == (item.name, item.words, item.case_sensitive)
+            ),
+            None,
+        )
+        if same is None:
+            held_keywords.append(item)
+        elif rank(item.mode) > rank(held_keywords[same].mode):
+            held_keywords[same] = item
+    held_custom = list(base.custom_entities)
+    for custom in custom_entities:
+        if custom.mode is EntityMode.OFF:
+            continue
+        same = next(
+            (
+                i
+                for i, c in enumerate(held_custom)
+                if (c.name, c.label) == (custom.name, custom.label)
+            ),
+            None,
+        )
+        if same is None:
+            held_custom.append(custom)
+        elif rank(custom.mode) > rank(held_custom[same].mode):
+            held_custom[same] = custom
     seen = {(pattern.name, pattern.regex) for pattern in patterns}
 
     def current() -> RedactionPolicy:
         # `model_construct`: the pieces are already validated, and this runs a
         # few times per fold, which is memoised per user.
         return RedactionPolicy.model_construct(
+            engine=base.engine,
             default_mode=base.default_mode,
+            formats=base.formats,
             entities=entities,
+            custom_entities=held_custom,
             patterns=patterns,
+            keywords=held_keywords,
             allow_list=base.allow_list,
         )
 
@@ -123,7 +169,7 @@ def fold(base: RedactionPolicy, rules: Sequence[UserRule]) -> RedactionPolicy:
                 # The label is already in use (an administrator's pattern, or a
                 # type they named): mode_for reads the entity entry first, so
                 # the user's stricter mode has to be written there to apply.
-                existing = entities.get(rule.name)
+                existing = entities.get(rule.name) or base.formats.get(rule.name)
                 entities[rule.name] = EntityPolicy(
                     mode=rule.mode,
                     placeholder=collides[1],
@@ -136,7 +182,7 @@ def fold(base: RedactionPolicy, rules: Sequence[UserRule]) -> RedactionPolicy:
         else:
             policy = current()
             if rank(rule.mode) > rank(policy.mode_for(rule.name)):
-                existing = entities.get(rule.name)
+                existing = entities.get(rule.name) or base.formats.get(rule.name)
                 entities[rule.name] = EntityPolicy(
                     mode=rule.mode,
                     placeholder=policy.placeholder_style_for(rule.name),

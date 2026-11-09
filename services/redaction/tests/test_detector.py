@@ -350,7 +350,7 @@ class TestHttpSurface:
         and the reason engines are swappable."""
         body = (await client.post("/detect", json={"texts": ["Ask Mario Rossi."]})).json()
         span = body["findings"][0]["spans"][0]
-        assert set(span) == {"start", "end", "entity_type", "score"}
+        assert set(span) == {"start", "end", "entity_type", "score", "engine"}
 
     async def test_an_empty_batch_is_fine(self, client: Any) -> None:
         response = await client.post("/detect", json={"texts": []})

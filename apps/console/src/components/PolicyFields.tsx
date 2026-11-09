@@ -1,22 +1,31 @@
-import { Badge, Button, Card, Dialog, Input, Select } from "@llmp/ui";
+import { Badge, Button, Card, Dialog, Input, Notice, Select } from "@llmp/ui";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { MODES, entityLabel, entitySource, modeRank } from "../lib/entities";
+import { MODES, entityLabel, modeRank } from "../lib/entities";
 import { m } from "../paraglide/messages.js";
 import { REDACTION_PATTERN_TEMPLATES } from "../lib/redactionTemplates";
 import type {
+  CustomEntity,
   EntityMode,
   EntityPolicy,
+  KeywordList,
   PlaceholderStyle,
+  PrivacyEngine,
+  PrivacyEngines,
   RedactionPolicy,
 } from "../lib/types";
 import { CODE, FIELD_LABEL, FORM, MUTED } from "../lib/layout";
+import { Tip } from "./Tip";
 
 export interface PolicyFieldsProps {
   policy: RedactionPolicy;
   onChange: (policy: RedactionPolicy) => void;
-  /** Types the detector reports. Whatever the policy already names is added. */
-  entityTypes?: string[];
+  /**
+   * What the redaction service reports: the pattern formats, and the NER engines
+   * with the types each exposes. Undefined while it loads; the editor then shows
+   * only what the policy already names.
+   */
+  engines?: PrivacyEngines | null;
   /** The deployment's threshold, shown as each row's placeholder. */
   scoreThreshold?: number | null;
   /** Hidden on a personal policy, where an allow-list is refused by the API. */
@@ -31,81 +40,57 @@ export interface PolicyFieldsProps {
   allowListIgnored?: boolean;
 }
 
+/** The comma-separated words of a keyword list, as the list they stand for. */
+export function parseWords(text: string): string[] {
+  return text
+    .split(",")
+    .map((word) => word.trim())
+    .filter(Boolean);
+}
+
 /**
- * The policy document as a form: default mode, per-type modes, patterns,
- * allow-list.
+ * The engine that reads this policy: the one it names, else the deployment's
+ * default. Undefined when the service did not say.
+ */
+export function chosenEngine(
+  policy: RedactionPolicy,
+  engines: PrivacyEngines | null | undefined,
+): PrivacyEngine | undefined {
+  if (!engines) return undefined;
+  return policy.engine
+    ? engines.engines.find((engine) => engine.name === policy.engine)
+    : engines.engines.find((engine) => engine.default);
+}
+
+/**
+ * The policy document as a form, in the two groups that never mix.
  *
- * One component for three callers — the deployment policy, a scoped rule, and a
- * person's own policy — because a policy means the same thing in all three and
- * three editors would drift apart on the detail that matters most: which mode
- * is stronger than which.
+ * Patterns (fast, deterministic): the service's built-in formats, regular
+ * expressions an administrator wrote, and keyword lists. Entities (NER,
+ * probabilistic): the types the policy's engine reads, and, for an engine that
+ * takes labels in plain words, custom types.
  *
- * The entity rows come from the detector rather than from a list here. Entity
- * labels belong to whatever engine is installed (ADR 0026), so hard-coding them
- * would mean a console that silently omits a recogniser the engine gained last
- * week — the same failure this feature exists to fix, one level up.
+ * One component for the deployment's policies and a scoped rule because a policy
+ * means the same thing in both and two editors would drift apart on the detail
+ * that matters most: which mode is stronger than which.
+ *
+ * The lists come from the service rather than from here. Types belong to
+ * whatever engine is installed (ADR 0026), so hard-coding them would mean a
+ * console that silently omits a recogniser the engine gained last week.
  */
 export function PolicyFields({
   policy,
   onChange,
-  entityTypes = [],
+  engines = null,
   scoreThreshold = null,
   allowList = true,
   floor = null,
   allowListIgnored = false,
 }: PolicyFieldsProps) {
-  // Every type the detector holds, plus anything the policy already names — a
-  // rule about a type this engine does not report is still a rule, and dropping
-  // it from the screen would silently delete it on the next save.
-  const known = [...new Set([...entityTypes, ...Object.keys(policy.entities)])];
-  // The rows are the types this policy says something about. The rest follow
-  // the default, which is what an absent entry means to the gateway too, so
-  // "remove the row" and "reset to the default" are the same act.
-  const named = Object.keys(policy.entities);
-  const unnamed = known
-    .filter((entity) => !(entity in policy.entities))
-    .sort((a, b) => entityLabel(a).localeCompare(entityLabel(b)));
-  const patternNames = policy.patterns.map((pattern) => pattern.name);
   const [templatesOpen, setTemplatesOpen] = useState(false);
-
-  const floorFor = (entity: string): EntityMode | null =>
-    floor === null ? null : (floor.entities[entity]?.mode ?? floor.default_mode);
-
-  const setEntity = (entity: string, patch: Partial<EntityPolicy>) =>
-    onChange({
-      ...policy,
-      entities: {
-        ...policy.entities,
-        [entity]: {
-          mode: patch.mode ?? policy.entities[entity]?.mode ?? policy.default_mode,
-          threshold:
-            patch.threshold !== undefined
-              ? patch.threshold
-              : (policy.entities[entity]?.threshold ?? null),
-          // Only written once somebody has chosen: an absent field means
-          // tagged to the gateway, and rules saved before the option existed
-          // should round-trip unchanged.
-          ...((patch.placeholder ?? policy.entities[entity]?.placeholder) !== undefined && {
-            placeholder: patch.placeholder ?? policy.entities[entity]?.placeholder,
-          }),
-        },
-      },
-    });
-
-  const removeEntity = (entity: string) => {
-    const { [entity]: _gone, ...entities } = policy.entities;
-    onChange({ ...policy, entities });
-  };
-
-  /**
-   * A new row starts stricter than the default, because a row that repeated the
-   * default would change nothing and the reason to add one is to treat the type
-   * differently. Redact, or Block when the default is already that strong.
-   */
-  const addEntity = (entity: string) =>
-    setEntity(entity, {
-      mode: modeRank(policy.default_mode) < modeRank("redact") ? "redact" : "block",
-    });
+  const engine = chosenEngine(policy, engines);
+  const floorFor = (group: "formats" | "entities", name: string): EntityMode | null =>
+    floor === null ? null : (floor[group][name]?.mode ?? floor.default_mode);
 
   const setPattern = (index: number, patch: Partial<RedactionPolicy["patterns"][number]>) =>
     onChange({
@@ -117,12 +102,12 @@ export function PolicyFields({
 
   return (
     <div className="flex flex-col gap-5">
-      <Card title={m["policy_fields.hide_card"]()} description={m["policy_fields.hide_hint"]()}>
+      <Card title={m["policy_fields.default_card"]()}>
         <div className={FORM}>
           {/* Applies to a recogniser the engine gains in a later release, which
               is why the safer direction is to protect by default rather than to
               let a new type through unnoticed. */}
-          <div className="flex flex-col gap-1">
+          <div className="flex items-end gap-2">
             <ModeSegments
               name="default-mode"
               legend={m["policy_fields.default_mode"]()}
@@ -131,268 +116,218 @@ export function PolicyFields({
               floor={floor?.default_mode ?? null}
               onChange={(mode) => onChange({ ...policy, default_mode: mode })}
             />
-            <p className="m-0 text-small text-ink-faint">
-              {m["policy_fields.default_mode_hint"]()}
-            </p>
+            <Tip text={m["policy_fields.default_mode_hint"]()} />
           </div>
-
-          {known.length === 0 ? (
-            <p className="m-0 text-body text-ink-muted">{m["policy_fields.no_entity_types"]()}</p>
-          ) : (
-            <section className="flex flex-col gap-3 border-t border-line-quiet pt-4">
-              <h3 className="m-0 text-body font-semibold">{m["policy_fields.types_heading"]()}</h3>
-
-              {named.length === 0 ? (
-                <p className="m-0 text-body text-ink-muted">{m["policy_fields.types_empty"]()}</p>
-              ) : (
-                <ul className="m-0 flex list-none flex-col p-0">
-                  {/* Column titles only where the columns are. On a phone each
-                      row stacks, and a header over a stack names nothing. */}
-                  <li
-                    aria-hidden="true"
-                    className={`${TYPE_ROW} border-b border-line pb-1 text-small font-medium text-ink-faint max-[40rem]:hidden`}
-                  >
-                    <span>{m["policy_fields.col_type"]()}</span>
-                    <span>{m["policy_fields.col_action"]()}</span>
-                    <span>{m["policy_fields.col_confidence"]()}</span>
-                    <span />
-                  </li>
-                  {named.map((entity) => {
-                    const name = entityLabel(entity);
-                    const source = entitySource(entity, patternNames);
-                    // Nothing here knows this label, so `entityLabel` handed it
-                    // back unchanged. Printing it twice would read as a
-                    // rendering fault.
-                    const known_ = name !== entity;
-                    return (
-                      <li
-                        key={entity}
-                        className={`${TYPE_ROW} border-b border-line-quiet py-2 max-[40rem]:py-3`}
-                      >
-                        <div className="flex min-w-0 flex-col gap-0.5" title={entity}>
-                          <span className="text-body font-medium">{known_ ? name : entity}</span>
-                          <span className="flex flex-wrap items-center gap-1.5 text-small text-ink-faint">
-                            {known_ && <code className={CODE}>{entity}</code>}
-                            {source && (
-                              <Badge>
-                                {source === "pattern"
-                                  ? m["policy_fields.source.pattern"]()
-                                  : m["policy_fields.source.model"]()}
-                              </Badge>
-                            )}
-                          </span>
-                        </div>
-                        <ModeSegments
-                          name={`mode-${entity}`}
-                          legend={m["policy_fields.mode_group"]({
-                            name: known_ ? `${name} (${entity})` : entity,
-                          })}
-                          value={policy.entities[entity]?.mode ?? policy.default_mode}
-                          floor={floorFor(entity)}
-                          onChange={(mode) => setEntity(entity, { mode })}
-                        />
-                        <Input
-                          label={m["policy_fields.confidence_for"]({ name })}
-                          hideLabel
-                          type="number"
-                          min="0"
-                          max="1"
-                          step="0.05"
-                          placeholder={
-                            scoreThreshold === null
-                              ? m["policy_fields.confidence_default"]()
-                              : String(scoreThreshold)
-                          }
-                          title={
-                            scoreThreshold === null
-                              ? undefined
-                              : m["policy_fields.confidence_default_value"]({
-                                  value: scoreThreshold,
-                                })
-                          }
-                          value={policy.entities[entity]?.threshold ?? ""}
-                          onChange={(event) =>
-                            setEntity(entity, {
-                              threshold:
-                                event.target.value === "" ? null : Number(event.target.value),
-                            })
-                          }
-                        />
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label={m["policy_fields.remove_type"]({ name })}
-                          title={m["policy_fields.remove_type"]({ name })}
-                          onClick={() => removeEntity(entity)}
-                        >
-                          {m["policy_fields.remove_type_short"]()}
-                        </Button>
-                        {/* Only the two modes that write a derived token have a
-                            form to choose; redact writes the bare label. */}
-                        {(policy.entities[entity]?.mode ?? policy.default_mode) !== "off" &&
-                          (policy.entities[entity]?.mode ?? policy.default_mode) !== "block" &&
-                          (policy.entities[entity]?.mode ?? policy.default_mode) !== "redact" && (
-                            <div className="col-span-full max-w-md">
-                              <PlaceholderSelect
-                                label={m["policy_fields.placeholder_for"]({ name })}
-                                value={policy.entities[entity]?.placeholder ?? "tagged"}
-                                onChange={(placeholder) => setEntity(entity, { placeholder })}
-                              />
-                            </div>
-                          )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-
-              <div className="max-w-sm">
-                <Select
-                  label={m["policy_fields.add_type"]()}
-                  value=""
-                  disabled={unnamed.length === 0}
-                  onChange={(event) => {
-                    if (event.target.value !== "") addEntity(event.target.value);
-                  }}
-                >
-                  <option value="">
-                    {unnamed.length === 0
-                      ? m["policy_fields.add_type_none"]()
-                      : m["policy_fields.add_type_choose"]()}
-                  </option>
-                  {unnamed.map((entity) => (
-                    <option key={entity} value={entity}>
-                      {entityLabel(entity) === entity
-                        ? entity
-                        : `${entityLabel(entity)} (${entity})`}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-
-              <details className="text-body text-ink-muted">
-                <summary className="cursor-pointer">{m["policy_fields.actions_key"]()}</summary>
-                <ModeKey />
-              </details>
-              {/* Measured, and the opposite of what a list of switches implies:
-                  the model pass runs over the whole prompt whichever types are
-                  asked for. See docs/performance.md. */}
-              <p className="m-0 text-small text-ink-faint">{m["policy_fields.detection_note"]()}</p>
-            </section>
-          )}
+          <details className="text-body text-ink-muted">
+            <summary className="cursor-pointer">{m["policy_fields.actions_key"]()}</summary>
+            <ModeKey />
+          </details>
         </div>
       </Card>
 
-      {/* No patterns is a card that is only its heading and its two buttons: the
-          section is "collapsed" until there is something in it, and the
-          buttons that fill it never move. */}
+      {/* Group one: found by a pattern, so exact and fast, and the same in any
+          language. */}
       <Card
-        title={m["policy_fields.patterns_card"]()}
-        description={m["policy_fields.patterns_hint"]()}
-        actions={
-          <>
-            <Button
-              onClick={() =>
-                onChange({
-                  ...policy,
-                  // Redact rather than the gentlest mode: a pattern somebody
-                  // wrote by hand is a value they went out of their way to name.
-                  patterns: [...policy.patterns, { name: "", regex: "", mode: "redact" }],
-                })
-              }
-            >
-              {m["policy_fields.pattern_add"]()}
-            </Button>
-            <Button variant="secondary" onClick={() => setTemplatesOpen(true)}>
-              {m["policy_fields.pattern_from_template"]()}
-            </Button>
-          </>
+        title={
+          <span className="flex items-center gap-2">
+            {m["policy_fields.patterns_group"]()}
+            <Tip text={m["policy_fields.patterns_group_tip"]()} />
+          </span>
         }
       >
-        {policy.patterns.length > 0 && (
-          // A fieldset because the legend is what names the group for a screen
-          // reader: three inputs called Name, Regex and Mode mean nothing
-          // without "Custom patterns" attached to them. `min-w-0` because a
-          // fieldset defaults to min-content, which breaks the grid.
-          <fieldset className="m-0 grid min-w-0 gap-3 border-0 p-0">
-            <legend className="sr-only">{m["policy_fields.patterns_legend"]()}</legend>
-            {policy.patterns.map((pattern, index) => (
-              // Keyed by position: a name is edited character by character, so
-              // keying on it would remount the field being typed into and lose
-              // focus on every keystroke.
-              <div
-                key={index}
-                className="grid grid-cols-[minmax(8rem,1fr)_minmax(10rem,2fr)_minmax(9rem,1fr)_auto] items-end gap-3 border-b border-line-quiet pb-3 max-[56rem]:grid-cols-1"
+        <div className="flex flex-col gap-5">
+          <TypeTable
+            heading={m["policy_fields.formats_heading"]()}
+            tip={m["policy_fields.formats_tip"]()}
+            group="formats"
+            known={engines?.pattern_entities ?? []}
+            entries={policy.formats}
+            defaultMode={policy.default_mode}
+            floorFor={(name) => floorFor("formats", name)}
+            scoreThreshold={null}
+            onChange={(formats) => onChange({ ...policy, formats })}
+          />
+
+          <section className="flex flex-col gap-3 border-t border-line-quiet pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="m-0 flex items-center gap-2 text-body font-semibold">
+                {m["policy_fields.patterns_card"]()}
+                <Tip text={m["policy_fields.patterns_hint"]()} />
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  onClick={() =>
+                    onChange({
+                      ...policy,
+                      // Redact rather than the gentlest mode: a pattern somebody
+                      // wrote by hand is a value they went out of their way to name.
+                      patterns: [...policy.patterns, { name: "", regex: "", mode: "redact" }],
+                    })
+                  }
+                >
+                  {m["policy_fields.pattern_add"]()}
+                </Button>
+                <Button variant="secondary" onClick={() => setTemplatesOpen(true)}>
+                  {m["policy_fields.pattern_from_template"]()}
+                </Button>
+              </div>
+            </div>
+            {policy.patterns.length > 0 && (
+              // A fieldset because the legend is what names the group for a screen
+              // reader. `min-w-0` because a fieldset defaults to min-content,
+              // which breaks the grid.
+              <fieldset className="m-0 grid min-w-0 gap-3 border-0 p-0">
+                <legend className="sr-only">{m["policy_fields.patterns_legend"]()}</legend>
+                {policy.patterns.map((pattern, index) => (
+                  // Keyed by position: a name is edited character by character, so
+                  // keying on it would remount the field being typed into and lose
+                  // focus on every keystroke.
+                  <div
+                    key={index}
+                    className="grid grid-cols-[minmax(8rem,1fr)_minmax(10rem,2fr)_minmax(9rem,1fr)_auto] items-end gap-3 border-b border-line-quiet pb-3 max-[56rem]:grid-cols-1"
+                  >
+                    <Input
+                      label={m["policy_fields.pattern_name_label"]({ number: index + 1 })}
+                      value={pattern.name}
+                      placeholder={m["policy_fields.pattern_name_placeholder"]()}
+                      onChange={(event) => setPattern(index, { name: event.target.value })}
+                    />
+                    <Input
+                      label={m["policy_fields.pattern_regex_label"]({ number: index + 1 })}
+                      className={CODE}
+                      value={pattern.regex}
+                      placeholder={m["policy_fields.pattern_regex_placeholder"]()}
+                      onChange={(event) => setPattern(index, { regex: event.target.value })}
+                    />
+                    <ModeSelect
+                      label={m["policy_fields.pattern_mode_label"]({ number: index + 1 })}
+                      value={pattern.mode}
+                      floor={null}
+                      onChange={(mode) => setPattern(index, { mode })}
+                    />
+                    <div>
+                      <Button
+                        variant="ghost"
+                        onClick={() =>
+                          onChange({
+                            ...policy,
+                            patterns: policy.patterns.filter((_, at) => at !== index),
+                          })
+                        }
+                      >
+                        {m["policy_fields.pattern_remove"]()}
+                      </Button>
+                    </div>
+                    {(pattern.mode === "anonymise_restore" || pattern.mode === "anonymise") && (
+                      <div className="col-span-full max-w-md">
+                        <PlaceholderSelect
+                          label={m["policy_fields.pattern_placeholder_label"]({
+                            number: index + 1,
+                          })}
+                          value={pattern.placeholder ?? "tagged"}
+                          onChange={(placeholder) => setPattern(index, { placeholder })}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <p className="m-0 text-small text-ink-faint">{m["policy_fields.pattern_note"]()}</p>
+              </fieldset>
+            )}
+          </section>
+
+          <section className="flex flex-col gap-3 border-t border-line-quiet pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="m-0 flex items-center gap-2 text-body font-semibold">
+                {m["policy_fields.keywords_heading"]()}
+                <Tip text={m["policy_fields.keywords_tip"]()} />
+              </h3>
+              <Button
+                onClick={() =>
+                  onChange({
+                    ...policy,
+                    keywords: [
+                      ...policy.keywords,
+                      { name: "", words: [], case_sensitive: false, mode: "redact" },
+                    ],
+                  })
+                }
               >
-                <Input
-                  label={m["policy_fields.pattern_name_label"]({
-                    number: index + 1,
-                  })}
-                  value={pattern.name}
-                  placeholder={m["policy_fields.pattern_name_placeholder"]()}
-                  onChange={(event) => setPattern(index, { name: event.target.value })}
-                />
-                <Input
-                  label={m["policy_fields.pattern_regex_label"]({
-                    number: index + 1,
-                  })}
-                  className={CODE}
-                  value={pattern.regex}
-                  placeholder={m["policy_fields.pattern_regex_placeholder"]()}
-                  onChange={(event) => setPattern(index, { regex: event.target.value })}
-                />
-                <ModeSelect
-                  label={m["policy_fields.pattern_mode_label"]({
-                    number: index + 1,
-                  })}
-                  value={pattern.mode}
-                  floor={null}
-                  onChange={(mode) => setPattern(index, { mode })}
-                />
-                <div>
-                  <Button
-                    variant="ghost"
-                    onClick={() =>
+                {m["policy_fields.keyword_add"]()}
+              </Button>
+            </div>
+            {policy.keywords.length > 0 && (
+              <fieldset className="m-0 grid min-w-0 gap-3 border-0 p-0">
+                <legend className="sr-only">{m["policy_fields.keywords_legend"]()}</legend>
+                {policy.keywords.map((keyword, index) => (
+                  <KeywordRow
+                    key={index}
+                    number={index + 1}
+                    keyword={keyword}
+                    onChange={(patch) =>
                       onChange({
                         ...policy,
-                        patterns: policy.patterns.filter((_, at) => at !== index),
+                        keywords: policy.keywords.map((k, at) =>
+                          at === index ? { ...k, ...patch } : k,
+                        ),
                       })
                     }
-                  >
-                    {m["policy_fields.pattern_remove"]()}
-                  </Button>
-                </div>
-                {(pattern.mode === "anonymise_restore" || pattern.mode === "anonymise") && (
-                  <div className="col-span-full max-w-md">
-                    <PlaceholderSelect
-                      label={m["policy_fields.pattern_placeholder_label"]({
-                        number: index + 1,
-                      })}
-                      value={pattern.placeholder ?? "tagged"}
-                      onChange={(placeholder) => setPattern(index, { placeholder })}
-                    />
-                  </div>
-                )}
-              </div>
-            ))}
-            <p className="m-0 text-small text-ink-faint">{m["policy_fields.pattern_note"]()}</p>
-          </fieldset>
-        )}
+                    onRemove={() =>
+                      onChange({
+                        ...policy,
+                        keywords: policy.keywords.filter((_, at) => at !== index),
+                      })
+                    }
+                  />
+                ))}
+              </fieldset>
+            )}
+          </section>
+        </div>
       </Card>
-      {/* Measured, not assumed: eight credential shapes were put through this
-          deployment's detector and none was found. Two produced *wrong* hits —
-          AWS_SECRET_ACCESS_KEY as a LOCATION, the word "token" as a PERSON.
-
-          Those shapes are therefore offered as templates rather than seeded
-          into every new rule. An empty pattern list is a deliberate choice; a
-          seeded list would make it impossible to tell that choice from an
-          omission. */}
       <PatternTemplatesDialog
         open={templatesOpen}
         policy={policy}
         onClose={() => setTemplatesOpen(false)}
         onChange={onChange}
       />
+
+      {/* Group two: read by a model, so probabilistic, and it depends on the
+          language. Which model is the policy's own choice. */}
+      <Card
+        title={
+          <span className="flex items-center gap-2">
+            {m["policy_fields.entities_group"]()}
+            <Tip text={m["policy_fields.entities_group_tip"]()} />
+          </span>
+        }
+      >
+        <div className="flex flex-col gap-5">
+          <EnginePicker
+            value={policy.engine}
+            engines={engines}
+            onChange={(next) => onChange({ ...policy, engine: next })}
+          />
+          <TypeTable
+            heading={m["policy_fields.types_heading"]()}
+            tip={m["policy_fields.detection_note"]()}
+            group="entities"
+            known={engine?.entities ?? []}
+            entries={policy.entities}
+            defaultMode={policy.default_mode}
+            floorFor={(name) => floorFor("entities", name)}
+            scoreThreshold={scoreThreshold}
+            onChange={(entities) => onChange({ ...policy, entities })}
+          />
+          {(engine?.custom_labels || policy.custom_entities.length > 0) && (
+            <CustomEntities
+              policy={policy}
+              usable={engine?.custom_labels === true}
+              onChange={(custom_entities) => onChange({ ...policy, custom_entities })}
+            />
+          )}
+        </div>
+      </Card>
 
       {/* For values a detector is right about the shape of and wrong about the
           meaning of: a corporate domain is a URL, and it identifies nobody. */}
@@ -416,15 +351,464 @@ export function PolicyFields({
 }
 
 /**
+ * The engine that reads this policy.
+ *
+ * Only an engine the service reports as available can be chosen (the server
+ * refuses the rest). A service that does not answer leaves only "Deployment
+ * default": nothing else can be checked, and a policy that names an engine the
+ * deployment cannot run would find nothing.
+ */
+function EnginePicker({
+  value,
+  engines,
+  onChange,
+}: {
+  value: RedactionPolicy["engine"];
+  engines: PrivacyEngines | null;
+  onChange: (engine: RedactionPolicy["engine"]) => void;
+}) {
+  const reachable = engines?.reachable ?? false;
+  const list = engines?.engines ?? [];
+  const current = value ? list.find((engine) => engine.name === value) : undefined;
+  const effective = current ?? (value ? undefined : list.find((engine) => engine.default));
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-[14rem]">
+          <Select
+            label={m["policy_fields.engine_label"]()}
+            value={value ?? ""}
+            onChange={(event) =>
+              onChange(event.target.value === "" ? null : (event.target.value as "spacy" | "gliner"))
+            }
+          >
+            <option value="">
+              {m["policy_fields.engine_default"]()}
+              {reachable && list.find((engine) => engine.default)
+                ? ` (${list.find((engine) => engine.default)?.name})`
+                : ""}
+            </option>
+            {list.map((engine) => {
+              const usable = reachable && engine.available;
+              return (
+                <option key={engine.name} value={engine.name} disabled={!usable}>
+                  {engine.name}
+                  {engine.default ? ` (${m["policy_fields.engine_is_default"]()})` : ""}
+                  {usable ? "" : ` (${m["policy_fields.engine_unavailable"]()})`}
+                </option>
+              );
+            })}
+            {/* A policy that names an engine the service no longer reports keeps
+                it on screen, so saving does not silently change it. */}
+            {value && !list.some((engine) => engine.name === value) && (
+              <option value={value} disabled>
+                {value} ({m["policy_fields.engine_unavailable"]()})
+              </option>
+            )}
+          </Select>
+        </div>
+        <Tip text={m["policy_fields.engine_tip"]()} />
+      </div>
+      {engines && !engines.reachable && (
+        <Notice tone="warn" title={m["policy_fields.engine_unreachable"]()}>
+          {/* i18n: server text, the redaction service's own reason. */}
+          {engines.detail}
+        </Notice>
+      )}
+      {effective && (
+        <p className={`m-0 text-small ${MUTED}`}>
+          {effective.ms_per_token !== null &&
+            `${m["policy_fields.engine_speed"]({ ms: String(effective.ms_per_token) })} · `}
+          {m["policy_fields.engine_languages"]({ languages: effective.languages.join(", ") })}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The rows for one dictionary of types (formats or entities): the types this
+ * policy says something about, an add control for the rest.
+ *
+ * The rows are the types the policy names. The rest follow the default, which is
+ * what an absent entry means to the gateway too, so "remove the row" and "reset
+ * to the default" are the same act. Whatever the policy already names is shown
+ * even when the service does not report it: dropping it from the screen would
+ * silently delete it on the next save.
+ */
+function TypeTable({
+  heading,
+  tip,
+  group,
+  known,
+  entries,
+  defaultMode,
+  floorFor,
+  scoreThreshold,
+  onChange,
+}: {
+  heading: string;
+  tip: string;
+  group: "formats" | "entities";
+  known: string[];
+  entries: Record<string, EntityPolicy>;
+  defaultMode: EntityMode;
+  floorFor: (name: string) => EntityMode | null;
+  /** Null for a group that has no confidence (formats). */
+  scoreThreshold: number | null;
+  onChange: (entries: Record<string, EntityPolicy>) => void;
+}) {
+  const named = Object.keys(entries);
+  const unnamed = [...new Set(known)]
+    .filter((name) => !(name in entries))
+    .sort((a, b) => entityLabel(a).localeCompare(entityLabel(b)));
+  const withThreshold = group === "entities";
+
+  const set = (name: string, patch: Partial<EntityPolicy>) => {
+    const old = entries[name];
+    const placeholder = patch.placeholder ?? old?.placeholder;
+    onChange({
+      ...entries,
+      [name]: {
+        mode: patch.mode ?? old?.mode ?? defaultMode,
+        threshold: patch.threshold !== undefined ? patch.threshold : (old?.threshold ?? null),
+        // Only written once somebody has chosen: an absent field means
+        // tagged to the gateway, and policies saved before the option existed
+        // should round-trip unchanged.
+        ...(placeholder !== undefined && { placeholder }),
+      },
+    });
+  };
+  const remove = (name: string) => {
+    const { [name]: _gone, ...rest } = entries;
+    onChange(rest);
+  };
+  /**
+   * A new row starts stricter than the default, because a row that repeated the
+   * default would change nothing and the reason to add one is to treat the type
+   * differently. Redact, or Block when the default is already that strong.
+   */
+  const add = (name: string) =>
+    set(name, { mode: modeRank(defaultMode) < modeRank("redact") ? "redact" : "block" });
+
+  const rowClass = withThreshold ? TYPE_ROW : TYPE_ROW_PLAIN;
+  return (
+    <section className="flex flex-col gap-3" aria-label={heading}>
+      <h3 className="m-0 flex items-center gap-2 text-body font-semibold">
+        {heading}
+        <Tip text={tip} />
+      </h3>
+      {named.length === 0 ? (
+        <p className="m-0 text-body text-ink-muted">{m["policy_fields.types_empty"]()}</p>
+      ) : (
+        <ul className="m-0 flex list-none flex-col p-0">
+          <li
+            aria-hidden="true"
+            className={`${rowClass} border-b border-line pb-1 text-small font-medium text-ink-faint max-[40rem]:hidden`}
+          >
+            <span>{m["policy_fields.col_type"]()}</span>
+            <span>{m["policy_fields.col_action"]()}</span>
+            {withThreshold && <span>{m["policy_fields.col_confidence"]()}</span>}
+            <span />
+          </li>
+          {named.map((entity) => {
+            const name = entityLabel(entity);
+            // Nothing here knows this label, so `entityLabel` handed it back
+            // unchanged. Printing it twice would read as a rendering fault.
+            const labelled = name !== entity;
+            const mode = entries[entity]?.mode ?? defaultMode;
+            return (
+              <li
+                key={entity}
+                className={`${rowClass} border-b border-line-quiet py-2 max-[40rem]:py-3`}
+              >
+                <div className="flex min-w-0 flex-col gap-0.5" title={entity}>
+                  <span className="text-body font-medium">{labelled ? name : entity}</span>
+                  {labelled && (
+                    <span className="flex flex-wrap items-center gap-1.5 text-small text-ink-faint">
+                      <code className={CODE}>{entity}</code>
+                    </span>
+                  )}
+                </div>
+                <ModeSegments
+                  name={`mode-${group}-${entity}`}
+                  legend={m["policy_fields.mode_group"]({
+                    name: labelled ? `${name} (${entity})` : entity,
+                  })}
+                  value={mode}
+                  floor={floorFor(entity)}
+                  onChange={(next) => set(entity, { mode: next })}
+                />
+                {withThreshold && (
+                  <Input
+                    label={m["policy_fields.confidence_for"]({ name })}
+                    hideLabel
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    placeholder={
+                      scoreThreshold === null
+                        ? m["policy_fields.confidence_default"]()
+                        : String(scoreThreshold)
+                    }
+                    title={
+                      scoreThreshold === null
+                        ? undefined
+                        : m["policy_fields.confidence_default_value"]({ value: scoreThreshold })
+                    }
+                    value={entries[entity]?.threshold ?? ""}
+                    onChange={(event) =>
+                      set(entity, {
+                        threshold: event.target.value === "" ? null : Number(event.target.value),
+                      })
+                    }
+                  />
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={m["policy_fields.remove_type"]({ name })}
+                  title={m["policy_fields.remove_type"]({ name })}
+                  onClick={() => remove(entity)}
+                >
+                  {m["policy_fields.remove_type_short"]()}
+                </Button>
+                {/* Only the two modes that write a derived token have a form to
+                    choose; redact writes the bare label. */}
+                {(mode === "anonymise" || mode === "anonymise_restore") && (
+                  <div className="col-span-full max-w-md">
+                    <PlaceholderSelect
+                      label={m["policy_fields.placeholder_for"]({ name })}
+                      value={entries[entity]?.placeholder ?? "tagged"}
+                      onChange={(placeholder) => set(entity, { placeholder })}
+                    />
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="max-w-sm">
+        <Select
+          label={
+            group === "formats" ? m["policy_fields.add_format"]() : m["policy_fields.add_type"]()
+          }
+          value=""
+          disabled={unnamed.length === 0}
+          onChange={(event) => {
+            if (event.target.value !== "") add(event.target.value);
+          }}
+        >
+          <option value="">
+            {unnamed.length === 0
+              ? m["policy_fields.add_type_none"]()
+              : m["policy_fields.add_type_choose"]()}
+          </option>
+          {unnamed.map((entity) => (
+            <option key={entity} value={entity}>
+              {entityLabel(entity) === entity ? entity : `${entityLabel(entity)} (${entity})`}
+            </option>
+          ))}
+        </Select>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * One keyword list: a name, the words as one comma-separated line, whether
+ * capitals and accents count, and the mode.
+ *
+ * The typed line is state of its own, as the allow-list's is: parsing on every
+ * keystroke would delete the comma at the moment it is typed. It is dropped for
+ * the list's own words whenever the two stop agreeing, which is what happens
+ * when another row is removed and this one takes its place.
+ */
+function KeywordRow({
+  number,
+  keyword,
+  onChange,
+  onRemove,
+}: {
+  number: number;
+  keyword: KeywordList;
+  onChange: (patch: Partial<KeywordList>) => void;
+  onRemove: () => void;
+}) {
+  const [text, setText] = useState(() => keyword.words.join(", "));
+  const parsed = parseWords(text);
+  if (parsed.length !== keyword.words.length || parsed.some((w, i) => w !== keyword.words[i])) {
+    setText(keyword.words.join(", "));
+  }
+  return (
+    <div className="grid grid-cols-[minmax(8rem,1fr)_minmax(10rem,2fr)_minmax(9rem,1fr)_auto] items-end gap-3 border-b border-line-quiet pb-3 max-[56rem]:grid-cols-1">
+      <Input
+        label={m["policy_fields.keyword_name_label"]({ number })}
+        value={keyword.name}
+        placeholder={m["policy_fields.keyword_name_placeholder"]()}
+        onChange={(event) => onChange({ name: event.target.value })}
+      />
+      <Input
+        label={m["policy_fields.keyword_words_label"]({ number })}
+        value={text}
+        placeholder={m["policy_fields.keyword_words_placeholder"]()}
+        onChange={(event) => {
+          setText(event.target.value);
+          onChange({ words: parseWords(event.target.value) });
+        }}
+      />
+      <ModeSelect
+        label={m["policy_fields.keyword_mode_label"]({ number })}
+        value={keyword.mode}
+        floor={null}
+        onChange={(mode) => onChange({ mode })}
+      />
+      <div>
+        <Button variant="ghost" onClick={onRemove}>
+          {m["policy_fields.pattern_remove"]()}
+        </Button>
+      </div>
+      <label className="col-span-full flex items-center gap-2 text-body">
+        <input
+          type="checkbox"
+          checked={keyword.case_sensitive ?? false}
+          onChange={(event) => onChange({ case_sensitive: event.target.checked })}
+        />
+        {m["policy_fields.keyword_case"]({ number })}
+        <Tip text={m["policy_fields.keyword_case_tip"]()} />
+      </label>
+      {(keyword.mode === "anonymise_restore" || keyword.mode === "anonymise") && (
+        <div className="col-span-full max-w-md">
+          <PlaceholderSelect
+            label={m["policy_fields.keyword_placeholder_label"]({ number })}
+            value={keyword.placeholder ?? "tagged"}
+            onChange={(placeholder) => onChange({ placeholder })}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Custom entity types, named in plain words, for an engine that reads labels
+ * (GLiNER). A name is how the type is stored, counted and logged, so it is
+ * UPPER_SNAKE; the label is what the model is asked to look for.
+ */
+function CustomEntities({
+  policy,
+  usable,
+  onChange,
+}: {
+  policy: RedactionPolicy;
+  usable: boolean;
+  onChange: (list: CustomEntity[]) => void;
+}) {
+  const list = policy.custom_entities;
+  const patch = (index: number, change: Partial<CustomEntity>) =>
+    onChange(list.map((item, at) => (at === index ? { ...item, ...change } : item)));
+  return (
+    <section
+      className="flex flex-col gap-3 border-t border-line-quiet pt-4"
+      aria-label={m["policy_fields.custom_heading"]()}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="m-0 flex items-center gap-2 text-body font-semibold">
+          {m["policy_fields.custom_heading"]()}
+          <Tip text={m["policy_fields.custom_tip"]()} />
+        </h3>
+        {usable && (
+          <Button
+            onClick={() =>
+              onChange([...list, { name: "", label: "", mode: "redact", threshold: null }])
+            }
+          >
+            {m["policy_fields.custom_add"]()}
+          </Button>
+        )}
+      </div>
+      {!usable && (
+        <Notice tone="warn">{m["policy_fields.custom_unused"]()}</Notice>
+      )}
+      {list.map((item, index) => (
+        <div
+          key={index}
+          className="grid grid-cols-[minmax(8rem,1fr)_minmax(10rem,2fr)_minmax(9rem,1fr)_6rem_auto] items-end gap-3 border-b border-line-quiet pb-3 max-[56rem]:grid-cols-1"
+        >
+          <Input
+            label={m["policy_fields.custom_name_label"]({ number: index + 1 })}
+            className={CODE}
+            value={item.name}
+            placeholder={m["policy_fields.custom_name_placeholder"]()}
+            onChange={(event) =>
+              patch(index, {
+                name: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"),
+              })
+            }
+          />
+          <Input
+            label={m["policy_fields.custom_label_label"]({ number: index + 1 })}
+            value={item.label}
+            placeholder={m["policy_fields.custom_label_placeholder"]()}
+            onChange={(event) => patch(index, { label: event.target.value })}
+          />
+          <ModeSelect
+            label={m["policy_fields.custom_mode_label"]({ number: index + 1 })}
+            value={item.mode}
+            floor={null}
+            onChange={(mode) => patch(index, { mode })}
+          />
+          <Input
+            label={m["policy_fields.custom_threshold_label"]({ number: index + 1 })}
+            type="number"
+            min="0"
+            max="1"
+            step="0.05"
+            value={item.threshold ?? ""}
+            onChange={(event) =>
+              patch(index, {
+                threshold: event.target.value === "" ? null : Number(event.target.value),
+              })
+            }
+          />
+          <div>
+            <Button variant="ghost" onClick={() => onChange(list.filter((_, at) => at !== index))}>
+              {m["policy_fields.pattern_remove"]()}
+            </Button>
+          </div>
+          {(item.mode === "anonymise_restore" || item.mode === "anonymise") && (
+            <div className="col-span-full max-w-md">
+              <PlaceholderSelect
+                label={m["policy_fields.custom_placeholder_label"]({ number: index + 1 })}
+                value={item.placeholder ?? "tagged"}
+                onChange={(placeholder) => patch(index, { placeholder })}
+              />
+            </div>
+          )}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/**
  * One row of the types table: the kind of data, its action, its confidence,
  * and the reset button. On a phone the four stack into two lines rather than
- * shrinking, because five segments and a number field do not fit in 360px.
+ * shrinking, because six segments and a number field do not fit in 360px.
  */
 const TYPE_ROW =
   "grid grid-cols-[minmax(8rem,1fr)_max-content_5.5rem_auto] items-center gap-x-3 gap-y-2 " +
   "max-[40rem]:grid-cols-[1fr_auto] max-[40rem]:[&>*:nth-child(2)]:col-span-2 " +
   "max-[40rem]:[&>*:nth-child(2)]:row-start-2 max-[40rem]:[&>*:nth-child(3)]:row-start-3 " +
   "max-[40rem]:[&>*:nth-child(3)]:col-span-2";
+
+/** The same row for a group with no confidence (the pattern formats). */
+const TYPE_ROW_PLAIN =
+  "grid grid-cols-[minmax(8rem,1fr)_max-content_auto] items-center gap-x-3 gap-y-2 " +
+  "max-[40rem]:grid-cols-[1fr_auto] max-[40rem]:[&>*:nth-child(2)]:col-span-2 " +
+  "max-[40rem]:[&>*:nth-child(2)]:row-start-2";
 
 /**
  * The template catalogue, offered rather than seeded.
@@ -524,8 +908,12 @@ function PatternTemplatesDialog({
 export function seededPolicy(): RedactionPolicy {
   return {
     default_mode: "off",
-    entities: {},
+    engine: null,
+    formats: {},
     patterns: [],
+    keywords: [],
+    entities: {},
+    custom_entities: [],
     allow_list: [],
   };
 }
@@ -566,7 +954,7 @@ function AllowList({
 }
 
 /**
- * The five modes as one segmented control, in the weakest-to-strongest order
+ * The six modes as one segmented control, in the weakest-to-strongest order
  * they are ranked in.
  *
  * Radios underneath, so the keyboard and a screen reader get what they would
@@ -587,6 +975,7 @@ function AllowList({
  */
 const SEGMENT_ON: Record<EntityMode, string> = {
   off: "peer-checked:bg-ink/10 peer-checked:font-semibold peer-checked:text-ink",
+  detect_only: "peer-checked:bg-ink/10 peer-checked:font-semibold peer-checked:text-ink",
   anonymise_restore:
     "peer-checked:bg-accent-solid peer-checked:font-semibold peer-checked:text-white",
   anonymise: "peer-checked:bg-accent-solid peer-checked:font-semibold peer-checked:text-white",
@@ -656,7 +1045,7 @@ function ModeSegments({
 }
 
 /**
- * What the five words mean, said once.
+ * What the six words mean, said once.
  *
  * This is the half of the density fix that matters: the labels below can only
  * be short because this is here. Without it the screen would be terser and less

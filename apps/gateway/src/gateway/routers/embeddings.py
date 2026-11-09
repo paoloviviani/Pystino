@@ -105,6 +105,8 @@ async def create_embeddings(
             settings=settings,
             surface=SURFACE,
             request_id=request_id,
+            kind="embed",
+            requested_name=resolved.requested_name,
         )
         redacted = [str(message.get("content") or "") for message in outcome.messages]
 
@@ -159,6 +161,11 @@ async def create_embeddings(
         # ledger.
         if body_out.get("model") is not None:
             body_out["model"] = resolved.requested_name
+        summary = _metered.redaction_summary_for(
+            request, principal=principal, outcome=outcome, request_id=request_id
+        )
+        if summary is not None:
+            body_out[_metered.REDACTION_SUMMARY_FIELD] = summary
         # Finalised after the answer is sent, not before it (ADR 0060).
         return JSONResponse(
             status_code=response.status_code,

@@ -50,6 +50,23 @@ const SIZES: Record<ButtonSize, string> = {
   sm: "px-2.5 py-1 text-dense",
 };
 
+/**
+ * A button's look, for a link that acts as a button (a router `Link` to an
+ * editor, say), so it reads as enabled exactly like its neighbours.
+ */
+export function buttonClasses(variant: ButtonVariant = "secondary", size: ButtonSize = "md"): string {
+  return cx(
+    "inline-flex items-center justify-center gap-2 rounded-lg border",
+    "font-medium leading-tight whitespace-nowrap no-underline",
+    SIZES[size],
+    "cursor-pointer transition-colors duration-120",
+    "focus-visible:outline-none focus-visible:shadow-focus",
+    "disabled:cursor-not-allowed disabled:opacity-55",
+    "aria-busy:cursor-progress",
+    VARIANTS[variant],
+  );
+}
+
 export function Button({
   variant = "secondary",
   size = "md",
@@ -64,17 +81,7 @@ export function Button({
       // `type` defaults to "submit" inside a form, which turns any stray button
       // into an accidental form submission. Explicit unless overridden.
       type="button"
-      className={cx(
-        "inline-flex items-center justify-center gap-2 rounded-lg border",
-        "font-medium leading-tight whitespace-nowrap",
-        SIZES[size],
-        "cursor-pointer transition-colors duration-120",
-        "focus-visible:outline-none focus-visible:shadow-focus",
-        "disabled:cursor-not-allowed disabled:opacity-55",
-        "aria-busy:cursor-progress",
-        VARIANTS[variant],
-        className,
-      )}
+      className={cx(buttonClasses(variant, size), className)}
       disabled={disabled || busy}
       aria-busy={busy || undefined}
       {...rest}

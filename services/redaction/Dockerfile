@@ -114,6 +114,28 @@ RUN set -eux; \
             "https://github.com/explosion/spacy-models/releases/download/${model}-${version}/${model}-${version}-py3-none-any.whl"; \
     done
 
+# Optional GLiNER engine (ADR 0113 section 0c). Empty (the default) installs nothing
+# and the image serves spaCy only. Set GLINER_MODEL (urchade/gliner_multi_pii-v1 is
+# Apache-2.0) and GLINER_REVISION (a commit sha: pin it) to add CPU-only PyTorch,
+# the `gliner` package (Apache-2.0) and the weights, fetched here so the running
+# container never needs the network. A request then picks `ner_engine: "gliner"`
+# per request; REDACTION_NER_DEFAULT=gliner makes it the default.
+ARG GLINER_MODEL=""
+ARG GLINER_REVISION="main"
+# GLiNER loads its tokenizer from the encoder it was built on (MIT), not from its own
+# repository, so that one is baked in as well or HF_HUB_OFFLINE would break startup.
+ARG GLINER_TOKENIZER_BASE="microsoft/mdeberta-v3-base"
+ARG GLINER_TOKENIZER_REVISION="main"
+ENV HF_HOME=/opt/hf
+COPY services/redaction/scripts/fetch_gliner.py /tmp/fetch_gliner.py
+RUN set -eux; \
+    mkdir -p /opt/hf; \
+    if [ -n "${GLINER_MODEL}" ]; then \
+        VIRTUAL_ENV=/opt/venv uv pip install --no-cache --index-url https://download.pytorch.org/whl/cpu torch; \
+        VIRTUAL_ENV=/opt/venv uv pip install --no-cache "gliner>=0.2.30,<0.3"; \
+        /opt/venv/bin/python /tmp/fetch_gliner.py "${GLINER_MODEL}" "${GLINER_REVISION}" "${GLINER_TOKENIZER_BASE}" "${GLINER_TOKENIZER_REVISION}"; \
+    fi
+
 # Recorded in the image so the running service reports exactly what it loaded,
 # and cannot claim a language whose weights are not present.
 RUN set -eux; \
@@ -125,6 +147,8 @@ RUN set -eux; \
         esac; \
     done; \
     echo "REDACTION_SPACY_MODELS=${languages}" > /opt/venv/models.env
+# Tells the service the image has GLiNER, so it loads it at startup.
+RUN if [ -n "${GLINER_MODEL}" ]; then echo "REDACTION_GLINER_MODEL=${GLINER_MODEL}" >> /opt/venv/models.env; fi
 
 
 FROM python:3.13-slim AS runtime
@@ -143,6 +167,8 @@ RUN groupadd --system --gid 1001 detect \
 
 COPY --from=builder --chown=detect:detect /opt/venv /opt/venv
 COPY --from=builder /opt/extractor-models /opt/extractor-models
+# Empty unless built with GLINER_MODEL; HF_HUB_OFFLINE (below) keeps the runtime off the network.
+COPY --from=builder --chown=detect:detect /opt/hf /opt/hf
 COPY --chown=detect:detect services/redaction/src /app/src
 # The contract package is installed into the venv as an editable path
 # dependency, so the path it points at has to exist here too. Copied rather than
@@ -166,6 +192,7 @@ ENV PATH="/opt/venv/bin:${PATH}" \
     REDACTION_PORT=8080 \
     EXTRACTOR_VARIANT=${EXTRACTOR} \
     EXTRACTOR_MODELS_DIR=/opt/extractor-models \
+    HF_HOME=/opt/hf \
     HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
     HOME=/tmp

@@ -105,6 +105,7 @@ async def extract_document(
     request_id: str | None = None,
     page_images: int = 0,
     long_side: int | None = None,
+    engine: str | None = None,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> ExtractionResponse:
     """Ask the extraction service to read one document.
@@ -125,6 +126,10 @@ async def extract_document(
         headers["x-filename"] = filename
     if request_id:
         headers["x-request-id"] = request_id
+    if engine:
+        # The reader a routing rule chose for this one document; an engine the
+        # service does not know is ignored there, not refused.
+        headers["x-extractor-engine"] = engine
     if page_images > 0:
         headers["x-page-images"] = str(page_images)
         if long_side:

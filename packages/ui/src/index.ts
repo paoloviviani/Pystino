@@ -19,8 +19,11 @@
 export { Badge } from "./components/Badge";
 export type { BadgeProps } from "./components/Badge";
 
-export { Button } from "./components/Button";
+export { Button, buttonClasses } from "./components/Button";
 export type { ButtonProps, ButtonVariant } from "./components/Button";
+
+export { Switch } from "./components/Switch";
+export type { SwitchProps } from "./components/Switch";
 
 export { Card } from "./components/Card";
 export type { CardProps } from "./components/Card";

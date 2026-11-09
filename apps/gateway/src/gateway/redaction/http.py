@@ -19,11 +19,14 @@ import json
 import logging
 import re
 from collections import Counter, OrderedDict
+from collections.abc import Sequence
 from functools import lru_cache
 from typing import Any
 
 import httpx
 from llmp_shared import (
+    MAX_CUSTOM_LABELS,
+    CustomLabel,
     DetectionRequest,
     DetectionResponse,
     EntitySpan,
@@ -33,18 +36,22 @@ from llmp_shared import (
     placeholder_for,
     same_length_placeholder,
 )
+from pydantic import ValidationError
 
 from gateway.config import (
     DEFAULT_REDACTION_POLICY,
     EffectivePolicy,
     EntityMode,
+    NerAsk,
     PlaceholderStyle,
     RedactionPolicy,
     RedactionSettings,
+    hides,
 )
-from gateway.errors import ContentBlockedError, GatewayError
+from gateway.errors import ContentBlockedError, GatewayError, ServiceUnavailableError
 from gateway.models import ApiSurface
 from gateway.redaction.base import RedactionOutcome, TextRewriteStage
+from gateway.redaction.keywords import keyword_spans
 from gateway.redaction.note import system_note
 from gateway.redaction.report import (
     SOURCE_MESSAGE,
@@ -69,6 +76,20 @@ class RedactionUnavailableError(GatewayError):
     status_code = 502
     error_type = "server_error"
     code = "redaction_unavailable"
+
+
+class EngineUnavailableError(Exception):
+    """The service has no such NER engine now (409 ``engine_unavailable``).
+
+    Not a :class:`GatewayError`: the redactor does not know which policy chose
+    the engine, so the caller turns it into the 503 that names the policy.
+    """
+
+    def __init__(self, engine: str | None, reason: str | None = None) -> None:
+        super().__init__(reason or f"NER engine {engine or '(default)'} is not available")
+        self.engine = engine
+        #: Why, when it is not simply "the service has no such engine".
+        self.reason = reason
 
 
 class _Cache:
@@ -97,13 +118,19 @@ class _Cache:
         types: list[str] | None,
         pattern_matching: bool | None,
         ner: bool | None,
+        engine: str | None = None,
+        labels: tuple[tuple[str, str], ...] = (),
     ) -> str:
         # JSON, not a joined string: it keeps None apart from [] (``types=None``
         # is "everything the detector knows", ``[]`` is "nothing enabled", and
         # a text cached as clean under the second must not be served for the
         # first, or it goes upstream unredacted) and it cannot be confused by a
         # separator appearing inside a value.
-        parts = json.dumps([language, threshold, types, pattern_matching, ner, text])
+        # The engine and the labels are part of the question: the same text asked of
+        # spaCy and of GLiNER, or with another label, is another answer.
+        parts = json.dumps(
+            [language, threshold, types, pattern_matching, ner, text, engine, labels]
+        )
         return hashlib.sha256(parts.encode()).hexdigest()
 
     def get(self, key: str) -> list[EntitySpan] | None:
@@ -361,21 +388,50 @@ def pattern_spans(
         for match in _compiled(pattern.regex).finditer(text):
             start, end = match.span()
             if end > start:
-                spans.append(EntitySpan(start=start, end=end, entity_type=pattern.name, score=1.0))
+                spans.append(
+                    EntitySpan(
+                        start=start,
+                        end=end,
+                        entity_type=pattern.name,
+                        score=1.0,
+                        engine="pattern",
+                    )
+                )
+    for item in policy.keywords:
+        if item.mode is EntityMode.OFF:
+            continue
+        key = (item.name, "\x1f".join(item.words))
+        if key in skip or (only is not None and key not in only):
+            continue
+        spans.extend(keyword_spans(text, item))
     return spans
 
 
 def eligible_spans(
-    text: str, spans: list[EntitySpan], policy: RedactionPolicy, default_threshold: float
+    text: str,
+    spans: list[EntitySpan],
+    policy: RedactionPolicy,
+    default_threshold: float,
+    *,
+    acting: bool = True,
 ) -> list[EntitySpan]:
-    """The spans the policy acts on: not off, over its threshold, not allow-listed."""
+    """The spans the policy acts on: not off, over its threshold, not allow-listed.
+
+    ``acting`` leaves out ``detect_only`` items, which are found and never hidden
+    (and so must not take part in overlap resolution or the substitution). A
+    condition that counts items passes ``acting=False``.
+    """
     return [
         span
         for span in spans
-        if policy.mode_for(span.entity_type) is not EntityMode.OFF
+        if (hides if acting else _found)(policy.mode_for(span.entity_type))
         and span.score >= policy.threshold_for(span.entity_type, default_threshold)
         and not policy.allows(span.slice_of(text))
     ]
+
+
+def _found(mode: EntityMode) -> bool:
+    return mode is not EntityMode.OFF
 
 
 def _overlaps(a: EntitySpan, b: EntitySpan) -> bool:
@@ -388,6 +444,8 @@ def eligible_for(
     policy: RedactionPolicy,
     default_threshold: float,
     user_patterns: frozenset[PatternKey] = frozenset(),
+    *,
+    acting: bool = True,
 ) -> list[EntitySpan]:
     """Every span the policy acts on, with a user's own patterns held to "add only".
 
@@ -405,11 +463,16 @@ def eligible_for(
         [*detected, *pattern_spans(text, policy, skip=user_patterns)],
         policy,
         default_threshold,
+        acting=acting,
     )
     if not user_patterns:
         return base
     mine = eligible_spans(
-        text, pattern_spans(text, policy, only=user_patterns), policy, default_threshold
+        text,
+        pattern_spans(text, policy, only=user_patterns),
+        policy,
+        default_threshold,
+        acting=acting,
     )
     return [*base, *(span for span in mine if not any(_overlaps(span, other) for other in base))]
 
@@ -625,6 +688,24 @@ class RestoreStage(TextRewriteStage):
         return self._placeholders.restore_with_edits(text)
 
 
+def _engine_unavailable(response: httpx.Response) -> bool:
+    """Whether a 409 is the service saying the NER engine asked for is not available."""
+    try:
+        detail = response.json().get("detail")
+    except ValueError:
+        return False
+    return isinstance(detail, dict) and detail.get("code") == "engine_unavailable"
+
+
+def _engine_busy(response: httpx.Response) -> bool:
+    """Whether a 503 is the service saying the engine's queue is full (``engine_busy``)."""
+    try:
+        detail = response.json().get("detail")
+    except ValueError:
+        return False
+    return isinstance(detail, dict) and detail.get("code") == "engine_busy"
+
+
 class HttpDetectionRedactor:
     """Redaction backed by an HTTP detection service."""
 
@@ -663,17 +744,26 @@ class HttpDetectionRedactor:
     # -- detection ---------------------------------------------------------
 
     async def detect(
-        self, texts: list[str], *, policy: RedactionPolicy | None = None
+        self,
+        texts: list[str],
+        *,
+        policy: RedactionPolicy | None = None,
+        asks: Sequence[NerAsk] | None = None,
+        strict: bool = False,
     ) -> list[list[EntitySpan]]:
-        """Spans for each text, cached, in one round trip for the misses."""
+        """Spans for each text from the service, cached, one call per engine asked.
+
+        *asks* is what ``EffectivePolicy.asks`` says the request needs: policies
+        that chose different NER engines are asked of the service one engine at a
+        time and the spans merged (one span per identical range and type, the
+        higher score kept). Without it the policy asks for itself.
+
+        ``strict`` ignores ``fail_open``: a condition that counts items must not
+        read an outage as "found nothing" (ADR 0113, section 0). An engine the
+        service reports unavailable raises :class:`EngineUnavailableError`.
+        """
         settings = self._settings
         active = policy or settings.policy
-        # What the policy will actually act on, not what the engine can find.
-        # Narrowing here is free detection time when an admin has enumerated the
-        # set; when they have not, it is None and everything comes back to be
-        # filtered locally — an engine's entity list is its own and cannot be
-        # enumerated from here (ADR 0026).
-        wanted = active.detected_types()
         # The lowest bar any enabled type sets. Filtering to each type's own
         # threshold happens in apply_spans: asking the detector for the strictest
         # would drop spans a laxer type still wants.
@@ -681,10 +771,31 @@ class HttpDetectionRedactor:
             [settings.score_threshold]
             + [
                 entry.threshold
-                for entry in active.entities.values()
+                for entry in active.service_types().values()
                 if entry.threshold is not None and entry.mode is not EntityMode.OFF
             ]
         )
+        calls = list(asks) if asks else active.ner_asks()
+        merged: list[dict[tuple[int, int, str], EntitySpan]] = [{} for _ in texts]
+        for ask in calls:
+            for index, spans in enumerate(await self._detect_ask(texts, ask, floor, strict)):
+                for span in spans:
+                    key = (span.start, span.end, span.entity_type)
+                    held = merged[index].get(key)
+                    if held is None or span.score > held.score:
+                        merged[index][key] = span
+        return [sorted(found.values(), key=lambda s: (s.start, s.end)) for found in merged]
+
+    async def _detect_ask(
+        self, texts: list[str], ask: NerAsk, floor: float, strict: bool
+    ) -> list[list[EntitySpan]]:
+        settings = self._settings
+        # What the policy will actually act on, not what the engine can find.
+        # Narrowing here is free detection time when an admin has enumerated the
+        # set; when they have not, it is None and everything comes back to be
+        # filtered locally — an engine's entity list is its own and cannot be
+        # enumerated from here (ADR 0026).
+        wanted = list(ask.types) if ask.types is not None else None
         keys = [
             _Cache.key(
                 text,
@@ -693,6 +804,8 @@ class HttpDetectionRedactor:
                 wanted,
                 settings.presidio_pattern_matching,
                 settings.presidio_ner,
+                ask.engine,
+                ask.labels,
             )
             for text in texts
         ]
@@ -702,15 +815,27 @@ class HttpDetectionRedactor:
         if not pending:
             return [spans or [] for spans in results]
 
-        request = DetectionRequest(
-            texts=[texts[index] for index in pending],
-            language=settings.language,
-            score_threshold=floor,
-            entity_types=wanted,
-            presidio_pattern_matching=settings.presidio_pattern_matching,
-            presidio_ner=settings.presidio_ner,
-        )
-        found = await self._post(request)
+        try:
+            request = DetectionRequest(
+                texts=[texts[index] for index in pending],
+                language=settings.language,
+                score_threshold=floor,
+                entity_types=wanted,
+                presidio_pattern_matching=settings.presidio_pattern_matching,
+                presidio_ner=settings.presidio_ner,
+                ner_engine=ask.engine,
+                custom_labels=[CustomLabel(entity=e, label=label) for e, label in ask.labels]
+                or None,
+            )
+        except ValidationError as exc:
+            # The policies in force together ask for more than the service takes (for
+            # example more than 30 custom labels for one engine): a named 503, never a 500.
+            raise EngineUnavailableError(
+                ask.engine,
+                "the policies in force ask the NER engine for more than it accepts "
+                f"({len(ask.labels)} custom entity types; the limit is {MAX_CUSTOM_LABELS})",
+            ) from exc
+        found, partial = await self._post(request, strict=strict)
 
         for position, index in enumerate(pending):
             spans = [] if found is None else found.get(position, [])
@@ -718,19 +843,30 @@ class HttpDetectionRedactor:
             # A fail-open outage yields no findings, which must not be cached:
             # one outage would otherwise leave every text seen during it marked
             # "clean" for the life of the process.
-            if found is not None:
+            # Nor an answer that left types out (the engine could not serve them): a later
+            # strict call must see the report again.
+            if found is not None and not partial:
                 self._cache.put(keys[index], spans)
 
         return [spans or [] for spans in results]
 
-    async def _post(self, request: DetectionRequest) -> dict[int, list[EntitySpan]] | None:
-        """Findings by position, or None when failing open on an outage."""
+    async def _post(
+        self, request: DetectionRequest, *, strict: bool = False
+    ) -> tuple[dict[int, list[EntitySpan]] | None, bool]:
+        """Findings by position (None when failing open on an outage), and whether the
+        engine reported types it could not serve."""
         try:
             response = await self._client.post(self._endpoint, json=request.model_dump(mode="json"))
+            if response.status_code == 409 and _engine_unavailable(response):
+                raise EngineUnavailableError(request.ner_engine)
+            if response.status_code == 503 and _engine_busy(response):
+                raise EngineUnavailableError(
+                    request.ner_engine, "the engine is busy; try again shortly"
+                )
             response.raise_for_status()
             parsed = DetectionResponse.model_validate(response.json())
         except (TimeoutError, httpx.HTTPError, ValueError) as exc:
-            if self._settings.fail_open:
+            if self._settings.fail_open and not strict:
                 # Loud, because this is the state in which the gateway is
                 # forwarding unredacted prompts while still reporting an engine.
                 logger.error(
@@ -739,7 +875,7 @@ class HttpDetectionRedactor:
                     exc,
                     exc_info=True,
                 )
-                return None
+                return None, False
             logger.error("detection service unavailable (%s); refusing the request", exc)
             raise RedactionUnavailableError(
                 "The redaction service could not be reached, so this request cannot be "
@@ -748,7 +884,14 @@ class HttpDetectionRedactor:
 
         found = {finding.index: finding.spans for finding in parsed.findings}
         self._report_unsupported(parsed.unsupported_types)
-        return found
+        if parsed.unsupported_types and strict:
+            # A condition that counts items cannot read "the engine cannot serve this
+            # type" as "found nothing": that is undecided, and the caller fails closed.
+            raise EngineUnavailableError(
+                request.ner_engine,
+                "the engine cannot find: " + ", ".join(sorted(parsed.unsupported_types)),
+            )
+        return found, bool(parsed.unsupported_types)
 
     def _report_unsupported(self, unsupported: list[str]) -> None:
         """Name the policy types this engine cannot serve, when it changes.
@@ -811,7 +954,14 @@ class HttpDetectionRedactor:
                 active=in_force,
             )
 
-        found = await self.detect(texts, policy=effective)
+        try:
+            found = await self.detect(
+                texts,
+                policy=effective,
+                asks=policy.asks() if policy is not None else None,
+            )
+        except EngineUnavailableError as exc:
+            raise engine_unavailable_error(exc.engine, policy, exc.reason) from exc
 
         placeholders = PlaceholderMap()
         total = 0
@@ -926,6 +1076,24 @@ class HttpDetectionRedactor:
         return outcome.placeholder_map.restore_with_edits(text)
 
 
+def engine_unavailable_error(
+    engine: str | None, policy: EffectivePolicy | None, reason: str | None = None
+) -> ServiceUnavailableError:
+    """The 503 for a policy whose NER engine the service no longer has (fail closed).
+
+    Names the policies that chose it and the engine, never the text: a request is
+    refused rather than screened by an engine the administrator did not choose.
+    """
+    names = policy.policies_of_engine(engine) if policy is not None else []
+    which = ", ".join(f"'{n}'" for n in names) or "a redaction policy"
+    return ServiceUnavailableError(
+        f"The NER engine {engine or 'chosen by default'} for {which} cannot run"
+        f"{': ' + reason if reason else ' (it is not available)'}, so "
+        "this request cannot be screened. It is refused rather than let through.",
+        code="redaction_engine_unavailable",
+    )
+
+
 def _longest_placeholder(placeholders: PlaceholderMap) -> int:
     """How much text a stream must hold back to never split a placeholder.
 
@@ -938,3 +1106,13 @@ def _longest_placeholder(placeholders: PlaceholderMap) -> int:
 
 def build(settings: RedactionSettings) -> HttpDetectionRedactor:
     return HttpDetectionRedactor(settings)
+
+
+def screened_texts(messages: list[dict[str, Any]]) -> list[str]:
+    """Every string redaction would screen in *messages*, one per input.
+
+    What the privacy pipelines classify (ADR 0113): the same strings redaction
+    reads, so a verdict is about the text that would otherwise leave, and each
+    input is judged on its own and in full.
+    """
+    return [target.text for message in messages for target in _message_targets(message)]

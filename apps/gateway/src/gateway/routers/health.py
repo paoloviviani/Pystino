@@ -13,12 +13,19 @@ from typing import Any
 from fastapi import APIRouter, Request, Response, status
 from sqlalchemy import text
 
+from gateway.privacy.state import state_of
+
 router = APIRouter(tags=["ops"])
 
 
 @router.get("/healthz")
-async def healthz() -> dict[str, str]:
-    return {"status": "ok"}
+async def healthz(request: Request) -> dict[str, str]:
+    # Alive means alive: a worker that has not read its privacy rules is reported
+    # (and refuses the requests they govern) but is not killed for it.
+    privacy = state_of(request)
+    if privacy.loaded:
+        return {"status": "ok"}
+    return {"status": "ok", "privacy_routing": "rules not loaded yet; some requests are refused"}
 
 
 @router.get("/readyz")
@@ -54,6 +61,19 @@ async def readyz(request: Request, response: Response) -> dict[str, Any]:
         except Exception as exc:
             checks["valkey"] = f"error: {type(exc).__name__}"
             degraded = True
+
+    privacy = state_of(request)
+    if privacy.loaded:
+        checks["privacy_routing"] = (
+            f"ok, {len(privacy.bad_rules)} rule(s) skipped as unreadable"
+            if privacy.bad_rules
+            else "ok"
+        )
+        degraded = degraded or bool(privacy.bad_rules)
+    else:
+        # Requests for kinds that rules govern are refused until the first read.
+        checks["privacy_routing"] = f"error: rules never loaded ({privacy.load_error or 'pending'})"
+        degraded = True
 
     if not ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE

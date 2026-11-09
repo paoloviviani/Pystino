@@ -18,9 +18,9 @@ import os
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from llmp_shared import (
     DetectionRequest,
     DetectionResponse,
@@ -29,7 +29,13 @@ from llmp_shared import (
 )
 from pydantic import BaseModel, Field
 
-from llmp_redaction.detector import Detector
+from llmp_redaction import gliner_engine
+from llmp_redaction.detector import (
+    Detector,
+    EngineBusyError,
+    EngineSlot,
+    EngineUnavailableError,
+)
 from llmp_redaction.documents import DEFAULT_LONG_SIDE, extract
 from llmp_redaction.engines import ENGINE_HEADER
 
@@ -144,41 +150,41 @@ def _phone_regions() -> tuple[str, ...]:
     return regions or DEFAULT_PHONE_REGIONS
 
 
-def build_detector() -> Detector:
-    """Load Presidio. Slow (seconds) and done once, at startup."""
+def _no_op_engine(languages: list[str]) -> Any:
+    from presidio_analyzer.nlp_engine import NoOpNlpEngine
+
+    # Presidio's no-op engine validates a model_name per language even
+    # though it never loads one; the language code is an honest placeholder.
+    nlp_engine = NoOpNlpEngine(
+        models=[{"lang_code": lang, "model_name": lang} for lang in languages]
+    )
+    nlp_engine.load()
+    return nlp_engine
+
+
+def _ner_default() -> str:
+    value = os.getenv("REDACTION_NER_DEFAULT", "spacy").strip().lower()
+    if value not in {"spacy", "gliner"}:
+        raise ValueError(f"REDACTION_NER_DEFAULT must be 'spacy' or 'gliner', not {value!r}")
+    return value
+
+
+def _assemble_analyzer(
+    languages: list[str],
+    nlp_engine: Any,
+    *,
+    no_ner: bool,
+    gliner_recognizers: list[Any] | None = None,
+) -> Any:
+    """Presidio analyzer over *nlp_engine*, with the pattern recognisers every engine shares.
+
+    ``no_ner`` means the NLP engine is Presidio's no-op: spaCy's recogniser is
+    removed (it could never find anything) and the phone score is restored.
+    ``gliner_recognizers`` are added in that case, so the pattern recognisers
+    work identically whichever NER engine runs.
+    """
     from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
     from presidio_analyzer import predefined_recognizers as recognizers
-    from presidio_analyzer.nlp_engine import NlpEngineProvider
-
-    nlp_engine_name = _nlp_engine_name()
-    started = time.monotonic()
-
-    if nlp_engine_name == DISABLED_NLP_ENGINE:
-        # No model is loaded or needed: the languages stand alone, and every
-        # entity the engine then reports is one a pattern can actually find.
-        languages = _configured_languages()
-        from presidio_analyzer.nlp_engine import NoOpNlpEngine
-
-        # Presidio's no-op engine validates a model_name per language even
-        # though it never loads one; the language code is an honest placeholder.
-        nlp_engine = NoOpNlpEngine(
-            models=[{"lang_code": lang, "model_name": lang} for lang in languages]
-        )
-        nlp_engine.load()
-        models: dict[str, str] = {}
-    else:
-        models = _configured_models() or dict(DEFAULT_MODELS)
-        languages = list(models)
-        provider = NlpEngineProvider(
-            nlp_configuration={
-                "nlp_engine_name": "spacy",
-                "models": [
-                    {"lang_code": language, "model_name": model}
-                    for language, model in models.items()
-                ],
-            }
-        )
-        nlp_engine = provider.create_engine()
 
     registry = RecognizerRegistry(supported_languages=languages)
     # The NLP recogniser (SpacyRecognizer) is added by this call whenever it can
@@ -188,12 +194,14 @@ def build_detector() -> Detector:
     # PERSON/LOCATION/... in `get_supported_entities` while nothing could ever
     # find them: exactly the lie the capabilities report exists to prevent.
     registry.load_predefined_recognizers(languages=languages, nlp_engine=nlp_engine)
-    if nlp_engine_name == DISABLED_NLP_ENGINE:
+    if no_ner:
         from presidio_analyzer.predefined_recognizers import SpacyRecognizer
 
         for existing in list(registry.recognizers):
             if isinstance(existing, SpacyRecognizer):
                 registry.remove_recognizer(type(existing).__name__)
+    for gliner_recognizer in gliner_recognizers or []:
+        registry.add_recognizer(gliner_recognizer)
     for name in EXTRA_PATTERN_RECOGNIZERS:
         recognizer_class = getattr(recognizers, name, None)
         if recognizer_class is None:
@@ -219,7 +227,7 @@ def build_detector() -> Detector:
     # (gateway/redaction/http.py), so a policy that wants phones kept still
     # keeps them.
     phone_recognizer_class = recognizers.PhoneRecognizer
-    if nlp_engine_name == DISABLED_NLP_ENGINE:
+    if no_ner:
 
         class NoNerPhoneRecognizer(phone_recognizer_class):  # type: ignore[misc, valid-type]
             SCORE = 0.4 + 0.35  # Presidio's base + context_similarity_factor
@@ -235,9 +243,72 @@ def build_detector() -> Detector:
             phone_recognizer_class(supported_language=language, supported_regions=regions)
         )
 
-    analyzer = AnalyzerEngine(
-        nlp_engine=nlp_engine, registry=registry, supported_languages=languages
+    return AnalyzerEngine(nlp_engine=nlp_engine, registry=registry, supported_languages=languages)
+
+
+def build_detector() -> Detector:
+    """Load Presidio, and GLiNER when the image has it. Slow (seconds) and done once, at startup.
+
+    Two analyzers share one process: the spaCy one (the historical engine) and,
+    only when ``REDACTION_GLINER_MODEL`` names a baked-in checkpoint, a GLiNER one
+    on Presidio's no-op NLP engine. A request picks between them.
+    """
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+    nlp_engine_name = _nlp_engine_name()
+    started = time.monotonic()
+
+    if nlp_engine_name == DISABLED_NLP_ENGINE:
+        # No model is loaded or needed: the languages stand alone, and every
+        # entity the engine then reports is one a pattern can actually find.
+        languages = _configured_languages()
+        nlp_engine = _no_op_engine(languages)
+        models: dict[str, str] = {}
+    else:
+        models = _configured_models() or dict(DEFAULT_MODELS)
+        languages = list(models)
+        provider = NlpEngineProvider(
+            nlp_configuration={
+                "nlp_engine_name": "spacy",
+                "models": [
+                    {"lang_code": language, "model_name": model}
+                    for language, model in models.items()
+                ],
+            }
+        )
+        nlp_engine = provider.create_engine()
+
+    # The NLP recogniser (SpacyRecogniser) is added by `load_predefined_recognizers`
+    # whenever it can resolve one, so no-NER mode removes it afterwards (see
+    # `_assemble_analyzer`).
+    analyzer = _assemble_analyzer(
+        languages, nlp_engine, no_ner=nlp_engine_name == DISABLED_NLP_ENGINE
     )
+    regions = _phone_regions()
+
+    gliner_slot: EngineSlot | None = None
+    gliner_model = gliner_engine.configured_model()
+    default_engine = _ner_default()
+    if gliner_model:
+        gliner_analyzer = _assemble_analyzer(
+            languages,
+            _no_op_engine(languages),
+            no_ner=True,
+            gliner_recognizers=gliner_engine.build_recognizers(languages, gliner_model),
+        )
+        gliner_slot = EngineSlot(
+            name="gliner",
+            analyzer=gliner_analyzer,
+            languages=list(languages),
+            models=dict.fromkeys(languages, gliner_model),
+            ner_entities=sorted(set(gliner_engine.configured_labels().values())),
+            custom_labels=True,
+        )
+    elif default_engine == "gliner":
+        raise ValueError(
+            "REDACTION_NER_DEFAULT=gliner but this image has no GLiNER model "
+            "(build it with --build-arg GLINER_MODEL=...)"
+        )
 
     try:
         from importlib.metadata import version as package_version
@@ -266,7 +337,10 @@ def build_detector() -> Detector:
         models=models,
         engine="presidio",
         engine_version=version,
+        gliner=gliner_slot,
+        default_engine="gliner" if default_engine == "gliner" else "spacy",
     )
+    detector.calibrate()
     missing = detector.capabilities().degraded
     if missing:
         logger.warning(
@@ -291,6 +365,25 @@ def _requested_page_images(header: str | None) -> int:
         return 0
 
 
+class NerEngineInfo(BaseModel):
+    """One NER engine this process knows about (healthz ``ner_engines``)."""
+
+    name: Literal["spacy", "gliner"]
+    available: bool
+    default: bool
+    # Model-backed entity types this engine can return. Pattern recognisers run
+    # whatever the engine and are listed in `pattern_entities`.
+    entities: list[str]
+    # GLiNER takes labels at inference; spaCy has a fixed set.
+    custom_labels: bool
+    # The labels this engine always asks of its model (GLiNER's), case-folded; a custom
+    # label may not equal one. Empty for spaCy.
+    labels: list[str] = Field(default_factory=list)
+    # Measured once at startup on a synthetic text; null when not measured.
+    ms_per_token: float | None
+    languages: list[str]
+
+
 class HealthResponse(BaseModel):
     status: str
     engine: str
@@ -309,6 +402,7 @@ class HealthResponse(BaseModel):
     # False on detectors that predate family selection. The gateway must not
     # treat an unpartitioned entity list as narrowed support.
     family_partition: bool = False
+    ner_engines: list[NerEngineInfo] = Field(default_factory=list)
 
 
 def create_app(detector: Detector | None = None) -> FastAPI:
@@ -341,6 +435,23 @@ def create_app(detector: Detector | None = None) -> FastAPI:
             pattern_entities=capabilities.pattern_entities,
             model_entities=capabilities.model_entities,
             family_partition=True,
+            ner_engines=[
+                NerEngineInfo(
+                    name=slot.name,
+                    available=slot.available,
+                    default=slot.name == engine.default_engine,
+                    entities=list(slot.ner_entities) if slot.available else [],
+                    custom_labels=slot.custom_labels,
+                    labels=(
+                        sorted(gliner_engine.default_label_texts())
+                        if slot.name == "gliner" and slot.available
+                        else []
+                    ),
+                    ms_per_token=slot.ms_per_token if slot.available else None,
+                    languages=list(slot.languages) if slot.available else [],
+                )
+                for slot in engine.slots
+            ],
         )
 
     @app.post("/extract", response_model=ExtractionResponse)
@@ -354,7 +465,7 @@ def create_app(detector: Detector | None = None) -> FastAPI:
         content type is unrecognised — several clients send
         `application/octet-stream` for every upload. `X-Page-Images: N` asks
         for up to N pictures of PDF pages that have no text (long side from
-        `X-Page-Image-Long-Side`). `X-Extractor-Engine: markitdown|docling` picks
+        `X-Page-Image-Long-Side`). `X-Extractor-Engine: markitdown|ocr|docling` picks
         the reader for this one request (default: `EXTRACTOR_ENGINE`; an
         unknown name is ignored), the seam a routing rule would use.
 
@@ -403,7 +514,29 @@ def create_app(detector: Detector | None = None) -> FastAPI:
         # fact-returning behaviour the contract asks for; the caller decides
         # whether a partial detection is acceptable (it is, and the gateway
         # logs it loudly every time the set changes).
-        capabilities = engine.capabilities()
+        try:
+            slot = engine.slot(request.ner_engine)
+        except EngineUnavailableError as error:
+            # Fail closed: the caller asked for this engine for a reason (a policy
+            # that needs GLiNER's medical types, say), and answering with another
+            # engine's findings would look like a clean result.
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "engine_unavailable", "engine": error.engine},
+            ) from error
+        capabilities = engine.capabilities_of(slot)
+        clash = sorted(
+            c.label
+            for c in request.custom_labels or []
+            if slot.name == "gliner" and c.label.casefold() in gliner_engine.default_label_texts()
+        )
+        if clash:
+            # Taking it would re-type what the model finds under a built-in label as the
+            # custom entity (the label map is keyed by label text), so it is refused.
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "label_taken", "labels": clash},
+            )
         effective = set(
             Detector.family_entities(
                 capabilities,
@@ -411,8 +544,18 @@ def create_app(detector: Detector | None = None) -> FastAPI:
                 request.presidio_ner,
             )
         )
+        # Custom labels are GLiNER's and need the NER family; anywhere else they
+        # are named as unsupported rather than silently dropped.
+        customs = request.custom_labels or []
+        custom_entities = {custom.entity.upper() for custom in customs}
+        custom_served = slot.custom_labels and request.presidio_ner is not False
+        if custom_served:
+            effective |= custom_entities
         requested = request.entity_types
-        unsupported = sorted({t.upper() for t in (requested or [])} - effective)
+        unsupported = sorted(
+            ({t.upper() for t in (requested or [])} - effective)
+            | (set() if custom_served else custom_entities)
+        )
         if requested is None:
             # Preserve Presidio's historical all-recognizers call only when no
             # family is disabled. A narrowed request must name the family subset
@@ -430,12 +573,20 @@ def create_app(detector: Detector | None = None) -> FastAPI:
         if not effective or (requested is not None and not servable):
             found: list[list[Any]] = [[] for _ in request.texts]
         else:
-            found = await engine.analyse(
-                request.texts,
-                language=request.language,
-                score_threshold=request.score_threshold,
-                entity_types=servable,
-            )
+            try:
+                found = await engine.analyse(
+                    request.texts,
+                    language=request.language,
+                    score_threshold=request.score_threshold,
+                    entity_types=servable,
+                    engine=request.ner_engine,
+                    custom_labels=customs if custom_served else None,
+                )
+            except EngineBusyError as busy:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"code": "engine_busy", "engine": busy.engine},
+                ) from busy
         return DetectionResponse(
             findings=[TextFindings(index=index, spans=spans) for index, spans in enumerate(found)],
             engine=engine.engine,

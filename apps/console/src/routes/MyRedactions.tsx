@@ -1,25 +1,15 @@
-import { Badge, Button, Card, Input, Notice, Pagination, Select, Spinner, Table } from "@llmp/ui";
+import { Badge, Card, Input, Notice, Pagination, Spinner, Table } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
+import { Link } from "react-router";
 
 import { PageHeader } from "../components/PageHeader";
+import { kindLabel } from "../lib/privacy";
 import { entityLabel, modeLabel } from "../lib/entities";
 import { formatDateTime } from "../lib/format";
-import { FIELD, FIELD_LABEL, FORM, FORM_ROW, MUTED, NOWRAP, PAGE, TEXTAREA } from "../lib/layout";
-import {
-  useDeleteRedactionRule,
-  useMyRedactionRules,
-  useRedactionEvents,
-  useRulesInForce,
-  useSaveRedactionRule,
-  useTestRedaction,
-} from "../lib/myRedaction";
-import type {
-  AdminRuleView,
-  RedactionEvent,
-  UserRedactionRule,
-  UserRedactionRuleInput,
-} from "../lib/types";
+import { MUTED, NOWRAP, PAGE } from "../lib/layout";
+import { useRedactionEvents } from "../lib/myRedaction";
+import type { RedactionEvent } from "../lib/types";
 import { m } from "../paraglide/messages.js";
 
 /**
@@ -33,399 +23,48 @@ import { m } from "../paraglide/messages.js";
 
 const PAGE_SIZE = 25;
 
-/** The four modes a user may choose; there is no "off" to pick. */
-const USER_MODES = ["anonymise_restore", "anonymise", "redact", "block"] as const;
-
-const SCOPE_LABEL: Record<AdminRuleView["scope"], () => string> = {
-  all: m["my_redaction.scope.all"],
-  group: m["my_redaction.scope.group"],
-  user: m["my_redaction.scope.user"],
-  model: m["my_redaction.scope.model"],
-  provider: m["my_redaction.scope.provider"],
-  api_key: m["my_redaction.scope.api_key"],
-};
-
-/** What a mode means for a reader, in a sentence. */
-function modeSentence(mode: string): string {
-  switch (mode) {
-    case "anonymise_restore":
-      return m["my_redaction.mode.anonymise_restore"]();
-    case "anonymise":
-      return m["my_redaction.mode.anonymise"]();
-    case "redact":
-      return m["my_redaction.mode.redact"]();
-    case "block":
-      return m["my_redaction.mode.block"]();
-    default:
-      return m["my_redaction.mode.off"]();
-  }
-}
-
-function AdminRule({ rule }: { rule: AdminRuleView }) {
-  const where = rule.subject_label
-    ? m["my_redaction.applies_to_subject"]({
-        scope: SCOPE_LABEL[rule.scope](),
-        subject: rule.subject_label,
-      })
-    : SCOPE_LABEL[rule.scope]();
-  return (
-    <li className="rounded-lg border border-line p-4">
-      <p className="m-0 font-medium">
-        {/* i18n: server text, the name an administrator gave the rule. */}
-        {rule.name || SCOPE_LABEL[rule.scope]()}
-      </p>
-      <p className={`m-0 text-dense ${MUTED}`}>{where}</p>
-      <ul className="mt-2 mb-0 flex list-disc flex-col gap-1 pl-5 text-body">
-        {rule.default_mode !== "off" && (
-          <li>
-            {m["my_redaction.default_mode"]({ what: modeSentence(rule.default_mode) })}
-          </li>
-        )}
-        {rule.entities.map((entity) => (
-          <li key={entity.entity_type}>
-            {m["my_redaction.type_line"]({
-              type: entityLabel(entity.entity_type),
-              what: modeSentence(entity.mode),
-            })}
-          </li>
-        ))}
-        {rule.patterns.map((pattern) => (
-          <li key={pattern.name}>
-            {m["my_redaction.pattern_line"]({
-              name: pattern.name,
-              what: modeSentence(pattern.mode),
-            })}
-          </li>
-        ))}
-        {rule.exceptions > 0 && (
-          <li>{m["my_redaction.exceptions"]({ count: rule.exceptions })}</li>
-        )}
-      </ul>
-    </li>
+function RoutingCell({ routing }: { routing: RedactionEvent["routing"] }) {
+  if (!routing) return <span className={MUTED}>{m["my_redaction.routing.none"]()}</span>;
+  const rule = routing.handled.routing_rule;
+  const observed = routing.observed;
+  const seen = [observed.filetype, observed.is_scan ? m["my_redaction.routing.scan"]() : null].filter(
+    Boolean,
   );
-}
-
-function RulesInForce() {
-  const inForce = useRulesInForce();
   return (
-    <Card title={m["my_redaction.in_force.title"]()}>
-      <p className={`mt-0 ${MUTED}`}>{m["my_redaction.in_force.intro"]()}</p>
-      {inForce.isPending || !inForce.data ? (
-        inForce.isError ? (
-          <Notice tone="danger" title={m["my_redaction.error"]()}>
-            {/* i18n: server text, the API's own error message. */}
-            {inForce.error instanceof Error
-              ? inForce.error.message
-              : m["my_redaction.unknown_error"]()}
-          </Notice>
-        ) : (
-          <Spinner label={m["my_redaction.loading"]()} />
-        )
-      ) : (
-        <>
-          {!inForce.data.engine_active && (
-            <Notice tone="warn" title={m["my_redaction.engine_off.title"]()}>
-              {m["my_redaction.engine_off.body"]()}
-            </Notice>
-          )}
-          {inForce.data.rules.length === 0 ? (
-            <p className={`mb-0 ${MUTED}`}>{m["my_redaction.in_force.none"]()}</p>
-          ) : (
-            <ul className="m-0 flex list-none flex-col gap-3 p-0">
-              {inForce.data.rules.map((rule) => (
-                <AdminRule key={rule.id} rule={rule} />
-              ))}
-            </ul>
-          )}
-        </>
-      )}
-    </Card>
-  );
-}
-
-function RuleStatus({ rule }: { rule: UserRedactionRule }) {
-  if (rule.status === "adds_protection") {
-    return <Badge tone="ok">{m["my_redaction.rule.adds"]()}</Badge>;
-  }
-  return (
-    <span>
-      <Badge tone="warn">{m["my_redaction.rule.covered"]()}</Badge>
-      <span className={`block text-small ${MUTED}`}>
-        {rule.admin_mode
-          ? m["my_redaction.rule.covered_by_mode"]({ mode: modeLabel(rule.admin_mode) })
-          : m["my_redaction.rule.covered_by"]()}
+    <span className="flex flex-col gap-0.5">
+      <span>
+        {kindLabel(routing.kind)}
+        {" · "}
+        {rule
+          ? m["my_redaction.routing.rule"]({ name: `${rule.pipeline ?? ""} › ${rule.name}` })
+          : m["my_redaction.routing.no_rule"]()}
       </span>
+      {routing.handled.extractor && (
+        <span className="text-small">
+          {m["my_redaction.routing.reader"]({ name: routing.handled.extractor })}
+        </span>
+      )}
+      {seen.length > 0 && <span className={`text-small ${MUTED}`}>{seen.join(" · ")}</span>}
+      {routing.handled.fallback_reason && (
+        <span className="text-small">
+          <Badge tone="warn">
+            {m["my_redaction.routing.fallback"]({ reason: routing.handled.fallback_reason })}
+          </Badge>
+        </span>
+      )}
+      {routing.outcome === "refused" && (
+        <span className="text-small">
+          <Badge tone="danger">{m["my_redaction.routing.refused"]()}</Badge>
+        </span>
+      )}
     </span>
   );
 }
 
-const EMPTY_FORM = { kind: "mode", name: "", regex: "", mode: "redact" } as const;
-
-type FormState = {
-  kind: "pattern" | "mode";
-  name: string;
-  regex: string;
-  mode: (typeof USER_MODES)[number];
-};
-
-function MyRules() {
-  const rules = useMyRedactionRules();
-  const save = useSaveRedactionRule();
-  const remove = useDeleteRedactionRule();
-  const [editing, setEditing] = useState<string | undefined>(undefined);
-  const [form, setForm] = useState<FormState>({ ...EMPTY_FORM });
-  const items = rules.data?.items ?? [];
-
-  const reset = () => {
-    setEditing(undefined);
-    setForm({ ...EMPTY_FORM });
-    save.reset();
-  };
-
-  const submit = (event: React.FormEvent) => {
-    event.preventDefault();
-    const body: UserRedactionRuleInput = {
-      kind: form.kind,
-      name: form.name.trim(),
-      mode: form.mode,
-      regex: form.kind === "pattern" ? form.regex : null,
-    };
-    save.mutate({ id: editing, body }, { onSuccess: reset });
-  };
-
-  const columns: Column<UserRedactionRule>[] = [
-    {
-      key: "what",
-      header: m["my_redaction.rules.column.rule"](),
-      render: (rule) =>
-        rule.kind === "pattern" ? (
-          <span>
-            <span className="font-medium">{rule.name}</span>
-            <code className="block text-small [overflow-wrap:anywhere]">{rule.regex}</code>
-          </span>
-        ) : (
-          <span>
-            <span className="font-medium">{entityLabel(rule.name)}</span>{" "}
-            <span className={`text-small ${MUTED}`}>{rule.name}</span>
-          </span>
-        ),
-    },
-    {
-      key: "mode",
-      header: m["my_redaction.rules.column.mode"](),
-      render: (rule) => modeLabel(rule.mode),
-    },
-    {
-      key: "status",
-      header: m["my_redaction.rules.column.status"](),
-      render: (rule) => <RuleStatus rule={rule} />,
-    },
-    {
-      key: "actions",
-      header: "",
-      label: m["my_redaction.rules.column.actions"](),
-      render: (rule) => (
-        <span className="flex gap-2">
-          <Button
-            onClick={() => {
-              setEditing(rule.id);
-              setForm({
-                kind: rule.kind,
-                name: rule.name,
-                regex: rule.regex ?? "",
-                mode: rule.mode as FormState["mode"],
-              });
-            }}
-          >
-            {m["my_redaction.rules.edit"]()}
-          </Button>
-          <Button
-            onClick={() => remove.mutate(rule.id)}
-            disabled={remove.isPending}
-            aria-label={m["my_redaction.rules.remove_aria"]({ name: rule.name })}
-          >
-            {m["my_redaction.rules.remove"]()}
-          </Button>
-        </span>
-      ),
-    },
-  ];
-
-  return (
-    <Card title={m["my_redaction.rules.title"]()} flush>
-      <div className="p-5">
-        <p className={`mt-0 ${MUTED}`}>{m["my_redaction.rules.intro"]()}</p>
-        {rules.isError && (
-          <Notice tone="danger" title={m["my_redaction.error"]()}>
-            {/* i18n: server text, the API's own error message. */}
-            {rules.error instanceof Error ? rules.error.message : m["my_redaction.unknown_error"]()}
-          </Notice>
-        )}
-      </div>
-      <Table
-        stack
-        columns={columns}
-        rows={items}
-        rowKey={(rule) => rule.id}
-        empty={m["my_redaction.rules.empty"]()}
-        caption={m["my_redaction.rules.caption"]()}
-      />
-      <form className={`${FORM} border-t border-line p-5`} onSubmit={submit}>
-        <h3 className="m-0 text-body font-semibold">
-          {editing ? m["my_redaction.form.edit"]() : m["my_redaction.form.add"]()}
-        </h3>
-        {save.isError && (
-          <Notice tone="danger" title={m["my_redaction.form.error"]()}>
-            {/* i18n: server text, the API's own error message (it names what RE2 refused). */}
-            {save.error instanceof Error ? save.error.message : m["my_redaction.unknown_error"]()}
-          </Notice>
-        )}
-        <div className={FORM_ROW}>
-          <Select
-            label={m["my_redaction.form.kind"]()}
-            value={form.kind}
-            onChange={(e) => setForm({ ...form, kind: e.target.value as FormState["kind"] })}
-          >
-            <option value="mode">{m["my_redaction.form.kind_mode"]()}</option>
-            <option value="pattern">{m["my_redaction.form.kind_pattern"]()}</option>
-          </Select>
-          <Input
-            label={
-              form.kind === "pattern"
-                ? m["my_redaction.form.pattern_name"]()
-                : m["my_redaction.form.type_name"]()
-            }
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-            maxLength={64}
-            required
-            hint={
-              form.kind === "pattern"
-                ? m["my_redaction.form.pattern_name_hint"]()
-                : m["my_redaction.form.type_name_hint"]()
-            }
-          />
-          <Select
-            label={m["my_redaction.form.mode"]()}
-            value={form.mode}
-            onChange={(e) => setForm({ ...form, mode: e.target.value as FormState["mode"] })}
-          >
-            {USER_MODES.map((mode) => (
-              <option key={mode} value={mode}>
-                {modeLabel(mode)}
-              </option>
-            ))}
-          </Select>
-        </div>
-        {form.kind === "pattern" && (
-          <Input
-            label={m["my_redaction.form.regex"]()}
-            value={form.regex}
-            onChange={(e) => setForm({ ...form, regex: e.target.value })}
-            maxLength={512}
-            required
-            hint={m["my_redaction.form.regex_hint"]()}
-            className="font-mono"
-          />
-        )}
-        <p className={`m-0 text-small ${MUTED}`}>{m["my_redaction.form.only_stricter"]()}</p>
-        <div className="flex gap-2">
-          <Button type="submit" variant="primary" disabled={save.isPending || !form.name.trim()}>
-            {editing ? m["my_redaction.form.save"]() : m["my_redaction.form.add_button"]()}
-          </Button>
-          {editing && <Button onClick={reset}>{m["my_redaction.form.cancel"]()}</Button>}
-        </div>
-      </form>
-    </Card>
-  );
-}
-
-function TestBox() {
-  const [text, setText] = useState("");
-  // What was tested, kept so the offsets in the answer still point at it after the box is edited.
-  const [tested, setTested] = useState("");
-  const test = useTestRedaction();
-
-  return (
-    <Card title={m["my_redaction.test.title"]()}>
-      <div className={FORM}>
-        <div className={FIELD}>
-          <label className={FIELD_LABEL} htmlFor="my-redaction-test">
-            {m["my_redaction.test.label"]()}
-          </label>
-          <textarea
-            id="my-redaction-test"
-            className={TEXTAREA}
-            rows={4}
-            maxLength={20_000}
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            placeholder={m["my_redaction.test.placeholder"]()}
-          />
-          <p className={`m-0 text-small ${MUTED}`}>{m["my_redaction.test.not_logged"]()}</p>
-        </div>
-        <div>
-          <Button
-            variant="primary"
-            disabled={test.isPending || !text.trim()}
-            onClick={() => {
-              setTested(text);
-              test.mutate(text);
-            }}
-          >
-            {m["my_redaction.test.run"]()}
-          </Button>
-        </div>
-        {test.isError && (
-          <Notice tone="danger" title={m["my_redaction.error"]()}>
-            {/* i18n: server text, the API's own error message. */}
-            {test.error instanceof Error ? test.error.message : m["my_redaction.unknown_error"]()}
-          </Notice>
-        )}
-        {test.data && (
-          <div role="status" className="flex flex-col gap-2">
-            {test.data.note && <Notice tone="warn">{test.data.note}</Notice>}
-            {test.data.blocked && (
-              <Notice tone="danger" title={m["my_redaction.test.blocked"]()}>
-                {m["my_redaction.test.blocked_body"]()}
-              </Notice>
-            )}
-            {test.data.engine_active && test.data.spans.length === 0 && (
-              <p className="m-0">{m["my_redaction.test.nothing"]()}</p>
-            )}
-            {test.data.spans.length > 0 && (
-              <ul className="m-0 flex list-none flex-col gap-2 p-0">
-                {test.data.spans.map((span) => (
-                  <li
-                    key={`${span.start}-${span.end}-${span.entity_type}`}
-                    className="rounded-lg border border-line p-3"
-                  >
-                    <code className="[overflow-wrap:anywhere]">{tested.slice(span.start, span.end)}</code>
-                    <p className="m-0 text-dense">
-                      {m["my_redaction.test.span"]({
-                        type: entityLabel(span.entity_type),
-                        what: modeSentence(span.mode),
-                      })}
-                    </p>
-                    <p className={`m-0 text-small ${MUTED}`}>
-                      {span.rule
-                        ? span.rule.owner === "user"
-                          ? m["my_redaction.test.by_you"]({ name: span.rule.name })
-                          : m["my_redaction.test.by_admin"]({ name: span.rule.name })
-                        : m["my_redaction.test.by_unknown"]()}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-      </div>
-    </Card>
-  );
-}
-
 function entitySummary(event: RedactionEvent) {
+  if (event.entities.length === 0) {
+    return <span className={MUTED}>{m["my_redaction.log.nothing_hidden"]()}</span>;
+  }
   return event.entities.map((entity) => (
     <span key={entity.type} className="block">
       {m["my_redaction.log.entity"]({
@@ -478,6 +117,11 @@ function Log() {
       render: (event) => entitySummary(event),
     },
     {
+      key: "handled",
+      header: m["my_redaction.log.column.handled"](),
+      render: (event) => <RoutingCell routing={event.routing} />,
+    },
+    {
       key: "rule",
       header: m["my_redaction.log.column.rule"](),
       hideBelow: "md",
@@ -507,6 +151,8 @@ function Log() {
       render: (event) =>
         event.blocked ? (
           <Badge tone="danger">{m["my_redaction.log.blocked"]()}</Badge>
+        ) : event.entities.length === 0 ? (
+          <Badge>{m["my_redaction.log.seen"]()}</Badge>
         ) : (
           <Badge tone="ok">{m["my_redaction.log.hidden"]()}</Badge>
         ),
@@ -572,9 +218,9 @@ export function MyRedactions() {
         title={m["my_redaction.title"]()}
         subtitle={m["my_redaction.subtitle"]()}
       />
-      <RulesInForce />
-      <MyRules />
-      <TestBox />
+      <p className={`m-0 text-body ${MUTED}`}>
+        {m["my_redaction.pipelines_note"]()} <Link to="/privacy">{m["my_redaction.pipelines_link"]()}</Link>
+      </p>
       <Log />
     </div>
   );

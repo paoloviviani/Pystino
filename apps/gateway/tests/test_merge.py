@@ -33,15 +33,15 @@ from gateway.models import (
     MembershipRole,
     MembershipSource,
     ModelDef,
+    PrivacyPipeline,
     Provider,
     QuotaNotificationSetting,
-    RedactionRule,
-    RedactionScope,
     RefreshCredential,
     User,
     UserIdentity,
     UserMerge,
     UserModelAccess,
+    UserPolicy,
 )
 from gateway.oidc import PENDING_USER_ISSUER
 from gateway.secrets import SecretBox
@@ -301,8 +301,17 @@ class TestScopeIdUser:
             window_seconds=3600,
             limit_value=Decimal(2000),
         )
-        user_redaction = RedactionRule(scope=RedactionScope.USER, scope_id=source.id, policy={})
-        session.add_all([user_rule, group_rule, user_redaction])
+        # An administrator's pipeline that names the source among its users.
+        named = PrivacyPipeline(
+            kind="chat",
+            name="Clinic",
+            position=0,
+            who={"mode": "users", "ids": [str(source.id), str(uuid.uuid4())]},
+            target={"mode": "all", "providers": [], "models": []},
+            rules=[],
+            otherwise={"level": "pass"},
+        )
+        session.add_all([user_rule, group_rule, named])
         await session.commit()
 
         await merge_users(
@@ -317,10 +326,12 @@ class TestScopeIdUser:
 
         await session.refresh(user_rule)
         await session.refresh(group_rule)
-        await session.refresh(user_redaction)
+        await session.refresh(named)
         assert user_rule.scope_id == target.id
         assert group_rule.scope_id == group.id, "not user-scoped, untouched"
-        assert user_redaction.scope_id == target.id
+        # The merged person stays inside the scope the source was in.
+        assert str(target.id) in named.who["ids"] and str(source.id) not in named.who["ids"]
+        assert len(named.who["ids"]) == 2
 
     async def test_a_duplicate_limit_rule_is_kept_on_the_target_not_moved(
         self, session: AsyncSession
@@ -383,25 +394,34 @@ class TestScopeIdUser:
         assert target_rule.limit_value == Decimal(2000), "the target's own value stands"
         assert distinct_rule.scope_id == target.id, "the non-colliding rule still moved"
 
-    async def test_a_duplicate_user_redaction_rule_is_kept_on_the_target(
+    async def test_the_targets_own_policies_and_pipelines_stand_and_the_sources_go(
         self, session: AsyncSession
     ) -> None:
-        """`redaction_rules` allows at most one user-scoped row per user, so
-        any existing target row makes the source's a duplicate outright."""
+        """A user's own policies and pipelines only ever add protection, so dropping
+        the source's costs a minute to re-add and never a leak."""
         source = await make_user(session)
         target = await make_user(session)
-        source_rule = RedactionRule(scope=RedactionScope.USER, scope_id=source.id, policy={})
-        target_rule = RedactionRule(scope=RedactionScope.USER, scope_id=target.id, policy={})
-        session.add_all([source_rule, target_rule])
+        mine = UserPolicy(user_id=source.id, name="Mine", rules=[])
+        theirs = UserPolicy(user_id=target.id, name="Mine", rules=[])
+        own = PrivacyPipeline(
+            owner_id=source.id,
+            kind="chat",
+            name="P",
+            position=0,
+            who={"mode": "users", "ids": [str(source.id)]},
+            target={"mode": "all", "providers": [], "models": []},
+            rules=[],
+            otherwise={"level": "pass"},
+        )
+        session.add_all([mine, theirs, own])
         await session.commit()
 
         preview = await compute_merge_preview(
             session, source_id=source.id, target_id=target.id, actor_id=uuid.uuid4()
         )
-        assert preview.counts["redaction_rules"] == 0
-        assert preview.duplicate_rules_dropped == 1
+        assert preview.counts["user_policies"] == 1
 
-        summary = await merge_users(
+        await merge_users(
             session,
             source_id=source.id,
             target_id=target.id,
@@ -411,9 +431,9 @@ class TestScopeIdUser:
         )
         await session.commit()
 
-        assert summary.duplicate_rules_dropped == 1
-        remaining = (await session.execute(select(RedactionRule))).scalars().all()
-        assert [row.id for row in remaining] == [target_rule.id]
+        remaining = (await session.execute(select(UserPolicy))).scalars().all()
+        assert [row.id for row in remaining] == [theirs.id]
+        assert (await session.execute(select(PrivacyPipeline))).scalars().all() == []
 
     async def test_the_merge_never_raises_on_a_duplicate(self, session: AsyncSession) -> None:
         """The property the fix exists for: no raw rollback, whatever the
@@ -436,8 +456,6 @@ class TestScopeIdUser:
                     window_seconds=3600,
                     limit_value=Decimal(2),
                 ),
-                RedactionRule(scope=RedactionScope.USER, scope_id=source.id, policy={}),
-                RedactionRule(scope=RedactionScope.USER, scope_id=target.id, policy={}),
             ]
         )
         await session.commit()

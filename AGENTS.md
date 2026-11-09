@@ -282,6 +282,7 @@ uv run python scripts/test_pystino_usage_live.py     # GET /v1/pystino/usage und
 uv run python scripts/test_citations_live.py         # citation offsets after a real placeholder
 uv run python scripts/test_public_tls_live.py        # TLS, the IdP, a Secure cookie, nothing else exposed
 uv run python scripts/test_byok_live.py              # BYOK: grant, private provider, my/<name>, the guard, admin holds
+uv run python scripts/test_privacy_routing_live.py   # privacy pipelines on /v1/embeddings and /v1/ocr, the log in PostgreSQL (needs the redaction profile)
 uv run python scripts/benchmark_live.py              # per-layer cost; see docs/performance.md
 ```
 
@@ -591,10 +592,61 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
   one response that may carry them (`x-pystino-redaction-values`, OIDC token
   only) and nothing that persists reads that field. A new reader of the outcome
   or the log must keep it so (`test_redaction_visibility.py` scans every table).
-  A user's own rules (`user_redaction_rules`, `redaction/user_rules.py`) fold in
+  A user's own policies (`user_policies`, `redaction/user_rules.py`) fold in
   after the administrators' and may only tighten; do not route them through
-  `RedactionPolicy.combine`, which lets a scope lower a threshold or veto a
+  `RedactionPolicy.combine`, which lets a policy lower a threshold or veto a
   placeholder style.
+- **Privacy pipelines are stateless and query-free** (ADR 0113, section 0,
+  `gateway/privacy/`, docs/privacy-routing.md). Two objects: a *policy*
+  (`redaction_policies`: what to find and hide, no scope) and a *pipeline*
+  (`privacy_pipelines`: kind, who, target, ordered rules, a fixed last rule).
+  `PrivacyState` reads pipelines, policies, user policies, classifiers and reader
+  names on the ten-second poll (the redaction resolver's design), so a request adds
+  no query (`test_query_counts.py`); an admin write refreshes the worker that
+  served it. **Every pipeline in scope runs and the results combine**
+  (`privacy/combine.py`): the highest level on the ladder wins, policies add up
+  and `RedactionPolicy.combine` takes the strictest mode, the administrator's
+  reader and engine hold over a user's, the administrator's rule is named on a
+  tie. First match applies only *inside* a pipeline. `_metered.redact_or_block`
+  plans for every redacting surface (`kind="embed"` for embeddings and rerank,
+  chat otherwise); `/v1/ocr` plans in the route because a reroute re-targets the
+  request and the pipelines that guard the new reader must also run. Anything a
+  protective rule needs and cannot have (a reader that is a link for the built-in
+  extractor, a reader the caller is not granted) fails closed with a 403 naming
+  the rule and its pipeline, never the content or the file name; a content
+  condition that cannot be decided is the 503 `privacy_undecidable` (below). A `scan` condition is only known after
+  reading, so the OCR route reads once on the built-in extractor and plans again.
+  There is no "local" and no reroute for embed or chat. A user's pipeline has its
+  who forced to its owner when saved *and* when read, and only tightening actions
+  (`rules.clean_action(user=True)`): the combination is monotone, so it can never
+  loosen. `routing` (what was observed, what handled it, every pipeline in
+  scope) rides in `redaction_detail["routing"]` and the `pystino_redaction`
+  summary: labels and names only; a file's name is in the summary of that
+  response and never persisted. Migration `0082` is proved byte for byte by
+  `test_privacy_migration_contract.py` against `tests/golden/`; do not change a
+  golden to make it pass.
+- **One vocabulary: policies find, conditions count** (ADR 0113, section 0c).
+  `RedactionPolicy` keeps its items in two groups that must never be mixed, in
+  the model, the API and the editor: patterns (`formats`, `patterns`, `keywords`;
+  deterministic, gateway-evaluated except the service's built-in formats) and
+  entities (`entities`, `custom_entities`, `engine`; NER, probabilistic).
+  `service_types()` is the merged view the fold and the detector use. The
+  conditions are `filetype`, `scan`, `filename`, `finds` ("policy finds at least
+  N distinct items", any mode but `off`) and `classified` (a decision model);
+  there is no built-in topic, list or quick check, and none may be added.
+  `privacy/finds.py` counts items; `detect_only` is found and counted, never
+  hidden, so `eligible_spans` takes `acting=` (redaction acts only on modes that
+  hide). **A condition that cannot look never reads "could not look" as "found
+  nothing"**: `strict` detection ignores `fail_open`, an unavailable NER engine
+  (409 `engine_unavailable`) or service is `FindResult.unavailable`, and
+  `Evaluator._undecided` applies the fail-closed rule (the patterns part never
+  fails). Policies of different NER engines are called once per engine
+  (`EffectivePolicy.asks`) and the spans merged; redaction with an engine the
+  service lost is a 503 naming the policy. A user may name an administrator's
+  policy only when `shared_with_users`; `classified` is administrators' only
+  because it sends text to a provider. Migration `0083` converts the removed
+  conditions without dropping any silently (a rule with no equivalent is kept
+  switched off with a `note`, and named in the migration log).
 - **`InMemoryCounterStore` is atomic only because it never awaits.** It proves
   nothing about `MULTI`/`EXEC`, which is why `test_quota_race_live.py` exists.
 - **An abandoned stream is billed from our price table.** A client that hangs

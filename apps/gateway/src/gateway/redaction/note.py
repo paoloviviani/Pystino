@@ -74,8 +74,9 @@ def system_note(
     names an anonymising mode (``anonymise_restore``, ``anonymise``,
     ``redact``). Redaction off, or only ``off`` and ``block``, gets nothing.
     """
-    modes = [entry.mode for entry in policy.entities.values()]
+    modes = [entry.mode for entry in policy.service_types().values()]
     modes += [pattern.mode for pattern in policy.patterns]
+    modes += [item.mode for item in policy.keywords]
     modes.append(policy.default_mode)
     if not any(mode in _ANONYMISING for mode in modes):
         return None
@@ -93,14 +94,22 @@ def system_note(
         )
     else:
         text = HIDDEN_NOTE
-    same_length = any(
-        entry.placeholder is PlaceholderStyle.SAME_LENGTH
-        and entry.mode in (EntityMode.ANONYMISE_RESTORE, EntityMode.ANONYMISE)
-        for entry in policy.entities.values()
-    ) or any(
-        pattern.placeholder is PlaceholderStyle.SAME_LENGTH
-        and pattern.mode in (EntityMode.ANONYMISE_RESTORE, EntityMode.ANONYMISE)
-        for pattern in policy.patterns
+    same_length = (
+        any(
+            entry.placeholder is PlaceholderStyle.SAME_LENGTH
+            and entry.mode in (EntityMode.ANONYMISE_RESTORE, EntityMode.ANONYMISE)
+            for entry in policy.service_types().values()
+        )
+        or any(
+            pattern.placeholder is PlaceholderStyle.SAME_LENGTH
+            and pattern.mode in (EntityMode.ANONYMISE_RESTORE, EntityMode.ANONYMISE)
+            for pattern in policy.patterns
+        )
+        or any(
+            item.placeholder is PlaceholderStyle.SAME_LENGTH
+            and item.mode in (EntityMode.ANONYMISE_RESTORE, EntityMode.ANONYMISE)
+            for item in policy.keywords
+        )
     )
     if EntityMode.REDACT in modes:
         text = f"{text} {REDACT_NOTE}"
