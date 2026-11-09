@@ -12,8 +12,11 @@ planning; see [Measured performance](performance.md).
 ## Policies and pipelines
 
 Two objects, one job each (ADR 0113; see [Privacy](privacy.md) and [Privacy
-pipelines](privacy-routing.md)). A **redaction policy** is *what to hide*:
-patterns, entity types and a mode for each, with no scope. A **pipeline** is *when
+pipelines](privacy-routing.md)). A **redaction policy** is *what to look for and
+what to do about it*: items in two groups, [patterns and entities](#items-two-groups-never-mixed),
+and a mode for each, with no scope. Policies are the only object that finds
+things: a pipeline condition "\<policy\> finds at least N items" counts a
+policy's items with the same editor. A **pipeline** is *when
 and how*: a kind (read, embed, chat), a scope (who, which target), ordered rules,
 and a fixed last rule, and any non-refuse action may **redact with** one policy.
 
@@ -25,7 +28,7 @@ text (reading), the input (embedding and rerank), or messages and tool results
 
 | | Redaction policy | Pipeline |
 |---|---|---|
-| Purpose | what is hidden from the provider | when and how a request is handled |
+| Purpose | what is found, and hidden from the provider | when and how a request is handled |
 | Scope | none | who and target |
 | Several apply | **all** apply, and the **strictest** mode wins | all in scope run and combine; the first rule matching wins inside one |
 | Lives in | console: **Privacy, Redaction policies** | console: **Privacy, Pipelines** |
@@ -83,6 +86,59 @@ given — the row is append-only, so the history of that decision survives.
 
 The shipped default is `noop`, which redacts nothing. Redaction being **on**
 must be a choice somebody made, never a default someone forgot about.
+
+## Items: two groups, never mixed
+
+A policy's items come in two groups, in the API and in the console editor, and the
+two are different in kind:
+
+| | **Patterns** (fast, deterministic) | **Entities** (NER, probabilistic) |
+|---|---|---|
+| What | built-in formats, regular expressions, keyword lists | the entity types of the policy's NER engine; custom types for GLiNER |
+| Where it runs | the built-in formats in the redaction service's recognisers (checksummed where there is one); the regular expressions and keyword lists in the gateway | the redaction service, per engine |
+| Can fail | the gateway's never; the service's if it is down | yes: if the service or the engine is unavailable the request fails closed |
+| Stored as | `formats`, `patterns`, `keywords` | `entities`, `custom_entities` |
+
+- **Built-in formats** are the service's own `pattern_entities` (email, IBAN, card,
+  the Italian identifiers, and so on). The console lists what the service reports.
+- **Custom regular expressions** are evaluated in the gateway under RE2 (below).
+- **Keyword lists** are a name, a comma-separated list of words and phrases, a
+  **case sensitive** checkbox and a mode. They are found as **whole words**; spacing
+  and punctuation between the words of a phrase do not matter ("data protection"
+  finds "Data-protection"). Unless case sensitive, case is ignored and **accents are
+  folded** ("perche" finds "Perché"). Evaluated in the gateway in **linear time**, as
+  a trie over word tokens: no regular expression is ever built from what was typed.
+  A list holds up to 1,000 entries, each up to 100 characters and six words.
+- **Entities** are the types the chosen NER engine exposes, each with a mode and a
+  confidence threshold. A policy chooses its **engine**, spaCy or GLiNER, among
+  those the service reports available (none chosen: the deployment's default). With
+  GLiNER an administrator may add **custom entity types**: an UPPER_SNAKE name and a
+  natural-language label the model is given at inference ("project code name").
+
+Every item has a mode, including **`detect only`**: found and counted, **never
+hidden**. It sits just above `off` in the order, so the strictest-mode fold and the
+tighten-only user rules are unchanged: a policy that only decides sets its items to
+`detect only`, and a user cannot use it to lower an administrator's mode.
+
+Nothing here is specific to any topic: no list ships, no template is seeded.
+
+The policy editor has a **Try it** box (`POST /api/admin/privacy/policies/try`) that
+runs the real detection over a text, with no side effects, and lists each item found
+with its group, and the engine and score for entities.
+
+### The redaction service's contract
+
+`GET /healthz` reports `pattern_entities` and `ner_engines`, one entry per engine
+(`name`, `available`, `default`, `entities`, `custom_labels`, `ms_per_token`,
+`languages`). `POST /detect` takes `ner_engine` (null is the service default) and
+`custom_labels` (`[{entity, label}]`) and answers **409 `{"detail": {"code":
+"engine_unavailable"}}`** for an engine it has not got. Spans carry `score` and
+`engine` (`pattern`, `spacy` or `gliner`). When several policies in force choose
+different engines the gateway calls the service **once per engine** and merges the
+spans (identical range and type: the higher score), and the strictest mode of the
+fold applies. An engine the service reports unavailable can neither be chosen nor,
+if it goes away, be skipped: a request that needs it is refused with a 503 naming
+the policy.
 
 ## Detection families
 
@@ -192,7 +248,7 @@ content, or the deployment policy) has some entity type, the default, or a custo
 pattern in a mode other than `off`, **or** a chat pipeline in scope refuses them
 (audio has no text for a pipeline to judge, so a refusal that names the caller
 counts as much as a policy). A policy that only lists types as `off` does not count.
-**Known limit:** chat pipelines are judged without content here, so a chat pipeline whose rules depend on what the text says (for example "contains health data → refuse") cannot act on audio, and does not by itself block transcription; only a refusal that does not depend on content, or a policy in force, does.
+**Known limit:** chat pipelines are judged without content here, so a chat pipeline whose rules depend on what the text says (for example "finds at least 1 item of a policy → refuse") cannot act on audio, and does not by itself block transcription; only a refusal that does not depend on content, or a policy in force, does.
 Leave it `true` only if you accept that audio from those callers reaches the
 provider unscreened, although the same words typed as text would have been
 substituted or blocked by their rule. If you do not accept that, set it to
@@ -206,6 +262,7 @@ the model sees and what the person gets back:
 | Mode | Upstream sees | The person gets back |
 |---|---|---|
 | `off` | the real value | the real value |
+| `detect_only` | the real value | the real value; the item is found and counted (for a pipeline condition), never hidden |
 | `anonymise_restore` | `<PERSON_xxxx>`, stable | the real value, restored |
 | `anonymise` | `<PERSON_xxxx>`, stable | the placeholder |
 | `redact` | `<PERSON>` — lossy, two users collapse into one label | the label |
@@ -234,7 +291,7 @@ tool call with the same hold-back rule as prose. This covers chat completions
 (`tool_calls`), the Responses surface (`function_call`) and Anthropic Messages
 (`tool_use`).
 
-Two settings, both read-only on the Detectors tab because they come from the
+Two settings, both read-only on the Redaction service tab because they come from the
 environment:
 
 - `GATEWAY_REDACTION__RESTORE_IN_RESPONSE` (default on) puts real values back in
@@ -420,9 +477,10 @@ as above:
   pattern (no backreferences or lookaround; a pattern that matches the empty
   string is refused);
 - **a stricter mode for an entity type** wins over a weaker one, by the order
-  `off` < `anonymise_restore` < `anonymise` < `redact` < `block`. An entity type
-  must be one the administrator has made available to users (Detectors tab; blank
-  means any).
+  `off` < `detect_only` < `anonymise_restore` < `anonymise` < `redact` < `block`. An
+  entity type must be one the administrator has made available to users (Redaction
+  service tab; blank means any). `detect_only` can add something to count in the
+  user's own pipeline and never lowers an administrator's mode.
 
 A user's pattern also never displaces or shrinks what the administrators' policies
 already cover: a pattern span that overlaps a detected or administrator span is
@@ -551,25 +609,27 @@ otherwise the entry is written only when something was hidden, as before.
     "target": {"alias": "reader", "model": "local-reader", "provider": "onsite"},
     "filename": "referto-rossi.pdf (summary only)", "filename_match": {"rule_id": "6c1e...", "pattern_index": 0}, "mime": "application/pdf",
     "filetype": "pdf", "is_scan": true,
-    "verdicts": {"health": true, "ids": false, "lang": "it", "method": "patterns"}
+    "finds": {"Codenames": 2}, "classified": {"Refunds": false}
   },
   "handled": {
     "extractor": "docling", "fallback_reason": "docling busy", "reader": "docling", "engine": "docling",
-    "profile": "default", "policies": ["Default"],
-    "routing_rule": {"id": "6c1e...", "name": "Medical PDFs", "pipeline": "Reports", "pipeline_id": "…", "owner": "admin"}
+    "policies": ["Default"],
+    "routing_rule": {"id": "6c1e...", "name": "Codename files", "pipeline": "Reports", "pipeline_id": "…", "owner": "admin"}
   },
   "outcome": "rule",
   "pipelines": [
-    {"id": "…", "name": "Reports", "owner": "admin", "hop": 0, "rule": {"id": "6c1e...", "name": "Medical PDFs"}, "level": "read_with"},
+    {"id": "…", "name": "Reports", "owner": "admin", "hop": 0, "rule": {"id": "6c1e...", "name": "Codename files"}, "level": "read_with"},
     {"id": "…", "name": "My reports", "owner": "user", "hop": 0, "rule": null, "level": "default"}
   ],
   "observed_rules": [{"id": "...", "name": "Trial"}],
-  "degraded": [], "fallbacks": []
+  "degraded": []
 }
 ```
 
 - `observed.filename` (summary only), `mime`, `filetype`, `is_scan` and `filename_match` are only for `read`;
-  `verdicts` only when a rule asked for the text's content. `is_scan` is what the
+  `finds` (the number of distinct items each counted policy found, by policy name)
+  and `classified` (what each classifier said) only when a rule asked for the text's
+  content. Items are never listed: counts only. `is_scan` is what the
   extractor reported, so it is `null` for a document that was never read here.
 - **The file name is never stored.** File names often carry personal data, so the
   log keeps the type, the MIME, `is_scan` and `filename_match` (the rule id and
@@ -578,7 +638,7 @@ otherwise the entry is written only when something was hidden, as before.
   in the per-response summary, for that one response. Everything else here is a
   label, a group or model name, or a count.
 - `handled.extractor` and `fallback_reason` come from the extractor's own answer.
-  `profile` is `default` until chat detector profiles (phase 2). `routing_rule`
+  `routing_rule`
   is the rule that set the winning level (the administrator's on a tie), with its
   pipeline and `owner`, or `null`; `policies` names the policies applied.
 - `pipelines` lists every pipeline that was in scope and the rule that fired in
@@ -587,8 +647,8 @@ otherwise the entry is written only when something was hidden, as before.
 - `outcome` is `default` (nothing applied), `rule`, `rerouted`, `refused`, or
   `blocked` (redaction refused it).
 - `observed_rules` lists observe-only rules that would have applied.
-- `degraded` and `fallbacks` appear when a detector a rule needed was
-  unavailable, and say how that was handled (see [Privacy pipelines](privacy-routing.md)).
+- `degraded` appears when a policy's NER part or a classifier a rule needed was
+  unavailable, and says how that was handled (see [Privacy pipelines](privacy-routing.md)).
 - The console's **Redactions** page shows these fields compactly in a "Handled
   by" column, and lists requests where nothing was hidden when routing is on.
 
@@ -604,8 +664,9 @@ whose output is logged.
 
 - The **Privacy** area of the console holds all of it: **Pipelines** (when and
   how), **Redaction policies** (what is hidden; the editor is its own page),
-  **Detectors** (the engine choice and the detection families inside the Fast
-  profile), and **Test** (one box that runs the real combination for a sample).
+  **Classifiers** (decision models), **Redaction service** (the redaction engine
+  choice, the detection families, what users may add to their own policies), and
+  **Test** (one box that runs the real combination for a sample).
 - `GET /api/admin/redaction` reports what is in force.
 - The detection cache is a **per-process LRU** — adding worker processes
   lowers the hit rate. It is keyed on the text *and* everything the detector

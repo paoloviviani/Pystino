@@ -598,9 +598,9 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
   placeholder style.
 - **Privacy pipelines are stateless and query-free** (ADR 0113, section 0,
   `gateway/privacy/`, docs/privacy-routing.md). Two objects: a *policy*
-  (`redaction_policies`: what to hide, no scope) and a *pipeline*
+  (`redaction_policies`: what to find and hide, no scope) and a *pipeline*
   (`privacy_pipelines`: kind, who, target, ordered rules, a fixed last rule).
-  `PrivacyState` reads pipelines, policies, user policies, profiles and reader
+  `PrivacyState` reads pipelines, policies, user policies, classifiers and reader
   names on the ten-second poll (the redaction resolver's design), so a request adds
   no query (`test_query_counts.py`); an admin write refreshes the worker that
   served it. **Every pipeline in scope runs and the results combine**
@@ -612,9 +612,9 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
   chat otherwise); `/v1/ocr` plans in the route because a reroute re-targets the
   request and the pipelines that guard the new reader must also run. Anything a
   protective rule needs and cannot have (a reader that is a link for the built-in
-  extractor, a reader the caller is not granted, a detector that is down with
-  fallback `refuse`) fails closed with a 403 naming the rule and its pipeline,
-  never the content or the file name. A `scan` condition is only known after
+  extractor, a reader the caller is not granted) fails closed with a 403 naming
+  the rule and its pipeline, never the content or the file name; a content
+  condition that cannot be decided is the 503 `privacy_undecidable` (below). A `scan` condition is only known after
   reading, so the OCR route reads once on the built-in extractor and plans again.
   There is no "local" and no reroute for embed or chat. A user's pipeline has its
   who forced to its owner when saved *and* when read, and only tightening actions
@@ -625,6 +625,28 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
   response and never persisted. Migration `0082` is proved byte for byte by
   `test_privacy_migration_contract.py` against `tests/golden/`; do not change a
   golden to make it pass.
+- **One vocabulary: policies find, conditions count** (ADR 0113, section 0c).
+  `RedactionPolicy` keeps its items in two groups that must never be mixed, in
+  the model, the API and the editor: patterns (`formats`, `patterns`, `keywords`;
+  deterministic, gateway-evaluated except the service's built-in formats) and
+  entities (`entities`, `custom_entities`, `engine`; NER, probabilistic).
+  `service_types()` is the merged view the fold and the detector use. The
+  conditions are `filetype`, `scan`, `filename`, `finds` ("policy finds at least
+  N distinct items", any mode but `off`) and `classified` (a decision model);
+  there is no built-in topic, list or quick check, and none may be added.
+  `privacy/finds.py` counts items; `detect_only` is found and counted, never
+  hidden, so `eligible_spans` takes `acting=` (redaction acts only on modes that
+  hide). **A condition that cannot look never reads "could not look" as "found
+  nothing"**: `strict` detection ignores `fail_open`, an unavailable NER engine
+  (409 `engine_unavailable`) or service is `FindResult.unavailable`, and
+  `Evaluator._undecided` applies the fail-closed rule (the patterns part never
+  fails). Policies of different NER engines are called once per engine
+  (`EffectivePolicy.asks`) and the spans merged; redaction with an engine the
+  service lost is a 503 naming the policy. A user may name an administrator's
+  policy only when `shared_with_users`; `classified` is administrators' only
+  because it sends text to a provider. Migration `0083` converts the removed
+  conditions without dropping any silently (a rule with no equivalent is kept
+  switched off with a `note`, and named in the migration log).
 - **`InMemoryCounterStore` is atomic only because it never awaits.** It proves
   nothing about `MULTI`/`EXEC`, which is why `test_quota_race_live.py` exists.
 - **An abandoned stream is billed from our price table.** A client that hangs

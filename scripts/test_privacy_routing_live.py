@@ -3,10 +3,11 @@
 
 What only this can prove, that the unit suite on SQLite cannot:
 
-* pipelines, policies, profiles and the `routing` log entry round-trip through
-  **PostgreSQL** (a JSON column read with `->`, the migration's seeded profile);
-* an embedding pipeline refuses health data and the *fake upstream receives
-  nothing at all*; a pipeline that redacts with a policy hides what it names;
+* pipelines, policies, classifiers and the `routing` log entry round-trip through
+  **PostgreSQL** (a JSON column read with `->`, the two-group policy shape);
+* an embedding pipeline refuses a text in which a keyword list finds an item
+  ("finds at least 1 item"), and the *fake upstream receives nothing at all*; a
+  pipeline that redacts with a policy hides what it names;
 * `/v1/ocr` reads a real PDF on the real extractor service: a file-name rule
   refuses before anything is read, a scan rule reads first on the built-in
   extractor and then refuses (and lets a PDF with a text layer through), and a
@@ -36,7 +37,7 @@ from test_surfaces_live import call, key_for
 FAILURES: list[str] = []
 UPSTREAM = "http://localhost:8081"
 SUMMARY = {"x-pystino-redaction-summary": "1"}
-HEALTH = "Il paziente presenta una diagnosi di diabete di tipo 2 e ipertensione."
+CODENAME_TEXT = "The project codename is Falcon and the plan is on schedule."
 PLAIN = "La riunione di lunedi parlera del budget trimestrale e delle ferie."
 EMBED = "route-embed"
 
@@ -151,22 +152,17 @@ def main() -> int:
     if secret is None:
         return 1
 
-    print("=== the migration seeded the default profile; the API sees PostgreSQL ===")
-    status, profiles = api(dave, "/api/admin/privacy/profiles")
-    names = [p["name"] for p in profiles["items"]] if status == 200 else []
-    expect("the default profile Fast exists", "Fast" in names, str(names))
+    print("=== the two-group policy shape and the classifiers round-trip through PostgreSQL ===")
+    status, engines = api(dave, "/api/admin/privacy/engines")
     expect(
-        "and it is available and can decide",
-        status == 200
-        and any(
-            p["name"] == "Fast" and p["status"] == "available" and p["decides"]
-            for p in profiles["items"]
-        ),
+        "the service reports what it offers", status == 200 and "engines" in engines, str(engines)
     )
+    status, listed = api(dave, "/api/admin/privacy/classifiers")
+    expect("classifiers are listed (none is seeded)", status == 200 and listed["items"] == [])
     wipe(dave)
 
     print()
-    print("=== embedding: a pipeline refuses health data and nothing reaches the upstream ===")
+    print("=== embedding: a pipeline refuses a codename and nothing reaches the upstream ===")
     providers = api(dave, "/api/admin/providers?limit=200")[1]["items"]
     provider = next((p for p in providers if p.get("plugin") != "extractor"), None)
     if provider is None:
@@ -175,22 +171,34 @@ def main() -> int:
     group = (api(dave, "/api/me")[1] or {}).get("default_billing_group", {}) or {}
     if ensure_embedding(dave, EMBED, provider["id"], group.get("id")) is None:
         return 1
+    status, made = api(
+        dave,
+        "/api/admin/privacy/policies",
+        json_body={
+            "name": "Codenames",
+            "policy": {
+                "keywords": [{"name": "CODENAME", "words": "Falcon", "mode": "detect_only"}]
+            },
+        },
+        method="POST",
+    )
+    expect("a keyword policy saves", status == 201, str(made))
     pipeline(
         dave,
         "embed",
         "Remote embeddings",
-        [rule("No health text", [{"key": "health"}])],
+        [rule("No codename", [{"key": "finds", "values": [made["id"]]}])],
     )
     before = last_upstream()
     status, body = call(
-        secret, "/v1/embeddings", {"model": EMBED, "input": [HEALTH + " ZZ-MARKER"]}
+        secret, "/v1/embeddings", {"model": EMBED, "input": [CODENAME_TEXT + " ZZ-MARKER"]}
     )
     text = json.dumps(body)
     expect("it is a 403", status == 403, f"HTTP {status}")
     expect(
-        "naming the rule and the pipeline", "No health text" in text and "Remote embeddings" in text
+        "naming the rule and the pipeline", "No codename" in text and "Remote embeddings" in text
     )
-    expect("and never the content", "diabete" not in text and "ZZ-MARKER" not in text)
+    expect("and never the content", "Falcon" not in text and "ZZ-MARKER" not in text)
     expect("the upstream was not called", last_upstream() == before)
     blocked = sql(
         "select status, error_code from usage_records where api_surface = 'embeddings' "
