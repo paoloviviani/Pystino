@@ -64,6 +64,9 @@ from gateway.sse.pipeline import StreamStage, passthrough
 
 logger = logging.getLogger(__name__)
 
+#: Types the spaCy recogniser's label map once advertised but no stock model ever emits.
+_LEGACY_INERT = frozenset({"AGE", "ID", "EMAIL"})
+
 # Roles whose content is sent for detection. Everything the *user* side of the
 # conversation contributed, plus prior assistant turns — a name the model repeated
 # in turn 3 is still in the transcript the upstream receives in turn 4.
@@ -796,6 +799,23 @@ class HttpDetectionRedactor:
         # filtered locally — an engine's entity list is its own and cannot be
         # enumerated from here (ADR 0026).
         wanted = list(ask.types) if ask.types is not None else None
+        ner_on = settings.presidio_ner
+        engine_off = {
+            "spacy": settings.spacy_enabled is False,
+            "gliner": settings.gliner_enabled is False,
+        }
+        if ask.engine is not None and engine_off.get(ask.engine):
+            # The policy chose an engine the administrator switched off: fail closed, and the
+            # caller turns this into the 503 that names the policy.
+            raise EngineUnavailableError(
+                ask.engine, f"the NER engine {ask.engine} is switched off on the Detectors tab"
+            )
+        if ask.engine is None and any(engine_off.values()):
+            default = await self._default_engine()
+            if default is None or engine_off.get(default, False):
+                # The service would run its default engine: tell it not to run NER at all,
+                # so what needs it comes back unsupported and is refused below.
+                ner_on = False
         keys = [
             _Cache.key(
                 text,
@@ -803,7 +823,7 @@ class HttpDetectionRedactor:
                 floor,
                 wanted,
                 settings.presidio_pattern_matching,
-                settings.presidio_ner,
+                ner_on,
                 ask.engine,
                 ask.labels,
             )
@@ -822,7 +842,7 @@ class HttpDetectionRedactor:
                 score_threshold=floor,
                 entity_types=wanted,
                 presidio_pattern_matching=settings.presidio_pattern_matching,
-                presidio_ner=settings.presidio_ner,
+                presidio_ner=ner_on,
                 ner_engine=ask.engine,
                 custom_labels=[CustomLabel(entity=e, label=label) for e, label in ask.labels]
                 or None,
@@ -849,6 +869,42 @@ class HttpDetectionRedactor:
                 self._cache.put(keys[index], spans)
 
         return [spans or [] for spans in results]
+
+    async def _healthz(self) -> dict[str, Any] | None:
+        """The service's ``/healthz`` body, cached for 30 seconds (None when unreadable)."""
+        import time
+
+        held = getattr(self, "_healthz_seen", None)
+        if held is not None and time.monotonic() - held[0] < 30:
+            return held[1]  # type: ignore[no-any-return]
+        try:
+            base = self._endpoint.removesuffix("/detect")
+            body = (await self._client.get(f"{base}/healthz")).json()
+        except Exception:
+            logger.info("could not read the redaction service's capabilities", exc_info=True)
+            return None
+        found = body if isinstance(body, dict) else None
+        self._healthz_seen = (time.monotonic(), found)
+        return found
+
+    async def _default_engine(self) -> str | None:
+        """The service's default NER engine (None when unknown)."""
+        body = await self._healthz()
+        for engine in (body or {}).get("ner_engines") or []:
+            if isinstance(engine, dict) and engine.get("default"):
+                return str(engine.get("name"))
+        return None
+
+    async def _listed_types(self) -> set[str] | None:
+        """Every type the service lists in either family (None when it cannot be asked)."""
+        body = await self._healthz()
+        if body is None:
+            return None
+        listed = {str(t).upper() for t in body.get("pattern_entities") or []}
+        for engine in body.get("ner_engines") or []:
+            if isinstance(engine, dict):
+                listed.update(str(t).upper() for t in engine.get("entities") or [])
+        return listed
 
     async def _post(
         self, request: DetectionRequest, *, strict: bool = False
@@ -884,12 +940,39 @@ class HttpDetectionRedactor:
 
         found = {finding.index: finding.spans for finding in parsed.findings}
         self._report_unsupported(parsed.unsupported_types)
-        if parsed.unsupported_types and strict:
+        family_off = request.presidio_pattern_matching is False or request.presidio_ner is False
+        unsupported = list(parsed.unsupported_types)
+        if unsupported and family_off and not strict:
+            # A type the service lists in neither family (AGE, ID and EMAIL were once advertised
+            # by the spaCy recogniser's label map and never detected anything) is not
+            # protection lost to a switch: refusing the request for it would be an outage that
+            # buys nothing. Said in the log, once per change, instead.
+            # Only the legacy set: a custom GLiNER entity, or a model type whose engine slot is
+            # unavailable, is also absent from /healthz's lists, and must stay refused.
+            listed = await self._listed_types() or set()
+            inert = [
+                t for t in unsupported if t.upper() in _LEGACY_INERT and t.upper() not in listed
+            ]
+            if inert:
+                logger.warning(
+                    "ignoring policy type(s) %s: the redaction service finds them in no family, "
+                    "so no switch is what keeps them from being detected",
+                    ", ".join(sorted(inert)),
+                )
+                unsupported = [t for t in unsupported if t not in inert]
+        if unsupported and (strict or family_off):
             # A condition that counts items cannot read "the engine cannot serve this
             # type" as "found nothing": that is undecided, and the caller fails closed.
+            # So is a type a switched-off detector would have found: the administrator
+            # switched it off, but a policy still asks for it.
             raise EngineUnavailableError(
                 request.ner_engine,
-                "the engine cannot find: " + ", ".join(sorted(parsed.unsupported_types)),
+                (
+                    "a detector that is switched off cannot find: "
+                    if family_off and not strict
+                    else "the engine cannot find: "
+                )
+                + ", ".join(sorted(unsupported)),
             )
         return found, bool(parsed.unsupported_types)
 

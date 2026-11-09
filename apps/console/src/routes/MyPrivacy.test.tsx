@@ -44,7 +44,11 @@ interface Seen {
   body: unknown;
 }
 
-function render_(element: React.ReactElement, seen: Seen[] = []) {
+function render_(
+  element: React.ReactElement,
+  seen: Seen[] = [],
+  options: Record<string, unknown> = {},
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -83,6 +87,9 @@ function render_(element: React.ReactElement, seen: Seen[] = []) {
           own_policies: [],
           classifiers: [],
           entity_types: ["PERSON", "IBAN_CODE"],
+          ner_available: true,
+          ner_note: null,
+          ...options,
         });
       return jsonResponse({});
     }),
@@ -137,6 +144,38 @@ describe("My privacy pipelines", () => {
       name: "Mine",
       entries: [{ kind: "mode", name: "IBAN_CODE", mode: "redact", regex: null }],
     });
+  });
+
+  it("says no NER engine is installed, and offers no model types, on a pattern-only service", async () => {
+    render_(<MyPrivacy />, [], {
+      entity_types: ["IBAN_CODE"],
+      ner_available: false,
+      ner_note: "No NER engine is installed in the redaction service; entities need one.",
+    });
+    const user = userEvent.setup();
+    await screen.findByText("My names");
+    await user.click(within(screen.getByRole("region", { name: "My policies" })).getByRole("button", { name: "New policy" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/No NER engine is installed in the redaction service/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: "How to enable it" })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Add an entry" }));
+    const types = within(dialog).getByLabelText("Kind of value") as HTMLSelectElement;
+    expect([...types.options].map((o) => o.value)).toEqual(["", "IBAN_CODE"]);
+  });
+
+  it("offers templates limited to the types the administrator allows", async () => {
+    render_(<MyPrivacy />, [], { entity_types: ["IBAN_CODE"], ner_available: false });
+    const user = userEvent.setup();
+    await screen.findByText("My names");
+    await user.click(screen.getByRole("button", { name: "New policy from template" }));
+    const picker = await screen.findByRole("dialog");
+    expect(within(picker).getByText(/Skipped: PERSON, LOCATION, which need an NER engine/)).toBeInTheDocument();
+    expect(within(picker).getAllByText(/which your administrator has not made available/).length).toBeGreaterThan(0);
+    await user.click(within(picker).getByRole("button", { name: "Use the template Personal and banking data" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("Personal and banking data");
+    const types = within(dialog).getAllByLabelText("Kind of value") as HTMLSelectElement[];
+    expect(types.map((t) => t.value)).toEqual(["IBAN_CODE"]);
   });
 
   it("has no detector-profile picker in a user's policy", async () => {

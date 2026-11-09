@@ -27,8 +27,12 @@ export function AdminPolicy() {
   const { policyId: param } = useParams();
   const policyId = param === "new" ? undefined : param;
   const navigate = useNavigate();
-  const cloneFrom =
-    (useLocation().state as { cloneFrom?: RedactionPolicyRecord } | null)?.cloneFrom ?? null;
+  const locationState = useLocation().state as {
+    cloneFrom?: RedactionPolicyRecord;
+    fromTemplate?: { name: string; policy: RedactionPolicy; note: string | null };
+  } | null;
+  const cloneFrom = locationState?.cloneFrom ?? null;
+  const fromTemplate = locationState?.fromTemplate ?? null;
   const status = useRedactionStatus();
   const policies = usePolicies();
   const engines = usePrivacyEngines();
@@ -36,9 +40,15 @@ export function AdminPolicy() {
   const toast = useOptionalToast();
   const existing = policies.data?.items.find((p) => p.id === policyId) ?? null;
 
-  const [name, setName] = useState(cloneFrom ? `${cloneFrom.name} (copy)` : "");
+  const [name, setName] = useState(
+    cloneFrom ? `${cloneFrom.name} (copy)` : (fromTemplate?.name ?? ""),
+  );
   const [policy, setPolicy] = useState<RedactionPolicy>(
-    cloneFrom ? structuredClone(cloneFrom.policy) : seededPolicy(),
+    cloneFrom
+      ? structuredClone(cloneFrom.policy)
+      : fromTemplate
+        ? structuredClone(fromTemplate.policy)
+        : seededPolicy(),
   );
   const [shared, setShared] = useState(cloneFrom?.shared_with_users ?? false);
   const [reason, setReason] = useState(cloneFrom?.reason ?? "");
@@ -108,6 +118,11 @@ export function AdminPolicy() {
         <Notice tone="danger" title={m["privacy.save_error"]()}>
           {/* i18n: server text, the gateway's own error message. */}
           {save.error.message}
+        </Notice>
+      )}
+      {fromTemplate && !policyId && (
+        <Notice title={m["policy_template.note_added"]()}>
+          {fromTemplate.note ?? m["policy_template.lead"]()}
         </Notice>
       )}
       <div className="grid items-start gap-5 min-[80rem]:grid-cols-[minmax(0,1fr)_minmax(20rem,25rem)]">

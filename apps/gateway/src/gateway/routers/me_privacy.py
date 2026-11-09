@@ -44,10 +44,18 @@ from gateway.models import (
 from gateway.pagination import MAX_LIMIT, Page
 from gateway.privacy import rules as rulelib
 from gateway.privacy import service
+from gateway.privacy.engines import (
+    effective_engines,
+    has_ner,
+    ner_type_names,
+    no_ner_message,
+    usable,
+)
 from gateway.privacy.pipelines import Pipeline, pipeline_from_row, validate_pipeline
 from gateway.privacy.schemas import (
     DryRunRequest,
     DryRunResponse,
+    EnginesResponse,
     IssueView,
     ModelOption,
     NamedId,
@@ -169,8 +177,8 @@ async def _name_free(
 async def options(
     user: ManagementUserDep,
     session: SessionDep,
-    control_http: ControlHttpDep,
     settings: SettingsDep,
+    control_http: ControlHttpDep,
 ) -> OptionsResponse:
     """What this user may pick: their readers, policies, targets and types."""
     group = service.request_group_id(user)
@@ -200,6 +208,13 @@ async def options(
     ]
     mine = await service.user_policy_rows(session, user.id)
     settings_row = await service.settings_row(session)
+    report = usable(await effective_engines(session, control_http, settings))
+    ner = has_ner(report)
+    entity_types = settings_row.user_entity_types
+    if ner is False and entity_types is not None:
+        # No model, so a type only a model finds could never be served: not offered.
+        blocked = ner_type_names(report)
+        entity_types = [t for t in entity_types if t.upper() not in blocked]
     return OptionsResponse(
         users=[],
         groups=[],
@@ -220,7 +235,17 @@ async def options(
         policies=[NamedId(id=p.id, name=p.name) for p in admin_policies],
         own_policies=[NamedId(id=p.id, name=p.name) for p in mine],
         classifiers=[],
-        entity_types=settings_row.user_entity_types,
+        entity_types=entity_types,
+        ner_available=ner,
+        offered_types=(
+            sorted(
+                {t.upper() for t in report.pattern_entities}
+                | {t.upper() for e in report.engines if e.available for t in e.entities}
+            )
+            if report.reachable
+            else None
+        ),
+        ner_note=no_ner_message(report) if ner is False else None,
     )
 
 
@@ -408,8 +433,37 @@ async def _own_policy(session: SessionDep, user: User, policy_id: uuid.UUID) -> 
     return row
 
 
+async def _administrator_names(session: SessionDep) -> set[str]:
+    """Every name an administrator policy gives an item: formats, entities, patterns,
+    keyword lists and custom entities.
+
+    A user's pattern may not take one of them. ``fold`` writes a user's pattern into the
+    entity table under its name, so a pattern called like an administrator's keyword list
+    would replace that list's mode for the type. Refusing the name is the smaller change:
+    the fold stays as it is, and the user is told which name to avoid. (Chosen over making
+    the fold raise the mode on the pattern, which would let one user's pattern change
+    how an administrator's item is counted.)
+    """
+    names: set[str] = set()
+    for row in await service.policy_rows(session):
+        raw = row.policy or {}
+        for table in ("formats", "entities"):
+            names.update(str(name) for name in (raw.get(table) or {}))
+        for table in ("patterns", "keywords", "custom_entities"):
+            names.update(
+                str(item.get("name"))
+                for item in raw.get(table) or []
+                if isinstance(item, dict) and item.get("name")
+            )
+    return names
+
+
 async def _policy_fields(
-    session: SessionDep, user: User, payload: UserPolicyRequest, ignore: uuid.UUID | None
+    session: SessionDep,
+    user: User,
+    payload: UserPolicyRequest,
+    ignore: uuid.UUID | None,
+    report: EnginesResponse,
 ) -> tuple[str, list[dict[str, Any]]]:
     name = payload.name.strip()
     if not name:
@@ -422,17 +476,17 @@ async def _policy_fields(
         entries = service.clean_entries(
             payload.entries,
             allowed_types=settings_row.user_entity_types,
+            no_ner_types=ner_type_names(report) if has_ner(report) is False else None,
+            no_ner_reason=no_ner_message(report),
+            offered_types=(
+                {t.upper() for t in report.pattern_entities}
+                | {t.upper() for e in report.engines if e.available for t in e.entities}
+                if report.reachable
+                else None
+            ),
             reserved={
                 *(settings_row.user_entity_types or ()),
-                *(
-                    name
-                    for row in await service.policy_rows(session)
-                    for table in (
-                        (row.policy or {}).get("formats"),
-                        (row.policy or {}).get("entities"),
-                    )
-                    for name in (table or {})
-                ),
+                *await _administrator_names(session),
             },
         )
     except ValueError as exc:
@@ -461,7 +515,12 @@ async def list_my_policies(
 
 @router.post("/policies", response_model=UserPolicyResponse, status_code=status.HTTP_201_CREATED)
 async def create_my_policy(
-    payload: UserPolicyRequest, user: ManagementUserDep, session: SessionDep, request: Request
+    payload: UserPolicyRequest,
+    user: ManagementUserDep,
+    session: SessionDep,
+    request: Request,
+    settings: SettingsDep,
+    control_http: ControlHttpDep,
 ) -> UserPolicyResponse:
     count = (
         await session.execute(
@@ -470,7 +529,13 @@ async def create_my_policy(
     ).scalar_one()
     if count >= MAX_POLICIES_PER_USER:
         raise ConflictError(f"You can keep at most {MAX_POLICIES_PER_USER} policies.")
-    name, entries = await _policy_fields(session, user, payload, None)
+    name, entries = await _policy_fields(
+        session,
+        user,
+        payload,
+        None,
+        usable(await effective_engines(session, control_http, settings)),
+    )
     row = UserPolicy(id=uuid.uuid4(), user_id=user.id, name=name, rules=entries)
     session.add(row)
     await session.commit()
@@ -485,9 +550,17 @@ async def update_my_policy(
     user: ManagementUserDep,
     session: SessionDep,
     request: Request,
+    settings: SettingsDep,
+    control_http: ControlHttpDep,
 ) -> UserPolicyResponse:
     row = await _own_policy(session, user, policy_id)
-    name, entries = await _policy_fields(session, user, payload, row.id)
+    name, entries = await _policy_fields(
+        session,
+        user,
+        payload,
+        row.id,
+        usable(await effective_engines(session, control_http, settings)),
+    )
     row.name = name
     row.rules = entries
     await session.commit()

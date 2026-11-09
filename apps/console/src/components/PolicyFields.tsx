@@ -1,6 +1,6 @@
 import { Badge, Button, Card, Dialog, Input, Notice, Select } from "@llmp/ui";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MODES, entityLabel, modeRank } from "../lib/entities";
 import { m } from "../paraglide/messages.js";
 import { REDACTION_PATTERN_TEMPLATES } from "../lib/redactionTemplates";
@@ -63,6 +63,74 @@ export function chosenEngine(
 }
 
 /**
+ * The capabilities as a policy may use them: a detector switched off on the
+ * Detectors tab offers nothing (no formats, no engine, no entities), whatever the
+ * service reports.
+ */
+export function usableEngines(engines: PrivacyEngines | null | undefined): PrivacyEngines | null {
+  if (!engines) return null;
+  return {
+    ...engines,
+    pattern_entities: engines.patterns_enabled === false ? [] : engines.pattern_entities,
+    engines: engines.engines.map((engine) =>
+      engine.enabled === false ? { ...engine, available: false } : engine,
+    ),
+  };
+}
+
+/**
+ * Whether the redaction service has any NER engine that can find entities.
+ * Undefined while the service has not answered (or cannot be reached): nothing is
+ * hidden on a guess.
+ */
+export function hasNer(engines: PrivacyEngines | null | undefined): boolean | undefined {
+  if (!engines || !engines.reachable) return undefined;
+  return engines.engines.some(
+    (engine) => engine.available && engine.enabled !== false && engine.entities.length > 0,
+  );
+}
+
+/**
+ * Formats the service no longer lists. The spaCy recogniser's label map once made
+ * AGE, ID and EMAIL look like pattern formats; a policy that saved one keeps it.
+ * A name an engine does find moves to the entities, any other stays in the
+ * formats but is turned off: never dropped, and never left to act on nothing.
+ */
+export function migrateFormats(
+  policy: RedactionPolicy,
+  engines: PrivacyEngines | null | undefined,
+): { policy: RedactionPolicy; moved: string[]; retired: string[] } {
+  const none = { policy, moved: [] as string[], retired: [] as string[] };
+  if (!engines || !engines.reachable || engines.pattern_entities.length === 0) return none;
+  const known = new Set(engines.pattern_entities.map((name) => name.toUpperCase()));
+  const engine = chosenEngine(policy, engines);
+  const modelTypes = new Set((engine?.entities ?? []).map((name) => name.toUpperCase()));
+  const moved: string[] = [];
+  const retired: string[] = [];
+  const formats: RedactionPolicy["formats"] = {};
+  const entities = { ...policy.entities };
+  let changed = false;
+  for (const [name, entry] of Object.entries(policy.formats)) {
+    if (known.has(name.toUpperCase())) {
+      formats[name] = entry;
+    } else if (modelTypes.has(name.toUpperCase()) && !(name in entities)) {
+      entities[name] = entry;
+      moved.push(name);
+      changed = true;
+    } else {
+      formats[name] = entry.mode === "off" ? entry : { ...entry, mode: "off" };
+      retired.push(name);
+      changed = changed || entry.mode !== "off";
+    }
+  }
+  if (!changed) return { policy, moved, retired };
+  return { policy: { ...policy, formats, entities }, moved, retired };
+}
+
+/** Where the docs say how to install an NER engine. */
+export const NER_DOCS_URL = "https://paoloviviani.github.io/Pystino/redaction/#deploying-less-of-it";
+
+/**
  * The policy document as a form, in the two groups that never mix.
  *
  * Patterns (fast, deterministic): the service's built-in formats, regular
@@ -81,14 +149,31 @@ export function chosenEngine(
 export function PolicyFields({
   policy,
   onChange,
-  engines = null,
+  engines: reported = null,
   scoreThreshold = null,
   allowList = true,
   floor = null,
   allowListIgnored = false,
 }: PolicyFieldsProps) {
+  const engines = usableEngines(reported);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const engine = chosenEngine(policy, engines);
+  // Formats the service stopped offering are moved or turned off once, in the
+  // open (a notice says so), rather than dropped or left acting on nothing.
+  const migration = migrateFormats(policy, engines);
+  const movedRef = useRef<string[]>([]);
+  const [moved, setMoved] = useState<string[]>([]);
+  useEffect(() => {
+    if (migration.policy !== policy) {
+      movedRef.current = [...movedRef.current, ...migration.moved];
+      setMoved(movedRef.current);
+      onChange(migration.policy);
+    }
+    // `migration` is derived from the two inputs listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policy, engines]);
+  const noNer = hasNer(engines) === false;
+  const entityItems = Object.keys(policy.entities).length + policy.custom_entities.length;
   const floorFor = (group: "formats" | "entities", name: string): EntityMode | null =>
     floor === null ? null : (floor[group][name]?.mode ?? floor.default_mode);
 
@@ -136,11 +221,20 @@ export function PolicyFields({
         }
       >
         <div className="flex flex-col gap-5">
+          {migration.retired.length > 0 && (
+            <Notice tone="warn">
+              {m["policy_fields.formats_retired"]({ names: migration.retired.join(", ") })}
+            </Notice>
+          )}
+          {moved.length > 0 && (
+            <Notice>{m["policy_fields.formats_moved"]({ names: moved.join(", ") })}</Notice>
+          )}
           <TypeTable
             heading={m["policy_fields.formats_heading"]()}
             tip={m["policy_fields.formats_tip"]()}
             group="formats"
             known={engines?.pattern_entities ?? []}
+            flagUnknown
             entries={policy.formats}
             defaultMode={policy.default_mode}
             floorFor={(name) => floorFor("formats", name)}
@@ -218,17 +312,16 @@ export function PolicyFields({
                         {m["policy_fields.pattern_remove"]()}
                       </Button>
                     </div>
-                    {(pattern.mode === "anonymise_restore" || pattern.mode === "anonymise") && (
-                      <div className="col-span-full max-w-md">
-                        <PlaceholderSelect
-                          label={m["policy_fields.pattern_placeholder_label"]({
-                            number: index + 1,
-                          })}
-                          value={pattern.placeholder ?? "tagged"}
-                          onChange={(placeholder) => setPattern(index, { placeholder })}
-                        />
-                      </div>
-                    )}
+                    <div className="col-span-full max-w-md">
+                      <PlaceholderSelect
+                        label={m["policy_fields.pattern_placeholder_label"]({
+                          number: index + 1,
+                        })}
+                        mode={pattern.mode}
+                        value={pattern.placeholder ?? "tagged"}
+                        onChange={(placeholder) => setPattern(index, { placeholder })}
+                      />
+                    </div>
                   </div>
                 ))}
                 <p className="m-0 text-small text-ink-faint">{m["policy_fields.pattern_note"]()}</p>
@@ -302,31 +395,38 @@ export function PolicyFields({
           </span>
         }
       >
-        <div className="flex flex-col gap-5">
-          <EnginePicker
-            value={policy.engine}
-            engines={engines}
-            onChange={(next) => onChange({ ...policy, engine: next })}
+        {noNer ? (
+          <NoNerNotice
+            items={entityItems}
+            off={engines?.engines.some((e) => e.entities.length > 0 && e.enabled === false) ?? false}
           />
-          <TypeTable
-            heading={m["policy_fields.types_heading"]()}
-            tip={m["policy_fields.detection_note"]()}
-            group="entities"
-            known={engine?.entities ?? []}
-            entries={policy.entities}
-            defaultMode={policy.default_mode}
-            floorFor={(name) => floorFor("entities", name)}
-            scoreThreshold={scoreThreshold}
-            onChange={(entities) => onChange({ ...policy, entities })}
-          />
-          {(engine?.custom_labels || policy.custom_entities.length > 0) && (
-            <CustomEntities
-              policy={policy}
-              usable={engine?.custom_labels === true}
-              onChange={(custom_entities) => onChange({ ...policy, custom_entities })}
+        ) : (
+          <div className="flex flex-col gap-5">
+            <EnginePicker
+              value={policy.engine}
+              engines={engines}
+              onChange={(next) => onChange({ ...policy, engine: next })}
             />
-          )}
-        </div>
+            <TypeTable
+              heading={m["policy_fields.types_heading"]()}
+              tip={m["policy_fields.detection_note"]()}
+              group="entities"
+              known={engine?.entities ?? []}
+              entries={policy.entities}
+              defaultMode={policy.default_mode}
+              floorFor={(name) => floorFor("entities", name)}
+              scoreThreshold={scoreThreshold}
+              onChange={(entities) => onChange({ ...policy, entities })}
+            />
+            {((engine?.available && engine?.custom_labels) || policy.custom_entities.length > 0) && (
+              <CustomEntities
+                policy={policy}
+                usable={engine?.available === true && engine?.custom_labels === true}
+                onChange={(custom_entities) => onChange({ ...policy, custom_entities })}
+              />
+            )}
+          </div>
+        )}
       </Card>
 
       {/* For values a detector is right about the shape of and wrong about the
@@ -351,6 +451,40 @@ export function PolicyFields({
 }
 
 /**
+ * The one line that replaces the entities section when the redaction service has
+ * no NER engine: what is missing and where to read how to install it. Items the
+ * policy already lists are kept (and counted here), never dropped.
+ */
+export function NoNerNotice({ items, off = false }: { items: number; off?: boolean }) {
+  return (
+    <div className="flex flex-col gap-2" data-testid="no-ner">
+      {off ? (
+        // Installed but switched off: say so, and point at the switch, not at the docs.
+        <p className={`m-0 text-body ${MUTED}`}>
+          {m["policy_fields.no_ner_off"]()}{" "}
+          <a href="/console/admin/privacy/detectors" className="underline">
+            {m["policy_fields.no_ner_off_link"]()}
+          </a>
+        </p>
+      ) : (
+        <>
+          <p className={`m-0 text-body ${MUTED}`}>
+            {m["policy_fields.no_ner"]()}{" "}
+            <a href={NER_DOCS_URL} target="_blank" rel="noreferrer" className="underline">
+              {m["policy_fields.no_ner_docs"]()}
+            </a>
+          </p>
+          <p className={`m-0 text-small ${MUTED}`}>{m["policy_fields.no_ner_how"]()}</p>
+        </>
+      )}
+      {items > 0 && (
+        <Notice tone="warn">{m["policy_fields.no_ner_kept"]({ count: items })}</Notice>
+      )}
+    </div>
+  );
+}
+
+/**
  * The engine that reads this policy.
  *
  * Only an engine the service reports as available can be chosen (the server
@@ -368,7 +502,9 @@ function EnginePicker({
   onChange: (engine: RedactionPolicy["engine"]) => void;
 }) {
   const reachable = engines?.reachable ?? false;
-  const list = engines?.engines ?? [];
+  // Only an engine the service can run is offered; one a policy already names
+  // stays on screen below, flagged, so saving does not silently change it.
+  const list = (engines?.engines ?? []).filter((engine) => engine.available);
   const current = value ? list.find((engine) => engine.name === value) : undefined;
   const effective = current ?? (value ? undefined : list.find((engine) => engine.default));
   return (
@@ -388,16 +524,12 @@ function EnginePicker({
                 ? ` (${list.find((engine) => engine.default)?.name})`
                 : ""}
             </option>
-            {list.map((engine) => {
-              const usable = reachable && engine.available;
-              return (
-                <option key={engine.name} value={engine.name} disabled={!usable}>
-                  {engine.name}
-                  {engine.default ? ` (${m["policy_fields.engine_is_default"]()})` : ""}
-                  {usable ? "" : ` (${m["policy_fields.engine_unavailable"]()})`}
-                </option>
-              );
-            })}
+            {list.map((engine) => (
+              <option key={engine.name} value={engine.name} disabled={!reachable}>
+                {engine.name}
+                {engine.default ? ` (${m["policy_fields.engine_is_default"]()})` : ""}
+              </option>
+            ))}
             {/* A policy that names an engine the service no longer reports keeps
                 it on screen, so saving does not silently change it. */}
             {value && !list.some((engine) => engine.name === value) && (
@@ -441,6 +573,7 @@ function TypeTable({
   tip,
   group,
   known,
+  flagUnknown = false,
   entries,
   defaultMode,
   floorFor,
@@ -451,6 +584,8 @@ function TypeTable({
   tip: string;
   group: "formats" | "entities";
   known: string[];
+  /** Mark (and lock) a row whose type the service does not list. */
+  flagUnknown?: boolean;
   entries: Record<string, EntityPolicy>;
   defaultMode: EntityMode;
   floorFor: (name: string) => EntityMode | null;
@@ -517,6 +652,8 @@ function TypeTable({
             // unchanged. Printing it twice would read as a rendering fault.
             const labelled = name !== entity;
             const mode = entries[entity]?.mode ?? defaultMode;
+            const unlisted =
+              flagUnknown && known.length > 0 && !known.some((k) => k.toUpperCase() === entity);
             return (
               <li
                 key={entity}
@@ -529,6 +666,11 @@ function TypeTable({
                       <code className={CODE}>{entity}</code>
                     </span>
                   )}
+                  {unlisted && (
+                    <span className="text-small text-warn">
+                      {m["policy_fields.format_unlisted"]()}
+                    </span>
+                  )}
                 </div>
                 <ModeSegments
                   name={`mode-${group}-${entity}`}
@@ -537,6 +679,7 @@ function TypeTable({
                   })}
                   value={mode}
                   floor={floorFor(entity)}
+                  locked={unlisted}
                   onChange={(next) => set(entity, { mode: next })}
                 />
                 {withThreshold && (
@@ -576,15 +719,14 @@ function TypeTable({
                 </Button>
                 {/* Only the two modes that write a derived token have a form to
                     choose; redact writes the bare label. */}
-                {(mode === "anonymise" || mode === "anonymise_restore") && (
-                  <div className="col-span-full max-w-md">
-                    <PlaceholderSelect
-                      label={m["policy_fields.placeholder_for"]({ name })}
-                      value={entries[entity]?.placeholder ?? "tagged"}
-                      onChange={(placeholder) => set(entity, { placeholder })}
-                    />
-                  </div>
-                )}
+                <div className="col-span-full max-w-md">
+                  <PlaceholderSelect
+                    label={m["policy_fields.placeholder_for"]({ name })}
+                    mode={mode}
+                    value={entries[entity]?.placeholder ?? "tagged"}
+                    onChange={(placeholder) => set(entity, { placeholder })}
+                  />
+                </div>
               </li>
             );
           })}
@@ -679,15 +821,14 @@ function KeywordRow({
         {m["policy_fields.keyword_case"]({ number })}
         <Tip text={m["policy_fields.keyword_case_tip"]()} />
       </label>
-      {(keyword.mode === "anonymise_restore" || keyword.mode === "anonymise") && (
-        <div className="col-span-full max-w-md">
-          <PlaceholderSelect
-            label={m["policy_fields.keyword_placeholder_label"]({ number })}
-            value={keyword.placeholder ?? "tagged"}
-            onChange={(placeholder) => onChange({ placeholder })}
-          />
-        </div>
-      )}
+      <div className="col-span-full max-w-md">
+        <PlaceholderSelect
+          label={m["policy_fields.keyword_placeholder_label"]({ number })}
+          mode={keyword.mode}
+          value={keyword.placeholder ?? "tagged"}
+          onChange={(placeholder) => onChange({ placeholder })}
+        />
+      </div>
     </div>
   );
 }
@@ -778,15 +919,14 @@ function CustomEntities({
               {m["policy_fields.pattern_remove"]()}
             </Button>
           </div>
-          {(item.mode === "anonymise_restore" || item.mode === "anonymise") && (
-            <div className="col-span-full max-w-md">
-              <PlaceholderSelect
-                label={m["policy_fields.custom_placeholder_label"]({ number: index + 1 })}
-                value={item.placeholder ?? "tagged"}
-                onChange={(placeholder) => patch(index, { placeholder })}
-              />
-            </div>
-          )}
+          <div className="col-span-full max-w-md">
+            <PlaceholderSelect
+              label={m["policy_fields.custom_placeholder_label"]({ number: index + 1 })}
+              mode={item.mode}
+              value={item.placeholder ?? "tagged"}
+              onChange={(placeholder) => patch(index, { placeholder })}
+            />
+          </div>
         </div>
       ))}
     </section>
@@ -989,6 +1129,7 @@ function ModeSegments({
   visibleLegend = false,
   value,
   floor,
+  locked = false,
   onChange,
 }: {
   name: string;
@@ -997,6 +1138,8 @@ function ModeSegments({
   visibleLegend?: boolean;
   value: EntityMode;
   floor: EntityMode | null;
+  /** Nothing can be chosen: the row's type is not one the service offers. */
+  locked?: boolean;
   onChange: (mode: EntityMode) => void;
 }) {
   const least = floor === null ? -1 : modeRank(floor);
@@ -1009,7 +1152,7 @@ function ModeSegments({
       <legend className={visibleLegend ? `mb-1 p-0 ${FIELD_LABEL}` : "sr-only"}>{legend}</legend>
       <div className="grid grid-flow-col auto-cols-auto overflow-hidden rounded-md border border-line bg-surface min-[40rem]:w-max min-[40rem]:grid-flow-col">
         {MODES.map((mode) => {
-          const disabled = modeRank(mode.value) < least;
+          const disabled = locked || modeRank(mode.value) < least;
           return (
             // Disabled because a stricter policy above sets a floor. Dimmed
             // rather than hidden: the reader is meant to see that the option
@@ -1064,22 +1207,29 @@ function ModeKey() {
   );
 }
 
+/** Whether a mode writes a derived token, which is what a placeholder style shapes. */
+export function writesToken(mode: EntityMode): boolean {
+  return mode === "anonymise" || mode === "anonymise_restore";
+}
+
 /**
- * How a placeholder is written, for the modes that write one.
- *
- * A select rather than segments: it is a two-way choice that is rarely
- * changed, and the hint beside it carries the one thing worth knowing — that
- * the same-length form tells the provider how long the value is.
+ * How a placeholder is written, shown only where a value is replaced by a
+ * derived token (the two Anonymise actions). Redact writes the bare label
+ * (`opaque_placeholder`) and block refuses the request, so the style would change
+ * nothing there. The same select serves every row of every group.
  */
 function PlaceholderSelect({
   label,
+  mode,
   value,
   onChange,
 }: {
   label: ReactNode;
+  mode: EntityMode;
   value: PlaceholderStyle;
   onChange: (value: PlaceholderStyle) => void;
 }) {
+  if (!writesToken(mode)) return null;
   return (
     <Select
       label={label}

@@ -20,6 +20,7 @@ import httpx
 from conftest import Seeded
 from gateway.config import (
     DEFAULT_REDACTION_POLICY,
+    CustomEntity,
     CustomPattern,
     EntityMode,
     EntityPolicy,
@@ -87,6 +88,92 @@ class TestTheFold:
         lax = policy(entities={"PERSON": EntityPolicy(threshold=0.95)})
 
         assert RedactionPolicy.combine([strict, lax]).threshold_for("PERSON", 0.0) == 0.5
+
+    def test_a_stricter_pattern_of_the_same_name_cannot_hide_a_lower_threshold(self) -> None:
+        """Policy A finds PERSON and PHONE_NUMBER at 0.3 and redacts them; policy B has
+        patterns of the same names in block. The strictest-mode entry is the pattern, which
+        has no threshold, so the type used to fall back to the deployment's 0.5 and hide
+        less than A asked."""
+        a = policy(
+            entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT, threshold=0.3)},
+            formats={"PHONE_NUMBER": EntityPolicy(mode=EntityMode.REDACT, threshold=0.3)},
+        )
+        b = policy(
+            patterns=[
+                CustomPattern(name="PERSON", regex="aaa", mode=EntityMode.BLOCK),
+                CustomPattern(name="PHONE_NUMBER", regex="bbb", mode=EntityMode.BLOCK),
+            ]
+        )
+        combined = RedactionPolicy.combine([a, b])
+        assert combined.mode_for("PERSON") is EntityMode.BLOCK
+        assert combined.threshold_for("PERSON", 0.5) == 0.3
+        assert combined.threshold_for("PHONE_NUMBER", 0.5) == 0.3
+        # An entry that is off does not set one, and with none the default stands.
+        off = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.OFF, threshold=0.1)})
+        assert off.threshold_for("PERSON", 0.5) == 0.5
+
+    def test_an_entry_with_no_threshold_is_not_loosened_by_anothers_higher_one(self) -> None:
+        """A policy that leaves PERSON at the deployment default (0.5) and a shared one that
+        asks 0.95: the fold used to keep 0.95, so what the first hides at 0.5 went through."""
+        silent = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT)})
+        lax = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT, threshold=0.95)})
+        combined = RedactionPolicy.combine([silent, lax])
+        assert combined.threshold_for("PERSON", 0.5) == 0.5
+        # Still the lowest when the default is higher than what somebody asked for.
+        low = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT, threshold=0.3)})
+        assert RedactionPolicy.combine([silent, low, lax]).threshold_for("PERSON", 0.5) == 0.3
+        # One policy: a pattern of the same name votes the default as well.
+        mixed = policy(
+            entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT, threshold=0.9)},
+            patterns=[CustomPattern(name="PERSON", regex="x+", mode=EntityMode.BLOCK)],
+        )
+        assert mixed.threshold_for("PERSON", 0.5) == 0.5
+
+    def test_a_users_tightening_does_not_loosen_the_folded_threshold(self) -> None:
+        """combine(A: no threshold, B: 0.9) votes the default; a user's rule making PERSON
+        stricter must keep that, not start a fresh entry that keeps only 0.9."""
+        import uuid
+
+        from gateway.redaction.user_rules import UserRule, fold
+
+        a = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT)})
+        b = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT, threshold=0.9)})
+        combined = RedactionPolicy.combine([a, b])
+        assert combined.threshold_for("PERSON", 0.5) == 0.5
+        rule = UserRule(uuid.uuid4(), "mode", "PERSON", None, EntityMode.BLOCK)
+        folded = fold(combined, [rule])
+        assert folded.mode_for("PERSON") is EntityMode.BLOCK
+        assert folded.threshold_for("PERSON", 0.5) == 0.5
+        # The same through a format, and through a user pattern taking the type's name.
+        fmt = RedactionPolicy.combine(
+            [
+                policy(formats={"URL": EntityPolicy(mode=EntityMode.REDACT)}),
+                policy(formats={"URL": EntityPolicy(mode=EntityMode.REDACT, threshold=0.9)}),
+            ]
+        )
+        again = fold(fmt, [UserRule(uuid.uuid4(), "mode", "URL", None, EntityMode.BLOCK)])
+        assert again.threshold_for("URL", 0.5) == 0.5
+
+    def test_a_users_chosen_policy_folds_custom_thresholds_like_combine(self) -> None:
+        from gateway.redaction.user_rules import fold
+
+        held = CustomEntity(name="CODE", label="code", mode=EntityMode.REDACT)
+        base = policy(custom_entities=[held])
+        picked = CustomEntity(name="CODE", label="code", mode=EntityMode.BLOCK, threshold=0.9)
+        folded = fold(base, [], custom_entities=[picked])
+        assert folded.custom_entities[0].mode is EntityMode.BLOCK
+        assert folded.threshold_for("CODE", 0.5) == 0.5
+
+    def test_the_same_holds_for_custom_entities(self) -> None:
+        a = policy(
+            custom_entities=[CustomEntity(name="CODE", label="code", mode=EntityMode.REDACT)]
+        )
+        b = policy(
+            custom_entities=[
+                CustomEntity(name="CODE", label="code", mode=EntityMode.REDACT, threshold=0.9)
+            ]
+        )
+        assert RedactionPolicy.combine([a, b]).threshold_for("CODE", 0.5) == 0.5
 
     def test_patterns_are_unioned(self) -> None:
         a = policy(patterns=[CustomPattern(name="PRJ", regex=r"PRJ-\d+")])

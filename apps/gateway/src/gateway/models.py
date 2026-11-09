@@ -2717,6 +2717,9 @@ class RedactionConfig(Base):
     #: behaviour; non-null values are independent console decisions.
     presidio_pattern_matching: Mapped[bool | None] = mapped_column(Boolean, default=None)
     presidio_ner: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    #: The Detectors tab's per-engine switches. Null: not decided, ``presidio_ner`` applies.
+    spacy_enabled: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    gliner_enabled: Mapped[bool | None] = mapped_column(Boolean, default=None)
     #: Why. Required by the API when switching to an engine that redacts nothing,
     #: optional otherwise: turning the layer off is the change that needs
     #: explaining, and demanding a sentence for every change trains people to

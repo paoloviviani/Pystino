@@ -67,12 +67,12 @@ Each name means exactly one engine, whatever the image defaults to. `EXTRACTOR_E
 and `EXTRACTOR_OCR` decide only a call that sends no header (a client calling the
 extractor directly). The default for a deployment's callers is the model they name.
 
-The rows are made by migration `0084` (like `markitdown` by `0041`, so a model an
+The rows are made by migration `0085` (like `markitdown` by `0041`, so a model an
 admin deactivated is never put back): they copy `markitdown`'s active and public
 flags and its group and user grants, and are unpriced (set a per-page rate on each
 if the deployment charges for reading). Admins can deactivate them or set grants
 like any model, but cannot delete them (nor the provider): the API answers 409 and the
-console disables Delete. If a deployment had deleted `markitdown` before this rule, `0084`
+console disables Delete. If a deployment had deleted `markitdown` before this rule, `0085`
 recreates the built-in models with the seed defaults and logs it. The deployment default stays markitdown.
 
 ## Choosing the engine

@@ -1,7 +1,7 @@
 """One OCR model per built-in extractor engine; rules name the model, not an engine.
 
-Revision ID: 0084
-Revises: 0083
+Revision ID: 0085
+Revises: 0084
 Create Date: 2026-11-09
 
 The built-in extractor reads with markitdown, markitdown plus OCR, or Docling, and
@@ -46,8 +46,8 @@ from typing import Any
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0084"
-down_revision: str | None = "0083"
+revision: str = "0085"
+down_revision: str | None = "0084"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -286,7 +286,7 @@ def upgrade() -> None:
     t = _tables()
     log = _seed_models(bind, t) + _convert_pipelines(bind, t)
     for line in log:
-        logger.warning("extractor engine models 0084: %s", line)
+        logger.warning("extractor engine models 0085: %s", line)
 
 
 def downgrade() -> None:

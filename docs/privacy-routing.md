@@ -405,7 +405,7 @@ exist only on unreleased builds so far, but nothing is dropped silently:
 - Every conversion is in the migration log (`privacy migration 0083: ...`), naming
   the pipeline and the rule.
 
-### Migration 0084: the extractor's engines are models
+### Migration 0085: the extractor's engines are models
 
 Rules no longer say "the built-in extractor" plus an engine; they name a model.
 `builtin` with engine `markitdown` becomes `markitdown`, `ocr` becomes `markitdown-ocr`,
@@ -413,7 +413,7 @@ Rules no longer say "the built-in extractor" plus an engine; they name a model.
 only pointed at a model on the extractor provider: if a model of that name exists
 elsewhere (a remote service, an alias) the rule reads with `markitdown` instead and the
 log says so loudly, so a local-only rule never leaves the stack. Every changed rule is
-in the migration log (`extractor engine models 0084: ...`). The downgrade turns the
+in the migration log (`extractor engine models 0085: ...`). The downgrade turns the
 extractor's model names back into `builtin` and an engine. The API's `engine` field on a rule's
 action and the options' `engines` list are gone (a request that sends `engine` is
 refused with 400).
