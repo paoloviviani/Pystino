@@ -390,8 +390,13 @@ class TestPolicies:
             "chat", "Mine", owner=USER, otherwise={"level": "pass", "redact_with": str(theirs)}
         )
         combined = await run("chat", [mine], facts("chat"))
-        effective = state.effective_policy(combined.policy_uses(), RedactionPolicy())
-        assert effective.policy.mode_for("PERSON") is EntityMode.OFF
+        # Never applied, and the request is refused (a named 503) rather than run without the
+        # policy the pipeline chose.
+        from gateway.errors import ServiceUnavailableError
+
+        with pytest.raises(ServiceUnavailableError) as raised:
+            state.effective_policy(combined.policy_uses(), RedactionPolicy())
+        assert raised.value.code == "privacy_policy_unavailable"
 
 
 class TestReaders:
