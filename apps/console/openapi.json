@@ -3848,6 +3848,18 @@
             "title": "Pattern Entities",
             "type": "array"
           },
+          "patterns_enabled": {
+            "default": true,
+            "title": "Patterns Enabled",
+            "type": "boolean"
+          },
+          "patterns_used_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Patterns Used By",
+            "type": "array"
+          },
           "reachable": {
             "title": "Reachable",
             "type": "boolean"
@@ -3857,7 +3869,9 @@
           "reachable",
           "detail",
           "pattern_entities",
-          "engines"
+          "engines",
+          "patterns_enabled",
+          "patterns_used_by"
         ],
         "title": "EnginesResponse",
         "type": "object"
@@ -6652,6 +6666,11 @@
             "title": "Default",
             "type": "boolean"
           },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
           "entities": {
             "items": {
               "type": "string"
@@ -6687,6 +6706,13 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "used_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Used By",
+            "type": "array"
           }
         },
         "required": [
@@ -6697,7 +6723,9 @@
           "custom_labels",
           "labels",
           "ms_per_token",
-          "languages"
+          "languages",
+          "enabled",
+          "used_by"
         ],
         "title": "NerEngineView",
         "type": "object"
@@ -7278,6 +7306,42 @@
             "title": "Models",
             "type": "array"
           },
+          "ner_available": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ner Available"
+          },
+          "ner_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ner Note"
+          },
+          "offered_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offered Types"
+          },
           "own_policies": {
             "items": {
               "$ref": "#/components/schemas/NamedId"
@@ -7325,6 +7389,9 @@
           "own_policies",
           "classifiers",
           "entity_types",
+          "ner_available",
+          "ner_note",
+          "offered_types",
           "engines"
         ],
         "title": "OptionsResponse",
@@ -10098,6 +10165,17 @@
             "title": "Engine",
             "type": "string"
           },
+          "gliner_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gliner Enabled"
+          },
           "presidio_ner": {
             "anyOf": [
               {
@@ -10123,12 +10201,25 @@
           "reason": {
             "title": "Reason",
             "type": "string"
+          },
+          "spacy_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spacy Enabled"
           }
         },
         "required": [
           "engine",
           "presidio_pattern_matching",
           "presidio_ner",
+          "spacy_enabled",
+          "gliner_enabled",
           "reason",
           "changed_at",
           "changed_by"
@@ -10199,6 +10290,17 @@
             "title": "Engine",
             "type": "string"
           },
+          "gliner_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gliner Enabled"
+          },
           "presidio_ner": {
             "anyOf": [
               {
@@ -10226,6 +10328,17 @@
             "maxLength": 500,
             "title": "Reason",
             "type": "string"
+          },
+          "spacy_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spacy Enabled"
           }
         },
         "required": [
@@ -10835,6 +10948,11 @@
             "title": "Fail Open",
             "type": "boolean"
           },
+          "gliner_enabled": {
+            "default": true,
+            "title": "Gliner Enabled",
+            "type": "boolean"
+          },
           "installed_engines": {
             "items": {
               "type": "string"
@@ -10845,6 +10963,11 @@
           "language": {
             "title": "Language",
             "type": "string"
+          },
+          "patterns_enabled": {
+            "default": true,
+            "title": "Patterns Enabled",
+            "type": "boolean"
           },
           "placeholder_key_set": {
             "title": "Placeholder Key Set",
@@ -10885,6 +11008,17 @@
             "title": "Propagation Seconds",
             "type": "number"
           },
+          "restore_engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restore Engine"
+          },
           "restore_in_response": {
             "title": "Restore In Response",
             "type": "boolean"
@@ -10911,6 +11045,11 @@
             "default": "environment",
             "title": "Source",
             "type": "string"
+          },
+          "spacy_enabled": {
+            "default": true,
+            "title": "Spacy Enabled",
+            "type": "boolean"
           },
           "timeout_seconds": {
             "title": "Timeout Seconds",
@@ -10940,6 +11079,10 @@
           "score_threshold",
           "presidio_pattern_matching",
           "presidio_ner",
+          "restore_engine",
+          "patterns_enabled",
+          "spacy_enabled",
+          "gliner_enabled",
           "entity_types",
           "policy",
           "policy_source",

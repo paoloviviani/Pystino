@@ -7,6 +7,9 @@ import { PageHeader } from "../components/PageHeader";
 import { PipelineCard } from "../components/PipelineCard";
 import { PrivacyTestBox } from "../components/PrivacyTest";
 import { Tip } from "../components/Tip";
+import { PolicyTemplatePicker } from "../components/PolicyTemplatePicker";
+import { buildUserEntries, skippedNote } from "../lib/policyTemplates";
+import { NER_DOCS_URL } from "../components/PolicyFields";
 import { entityLabel, modeLabel } from "../lib/entities";
 import { FORM, FORM_ROW, MUTED, PAGE } from "../lib/layout";
 import {
@@ -76,17 +79,20 @@ interface EntryForm {
 
 function PolicyDialog({
   policy,
+  initial,
   onClose,
 }: {
   /** null: a new policy. */
   policy: UserPolicy | null;
+  /** A new policy filled from a template. */
+  initial?: { name: string; entries: UserPolicyEntry[]; note?: string | null };
   onClose: () => void;
 }) {
   const save = useSaveMyPolicy();
   const options = usePrivacyOptions("me");
-  const [name, setName] = useState(policy?.name ?? "");
+  const [name, setName] = useState(policy?.name ?? initial?.name ?? "");
   const [entries, setEntries] = useState<EntryForm[]>(
-    (policy?.entries ?? []).map((e) => ({
+    (policy?.entries ?? initial?.entries ?? []).map((e) => ({
       kind: e.kind,
       name: e.name,
       regex: e.regex ?? "",
@@ -138,6 +144,15 @@ function PolicyDialog({
           <Notice tone="danger" title={m["privacy.save_error"]()}>
             {/* i18n: server text, the API's own message (it names what RE2 refused). */}
             {save.error.message}
+          </Notice>
+        )}
+        {initial?.note && <Notice>{initial.note}</Notice>}
+        {options.data?.ner_available === false && (
+          <Notice>
+            {m["my_privacy.policy.no_ner"]()}{" "}
+            <a href={NER_DOCS_URL} target="_blank" rel="noreferrer" className="underline">
+              {m["policy_fields.no_ner_docs"]()}
+            </a>
           </Notice>
         )}
         <Input
@@ -230,6 +245,18 @@ function MyPolicies() {
   const policies = useMyPolicies();
   const remove = useDeleteMyPolicy();
   const [editing, setEditing] = useState<UserPolicy | "new" | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [fromTemplate, setFromTemplate] = useState<{
+    name: string;
+    entries: UserPolicyEntry[];
+    note: string | null;
+  } | null>(null);
+  const options = usePrivacyOptions("me");
+  const templateOptions = {
+    allowedTypes: options.data?.entity_types ?? null,
+    nerAvailable: options.data?.ner_available ?? null,
+    offeredTypes: options.data?.offered_types ?? null,
+  };
   const items = policies.data?.items ?? [];
   return (
     <section className="flex flex-col gap-3" aria-label={m["my_privacy.policies.title"]()}>
@@ -238,8 +265,27 @@ function MyPolicies() {
           {m["my_privacy.policies.title"]()}
           <Tip text={m["my_privacy.policies.tip"]()} />
         </h2>
-        <Button onClick={() => setEditing("new")}>{m["my_privacy.policy.new"]()}</Button>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => setEditing("new")}>{m["my_privacy.policy.new"]()}</Button>
+          <Button onClick={() => setPicking(true)}>{m["policy_template.new"]()}</Button>
+        </div>
       </div>
+      <PolicyTemplatePicker
+        open={picking}
+        busy={options.isPending}
+        onClose={() => setPicking(false)}
+        skippedFor={(template) => buildUserEntries(template, templateOptions).skipped}
+        onPick={(template) => {
+          const built = buildUserEntries(template, templateOptions);
+          setPicking(false);
+          setFromTemplate({
+            name: template.name(),
+            entries: built.entries,
+            note: skippedNote(built.skipped),
+          });
+          setEditing("new");
+        }}
+      />
       {remove.error && (
         <Notice tone="danger" title={m["privacy.save_error"]()}>
           {/* i18n: server text, the API's own message. */}
@@ -286,9 +332,13 @@ function MyPolicies() {
       ))}
       {editing && (
         <PolicyDialog
-          key={editing === "new" ? "new" : editing.id}
+          key={editing === "new" ? `new-${fromTemplate?.name ?? ""}` : editing.id}
           policy={editing === "new" ? null : editing}
-          onClose={() => setEditing(null)}
+          initial={editing === "new" && fromTemplate ? fromTemplate : undefined}
+          onClose={() => {
+            setEditing(null);
+            setFromTemplate(null);
+          }}
         />
       )}
     </section>

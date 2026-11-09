@@ -604,7 +604,8 @@ function CapabilityDefaultsCard() {
           return (
             <div
               key={entry.key}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line p-4"
+              data-testid={`capability-${entry.key}`}
+              className="flex flex-col gap-3 rounded-md border border-line p-4"
             >
               <div className="min-w-0">
                 <div className={CHIPS}>
@@ -612,9 +613,9 @@ function CapabilityDefaultsCard() {
                 </div>
                 <div className={`mt-1 text-body ${MUTED}`}>{entry.hint()}</div>
               </div>
-              {/* w-full on phones: shrink-0 alone kept the two long labels
-                  side by side and they ran past the card edge. */}
-              <div className="flex w-full flex-wrap items-end gap-3 sm:w-auto sm:shrink-0">
+              {/* Always the second line of the card, whatever the width or the
+                  length of the description: the controls never sit beside the title. */}
+              <div className="flex w-full flex-wrap items-end gap-3" data-testid="capability-controls">
                 <div className="w-40">
                   <Select
                     label={m["admin_settings.capability.new_groups_label"]()}

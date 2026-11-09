@@ -16,7 +16,7 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated, Literal
 
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 if TYPE_CHECKING:
@@ -644,6 +644,9 @@ class EntityPolicy(BaseModel):
     #: ``URL`` at 0.5 are not the same judgement, and one global number forces
     #: them to be. None means the global value applies.
     threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    #: Set by ``RedactionPolicy.combine``: one of the policies folded into this entry had no
+    #: threshold, so the deployment default also votes. Never stored or sent.
+    _or_default: bool = PrivateAttr(default=False)
 
 
 class CustomPattern(BaseModel):
@@ -808,6 +811,8 @@ class CustomEntity(BaseModel):
     mode: EntityMode = EntityMode.ANONYMISE_RESTORE
     placeholder: PlaceholderStyle = PlaceholderStyle.TAGGED
     threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    #: As on :class:`EntityPolicy`: set by ``combine``, never stored or sent.
+    _or_default: bool = PrivateAttr(default=False)
 
     @field_validator("name")
     @classmethod
@@ -978,10 +983,34 @@ class RedactionPolicy(BaseModel):
         return found[1] if found is not None else PlaceholderStyle.TAGGED
 
     def threshold_for(self, entity_type: str, default: float) -> float:
-        found = self._named(entity_type)
-        if found is None or found[2] is None:
-            return default
-        return found[2]
+        """The lowest threshold any acting entry for this type asks for, else ``default``.
+
+        Every acting entry (not off) in every table that names the type votes: its own
+        threshold, or the deployment ``default`` when it has none (a pattern or keyword
+        list, or an entity left at the default). An entry that stands for several policies
+        of which one deferred to the default (``combine``) votes the default as well. So an
+        entry with no threshold can never be loosened by another's higher one.
+        """
+        name = entity_type.upper()
+        votes: list[float] = []
+        for table in (self.entities, self.formats):
+            entry = table.get(name)
+            if entry is not None and entry.mode is not EntityMode.OFF:
+                votes.append(default if entry.threshold is None else entry.threshold)
+                if entry._or_default:
+                    votes.append(default)
+        for custom in self.custom_entities:
+            if custom.name == name and custom.mode is not EntityMode.OFF:
+                votes.append(default if custom.threshold is None else custom.threshold)
+                if custom._or_default:
+                    votes.append(default)
+        votes.extend(
+            default for p in self.patterns if p.name == name and p.mode is not EntityMode.OFF
+        )
+        votes.extend(
+            default for k in self.keywords if k.name == name and k.mode is not EntityMode.OFF
+        )
+        return min(votes) if votes else default
 
     def allows(self, text: str) -> bool:
         return text.strip().casefold() in self._allowed
@@ -1086,11 +1115,9 @@ class RedactionPolicy(BaseModel):
                 # type is silent, not voting for its own default.
                 speaking = [table[name] for table in tables if name in table]
                 mode = max((entry.mode for entry in speaking), key=order.index)
-                thresholds = [
-                    entry.threshold
-                    for entry in speaking
-                    if entry.threshold is not None and entry.mode is not EntityMode.OFF
-                ]
+                acting = [entry for entry in speaking if entry.mode is not EntityMode.OFF]
+                thresholds = [entry.threshold for entry in acting if entry.threshold is not None]
+                defers = any(entry.threshold is None or entry._or_default for entry in acting)
                 # Same-length only if every policy that speaks asks for it: it tells
                 # the provider how long the value is, so any scope can veto it and
                 # none can impose it.
@@ -1099,9 +1126,13 @@ class RedactionPolicy(BaseModel):
                     if all(entry.placeholder is PlaceholderStyle.SAME_LENGTH for entry in speaking)
                     else PlaceholderStyle.TAGGED
                 )
-                out[name] = EntityPolicy(
+                folded = EntityPolicy(
                     mode=mode, threshold=min(thresholds) if thresholds else None, placeholder=style
                 )
+                # An acting entry with no threshold means "the default", which a higher
+                # threshold of another policy must not loosen.
+                folded._or_default = bool(thresholds) and defers
+                out[name] = folded
             return out
 
         entities = fold([p.entities for p in policies])
@@ -1116,6 +1147,12 @@ class RedactionPolicy(BaseModel):
                     customs[key] = custom
                     continue
                 thresholds = [t for t in (held.threshold, custom.threshold) if t is not None]
+                defers = (
+                    held.threshold is None
+                    or custom.threshold is None
+                    or held._or_default
+                    or custom._or_default
+                )
                 customs[key] = held.model_copy(
                     update={
                         "mode": max(held.mode, custom.mode, key=order.index),
@@ -1129,6 +1166,7 @@ class RedactionPolicy(BaseModel):
                         ),
                     }
                 )
+                customs[key]._or_default = bool(thresholds) and defers
 
         patterns: list[CustomPattern] = []
         seen: dict[tuple[str, str], int] = {}
@@ -1469,6 +1507,10 @@ class RedactionSettings(BaseModel):
     engine: str = "noop"
     endpoint: str = ""
     timeout_seconds: float = 5.0
+    #: The Detectors tab's per-engine switches. None: not decided, ``presidio_ner`` applies.
+    #: False makes an ask that needs that engine fail closed (503 naming the policy).
+    spacy_enabled: bool | None = None
+    gliner_enabled: bool | None = None
 
     # Keyed HMAC secret for placeholder derivation. Must be stable for as long as
     # the transcripts it labelled are kept: rotating it re-labels every entity.

@@ -68,10 +68,10 @@ administrator has made available (Redaction service tab). See [User pipelines](p
 
 | Tab | What it holds |
 |---|---|
-| **Pipelines** | pipelines by kind: scope, rules as sentences, the fixed last rule; the editor (ladder as radios, "Redact with", observe-only), reorder, turn off |
+| **Pipelines** | the **Privacy: On / Off** master switch (off means no pipeline runs and nothing is hidden: the `noop` engine under a plain name, with an inline confirmation, the append-only engine row and its audit, and a warning banner across the Privacy area while it is off); pipelines by kind: scope, rules as sentences, the fixed last rule; the editor (ladder as radios, "Redact with", observe-only), reorder, turn off |
 | **Redaction policies** | one editor with two sections: *Patterns (fast, deterministic)*: built-in formats, regular expressions, keyword lists with a case checkbox; *Entities (NER, probabilistic)*: the engine picker (what is available), its entity types with a mode and a threshold, custom GLiNER types. A mode per item, `detect only` among them, same-length placeholders, the allow-list, and a **Try it** box |
 | **Classifiers** | decision models: a chat model and a topic in plain words; says when no model provider is configured and that classifying sends the text to that provider |
-| **Redaction service** | the redaction engine choice (with its append-only record), the Presidio pattern and named-entity switches, what the service reports, and what users may add to their own policies |
+| **Detectors** | exactly what the redaction service reports, one card per detector (the patterns, spaCy, GLiNER) with an On/Off switch, its capabilities (formats, languages, speed, entity types, custom types) and "used by N policies"; a detector no active policy uses can be switched off, one a policy uses is refused (409, naming the policies); a policy can only choose detectors that are on. Then what users may add to their own policies, and, collapsed, the engine's activity and configuration |
 | **Test** | one box: a kind of request, a user and a target, a text or file; every pipeline in scope with its trace (each item that made a condition true, with its group and, for entities, engine and score), the reroute, the ladder, who chose the reader and engine, and the policies added up. Nothing is stored |
 
 Users have **Privacy pipelines** (their own pipelines and policies, the
@@ -82,7 +82,7 @@ screens keep their explanations in (?) tooltips.
 Old links keep working: `/admin/redaction` and `/admin/privacy/hidden` go to
 Redaction policies, `/admin/redaction/rules/{id}` and
 `/admin/privacy/hidden/rules/{id}` go to the same policy (a rule kept its id when
-it became a policy), and `/admin/privacy/profiles` goes to the Redaction service tab.
+it became a policy), and `/admin/privacy/profiles` and the former `/admin/privacy/service` go to the Detectors tab (`/admin/privacy/detectors`).
 
 ## Seeing it before choosing it
 

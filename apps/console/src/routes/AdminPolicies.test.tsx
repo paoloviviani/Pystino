@@ -33,12 +33,23 @@ const POLICY = (over: Record<string, unknown>) => ({
   ...over,
 });
 
+const PATTERN_ONLY_ENGINES = {
+  reachable: true,
+  detail: "ok",
+  pattern_entities: ["IBAN_CODE", "EMAIL_ADDRESS", "PHONE_NUMBER", "URL"],
+  engines: [
+    { name: "spacy", available: false, default: true, entities: [], custom_labels: false, labels: [], ms_per_token: null, languages: [] },
+    { name: "gliner", available: false, default: false, entities: [], custom_labels: true, labels: [], ms_per_token: null, languages: [] },
+  ],
+};
+
 function renderPage(items: unknown[], seen: string[] = []) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       seen.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.endsWith("/engines")) return jsonResponse(PATTERN_ONLY_ENGINES);
       if (url.includes("/policies") && (init?.method ?? "GET") === "GET") {
         return jsonResponse({ items, total: items.length, limit: 200, offset: 0 });
       }
@@ -69,6 +80,22 @@ describe("Redaction policies", () => {
     expect(screen.getByText("Used by: Remote embeddings, Chat")).toBeInTheDocument();
     // No scope anywhere: nothing says user, group, provider or model.
     expect(screen.queryByText(/group|provider|model/i)).toBeNull();
+  });
+
+  it("offers templates, and names what a pattern-only service cannot do for them", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderPage([]);
+    await user.click(await screen.findByRole("button", { name: "New policy from template" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      await within(dialog).findByText(/Skipped: PERSON, LOCATION, which need an NER engine\./),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/HEALTH_INSURANCE_ID, MEDICAL_CONDITION, MEDICATION, which need the GLiNER engine/),
+    ).toBeInTheDocument();
+    // The secrets template needs nothing from the service.
+    expect(within(dialog).queryByTestId("skipped-secrets")).toBeNull();
+    expect(within(dialog).getAllByRole("button", { name: /^Use the template/ })).toHaveLength(6);
   });
 
   it("flags a policy whose engine cannot run", async () => {

@@ -579,6 +579,28 @@ describe("AdminSettings capabilities card", () => {
     expect(selects.map((s) => s.value)).toEqual(["off", "on", "on", "off", "on"]);
   });
 
+  it("lays every capability out on two lines: the description, then the controls", async () => {
+    mockRoutes({ policy: policyFixture() });
+    renderScreen(<AdminSettings />);
+    await openCard();
+    const cards = screen.getAllByTestId(/^capability-(?!controls)/);
+    expect(cards).toHaveLength(5);
+    for (const card of cards) {
+      // A column, never a row that lets short descriptions share a line with the controls.
+      expect(card.className).toContain("flex-col");
+      expect(card.className).not.toContain("justify-between");
+      const children = [...card.children];
+      expect(children).toHaveLength(2);
+      const controls = within(card).getByTestId("capability-controls");
+      expect(children[1]).toBe(controls);
+      expect(within(controls).getByLabelText("New groups")).toBeInTheDocument();
+      expect(within(controls).getByText("Existing groups")).toBeInTheDocument();
+      expect(within(controls).getByRole("button", { name: "Turn on for all" })).toBeInTheDocument();
+      expect(within(controls).getByRole("button", { name: "Turn off for all" })).toBeInTheDocument();
+      expect(controls.className).toContain("w-full");
+    }
+  });
+
   it("saves the local connectors default as its own policy field", async () => {
     const user = userEvent.setup({ delay: null });
     mockRoutes({ policy: policyFixture() });

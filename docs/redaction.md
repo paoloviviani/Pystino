@@ -254,6 +254,48 @@ request that lists `entity_types` gets a custom type only if it names it. With
 spaCy, or with the NER family switched off, custom labels are ignored and their
 entity names come back in `unsupported_types`.
 
+### What counts as a pattern format
+
+`pattern_entities` lists only entity types a deterministic recogniser (a regular
+expression or a checksum) finds; `model_entities` and each engine's `entities`
+list the ones a model finds. The service reads the split from the recognisers
+that are loaded, not from a list of names: Presidio's spaCy recogniser lists
+`AGE`, `ID`, `EMAIL`, `PHONE_NUMBER` and `DATE_TIME` in its label map though the
+stock models never produce most of them, and a recogniser that is not loaded
+advertises nothing. A policy saved while `AGE` or `ID` was listed under formats is
+kept: the console moves the item to the entities if the engine finds it, otherwise
+keeps it turned off with a warning, and the API accepts a format the service does
+not list only while it is `off`.
+
+When the service has no NER engine at all (the pattern-only image, or
+`REDACTION_NLP_ENGINE=disabled`), the policy editor hides the Entities section and
+says so, the API refuses an entity item ("No NER engine is installed in the
+redaction service; entities need one."), and My privacy offers no model-backed
+type. Enable one as described below.
+
+### Detector switches
+
+The console's **Detectors** tab switches each detector on or off: the patterns
+(`presidio_pattern_matching`), spaCy and GLiNER (`spacy_enabled`, `gliner_enabled`
+on the append-only `redaction_config` rows, migration `0084`; `presidio_ner` is on
+while either engine is). A detector an active policy uses cannot be switched off
+(409 naming the policies), and a policy can only choose detectors that are on. The
+whole of privacy is the **Privacy: On / Off** switch on the Pipelines tab, which
+is the old `noop` engine under a plain name.
+
+### Policy templates
+
+The Redaction policies tab has **New policy from template** next to **New
+policy**, and My privacy has the same for a user's own policies. A template is
+an example, never seeded: choosing one opens a new, unsaved policy to edit before
+saving. The examples are secrets and credentials, personal and banking data,
+government IDs, contact details, network and infrastructure, and health
+identifiers. A template adds only what the service reports: a format from
+`pattern_entities`, an entity the policy's engine exposes, and the health types
+only with GLiNER. Whatever is left out is named under the template in the picker
+("Skipped: PERSON, LOCATION, which need an NER engine."). A user's template keeps
+to the entity types the administrator made available, and has no keyword lists.
+
 ## Deploying less of it
 
 Three shapes, and all three work:

@@ -279,6 +279,8 @@ export function useSetRedactionEngine() {
       reason: string;
       presidio_pattern_matching?: boolean | null;
       presidio_ner?: boolean | null;
+      spacy_enabled?: boolean | null;
+      gliner_enabled?: boolean | null;
     }) =>
       request<RedactionStatus>("/api/admin/redaction/engine", {
         method: "PUT",
@@ -286,6 +288,8 @@ export function useSetRedactionEngine() {
       }),
     onSuccess: (status) => {
       client.setQueryData(adminKeys.redaction, status);
+      // The detectors' switches ride on the engines report, and a policy editor follows them.
+      void client.invalidateQueries({ queryKey: ["admin", "privacy", "engines"] });
     },
   });
 }

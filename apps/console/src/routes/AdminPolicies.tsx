@@ -2,11 +2,13 @@ import { Badge, Button, Card, Dialog, EmptyState, Notice, Spinner, buttonClasses
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 
+import { PolicyTemplatePicker } from "../components/PolicyTemplatePicker";
 import { PrivacyHeader } from "../components/PrivacyHeader";
 import { Tip } from "../components/Tip";
 import { summarisePolicy } from "../lib/entities";
+import { buildPolicyFromTemplate, skippedNote } from "../lib/policyTemplates";
 import { MUTED, PAGE } from "../lib/layout";
-import { useDeletePolicy, usePolicies, useSavePolicy } from "../lib/privacy";
+import { useDeletePolicy, usePolicies, usePrivacyEngines, useSavePolicy } from "../lib/privacy";
 import type { RedactionPolicyRecord } from "../lib/types";
 import { m } from "../paraglide/messages.js";
 
@@ -22,6 +24,8 @@ export function AdminPolicies() {
   const save = useSavePolicy();
   const remove = useDeletePolicy();
   const navigate = useNavigate();
+  const engines = usePrivacyEngines();
+  const [picking, setPicking] = useState(false);
   const [deleting, setDeleting] = useState<RedactionPolicyRecord | null>(null);
   const items = policies.data?.items ?? [];
 
@@ -30,10 +34,31 @@ export function AdminPolicies() {
       <PrivacyHeader
         tab="policies"
         actions={
-          <Button variant="primary" onClick={() => navigate("/admin/privacy/policies/new")}>
-            {m["privacy.policies.new"]()}
-          </Button>
+          <>
+            <Button variant="primary" onClick={() => navigate("/admin/privacy/policies/new")}>
+              {m["privacy.policies.new"]()}
+            </Button>
+            <Button onClick={() => setPicking(true)}>{m["policy_template.new"]()}</Button>
+          </>
         }
+      />
+      <PolicyTemplatePicker
+        open={picking}
+        busy={engines.isPending}
+        onClose={() => setPicking(false)}
+        skippedFor={(template) => buildPolicyFromTemplate(template, engines.data).skipped}
+        onPick={(template) => {
+          const built = buildPolicyFromTemplate(template, engines.data);
+          navigate("/admin/privacy/policies/new", {
+            state: {
+              fromTemplate: {
+                name: template.name(),
+                policy: built.policy,
+                note: skippedNote(built.skipped),
+              },
+            },
+          });
+        }}
       />
       <p className={`m-0 flex items-center gap-2 text-small ${MUTED}`}>
         {m["privacy.policies.lead"]()}

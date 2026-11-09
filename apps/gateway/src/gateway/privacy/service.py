@@ -449,6 +449,9 @@ def clean_entries(
     entries: Sequence[Any],
     *,
     allowed_types: Sequence[str] | None,
+    no_ner_types: set[str] | None = None,
+    no_ner_reason: str = "",
+    offered_types: set[str] | None = None,
     reserved: Collection[str] = (),
 ) -> list[dict[str, Any]]:
     """A user's policy entries, clean, under the administrators' own validation.
@@ -457,7 +460,8 @@ def clean_entries(
     type must be one an administrator made available; a pattern's label is a
     pattern, not a type, so it is not limited, except that it may not be *named* like a
     type (``reserved`` and the detectors' own names): labels and types share one name
-    space, and a pattern called PERSON would stand for persons.
+    space, and a pattern called PERSON would stand for persons. ``no_ner_types`` is set
+    when the redaction service has no NER model: a type only a model finds is refused.
     """
     from gateway.redaction import user_rules
 
@@ -484,9 +488,16 @@ def clean_entries(
             user_rules.validate_pattern(name, entry.regex, mode)
             regex: str | None = entry.regex
         else:
+            if no_ner_types is not None and name in no_ner_types:
+                raise ValueError(f"'{name}' is found by an NER engine. {no_ner_reason}")
             if allowed is not None and name not in allowed:
                 raise ValueError(
                     f"'{name}' is not an entity type your administrator makes available."
+                )
+            if offered_types is not None and name not in offered_types:
+                raise ValueError(
+                    f"'{name}' is not something the redaction service finds now (its pattern "
+                    "formats may be switched off, or it is not listed)."
                 )
             regex = None
         key = (entry.kind, name)
