@@ -225,9 +225,22 @@ def main() -> int:
         [rule("Medical files stay", [{"key": "filename", "values": ["referto*"]}])],
     )
     models = api(dave, "/api/admin/models?limit=200")[1]["items"]
-    reader = next(
-        (m for m in models if m["kind"] == "ocr" and m["provider_name"] == "extractor"), None
+    # Only a model whose engine the running extractor reports is offered (and callable):
+    # ask the listing, and prefer markitdown, the one engine every build has.
+    request_listing = urllib.request.Request(
+        f"{GATEWAY}/v1/models?include=ocr", headers={"authorization": f"Bearer {secret}"}
     )
+    with urllib.request.urlopen(request_listing, timeout=60) as listing:
+        offered = {m["id"] for m in json.loads(listing.read()).get("data", [])}
+    extractor_models = sorted(
+        (
+            m
+            for m in models
+            if m["kind"] == "ocr" and m["provider_name"] == "extractor" and m["name"] in offered
+        ),
+        key=lambda m: m["name"] != "markitdown",
+    )
+    reader = extractor_models[0] if extractor_models else None
     if reader is None:
         skip(
             "reading pipelines",
@@ -320,7 +333,11 @@ def main() -> int:
             == "PDFs with the default reader",
             str(handled),
         )
-        expect("by the default reader (no engine asked for)", handled.get("engine") is None)
+        expect(
+            "by the markitdown engine the rule named",
+            handled.get("engine") == "markitdown",
+            str(handled.get("engine")),
+        )
         expect("and the extractor's own answer is in the log", bool(handled.get("extractor")))
         row = sql(
             "select redaction_detail->'routing'->'observed'->>'filetype', "
