@@ -210,7 +210,7 @@ from gateway.quota.engine import is_per_user
 from gateway.quota_usage import override_replacing, user_quota_entries
 from gateway.redaction import Redactor
 from gateway.redaction import registry as redaction_registry
-from gateway.redaction.http import apply_spans
+from gateway.redaction.http import EngineUnavailableError, apply_spans
 from gateway.redaction.resolver import RedactionResolver, build_for, current_engine
 from gateway.reporting import (
     GroupBy,
@@ -6788,6 +6788,16 @@ async def _refuse_switching_off_a_used_detector(
     ).all()
     # A policy with no engine reads with the service's own default engine.
     report = await fetch_engines(http, settings)
+    if not report.reachable and settings.redaction.endpoint:
+        # Which policies use a detector cannot be told without the service's own lists
+        # (which engine a policy with none named reads with, which engine exposes a type).
+        raise ConflictError(
+            f"A detector cannot be switched off now: {', '.join(turning_off)}. The redaction "
+            "service cannot be asked, so it can't be checked which policies use it right now. "
+            "Try again when it answers."
+        )
+    # (With no service configured at all there is nothing to ask: the check runs on the
+    # policies alone.)
     default = next((e.name for e in report.engines if e.default), None)
     users = (await session.execute(select(UserPolicy.name, UserPolicy.rules))).all()
     used = users_of_detectors(
@@ -7047,7 +7057,14 @@ async def preview_redaction(
             ),
         )
 
-    spans = (await redactor.detect([payload.text], policy=effective.policy))[0]
+    try:
+        spans = (await redactor.detect([payload.text], policy=effective.policy))[0]
+    except EngineUnavailableError as exc:
+        # A switched-off or missing engine the policy needs: a named 503, not a 500.
+        raise ServiceUnavailableError(
+            f"The redaction policy cannot be tried: {exc.reason or exc}. "
+            "Switch the detector on (Detectors tab) or change the policy."
+        ) from exc
     described = [
         RedactionPreviewSpan(
             entity_type=span.entity_type,

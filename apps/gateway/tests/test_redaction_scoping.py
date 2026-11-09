@@ -129,6 +129,41 @@ class TestTheFold:
         )
         assert mixed.threshold_for("PERSON", 0.5) == 0.5
 
+    def test_a_users_tightening_does_not_loosen_the_folded_threshold(self) -> None:
+        """combine(A: no threshold, B: 0.9) votes the default; a user's rule making PERSON
+        stricter must keep that, not start a fresh entry that keeps only 0.9."""
+        import uuid
+
+        from gateway.redaction.user_rules import UserRule, fold
+
+        a = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT)})
+        b = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT, threshold=0.9)})
+        combined = RedactionPolicy.combine([a, b])
+        assert combined.threshold_for("PERSON", 0.5) == 0.5
+        rule = UserRule(uuid.uuid4(), "mode", "PERSON", None, EntityMode.BLOCK)
+        folded = fold(combined, [rule])
+        assert folded.mode_for("PERSON") is EntityMode.BLOCK
+        assert folded.threshold_for("PERSON", 0.5) == 0.5
+        # The same through a format, and through a user pattern taking the type's name.
+        fmt = RedactionPolicy.combine(
+            [
+                policy(formats={"URL": EntityPolicy(mode=EntityMode.REDACT)}),
+                policy(formats={"URL": EntityPolicy(mode=EntityMode.REDACT, threshold=0.9)}),
+            ]
+        )
+        again = fold(fmt, [UserRule(uuid.uuid4(), "mode", "URL", None, EntityMode.BLOCK)])
+        assert again.threshold_for("URL", 0.5) == 0.5
+
+    def test_a_users_chosen_policy_folds_custom_thresholds_like_combine(self) -> None:
+        from gateway.redaction.user_rules import fold
+
+        held = CustomEntity(name="CODE", label="code", mode=EntityMode.REDACT)
+        base = policy(custom_entities=[held])
+        picked = CustomEntity(name="CODE", label="code", mode=EntityMode.BLOCK, threshold=0.9)
+        folded = fold(base, [], custom_entities=[picked])
+        assert folded.custom_entities[0].mode is EntityMode.BLOCK
+        assert folded.threshold_for("CODE", 0.5) == 0.5
+
     def test_the_same_holds_for_custom_entities(self) -> None:
         a = policy(
             custom_entities=[CustomEntity(name="CODE", label="code", mode=EntityMode.REDACT)]

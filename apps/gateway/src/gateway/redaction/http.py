@@ -867,25 +867,41 @@ class HttpDetectionRedactor:
 
         return [spans or [] for spans in results]
 
-    async def _default_engine(self) -> str | None:
-        """The service's default NER engine, from its ``/healthz`` (None when unknown)."""
+    async def _healthz(self) -> dict[str, Any] | None:
+        """The service's ``/healthz`` body, cached for 30 seconds (None when unreadable)."""
         import time
 
-        held = getattr(self, "_default_engine_seen", None)
+        held = getattr(self, "_healthz_seen", None)
         if held is not None and time.monotonic() - held[0] < 30:
             return held[1]  # type: ignore[no-any-return]
-        found: str | None = None
         try:
             base = self._endpoint.removesuffix("/detect")
             body = (await self._client.get(f"{base}/healthz")).json()
-            for engine in body.get("ner_engines") or []:
-                if isinstance(engine, dict) and engine.get("default"):
-                    found = str(engine.get("name"))
         except Exception:
-            logger.info("could not read the redaction service's default engine", exc_info=True)
+            logger.info("could not read the redaction service's capabilities", exc_info=True)
             return None
-        self._default_engine_seen = (time.monotonic(), found)
+        found = body if isinstance(body, dict) else None
+        self._healthz_seen = (time.monotonic(), found)
         return found
+
+    async def _default_engine(self) -> str | None:
+        """The service's default NER engine (None when unknown)."""
+        body = await self._healthz()
+        for engine in (body or {}).get("ner_engines") or []:
+            if isinstance(engine, dict) and engine.get("default"):
+                return str(engine.get("name"))
+        return None
+
+    async def _listed_types(self) -> set[str] | None:
+        """Every type the service lists in either family (None when it cannot be asked)."""
+        body = await self._healthz()
+        if body is None:
+            return None
+        listed = {str(t).upper() for t in body.get("pattern_entities") or []}
+        for engine in body.get("ner_engines") or []:
+            if isinstance(engine, dict):
+                listed.update(str(t).upper() for t in engine.get("entities") or [])
+        return listed
 
     async def _post(
         self, request: DetectionRequest, *, strict: bool = False
@@ -922,7 +938,27 @@ class HttpDetectionRedactor:
         found = {finding.index: finding.spans for finding in parsed.findings}
         self._report_unsupported(parsed.unsupported_types)
         family_off = request.presidio_pattern_matching is False or request.presidio_ner is False
-        if parsed.unsupported_types and (strict or family_off):
+        unsupported = list(parsed.unsupported_types)
+        if unsupported and family_off and not strict:
+            # A type the service lists in neither family (AGE, ID and EMAIL were once advertised
+            # by the spaCy recogniser's label map and never detected anything) is not
+            # protection lost to a switch: refusing the request for it would be an outage that
+            # buys nothing. Said in the log, once per change, instead.
+            listed = await self._listed_types()
+            never = {"AGE", "ID", "EMAIL"} if listed is None else None
+            inert = [
+                t
+                for t in unsupported
+                if (t.upper() in never if never is not None else t.upper() not in (listed or set()))
+            ]
+            if inert:
+                logger.warning(
+                    "ignoring policy type(s) %s: the redaction service finds them in no family, "
+                    "so no switch is what keeps them from being detected",
+                    ", ".join(sorted(inert)),
+                )
+                unsupported = [t for t in unsupported if t not in inert]
+        if unsupported and (strict or family_off):
             # A condition that counts items cannot read "the engine cannot serve this
             # type" as "found nothing": that is undecided, and the caller fails closed.
             # So is a type a switched-off detector would have found: the administrator
@@ -934,7 +970,7 @@ class HttpDetectionRedactor:
                     if family_off and not strict
                     else "the engine cannot find: "
                 )
-                + ", ".join(sorted(parsed.unsupported_types)),
+                + ", ".join(sorted(unsupported)),
             )
         return found, bool(parsed.unsupported_types)
 

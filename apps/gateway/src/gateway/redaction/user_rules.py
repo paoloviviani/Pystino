@@ -142,8 +142,8 @@ def fold(
         )
         if same is None:
             held_custom.append(custom)
-        elif rank(custom.mode) > rank(held_custom[same].mode):
-            held_custom[same] = custom
+        else:
+            held_custom[same] = _fold_custom(held_custom[same], custom)
     seen = {(pattern.name, pattern.regex) for pattern in patterns}
 
     def current() -> RedactionPolicy:
@@ -171,29 +171,52 @@ def fold(
                 # type they named): mode_for reads the entity entry first, so
                 # the user's stricter mode has to be written there to apply.
                 existing = entities.get(rule.name) or base.formats.get(rule.name)
-                entities[rule.name] = EntityPolicy(
-                    mode=rule.mode,
-                    placeholder=collides[1],
-                    threshold=(
-                        existing.threshold
-                        if existing is not None and existing.mode is not EntityMode.OFF
-                        else None
-                    ),
-                )
+                entities[rule.name] = _tightened(existing, rule.mode, collides[1])
         else:
             policy = current()
             if rank(rule.mode) > rank(policy.mode_for(rule.name)):
                 existing = entities.get(rule.name) or base.formats.get(rule.name)
-                entities[rule.name] = EntityPolicy(
-                    mode=rule.mode,
-                    placeholder=policy.placeholder_style_for(rule.name),
-                    threshold=(
-                        existing.threshold
-                        if existing is not None and existing.mode is not EntityMode.OFF
-                        else None
-                    ),
+                entities[rule.name] = _tightened(
+                    existing, rule.mode, policy.placeholder_style_for(rule.name)
                 )
     return current()
+
+
+def _tightened(
+    existing: EntityPolicy | None, mode: EntityMode, placeholder: PlaceholderStyle
+) -> EntityPolicy:
+    """The entry for a type a user's rule makes stricter.
+
+    A copy of the administrators' entry with the stricter mode, not a new one: the copy keeps
+    its threshold and the "a folded policy deferred to the default" marker ``combine`` set,
+    which a fresh entry would drop and so let a user's tightening loosen the threshold.
+    """
+    if existing is not None and existing.mode is not EntityMode.OFF:
+        return existing.model_copy(update={"mode": mode, "placeholder": placeholder})
+    return EntityPolicy(mode=mode, placeholder=placeholder, threshold=None)
+
+
+def _fold_custom(held: CustomEntity, custom: CustomEntity) -> CustomEntity:
+    """Two custom entities of one name and label, folded as ``combine`` folds them: the
+    stricter mode, the lower threshold (a missing one defers to the default), same-length
+    only if both ask for it."""
+    thresholds = [t for t in (held.threshold, custom.threshold) if t is not None]
+    defers = (
+        held.threshold is None or custom.threshold is None or held._or_default or custom._or_default
+    )
+    folded = held.model_copy(
+        update={
+            "mode": custom.mode if rank(custom.mode) > rank(held.mode) else held.mode,
+            "threshold": min(thresholds) if thresholds else None,
+            "placeholder": (
+                PlaceholderStyle.SAME_LENGTH
+                if held.placeholder is custom.placeholder is PlaceholderStyle.SAME_LENGTH
+                else PlaceholderStyle.TAGGED
+            ),
+        }
+    )
+    folded._or_default = bool(thresholds) and defers
+    return folded
 
 
 def tightens(base: RedactionPolicy, rule: UserRule) -> bool:

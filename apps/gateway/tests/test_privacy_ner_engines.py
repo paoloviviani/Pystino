@@ -99,7 +99,7 @@ class FakeService:
         unsupported = sorted(
             e
             for e in (wanted or [])
-            if (ner_off and e in ("PERSON", "LOCATION", "ORGANIZATION"))
+            if (ner_off and e in ("PERSON", "LOCATION", "ORGANIZATION", "AGE"))
             or (patterns_off and e in self.health["pattern_entities"])
         )
         labels = {c["entity"] for c in payload.get("custom_labels") or []}
@@ -298,6 +298,24 @@ class TestAnUnavailableEngineFailsClosed:
         formats = RedactionPolicy(formats={"IBAN_CODE": E(mode=M.REDACT)})
         spans = await redactor.detect([TEXT], policy=formats)
         assert [s.entity_type for s in spans[0]] == ["IBAN_CODE"]
+
+    async def test_a_legacy_type_no_family_lists_does_not_turn_a_switch_into_an_outage(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        service = FakeService()
+        redactor = service.redactor(spacy_enabled=False, gliner_enabled=False, presidio_ner=False)
+        policy = RedactionPolicy(
+            formats={"AGE": E(mode=M.REDACT), "IBAN_CODE": E(mode=M.REDACT)},
+        )
+        with caplog.at_level("WARNING"):
+            spans = await redactor.detect([TEXT], policy=policy)
+        assert [s.entity_type for s in spans[0]] == ["IBAN_CODE"]
+        assert "AGE" in caplog.text and "no family" in caplog.text
+        # A type a switched-off family does list is still refused.
+        with pytest.raises(EngineUnavailableError):
+            await redactor.detect(
+                [TEXT], policy=RedactionPolicy(entities={"PERSON": E(mode=M.REDACT)})
+            )
 
     async def test_a_type_of_a_switched_off_pattern_family_is_refused_not_ignored(self) -> None:
         service = FakeService()
@@ -1086,3 +1104,48 @@ class TestUserFormatsFollowTheSwitches:
             json={"name": "P", "entries": [{"kind": "mode", "name": "PERSON", "mode": "redact"}]},
         )
         assert ok.status_code == 201
+
+
+class TestSwitchingOffNeedsTheService:
+    async def test_it_is_refused_while_the_service_cannot_be_asked(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+
+        class Down(FakeService):
+            def handle(self, request: httpx.Request) -> httpx.Response:
+                raise httpx.ConnectError("down")
+
+        app.state.settings.redaction.engine = "http"
+        app.state.settings.redaction.endpoint = "http://detector:8080"
+        app.state.control_http = Down().client()
+        refused = await client.put(
+            "/api/admin/redaction/engine", json={"engine": "noop", "spacy_enabled": False}
+        )
+        assert refused.status_code == 409 and "can't be checked" in refused.text
+        # Switching one on, or leaving them as they are, never needs the service.
+        assert (
+            await client.put("/api/admin/redaction/engine", json={"engine": "noop"})
+        ).status_code == 200
+
+    async def test_the_preview_of_a_policy_that_needs_a_switched_off_engine_is_a_named_503(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        from privacy_helpers import add_policy
+
+        as_user(app, await make_admin(session_factory, seeded))
+        service = FakeService()
+        app.state.settings.redaction.engine = "http"
+        app.state.settings.redaction.endpoint = "http://detector:8080"
+        app.state.control_http = service.client()
+        app.state.redactor = service.redactor(gliner_enabled=False)
+        app.state.redaction = None
+        policy_id = await add_policy(
+            app, session_factory, "Names", engine="gliner", entities={"PERSON": {"mode": "redact"}}
+        )
+        response = await client.post(
+            "/api/admin/redaction/preview",
+            json={"text": TEXT, "policy_id": str(policy_id)},
+        )
+        assert response.status_code == 503, response.text
+        assert "switched off" in response.text
