@@ -270,9 +270,14 @@ export function useTryPolicy() {
 export function useSavePrivacySettings() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (body: { user_entity_types: string[] | null }) =>
+    mutationFn: (body: { user_entity_types: string[] | null; allow_remote_classifiers?: boolean }) =>
       request<PrivacySettings>(`${BASE.admin}/settings`, { method: "PUT", body }),
-    onSuccess: () => client.invalidateQueries({ queryKey: privacyKeys.settings }),
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: privacyKeys.settings }),
+        // Which models a classifier may use depends on the setting.
+        client.invalidateQueries({ queryKey: privacyKeys.classifiers }),
+      ]),
   });
 }
 

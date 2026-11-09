@@ -2903,6 +2903,11 @@ class PrivacySettings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     user_entity_types: Mapped[list[str] | None] = mapped_column(JSON, default=None)
+    #: Whether a classifier may use a model that runs outside the deployment (classifying
+    #: sends the text to it). Off by default.
+    allow_remote_classifiers: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
 

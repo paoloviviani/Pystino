@@ -15,7 +15,7 @@ A policy is also what **conditions** look things up with: a rule can say "*polic
 finds at least N items" (embed, chat), next to the file type, the file name,
 whether a file is a scan (reading decides from the file, never its text), and
 "classified as *classifier*" (embed and chat; a decision model, for large
-deployments). There is no built-in topic and no quick check.
+deployments; by default only a model that runs inside the deployment, see "Allow remote classifiers"). There is no built-in topic and no quick check.
 
 The two are documented separately: [Privacy pipelines](privacy-routing.md) (when
 and how: the kinds, the ladder, conditions, readers, user pipelines, migration) and
@@ -70,7 +70,7 @@ administrator has made available (Redaction service tab). See [User pipelines](p
 |---|---|
 | **Pipelines** | the **Privacy: On / Off** master switch (off means no pipeline runs and nothing is hidden: the `noop` engine under a plain name, with an inline confirmation, the append-only engine row and its audit, and a warning banner across the Privacy area while it is off); pipelines by kind: scope, rules as sentences, the fixed last rule; the editor (ladder as radios, "Redact with", observe-only), reorder, turn off |
 | **Redaction policies** | one editor with two sections: *Patterns (fast, deterministic)*: built-in formats, regular expressions, keyword lists with a case checkbox; *Entities (NER, probabilistic)*: the engine picker (what is available), its entity types with a mode and a threshold, custom GLiNER types. A mode per item, `detect only` among them, same-length placeholders, the allow-list, and a **Try it** box |
-| **Classifiers** | decision models: a chat model and a topic in plain words; says when no model provider is configured and that classifying sends the text to that provider |
+| **Classifiers** | decision models: a chat model and a topic in plain words; offers only models that run inside the deployment unless the **Allow remote classifiers** switch (off by default) is on, says when there is none, and then says that classifying sends the text to that model's provider |
 | **Detectors** | exactly what the redaction service reports, one card per detector (the patterns, spaCy, GLiNER) with an On/Off switch, its capabilities (formats, languages, speed, entity types, custom types) and "used by N policies"; a detector no active policy uses can be switched off, one a policy uses is refused (409, naming the policies); a policy can only choose detectors that are on. Then what users may add to their own policies, and, collapsed, the engine's activity and configuration |
 | **Test** | one box: a kind of request, a user and a target, a text or file; every pipeline in scope with its trace (each item that made a condition true, with its group and, for entities, engine and score), the reroute, the ladder, who chose the reader, and the policies added up. Nothing is stored |
 

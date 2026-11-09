@@ -39,6 +39,7 @@ from gateway.models import (
     PrivacyPipeline,
     PrivacySettings,
     Provider,
+    ProviderKind,
     RedactionPolicyRecord,
     UserPolicy,
 )
@@ -60,6 +61,21 @@ MAX_PIPELINES = 5000
 
 #: The deployment's own extractor: a provider row whose plugin is this.
 LOCAL_EXTRACTOR = "extractor"
+
+#: Why a classifier on a remote model cannot answer while remote classifiers are not allowed.
+REMOTE_CLASSIFIER_WHY = (
+    "its model runs outside this deployment and remote classifiers are not allowed"
+)
+
+
+def is_local_provider(provider: Provider | None) -> bool:
+    """Whether a provider is the deployment's own service (the one notion of "local").
+
+    The same test the built-in readers use: an internal-kind provider or the extractor plugin.
+    """
+    return provider is not None and (
+        provider.kind == ProviderKind.INTERNAL or provider.plugin == LOCAL_EXTRACTOR
+    )
 
 
 def _schema_missing(exc: Exception) -> bool:
@@ -517,8 +533,8 @@ async def read_all(
         .all()
     )
     mine = list((await session.execute(select(UserPolicy).order_by(UserPolicy.id))).scalars().all())
-    classifiers = await classifier_refs(session)
     settings = await session.get(PrivacySettings, 1)
+    classifiers = await classifier_refs(session, settings)
     readers = (
         await session.execute(
             select(ModelDef.name, Provider.plugin)
@@ -544,9 +560,12 @@ async def read_all(
     )
 
 
-async def classifier_refs(session: AsyncSession) -> list[ClassifierRef]:
+async def classifier_refs(
+    session: AsyncSession, settings: PrivacySettings | None = None
+) -> list[ClassifierRef]:
     """Every classifier with what it needs to answer, read once per poll."""
     out: list[ClassifierRef] = []
+    allow_remote = bool(settings is not None and settings.allow_remote_classifiers)
     rows = (
         await session.execute(
             select(PrivacyClassifier, ModelDef, Provider)
@@ -565,6 +584,8 @@ async def classifier_refs(session: AsyncSession) -> list[ClassifierRef]:
             why = "its model is not a chat model"
         elif not (row.topic or "").strip():
             why = "no topic is written"
+        elif not allow_remote and not is_local_provider(provider):
+            why = REMOTE_CLASSIFIER_WHY
         out.append(
             ClassifierRef(
                 id=str(row.id),

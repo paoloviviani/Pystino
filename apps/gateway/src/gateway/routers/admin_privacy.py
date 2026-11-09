@@ -88,7 +88,7 @@ from gateway.privacy.schemas import (
     SettingsRequest,
     SettingsResponse,
 )
-from gateway.privacy.state import state_of
+from gateway.privacy.state import is_local_provider, state_of
 from gateway.rate_limit import SlidingWindowLimiter
 
 logger = logging.getLogger(__name__)
@@ -1005,10 +1005,11 @@ def _classifier_view(
     )
 
 
-async def _chat_models(session: SessionDep) -> list[ChatModelOption]:
+async def _chat_models(session: SessionDep, *, allow_remote: bool) -> list[ChatModelOption]:
+    """The chat models a classifier may use: the deployment's own, plus remote ones if allowed."""
     rows = (
         await session.execute(
-            select(ModelDef.id, ModelDef.name, Provider.name)
+            select(ModelDef.id, ModelDef.name, Provider)
             .join(Provider, Provider.id == ModelDef.provider_id)
             .where(
                 ModelDef.kind == ModelKind.CHAT,
@@ -1021,14 +1022,27 @@ async def _chat_models(session: SessionDep) -> list[ChatModelOption]:
             .order_by(ModelDef.name)
         )
     ).all()
-    return [ChatModelOption(id=i, name=n, provider=p) for i, n, p in rows]
+    return [
+        ChatModelOption(id=i, name=n, provider=p.name, local=is_local_provider(p))
+        for i, n, p in rows
+        if allow_remote or is_local_provider(p)
+    ]
 
 
 async def _check_classifier_model(session: SessionDep, model_id: uuid.UUID | None) -> None:
     if model_id is None:
         return
-    if model_id not in {m.id for m in await _chat_models(session)}:
-        raise UnprocessableError("The model must be an active chat model of a configured provider.")
+    allow_remote = (await service.settings_row(session)).allow_remote_classifiers
+    if model_id in {m.id for m in await _chat_models(session, allow_remote=allow_remote)}:
+        return
+    everything = await _chat_models(session, allow_remote=True)
+    if not allow_remote and model_id in {m.id for m in everything}:
+        raise BadRequestError(
+            "This model runs outside this deployment, and classifying sends it the text. "
+            'Turn on "Allow remote classifiers" in the privacy settings to use it.',
+            code="remote_classifier_not_allowed",
+        )
+    raise UnprocessableError("The model must be an active chat model of a configured provider.")
 
 
 async def _classifier_name_free(
@@ -1048,9 +1062,11 @@ async def list_classifiers(
     """The decision models: a model and a topic in plain words. Scaffolding, no model bundled."""
     used = await _used_by(session)
     state = state_of(request)
+    allow_remote = (await service.settings_row(session)).allow_remote_classifiers
     return ClassifierListResponse(
         items=[_classifier_view(c, state, used) for c in await service.classifier_rows(session)],
-        models=await _chat_models(session),
+        models=await _chat_models(session, allow_remote=allow_remote),
+        allow_remote=allow_remote,
     )
 
 
@@ -1153,22 +1169,32 @@ async def delete_classifier(
 async def get_settings(admin: AdminUserDep, session: SessionDep) -> SettingsResponse:
     row = await service.settings_row(session)
     await session.commit()
-    return SettingsResponse(user_entity_types=row.user_entity_types)
+    return SettingsResponse(
+        user_entity_types=row.user_entity_types,
+        allow_remote_classifiers=row.allow_remote_classifiers,
+    )
 
 
 @router.put("/settings", response_model=SettingsResponse)
 async def put_settings(
     payload: SettingsRequest, admin: AdminUserDep, session: SessionDep, request: Request
 ) -> SettingsResponse:
-    """The entity types users' own policies may name (null: any the detector offers)."""
+    """Entity types users may name (omit: unchanged, null: any), and remote classifiers."""
     row = await service.settings_row(session)
-    before = {"user_entity_types": row.user_entity_types}
-    types = (
-        None
-        if payload.user_entity_types is None
-        else sorted({t.strip().upper() for t in payload.user_entity_types if t.strip()})
-    )
+    before = {
+        "user_entity_types": row.user_entity_types,
+        "allow_remote_classifiers": row.allow_remote_classifiers,
+    }
+    types = row.user_entity_types
+    if "user_entity_types" in payload.model_fields_set:
+        types = (
+            None
+            if payload.user_entity_types is None
+            else sorted({t.strip().upper() for t in payload.user_entity_types if t.strip()})
+        )
     row.user_entity_types = types
+    if payload.allow_remote_classifiers is not None:
+        row.allow_remote_classifiers = payload.allow_remote_classifiers
     record_audit(
         session,
         admin,
@@ -1177,11 +1203,16 @@ async def put_settings(
         None,
         "Privacy settings",
         before=before,
-        after={"user_entity_types": types},
+        after={
+            "user_entity_types": types,
+            "allow_remote_classifiers": row.allow_remote_classifiers,
+        },
     )
     await session.commit()
     await _reload(request)
-    return SettingsResponse(user_entity_types=types)
+    return SettingsResponse(
+        user_entity_types=types, allow_remote_classifiers=row.allow_remote_classifiers
+    )
 
 
 # -- the test box ------------------------------------------------------------------

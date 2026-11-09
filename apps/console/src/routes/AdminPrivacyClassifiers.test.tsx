@@ -8,7 +8,8 @@ import { AdminPrivacyClassifiers } from "./AdminPrivacyClassifiers";
 
 /** The Classifiers tab: decision models with a topic; classifying sends the text to the model's provider. */
 
-const MODELS = [{ id: "m1", name: "chat-large", provider: "Acme AI" }];
+const MODELS = [{ id: "m1", name: "chat-large", provider: "Acme AI", local: false }];
+const LOCAL_MODELS = [{ id: "l1", name: "inside-chat", provider: "Built-in", local: true }];
 
 const CLASSIFIER = (over: Record<string, unknown> = {}) => ({
   id: "c1",
@@ -31,14 +32,24 @@ interface Seen {
   body: unknown;
 }
 
-function renderPage(items: unknown[], models: unknown[], seen: Seen[] = [], deleteFails = false) {
+function renderPage(
+  items: unknown[],
+  models: unknown[],
+  seen: Seen[] = [],
+  deleteFails = false,
+  allowRemote = true,
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
       seen.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
-      if (method === "GET") return jsonResponse({ items, models });
+      if (url.endsWith("/privacy/settings")) {
+        if (method === "PUT") return jsonResponse(JSON.parse(String(init?.body)));
+        return jsonResponse({ user_entity_types: null, allow_remote_classifiers: allowRemote });
+      }
+      if (method === "GET") return jsonResponse({ items, models, allow_remote: allowRemote });
       if (method === "DELETE") {
         return deleteFails
           ? jsonResponse({ error: { message: "Used by the rule Names in Remote embeddings.", code: "in_use" } }, 409)
@@ -65,6 +76,37 @@ describe("Classifiers", () => {
     expect(await screen.findByText("Needs a model provider")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Go to Providers" })).toHaveAttribute("href", "/admin/providers");
     expect(screen.getByRole("button", { name: "New classifier" })).toBeDisabled();
+  });
+
+  it("with no local model and remote ones not allowed, explains why and points to the setting", async () => {
+    renderPage([], [], [], false, false);
+    expect(await screen.findByText("No model that runs inside this deployment")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Go to Providers" })).toBeNull();
+    expect(screen.getByRole("switch", { name: "Allow remote classifiers" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("button", { name: "New classifier" })).toBeDisabled();
+  });
+
+  it("offers only what the server lists, and a local model carries no provider warning", async () => {
+    renderPage([], LOCAL_MODELS, [], false, false);
+    const user = userEvent.setup({ delay: null });
+    await user.click(await screen.findByRole("button", { name: "New classifier" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByRole("option", { name: /Acme AI/ })).toBeNull();
+    await user.selectOptions(within(dialog).getByLabelText("Model"), "l1");
+    expect(within(dialog).getByText(/text does not leave it/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/sends the text to/)).toBeNull();
+  });
+
+  it("switches remote classifiers on with a PUT that keeps the entity types", async () => {
+    const seen: Seen[] = [];
+    renderPage([], LOCAL_MODELS, seen, false, false);
+    const user = userEvent.setup({ delay: null });
+    await user.click(await screen.findByRole("switch", { name: "Allow remote classifiers" }));
+    await waitFor(() => expect(seen.some((c) => c.method === "PUT")).toBe(true));
+    expect(seen.find((c) => c.method === "PUT")).toMatchObject({
+      url: "/api/admin/privacy/settings",
+      body: { user_entity_types: null, allow_remote_classifiers: true },
+    });
   });
 
   it("lists a classifier with its topic, model, availability and the rules using it", async () => {
