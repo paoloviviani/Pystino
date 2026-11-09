@@ -6761,6 +6761,8 @@ export interface components {
             ner_available: boolean | null;
             /** Ner Note */
             ner_note: string | null;
+            /** Offered Types */
+            offered_types: string[] | null;
             /** Own Policies */
             own_policies: components["schemas"]["NamedId"][];
             /** Policies */
@@ -8131,6 +8133,8 @@ export interface components {
              * @default 0
              */
             propagation_seconds: number;
+            /** Restore Engine */
+            restore_engine: string | null;
             /** Restore In Response */
             restore_in_response: boolean;
             /** Restore In Tool Arguments */

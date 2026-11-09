@@ -464,6 +464,9 @@ class OptionsResponse(ResponseModel):
     #: entity types only a model finds are not offered and a policy naming one is refused.
     ner_available: bool | None = None
     ner_note: str | None = None
+    #: Every type the redaction service finds now (pattern formats if switched on, and the
+    #: entities of NER engines that are on); null when the service cannot be asked.
+    offered_types: list[str] | None = None
     engines: list[str]
 
 

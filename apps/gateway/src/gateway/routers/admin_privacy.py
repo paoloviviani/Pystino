@@ -28,7 +28,7 @@ from fastapi import APIRouter, Request, status
 from sqlalchemy import func, select
 
 from gateway.admin_audit import record_audit
-from gateway.config import EntityMode
+from gateway.config import EntityMode, RedactionPolicy
 from gateway.deps import (
     AdminUserDep,
     ControlHttpDep,
@@ -51,10 +51,10 @@ from gateway.pagination import MAX_LIMIT, Page
 from gateway.privacy import rules as rulelib
 from gateway.privacy import service
 from gateway.privacy.engines import (
-    NO_NER_MESSAGE,
     effective_engines,
     engine_problem,
-    has_ner,
+    ner_state,
+    no_ner_message,
     usable,
 )
 from gateway.privacy.pipelines import Pipeline, pipeline_from_row, validate_pipeline
@@ -523,7 +523,6 @@ def _policy_response(
     email: str | None,
     engines: EnginesResponse | None = None,
 ) -> PolicyResponse:
-    from gateway.config import RedactionPolicy
 
     # A stored policy that no longer parses is not replaced with an empty one
     # here: the listing is where an operator would find out the state is
@@ -585,15 +584,22 @@ def _check_engine(policy: Any, engines: EnginesResponse) -> None:
         (e for e in engines.engines if e.name == policy.engine),
         next((e for e in engines.engines if e.default), None),
     )
-    if chosen is not None and policy.entities and not chosen.entities:
-        # An engine that reports no entity types has no NER model (a pattern-only image, or
-        # a model that failed to load): every entity item would be unserved, and a
-        # condition that counts them could never answer.
-        if not has_ner(engines):
-            raise UnprocessableError(NO_NER_MESSAGE)
+    needs_ner = bool(policy.entities or policy.custom_entities)
+    if chosen is not None and needs_ner and not (chosen.available and chosen.entities):
+        # The engine in force (named, or the default when none is named) cannot find entities:
+        # switched off, not installed, or a pattern-only image. Every entity item would be
+        # unserved, and a condition that counts them could never answer.
+        if not chosen.enabled:
+            raise UnprocessableError(
+                f"The engine '{chosen.name}' is switched off on the Detectors tab."
+            )
+        state = ner_state(engines)
+        if state in ("none", "off"):
+            raise UnprocessableError(no_ner_message(engines))
         raise UnprocessableError(
             f"The engine '{chosen.name}' reports no entity types "
-            f"(it has no NER model), so it cannot find: {', '.join(sorted(policy.entities))}. "
+            f"(it has no NER model), so it cannot find: "
+            f"{', '.join(sorted({*policy.entities, *(c.name for c in policy.custom_entities)}))}. "
             "Choose an engine that has one."
         )
     if chosen is not None and chosen.entities:
@@ -832,6 +838,9 @@ async def update_policy(
                     "first, or it would silently stop hiding what they were written to hide."
                 )
         if payload.is_active and not row.is_active:
+            # Turning a policy on checks it against what the service offers now: it was saved
+            # against what it offered then.
+            _check_engine(RedactionPolicy.model_validate(row.policy or {}), report)
             # Turning a policy on brings its custom types in with the others'.
             await _check_label_budget(session, dict(row.policy or {}), report, ignore=row.id)
         elif payload.is_active and payload.policy is not None:

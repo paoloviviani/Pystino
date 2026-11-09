@@ -116,7 +116,6 @@ export const POLICY_TEMPLATES: PolicyTemplate[] = [
       f("IP_ADDRESS", "anonymise"),
       f("MAC_ADDRESS", "anonymise"),
       p("URL_WITH_PASSWORD", "anonymise"),
-      { kind: "keywords", name: "INTERNAL_HOSTS", mode: "anonymise" },
     ],
   },
   {
@@ -234,9 +233,17 @@ export function buildPolicyFromTemplate(
  */
 export function buildUserEntries(
   template: PolicyTemplate,
-  options: { allowedTypes: string[] | null; nerAvailable: boolean | null },
+  options: {
+    allowedTypes: string[] | null;
+    nerAvailable: boolean | null;
+    /** What the service finds now (patterns that are on, entities of engines that are on); null: unknown. */
+    offeredTypes?: string[] | null;
+  },
 ): { entries: UserPolicyEntry[]; skipped: Skipped[] } {
   const allowed = options.allowedTypes ? new Set(options.allowedTypes.map((t) => t.toUpperCase())) : null;
+  const offered = options.offeredTypes
+    ? new Set(options.offeredTypes.map((t) => t.toUpperCase()))
+    : null;
   const entries: UserPolicyEntry[] = [];
   const skips: [SkipReason, string][] = [];
   for (const item of template.items) {
@@ -254,6 +261,9 @@ export function buildUserEntries(
       }
     } else if (item.kind === "entity" && options.nerAvailable === false) {
       skips.push([item.gliner ? "gliner" : "ner", item.name]);
+    } else if (offered && !offered.has(item.name)) {
+      // Switched off, or not listed by the service: the server would refuse it too.
+      skips.push([item.kind === "entity" ? (item.gliner ? "gliner" : "ner") : "service", item.name]);
     } else if (allowed && !allowed.has(item.name)) {
       skips.push(["not_allowed", item.name]);
     } else {

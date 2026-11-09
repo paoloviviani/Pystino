@@ -7328,6 +7328,20 @@
             ],
             "title": "Ner Note"
           },
+          "offered_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offered Types"
+          },
           "own_policies": {
             "items": {
               "$ref": "#/components/schemas/NamedId"
@@ -7377,6 +7391,7 @@
           "entity_types",
           "ner_available",
           "ner_note",
+          "offered_types",
           "engines"
         ],
         "title": "OptionsResponse",
@@ -10993,6 +11008,17 @@
             "title": "Propagation Seconds",
             "type": "number"
           },
+          "restore_engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restore Engine"
+          },
           "restore_in_response": {
             "title": "Restore In Response",
             "type": "boolean"
@@ -11053,6 +11079,7 @@
           "score_threshold",
           "presidio_pattern_matching",
           "presidio_ner",
+          "restore_engine",
           "patterns_enabled",
           "spacy_enabled",
           "gliner_enabled",

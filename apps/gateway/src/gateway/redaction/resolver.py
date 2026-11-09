@@ -77,6 +77,8 @@ def build_for(
     policy: RedactionPolicy | None = None,
     presidio_pattern_matching: bool | None = None,
     presidio_ner: bool | None = None,
+    spacy_enabled: bool | None = None,
+    gliner_enabled: bool | None = None,
 ) -> Redactor:
     """Construct *engine* using the environment's other redaction settings.
 
@@ -99,6 +101,10 @@ def build_for(
         update["presidio_pattern_matching"] = presidio_pattern_matching
     if presidio_ner is not None:
         update["presidio_ner"] = presidio_ner
+    if spacy_enabled is not None:
+        update["spacy_enabled"] = spacy_enabled
+    if gliner_enabled is not None:
+        update["gliner_enabled"] = gliner_enabled
     return resolve(engine)(settings.model_copy(update=update))
 
 
@@ -203,6 +209,8 @@ class RedactionResolver:
                     if row is not None and row.presidio_ner is not None
                     else self._settings.presidio_ner
                 ),
+                spacy_enabled=row.spacy_enabled if row is not None else None,
+                gliner_enabled=row.gliner_enabled if row is not None else None,
             )
         except (UnknownEngineError, ValueError):
             # The engine was validated when it was saved, so reaching here means

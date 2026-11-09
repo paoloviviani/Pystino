@@ -450,6 +450,8 @@ def clean_entries(
     *,
     allowed_types: Sequence[str] | None,
     no_ner_types: set[str] | None = None,
+    no_ner_reason: str = "",
+    offered_types: set[str] | None = None,
     reserved: Collection[str] = (),
 ) -> list[dict[str, Any]]:
     """A user's policy entries, clean, under the administrators' own validation.
@@ -487,12 +489,15 @@ def clean_entries(
             regex: str | None = entry.regex
         else:
             if no_ner_types is not None and name in no_ner_types:
-                from gateway.privacy.engines import NO_NER_MESSAGE
-
-                raise ValueError(f"'{name}' is found by an NER engine. {NO_NER_MESSAGE}")
+                raise ValueError(f"'{name}' is found by an NER engine. {no_ner_reason}")
             if allowed is not None and name not in allowed:
                 raise ValueError(
                     f"'{name}' is not an entity type your administrator makes available."
+                )
+            if offered_types is not None and name not in offered_types:
+                raise ValueError(
+                    f"'{name}' is not something the redaction service finds now (its pattern "
+                    "formats may be switched off, or it is not listed)."
                 )
             regex = None
         key = (entry.kind, name)

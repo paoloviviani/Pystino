@@ -94,6 +94,14 @@ class FakeService:
         if state is None or not state["available"] or engine in self.down:
             return httpx.Response(409, json={"detail": {"code": "engine_unavailable"}})
         wanted = payload.get("entity_types")
+        ner_off = payload.get("presidio_ner") is False
+        patterns_off = payload.get("presidio_pattern_matching") is False
+        unsupported = sorted(
+            e
+            for e in (wanted or [])
+            if (ner_off and e in ("PERSON", "LOCATION", "ORGANIZATION"))
+            or (patterns_off and e in self.health["pattern_entities"])
+        )
         labels = {c["entity"] for c in payload.get("custom_labels") or []}
         findings = []
         for index, text in enumerate(payload["texts"]):
@@ -104,6 +112,10 @@ class FakeService:
             ):
                 for needle, entity in needles.items():
                     if wanted is not None and entity not in wanted:
+                        continue
+                    if entity in unsupported or (ner_off and source != "pattern"):
+                        continue
+                    if patterns_off and source == "pattern":
                         continue
                     if source == "gliner" and entity == "CODENAME" and entity not in labels:
                         continue
@@ -120,7 +132,10 @@ class FakeService:
                         )
                         start = text.find(needle, start + 1)
             findings.append({"index": index, "spans": spans})
-        return httpx.Response(200, json={"findings": findings, "engine": "fake"})
+        return httpx.Response(
+            200,
+            json={"findings": findings, "engine": "fake", "unsupported_types": unsupported},
+        )
 
     def client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(transport=httpx.MockTransport(self.handle))
@@ -257,6 +272,40 @@ class TestAnUnavailableEngineFailsClosed:
         with pytest.raises(EngineUnavailableError) as raised:
             await redactor.detect([TEXT], policy=policy)
         assert raised.value.engine == "gliner"
+
+    async def test_a_switched_off_engine_a_policy_chose_fails_closed(self) -> None:
+        service = FakeService()
+        redactor = service.redactor(gliner_enabled=False)
+        policy = RedactionPolicy(engine="gliner", entities={"PERSON": E(mode=M.REDACT)})
+        with pytest.raises(EngineUnavailableError) as raised:
+            await redactor.detect([TEXT], policy=policy)
+        assert raised.value.engine == "gliner" and "switched off" in str(raised.value)
+        # And the request is the 503 that names the policy, whatever fail_open says.
+        failing = service.redactor(gliner_enabled=False, fail_open=True)
+        with pytest.raises(ServiceUnavailableError) as again:
+            await failing.redact_request(
+                [{"role": "user", "content": TEXT}], policy=effective(("Names", policy))
+            )
+        assert "'Names'" in again.value.message
+
+    async def test_a_switched_off_default_engine_refuses_what_needs_it_only(self) -> None:
+        service = FakeService()
+        redactor = service.redactor(spacy_enabled=False, gliner_enabled=True)
+        needs = RedactionPolicy(entities={"PERSON": E(mode=M.REDACT)})
+        with pytest.raises(EngineUnavailableError):
+            await redactor.detect([TEXT], policy=needs)
+        # A policy of formats alone does not need the engine, so it still works.
+        formats = RedactionPolicy(formats={"IBAN_CODE": E(mode=M.REDACT)})
+        spans = await redactor.detect([TEXT], policy=formats)
+        assert [s.entity_type for s in spans[0]] == ["IBAN_CODE"]
+
+    async def test_a_type_of_a_switched_off_pattern_family_is_refused_not_ignored(self) -> None:
+        service = FakeService()
+        redactor = service.redactor(presidio_pattern_matching=False)
+        policy = RedactionPolicy(formats={"IBAN_CODE": E(mode=M.REDACT)})
+        with pytest.raises(EngineUnavailableError) as raised:
+            await redactor.detect([TEXT], policy=policy)
+        assert "switched off" in str(raised.value)
 
     async def test_the_request_is_a_503_naming_the_policy(self) -> None:
         service = FakeService()
@@ -800,7 +849,7 @@ class TestSwitchedOffDetectors:
         refused = await client.post(
             "/api/admin/privacy/policies", json={"name": "G", "policy": {"engine": "gliner"}}
         )
-        assert refused.status_code == 422 and "not available" in refused.text
+        assert refused.status_code == 422 and "switched off" in refused.text
         no_format = await client.post(
             "/api/admin/privacy/policies",
             json={"name": "F", "policy": {"formats": {"IBAN_CODE": {"mode": "redact"}}}},
@@ -844,3 +893,196 @@ class TestUserPatternNames:
             },
         )
         assert fresh.status_code == 201
+
+
+class TestSwitchedOffSaveTimeGaps:
+    async def install(self, app: Any, service: FakeService) -> None:
+        app.state.settings.redaction.engine = "http"
+        app.state.settings.redaction.endpoint = "http://detector:8080"
+        app.state.control_http = service.client()
+        app.state.redactor = service.redactor()
+        app.state.redaction = None
+
+    async def test_the_default_engine_switched_off_refuses_entities_with_no_engine_named(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        await self.install(app, FakeService())
+        off = await client.put(
+            "/api/admin/redaction/engine",
+            json={"engine": "noop", "spacy_enabled": False, "gliner_enabled": True},
+        )
+        assert off.status_code == 200
+        refused = await client.post(
+            "/api/admin/privacy/policies",
+            json={"name": "N", "policy": {"entities": {"PERSON": {"mode": "redact"}}}},
+        )
+        assert refused.status_code == 422 and "switched off" in refused.text
+        # Not "not installed": the engines are there.
+        assert "not installed" not in refused.text
+
+    async def test_every_engine_off_says_off_not_missing(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        await self.install(app, FakeService())
+        await client.put(
+            "/api/admin/redaction/engine",
+            json={"engine": "noop", "spacy_enabled": False, "gliner_enabled": False},
+        )
+        refused = await client.post(
+            "/api/admin/privacy/policies",
+            json={
+                "name": "N",
+                "policy": {"engine": "gliner", "entities": {"PERSON": {"mode": "redact"}}},
+            },
+        )
+        assert refused.status_code == 422 and "switched off" in refused.text
+
+    async def test_activating_a_policy_checks_it_against_what_is_on_now(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        from privacy_helpers import add_policy
+
+        as_user(app, await make_admin(session_factory, seeded))
+        await self.install(app, FakeService())
+        policy_id = await add_policy(
+            app,
+            session_factory,
+            "Names",
+            active=False,
+            engine="gliner",
+            entities={"PERSON": {"mode": "redact"}},
+        )
+        await client.put(
+            "/api/admin/redaction/engine", json={"engine": "noop", "gliner_enabled": False}
+        )
+        refused = await client.patch(
+            f"/api/admin/privacy/policies/{policy_id}", json={"is_active": True}
+        )
+        assert refused.status_code == 422 and "switched off" in refused.text
+
+    async def test_an_inconsistent_family_switch_is_rejected(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        await self.install(app, FakeService())
+        bad = await client.put(
+            "/api/admin/redaction/engine",
+            json={
+                "engine": "noop",
+                "presidio_ner": True,
+                "spacy_enabled": False,
+                "gliner_enabled": False,
+            },
+        )
+        assert bad.status_code == 400 and "contradicts" in bad.text
+
+    async def test_a_users_policy_counts_as_using_a_detector(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        from gateway.models import UserPolicy
+
+        as_user(app, await make_admin(session_factory, seeded))
+        await self.install(app, FakeService())
+        async with session_factory() as db:
+            db.add(
+                UserPolicy(
+                    user_id=seeded.user.id,
+                    name="Mine",
+                    rules=[{"kind": "mode", "name": "PERSON", "regex": None, "mode": "redact"}],
+                )
+            )
+            await db.commit()
+        refused = await client.put(
+            "/api/admin/redaction/engine", json={"engine": "noop", "spacy_enabled": False}
+        )
+        assert refused.status_code == 409 and "Mine (user policy)" in refused.text
+        formats = await client.put(
+            "/api/admin/redaction/engine", json={"engine": "noop", "gliner_enabled": False}
+        )
+        assert formats.status_code == 200
+
+    async def test_the_default_follows_the_service_not_a_constant(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        from privacy_helpers import add_policy
+
+        as_user(app, await make_admin(session_factory, seeded))
+        service = FakeService()
+        for engine in service.health["ner_engines"]:
+            engine["default"] = engine["name"] == "gliner"
+        await self.install(app, service)
+        await add_policy(app, session_factory, "Names", entities={"PERSON": {"mode": "redact"}})
+        # No engine named: it reads with the service's default, which is GLiNER here.
+        assert (
+            await client.put(
+                "/api/admin/redaction/engine", json={"engine": "noop", "spacy_enabled": False}
+            )
+        ).status_code == 200
+        refused = await client.put(
+            "/api/admin/redaction/engine",
+            json={"engine": "noop", "spacy_enabled": True, "gliner_enabled": False},
+        )
+        assert refused.status_code == 409 and "GLiNER" in refused.text
+
+    async def test_a_change_is_audited_with_a_reason_and_restores_the_running_engine(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        from gateway.models import AdminAuditEvent as AuditLog
+        from sqlalchemy import select
+
+        as_user(app, await make_admin(session_factory, seeded))
+        await self.install(app, FakeService())
+        off = await client.put("/api/admin/redaction/engine", json={"engine": "noop"})
+        assert off.status_code == 200
+        body = off.json()
+        assert body["configured"]["reason"] == "Changed from the console"
+        # The engine that redacts and was in force is what "on" brings back.
+        assert body["restore_engine"] == "http"
+        async with session_factory() as db:
+            actions = (await db.execute(select(AuditLog.action))).scalars().all()
+        assert "redaction_engine.set" in actions
+
+
+class TestUserFormatsFollowTheSwitches:
+    async def test_a_format_the_service_does_not_offer_now_is_refused_and_not_offered(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, seeded.user)
+        service = FakeService()
+        app.state.settings.redaction.engine = "http"
+        app.state.settings.redaction.endpoint = "http://detector:8080"
+        app.state.control_http = service.client()
+        app.state.redaction = None
+        async with session_factory() as db:
+            from gateway.models import RedactionConfig
+
+            db.add(
+                RedactionConfig(
+                    engine="http",
+                    presidio_pattern_matching=False,
+                    presidio_ner=True,
+                    reason="x",
+                )
+            )
+            await db.commit()
+        options = (await client.get("/api/me/privacy/options")).json()
+        assert "IBAN_CODE" not in options["offered_types"]
+        assert "PERSON" in options["offered_types"]
+        refused = await client.post(
+            "/api/me/privacy/policies",
+            json={
+                "name": "I",
+                "entries": [{"kind": "mode", "name": "IBAN_CODE", "mode": "redact"}],
+            },
+        )
+        assert (
+            refused.status_code == 422
+            and "not something the redaction service finds" in refused.text
+        )
+        ok = await client.post(
+            "/api/me/privacy/policies",
+            json={"name": "P", "entries": [{"kind": "mode", "name": "PERSON", "mode": "redact"}]},
+        )
+        assert ok.status_code == 201

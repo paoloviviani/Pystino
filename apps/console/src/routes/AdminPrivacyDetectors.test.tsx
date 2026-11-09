@@ -160,7 +160,11 @@ describe("Detectors: the cards", () => {
 
   it("switches one detector and keeps the others as they are", async () => {
     const user = userEvent.setup({ delay: null });
-    const puts = stub({ engines: BOTH });
+    // The previous change had its own reason, which must not be copied onto this one.
+    const puts = stub({
+      engines: BOTH,
+      status: status({ configured: { engine: "http", reason: "an older reason", changed_at: "", changed_by: null, presidio_ner: null, presidio_pattern_matching: null, spacy_enabled: null, gliner_enabled: null } }),
+    });
     renderUi(<AdminPrivacyDetectors />);
     const card = await screen.findByTestId("detector-gliner");
     await user.click(within(card).getByRole("switch"));
@@ -170,6 +174,7 @@ describe("Detectors: the cards", () => {
       presidio_pattern_matching: true,
       spacy_enabled: true,
       gliner_enabled: false,
+      reason: "Switched GLiNER Off from the console",
     });
   });
 
@@ -221,18 +226,35 @@ describe("the master switch and the off banner", () => {
     await user.click(toggle);
     await user.click(screen.getByRole("button", { name: "Turn privacy off" }));
     await waitFor(() => expect(puts).toHaveLength(1));
-    expect(puts[0]!.body).toMatchObject({ engine: "noop", spacy_enabled: false, gliner_enabled: true });
+    expect(puts[0]!.body).toMatchObject({
+      engine: "noop",
+      spacy_enabled: false,
+      gliner_enabled: true,
+      reason: "Turned privacy off from the console",
+    });
   });
 
-  it("turns privacy on without asking, with the engine that redacts", async () => {
+  it("turns privacy on without asking, restoring the engine that was running", async () => {
     const user = userEvent.setup({ delay: null });
-    const puts = stub({ status: status({ enabled: false, engine: "noop" }) });
+    const base = status({ enabled: false, engine: "noop", restore_engine: "regex" });
+    const puts = stub({
+      status: {
+        ...base,
+        engines: [
+          ...(base.engines as object[]),
+          { name: "regex", label: "Regex", description: "", needs_endpoint: false, redacts: true, is_active: false, blocked_reason: null },
+        ],
+      },
+    });
     renderUi(<PrivacyMasterSwitch />);
     const toggle = await screen.findByRole("switch", { name: "Privacy" });
     expect(toggle).toHaveAttribute("aria-checked", "false");
     await user.click(toggle);
     await waitFor(() => expect(puts).toHaveLength(1));
-    expect(puts[0]!.body).toMatchObject({ engine: "http" });
+    expect(puts[0]!.body).toMatchObject({
+      engine: "regex",
+      reason: "Turned privacy on from the console",
+    });
   });
 
   it("shows a warning banner across the Privacy area while it is off, and not while it is on", async () => {

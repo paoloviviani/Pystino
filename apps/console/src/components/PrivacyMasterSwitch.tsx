@@ -26,7 +26,11 @@ export function PrivacyMasterSwitch() {
   // Strictly boolean: a status that has not loaded shows no switch rather than a guess.
   if (!data || typeof data.enabled !== "boolean") return null;
   const on = data.enabled;
-  const redacting = data.engines.find((engine) => engine.redacts && engine.blocked_reason === null);
+  // The engine that was running before it was turned off, not merely the first that redacts.
+  const redacting =
+    data.engines.find(
+      (engine) => engine.name === data.restore_engine && engine.blocked_reason === null,
+    ) ?? data.engines.find((engine) => engine.redacts && engine.blocked_reason === null);
   const off = data.engines.find((engine) => !engine.redacts);
 
   const carry = (current: RedactionStatus) => ({
@@ -38,7 +42,11 @@ export function PrivacyMasterSwitch() {
 
   const change = (name: string) =>
     setEngine.mutate(
-      { engine: name, reason: "", ...carry(data) },
+      {
+        engine: name,
+        reason: on ? m["privacy.master.reason_off"]() : m["privacy.master.reason_on"](),
+        ...carry(data),
+      },
       {
         onSuccess: () => {
           setConfirming(false);

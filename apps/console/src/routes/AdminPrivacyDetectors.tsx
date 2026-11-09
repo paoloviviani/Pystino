@@ -198,7 +198,12 @@ export function DetectorCards({
     setEngine.mutate(
       {
         engine: status.engine,
-        reason: status.configured?.reason ?? "",
+        // This change's own reason: never the previous change's, which would put words
+        // in the audit log that nobody wrote for it.
+        reason: m["detectors.reason"]({
+          name: which === "patterns" ? m["detectors.patterns.title"]() : which === "spacy" ? "spaCy" : "GLiNER",
+          state: next ? m["detectors.on"]() : m["detectors.off"](),
+        }),
         presidio_pattern_matching: after.patterns,
         spacy_enabled: after.spacy,
         gliner_enabled: after.gliner,

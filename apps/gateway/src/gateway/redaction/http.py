@@ -796,6 +796,23 @@ class HttpDetectionRedactor:
         # filtered locally — an engine's entity list is its own and cannot be
         # enumerated from here (ADR 0026).
         wanted = list(ask.types) if ask.types is not None else None
+        ner_on = settings.presidio_ner
+        engine_off = {
+            "spacy": settings.spacy_enabled is False,
+            "gliner": settings.gliner_enabled is False,
+        }
+        if ask.engine is not None and engine_off.get(ask.engine):
+            # The policy chose an engine the administrator switched off: fail closed, and the
+            # caller turns this into the 503 that names the policy.
+            raise EngineUnavailableError(
+                ask.engine, f"the NER engine {ask.engine} is switched off on the Detectors tab"
+            )
+        if ask.engine is None and any(engine_off.values()):
+            default = await self._default_engine()
+            if default is None or engine_off.get(default, False):
+                # The service would run its default engine: tell it not to run NER at all,
+                # so what needs it comes back unsupported and is refused below.
+                ner_on = False
         keys = [
             _Cache.key(
                 text,
@@ -803,7 +820,7 @@ class HttpDetectionRedactor:
                 floor,
                 wanted,
                 settings.presidio_pattern_matching,
-                settings.presidio_ner,
+                ner_on,
                 ask.engine,
                 ask.labels,
             )
@@ -822,7 +839,7 @@ class HttpDetectionRedactor:
                 score_threshold=floor,
                 entity_types=wanted,
                 presidio_pattern_matching=settings.presidio_pattern_matching,
-                presidio_ner=settings.presidio_ner,
+                presidio_ner=ner_on,
                 ner_engine=ask.engine,
                 custom_labels=[CustomLabel(entity=e, label=label) for e, label in ask.labels]
                 or None,
@@ -849,6 +866,26 @@ class HttpDetectionRedactor:
                 self._cache.put(keys[index], spans)
 
         return [spans or [] for spans in results]
+
+    async def _default_engine(self) -> str | None:
+        """The service's default NER engine, from its ``/healthz`` (None when unknown)."""
+        import time
+
+        held = getattr(self, "_default_engine_seen", None)
+        if held is not None and time.monotonic() - held[0] < 30:
+            return held[1]  # type: ignore[no-any-return]
+        found: str | None = None
+        try:
+            base = self._endpoint.removesuffix("/detect")
+            body = (await self._client.get(f"{base}/healthz")).json()
+            for engine in body.get("ner_engines") or []:
+                if isinstance(engine, dict) and engine.get("default"):
+                    found = str(engine.get("name"))
+        except Exception:
+            logger.info("could not read the redaction service's default engine", exc_info=True)
+            return None
+        self._default_engine_seen = (time.monotonic(), found)
+        return found
 
     async def _post(
         self, request: DetectionRequest, *, strict: bool = False
@@ -884,12 +921,20 @@ class HttpDetectionRedactor:
 
         found = {finding.index: finding.spans for finding in parsed.findings}
         self._report_unsupported(parsed.unsupported_types)
-        if parsed.unsupported_types and strict:
+        family_off = request.presidio_pattern_matching is False or request.presidio_ner is False
+        if parsed.unsupported_types and (strict or family_off):
             # A condition that counts items cannot read "the engine cannot serve this
             # type" as "found nothing": that is undecided, and the caller fails closed.
+            # So is a type a switched-off detector would have found: the administrator
+            # switched it off, but a policy still asks for it.
             raise EngineUnavailableError(
                 request.ner_engine,
-                "the engine cannot find: " + ", ".join(sorted(parsed.unsupported_types)),
+                (
+                    "a detector that is switched off cannot find: "
+                    if family_off and not strict
+                    else "the engine cannot find: "
+                )
+                + ", ".join(sorted(parsed.unsupported_types)),
             )
         return found, bool(parsed.unsupported_types)
 

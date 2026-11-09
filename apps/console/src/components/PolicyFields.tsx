@@ -396,7 +396,10 @@ export function PolicyFields({
         }
       >
         {noNer ? (
-          <NoNerNotice items={entityItems} />
+          <NoNerNotice
+            items={entityItems}
+            off={engines?.engines.some((e) => e.entities.length > 0 && e.enabled === false) ?? false}
+          />
         ) : (
           <div className="flex flex-col gap-5">
             <EnginePicker
@@ -452,16 +455,28 @@ export function PolicyFields({
  * no NER engine: what is missing and where to read how to install it. Items the
  * policy already lists are kept (and counted here), never dropped.
  */
-export function NoNerNotice({ items }: { items: number }) {
+export function NoNerNotice({ items, off = false }: { items: number; off?: boolean }) {
   return (
     <div className="flex flex-col gap-2" data-testid="no-ner">
-      <p className={`m-0 text-body ${MUTED}`}>
-        {m["policy_fields.no_ner"]()}{" "}
-        <a href={NER_DOCS_URL} target="_blank" rel="noreferrer" className="underline">
-          {m["policy_fields.no_ner_docs"]()}
-        </a>
-      </p>
-      <p className={`m-0 text-small ${MUTED}`}>{m["policy_fields.no_ner_how"]()}</p>
+      {off ? (
+        // Installed but switched off: say so, and point at the switch, not at the docs.
+        <p className={`m-0 text-body ${MUTED}`}>
+          {m["policy_fields.no_ner_off"]()}{" "}
+          <a href="/console/admin/privacy/detectors" className="underline">
+            {m["policy_fields.no_ner_off_link"]()}
+          </a>
+        </p>
+      ) : (
+        <>
+          <p className={`m-0 text-body ${MUTED}`}>
+            {m["policy_fields.no_ner"]()}{" "}
+            <a href={NER_DOCS_URL} target="_blank" rel="noreferrer" className="underline">
+              {m["policy_fields.no_ner_docs"]()}
+            </a>
+          </p>
+          <p className={`m-0 text-small ${MUTED}`}>{m["policy_fields.no_ner_how"]()}</p>
+        </>
+      )}
       {items > 0 && (
         <Notice tone="warn">{m["policy_fields.no_ner_kept"]({ count: items })}</Notice>
       )}

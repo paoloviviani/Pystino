@@ -50,6 +50,7 @@ function status(overrides: Partial<RedactionStatus> = {}): RedactionStatus {
     configured: null,
     presidio_pattern_matching: null,
     presidio_ner: null,
+    restore_engine: "http",
     patterns_enabled: true,
     spacy_enabled: true,
     gliner_enabled: true,

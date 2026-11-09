@@ -3470,7 +3470,7 @@
   "policy_template.contact.name": "Contact details",
   "policy_template.contact.description": "Email addresses, phone numbers and URLs, anonymised and restored in the answer.",
   "policy_template.network.name": "Network and infrastructure",
-  "policy_template.network.description": "IP and MAC addresses, URLs with credentials, and an empty keyword list \"Internal hosts\" for you to fill with your own host names.",
+  "policy_template.network.description": "IP and MAC addresses and URLs with credentials. Add a keyword list of your own host names after creating the policy: a list cannot start empty.",
   "policy_template.health.name": "Health identifiers",
   "policy_template.health.description": "Health insurance numbers, medical conditions and medications, redacted. Needs the GLiNER engine.",
   "policy_template.skipped.ner": "Skipped: {names}, which need an NER engine.",
@@ -3515,5 +3515,10 @@
   "detectors.formats_list": "Show the formats",
   "detectors.unreachable": "The redaction service did not answer",
   "detectors.saved": "Saved. Policies follow within seconds.",
-  "detectors.failed": "The detector was not switched"
+  "detectors.failed": "The detector was not switched",
+  "privacy.master.reason_off": "Turned privacy off from the console",
+  "privacy.master.reason_on": "Turned privacy on from the console",
+  "detectors.reason": "Switched {name} {state} from the console",
+  "policy_fields.no_ner_off": "The NER engines are switched off on the Detectors tab; entities need one switched on.",
+  "policy_fields.no_ner_off_link": "Open Detectors"
 }

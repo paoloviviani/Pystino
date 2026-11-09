@@ -6642,6 +6642,19 @@ async def _redaction_response(
     from gateway.privacy.engines import switches_from
 
     switches = switches_from(stored, settings)
+    # The engine to bring back when privacy is turned on again: the newest one that redacts.
+    restore = next(
+        (
+            row.engine
+            for row in (
+                await session.execute(
+                    select(RedactionConfig).order_by(RedactionConfig.created_at.desc()).limit(25)
+                )
+            ).scalars()
+            if _engine_redacts(row.engine)
+        ),
+        config.engine if _engine_redacts(config.engine) else None,
+    )
 
     return RedactionStatusResponse(
         engine=engine,
@@ -6672,6 +6685,7 @@ async def _redaction_response(
         score_threshold=config.score_threshold,
         presidio_pattern_matching=pattern_matching,
         presidio_ner=ner,
+        restore_engine=restore,
         patterns_enabled=switches.patterns,
         spacy_enabled=switches.spacy,
         gliner_enabled=switches.gliner,
@@ -6722,16 +6736,35 @@ async def redaction_status(
     )
 
 
+def _engine_audit(row: Any, settings: Settings) -> dict[str, Any]:
+    """The engine decision as the audit log keeps it: the engine, the switches, the reason."""
+    from gateway.privacy.engines import switches_from
+
+    switches = switches_from(row, settings)
+    return {
+        "engine": getattr(row, "engine", None) or settings.redaction.engine,
+        "patterns": switches.patterns,
+        "spacy": switches.spacy,
+        "gliner": switches.gliner,
+        "reason": getattr(row, "reason", ""),
+    }
+
+
 async def _refuse_switching_off_a_used_detector(
-    session: AsyncSession, settings: Settings, proposed: Any
+    session: AsyncSession, http: Any, settings: Settings, proposed: Any
 ) -> None:
     """A detector an active policy reads with cannot be switched off (409, naming the policies).
 
     The same rule as deactivating a policy a pipeline applies: nothing that is in use
     is removed from under it.
     """
-    from gateway.models import RedactionPolicyRecord
-    from gateway.privacy.engines import current_switches, switches_from, users_of_detectors
+    from gateway.models import RedactionPolicyRecord, UserPolicy
+    from gateway.privacy.engines import (
+        current_switches,
+        fetch_engines,
+        switches_from,
+        users_of_detectors,
+    )
 
     now = await current_switches(session, settings)
     then = switches_from(proposed, settings)
@@ -6753,8 +6786,16 @@ async def _refuse_switching_off_a_used_detector(
             )
         )
     ).all()
-    # A policy with no engine reads with the deployment's default, spaCy unless said otherwise.
-    used = users_of_detectors([(r[0], r[1]) for r in rows], "spacy")
+    # A policy with no engine reads with the service's own default engine.
+    report = await fetch_engines(http, settings)
+    default = next((e.name for e in report.engines if e.default), None)
+    users = (await session.execute(select(UserPolicy.name, UserPolicy.rules))).all()
+    used = users_of_detectors(
+        [(r[0], r[1]) for r in rows],
+        default,
+        [(u[0], u[1]) for u in users],
+        {e.name: {t.upper() for t in e.entities} for e in report.engines},
+    )
     labels = {"patterns": "The patterns", "spacy": "spaCy", "gliner": "GLiNER"}
     for name in turning_off:
         if used[name]:
@@ -6821,7 +6862,7 @@ async def set_redaction_engine(
     # and a sentence typed to get past a dialog is not an audit trail. What
     # actually survives the change is still recorded without it: the engine,
     # who switched it, and when.
-    reason = payload.reason.strip()
+    reason = payload.reason.strip() or "Changed from the console"
 
     # Proves the engine can actually be built in this environment, using the same
     # code path the resolver will use. Refusing here is the difference between an
@@ -6854,11 +6895,19 @@ async def set_redaction_engine(
     pattern_matching = payload.presidio_pattern_matching
     ner = payload.presidio_ner
     spacy, gliner = payload.spacy_enabled, payload.gliner_enabled
-    if ner is None and (spacy is not None or gliner is not None):
-        # The family switch the detection service understands: on while either engine is.
-        ner = spacy is not False or gliner is not False
+    if spacy is not None or gliner is not None:
+        # The family switch the detection service understands is derived from the per-engine
+        # switches (on while either engine is), never taken from the payload alone.
+        derived = spacy is not False or gliner is not False
+        if ner is not None and ner != derived:
+            raise BadRequestError(
+                "presidio_ner contradicts the per-engine switches: it is on while spaCy or "
+                "GLiNER is. Send only the per-engine switches."
+            )
+        ner = derived
     await _refuse_switching_off_a_used_detector(
         session,
+        http,
         settings,
         SimpleNamespace(
             presidio_pattern_matching=pattern_matching,
@@ -6868,16 +6917,27 @@ async def set_redaction_engine(
         ),
     )
 
-    session.add(
-        RedactionConfig(
-            engine=engine,
-            presidio_pattern_matching=pattern_matching,
-            presidio_ner=ner,
-            spacy_enabled=spacy,
-            gliner_enabled=gliner,
-            reason=reason,
-            created_by=admin.id,
-        )
+    previous = await current_engine(session)
+    row = RedactionConfig(
+        engine=engine,
+        presidio_pattern_matching=pattern_matching,
+        presidio_ner=ner,
+        spacy_enabled=spacy,
+        gliner_enabled=gliner,
+        reason=reason,
+        created_by=admin.id,
+    )
+    session.add(row)
+    await session.flush()
+    record_audit(
+        session,
+        admin,
+        "redaction_engine.set",
+        "redaction_config",
+        row.id,
+        engine,
+        before=_engine_audit(previous, settings),
+        after=_engine_audit(row, settings),
     )
     await session.commit()
 

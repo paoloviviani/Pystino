@@ -255,6 +255,7 @@ function MyPolicies() {
   const templateOptions = {
     allowedTypes: options.data?.entity_types ?? null,
     nerAvailable: options.data?.ner_available ?? null,
+    offeredTypes: options.data?.offered_types ?? null,
   };
   const items = policies.data?.items ?? [];
   return (

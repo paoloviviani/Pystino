@@ -2782,6 +2782,8 @@ class RedactionStatusResponse(ResponseModel):
     presidio_pattern_matching: bool | None = None
     presidio_ner: bool | None = None
     #: What is in force for each detector, after the stored decision and the defaults.
+    #: The engine that redacts and was last in force, for "turn privacy on" to restore.
+    restore_engine: str | None = None
     patterns_enabled: bool = True
     spacy_enabled: bool = True
     gliner_enabled: bool = True

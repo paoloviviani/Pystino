@@ -124,9 +124,10 @@ describe("policy templates", () => {
     expect(patterns.filter((p) => p.name !== "PRIVATE_KEY").every((p) => p.mode === "redact")).toBe(true);
   });
 
-  it("start the internal hosts list empty, for the administrator to fill", () => {
-    const { keywords } = buildPolicyFromTemplate(byId("network"), patternOnly).policy;
-    expect(keywords).toMatchObject([{ name: "INTERNAL_HOSTS", words: [], mode: "anonymise" }]);
+  it("has no empty keyword list that the API would refuse", () => {
+    for (const template of POLICY_TEMPLATES) {
+      expect(buildPolicyFromTemplate(template, patternOnly).policy.keywords).toEqual([]);
+    }
   });
 
   it("give card and IBAN a same-length style", () => {
@@ -146,13 +147,24 @@ describe("policy templates for a user's own policy", () => {
     expect(skippedNote(built.skipped)).toContain("your administrator has not made available");
   });
 
-  it("offer no model-backed type without an NER engine, and no keyword list ever", () => {
+  it("offer no model-backed type without an NER engine", () => {
     const personal = buildUserEntries(byId("personal"), { allowedTypes: null, nerAvailable: false });
     expect(personal.entries.map((e) => e.name)).not.toContain("PERSON");
     expect(skippedNote(personal.skipped)).toBe("Skipped: PERSON, LOCATION, which need an NER engine.");
     const network = buildUserEntries(byId("network"), { allowedTypes: null, nerAvailable: true });
-    expect(network.entries.some((e) => e.name === "INTERNAL_HOSTS")).toBe(false);
-    expect(skippedNote(network.skipped)).toContain("INTERNAL_HOSTS");
+    expect(network.skipped).toEqual([]);
+  });
+
+  it("leave out a format the service does not offer now, as the server would refuse it", () => {
+    const built = buildUserEntries(byId("contact"), {
+      allowedTypes: null,
+      nerAvailable: true,
+      offeredTypes: ["EMAIL_ADDRESS"],
+    });
+    expect(built.entries.map((e) => e.name)).toEqual(["EMAIL_ADDRESS"]);
+    expect(skippedNote(built.skipped)).toBe(
+      "Skipped: PHONE_NUMBER, URL, which the redaction service does not offer.",
+    );
   });
 
   it("write patterns as the user's own patterns", () => {

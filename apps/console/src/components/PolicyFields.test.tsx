@@ -592,6 +592,9 @@ describe("PolicyFields follows the detectors switched on", () => {
     const off = ENGINES.engines.map((e) => ({ ...e, enabled: false }));
     render(<Harness engines={{ ...ENGINES, engines: off }} />);
     expect(screen.getByTestId("no-ner")).toBeInTheDocument();
+    // Installed but switched off: the message says so, and does not claim they are missing.
+    expect(screen.getByText(/switched off on the Detectors tab/)).toBeInTheDocument();
+    expect(screen.queryByText(/No NER engine is installed/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Engine")).not.toBeInTheDocument();
   });
 });

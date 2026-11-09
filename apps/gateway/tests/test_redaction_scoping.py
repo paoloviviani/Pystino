@@ -20,6 +20,7 @@ import httpx
 from conftest import Seeded
 from gateway.config import (
     DEFAULT_REDACTION_POLICY,
+    CustomEntity,
     CustomPattern,
     EntityMode,
     EntityPolicy,
@@ -110,6 +111,34 @@ class TestTheFold:
         # An entry that is off does not set one, and with none the default stands.
         off = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.OFF, threshold=0.1)})
         assert off.threshold_for("PERSON", 0.5) == 0.5
+
+    def test_an_entry_with_no_threshold_is_not_loosened_by_anothers_higher_one(self) -> None:
+        """A policy that leaves PERSON at the deployment default (0.5) and a shared one that
+        asks 0.95: the fold used to keep 0.95, so what the first hides at 0.5 went through."""
+        silent = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT)})
+        lax = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT, threshold=0.95)})
+        combined = RedactionPolicy.combine([silent, lax])
+        assert combined.threshold_for("PERSON", 0.5) == 0.5
+        # Still the lowest when the default is higher than what somebody asked for.
+        low = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT, threshold=0.3)})
+        assert RedactionPolicy.combine([silent, low, lax]).threshold_for("PERSON", 0.5) == 0.3
+        # One policy: a pattern of the same name votes the default as well.
+        mixed = policy(
+            entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT, threshold=0.9)},
+            patterns=[CustomPattern(name="PERSON", regex="x+", mode=EntityMode.BLOCK)],
+        )
+        assert mixed.threshold_for("PERSON", 0.5) == 0.5
+
+    def test_the_same_holds_for_custom_entities(self) -> None:
+        a = policy(
+            custom_entities=[CustomEntity(name="CODE", label="code", mode=EntityMode.REDACT)]
+        )
+        b = policy(
+            custom_entities=[
+                CustomEntity(name="CODE", label="code", mode=EntityMode.REDACT, threshold=0.9)
+            ]
+        )
+        assert RedactionPolicy.combine([a, b]).threshold_for("CODE", 0.5) == 0.5
 
     def test_patterns_are_unioned(self) -> None:
         a = policy(patterns=[CustomPattern(name="PRJ", regex=r"PRJ-\d+")])
