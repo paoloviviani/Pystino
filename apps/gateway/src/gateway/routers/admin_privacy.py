@@ -130,7 +130,13 @@ async def privacy_status(admin: AdminUserDep, request: Request) -> dict[str, Any
 
 
 @router.get("/options", response_model=OptionsResponse)
-async def options(admin: AdminUserDep, session: SessionDep, request: Request) -> OptionsResponse:
+async def options(
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+    control_http: ControlHttpDep,
+    settings: SettingsDep,
+) -> OptionsResponse:
     """What the editors may pick: scope subjects, targets, readers, policies, classifiers."""
     users = (
         await session.execute(select(User.id, User.email).order_by(User.email).limit(500))
@@ -154,7 +160,13 @@ async def options(admin: AdminUserDep, session: SessionDep, request: Request) ->
             .order_by(ModelDef.name)
         )
     ).all()
-    readers = await service.deployment_readers(session)
+    # The built-in extractor's models are offered only when it can run them now.
+    gone = await service.unavailable_readers(session, control_http, settings)
+    readers = {
+        n: local
+        for n, local in (await service.deployment_readers(session)).items()
+        if n not in gone
+    }
     policies = [p for p in await service.policy_rows(session) if p.is_active]
     classifiers = await service.classifier_rows(session)
     settings_row = await service.settings_row(session)
@@ -173,19 +185,11 @@ async def options(admin: AdminUserDep, session: SessionDep, request: Request) ->
             )
             for i, n, pid, pn, k in models
         ],
-        # The extractor's own model is the "Built-in extractor" (its engine picks how it
-        # reads); only other OCR models are listed by name.
-        readers=[ReaderOption(id=rulelib.BUILTIN_READER, name="Built-in extractor", builtin=True)]
-        + [
-            ReaderOption(id=name, name=name, builtin=False)
-            for name, (_, builtin) in readers.items()
-            if not builtin
-        ],
+        readers=[ReaderOption(id=name, name=name, local=local) for name, local in readers.items()],
         policies=[NamedId(id=p.id, name=p.name) for p in policies],
         own_policies=[],
         classifiers=[NamedId(id=c.id, name=c.name) for c in classifiers],
         entity_types=settings_row.user_entity_types,
-        engines=list(rulelib.ENGINES),
     )
 
 
@@ -239,7 +243,6 @@ async def _clean(
     otherwise: dict[str, Any] | None,
 ) -> dict[str, Any]:
     context = await service.validation_context(session, owner=None)
-    rules, otherwise = service.normalise_readers(rules, otherwise, context.builtin_aliases)
     try:
         clean = validate_pipeline(
             kind,
@@ -470,7 +473,10 @@ async def check_pipeline(
         return PipelineCheckResponse(error=exc.message, issues=[], soft_cap=rulelib.SOFT_CAP)
     draft = _draft(payload.kind, clean, payload.enabled)
     found = service.issues_of(
-        draft, state_of(request), usable(await effective_engines(session, control_http, settings))
+        draft,
+        state_of(request),
+        usable(await effective_engines(session, control_http, settings)),
+        await service.unavailable_readers(session, control_http, settings),
     )
     issues: list[IssueView] = []
     for rule_issues in found.values():

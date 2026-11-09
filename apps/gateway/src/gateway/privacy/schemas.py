@@ -45,10 +45,9 @@ class ActionBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     level: str
-    #: ``read_with``: ``builtin`` (the built-in extractor) or the name of a configured OCR model.
+    #: ``read_with``: the name of an OCR model (the built-in extractor's engines are
+    #: models: ``markitdown``, ``markitdown-ocr``, ``docling``). Default: ``markitdown``.
     reader: str | None = None
-    #: ``read_with`` the built-in extractor only: ``markitdown``, ``ocr`` or ``docling``.
-    engine: str | None = None
     #: The policy to apply to what is returned (read), the input (embed) or the
     #: messages and tool results (chat). Never with ``refuse``.
     redact_with: uuid.UUID | None = None
@@ -150,7 +149,6 @@ class ConditionView(ResponseModel):
 class ActionView(ResponseModel):
     level: str
     reader: str | None = None
-    engine: str | None = None
     redact_with: uuid.UUID | None = None
 
 
@@ -438,10 +436,11 @@ class ModelOption(ResponseModel):
 
 
 class ReaderOption(ResponseModel):
-    #: ``builtin`` or the model name.
+    #: The OCR model's name.
     id: str
     name: str
-    builtin: bool
+    #: Served by the deployment's own extractor (nothing leaves the stack).
+    local: bool
 
 
 class OptionsResponse(ResponseModel):
@@ -467,7 +466,6 @@ class OptionsResponse(ResponseModel):
     #: Every type the redaction service finds now (pattern formats if switched on, and the
     #: entities of NER engines that are on); null when the service cannot be asked.
     offered_types: list[str] | None = None
-    engines: list[str]
 
 
 # -- the test box ------------------------------------------------------------------
@@ -593,12 +591,10 @@ class DryRunResponse(ResponseModel):
     winner_rule: str | None = None
     winner_pipeline: str | None = None
     winner_owner: str | None = None
-    #: Reading: the reader chosen, who chose it, and the engine and who chose it.
+    #: Reading: the reader chosen, and who chose it.
     reader: str | None = None
     reader_by: str | None = None
     reader_overridden: list[str]
-    engine: str | None = None
-    engine_by: str | None = None
     impossible: str | None = None
     policies: list[str]
     policy_types: list[DryRunPolicyType]

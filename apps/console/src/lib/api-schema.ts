@@ -3963,8 +3963,6 @@ export interface components {
          *     ``read_with``, ``refuse``; embed and chat: ``pass``, ``refuse``).
          */
         ActionBody: {
-            /** Engine */
-            engine?: string | null;
             /** Level */
             level: string;
             /** Reader */
@@ -3974,8 +3972,6 @@ export interface components {
         };
         /** ActionView */
         ActionView: {
-            /** Engine */
-            engine: string | null;
             /** Level */
             level: string;
             /** Reader */
@@ -5224,10 +5220,6 @@ export interface components {
             blocked_by: string | null;
             /** Degraded */
             degraded: string[];
-            /** Engine */
-            engine: string | null;
-            /** Engine By */
-            engine_by: string | null;
             /** Estimate Ms */
             estimate_ms: number | null;
             /** Extractor */
@@ -6747,8 +6739,6 @@ export interface components {
         OptionsResponse: {
             /** Classifiers */
             classifiers: components["schemas"]["NamedId"][];
-            /** Engines */
-            engines: string[];
             /** Entity Types */
             entity_types: string[] | null;
             /** Groups */
@@ -7733,10 +7723,10 @@ export interface components {
         };
         /** ReaderOption */
         ReaderOption: {
-            /** Builtin */
-            builtin: boolean;
             /** Id */
             id: string;
+            /** Local */
+            local: boolean;
             /** Name */
             name: string;
         };

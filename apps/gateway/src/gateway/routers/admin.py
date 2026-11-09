@@ -346,6 +346,18 @@ def _matches(needle: str, *columns: InstrumentedAttribute[str | None]) -> Column
 
 logger = logging.getLogger(__name__)
 
+#: The built-in extractor's provider and models are the deployment's own readers: always there.
+BUILTIN_READER_KEPT = (
+    "The built-in reader can't be removed; deactivate it or limit who may use it instead."
+)
+
+
+def _is_builtin_reader_provider(provider: Provider | None) -> bool:
+    return provider is not None and (
+        provider.kind == ProviderKind.INTERNAL or provider.plugin == "extractor"
+    )
+
+
 router = APIRouter(prefix="/api/admin", tags=["administration"])
 
 #: The same provider, model, catalogue and price operations for a member who holds
@@ -1152,7 +1164,7 @@ async def delete_provider(
     provider = await _load_provider(session, provider_id, scope)
     audit_before = provider_view(provider)
 
-    if provider.kind == ProviderKind.INTERNAL:
+    if _is_builtin_reader_provider(provider):
         # This deployment's own infrastructure (the local extractor is the one
         # today), not a counterparty an administrator configured — there is
         # nothing to "remove" here that the deployment would not immediately
@@ -1160,7 +1172,7 @@ async def delete_provider(
         # any other provider; deleting it would just be re-seeded as absent
         # the next time a fresh install runs the same migration, which is not
         # a real deletion, only a confusing detour through 404s until then.
-        raise ConflictError("the local extractor can be deactivated, not deleted")
+        raise ConflictError(BUILTIN_READER_KEPT)
 
     if provider.kind != ProviderKind.SEARCH:
         counts = await _model_counts(session)
@@ -1488,11 +1500,11 @@ async def delete_model(model_id: uuid.UUID, scope: CatalogueScopeDep, session: S
     """
     model = await _load_model(session, model_id, scope=scope)
     audit_before = model_view(model)
-    if model.provider is not None and model.provider.kind == ProviderKind.INTERNAL:
+    if _is_builtin_reader_provider(model.provider):
         # The same protection as the provider row itself, and for the same
         # reason: this is the deployment's own infrastructure, and "delete"
         # would only be undone by the next fresh install's seed.
-        raise ConflictError("the local extractor can be deactivated, not deleted")
+        raise ConflictError(BUILTIN_READER_KEPT)
     # A model a search policy points at cannot go quietly either: the column
     # is ON DELETE SET NULL, which would silently unconfigure those groups'
     # unified search. Name them instead, so the administrator re-points or

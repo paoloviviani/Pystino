@@ -5,17 +5,6 @@
         "additionalProperties": false,
         "description": "Where it is handled, and what is hidden.\n\n``level`` is on the ladder of the pipeline's kind (read: ``default``,\n``read_with``, ``refuse``; embed and chat: ``pass``, ``refuse``).",
         "properties": {
-          "engine": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Engine"
-          },
           "level": {
             "title": "Level",
             "type": "string"
@@ -52,17 +41,6 @@
       },
       "ActionView": {
         "properties": {
-          "engine": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Engine"
-          },
           "level": {
             "title": "Level",
             "type": "string"
@@ -94,7 +72,6 @@
         "required": [
           "level",
           "reader",
-          "engine",
           "redact_with"
         ],
         "title": "ActionView",
@@ -3372,28 +3349,6 @@
             "title": "Degraded",
             "type": "array"
           },
-          "engine": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Engine"
-          },
-          "engine_by": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Engine By"
-          },
           "estimate_ms": {
             "anyOf": [
               {
@@ -3605,8 +3560,6 @@
           "reader",
           "reader_by",
           "reader_overridden",
-          "engine",
-          "engine_by",
           "impossible",
           "policies",
           "policy_types",
@@ -7264,13 +7217,6 @@
             "title": "Classifiers",
             "type": "array"
           },
-          "engines": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Engines",
-            "type": "array"
-          },
           "entity_types": {
             "anyOf": [
               {
@@ -7391,8 +7337,7 @@
           "entity_types",
           "ner_available",
           "ner_note",
-          "offered_types",
-          "engines"
+          "offered_types"
         ],
         "title": "OptionsResponse",
         "type": "object"
@@ -10084,13 +10029,13 @@
       },
       "ReaderOption": {
         "properties": {
-          "builtin": {
-            "title": "Builtin",
-            "type": "boolean"
-          },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "local": {
+            "title": "Local",
+            "type": "boolean"
           },
           "name": {
             "title": "Name",
@@ -10100,7 +10045,7 @@
         "required": [
           "id",
           "name",
-          "builtin"
+          "local"
         ],
         "title": "ReaderOption",
         "type": "object"

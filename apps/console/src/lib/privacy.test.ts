@@ -66,17 +66,17 @@ describe("ruleSentence", () => {
     );
   });
 
-  it("names the reader and the engine of a read", () => {
+  it("names the reader of a read", () => {
     const text = ruleSentence(
       "read",
       rule({
         conditions: [{ key: "filename", values: ["*draft*"], negate: false }],
-        action: { level: "read_with", reader: "builtin", engine: "ocr" },
+        action: { level: "read_with", reader: "markitdown-ocr" },
       }),
       labels,
     );
     expect(text).toBe(
-      "its name matches *draft* → read with the built-in extractor · engine OCR (markitdown + RapidOCR)",
+      "its name matches *draft* → read with markitdown-ocr",
     );
   });
 

@@ -45,6 +45,7 @@ from fastapi import APIRouter
 from sqlalchemy import Select, or_
 from sqlalchemy.orm import aliased
 
+from gateway import extraction
 from gateway.access import (
     accessible_model_by_name,
     accessible_models,
@@ -52,7 +53,7 @@ from gateway.access import (
     all_active_models,
 )
 from gateway.capabilities import holds_byok
-from gateway.deps import OptionalPrincipalDep, PrincipalDep, SessionDep
+from gateway.deps import ControlHttpDep, OptionalPrincipalDep, PrincipalDep, SessionDep, SettingsDep
 from gateway.errors import BadRequestError
 from gateway.models import ModelDef, ModelKind, ModelRouteTarget, Provider, ProviderKind
 
@@ -82,6 +83,8 @@ router = APIRouter(prefix="/v1", tags=["openai"])
 async def list_models(
     principal: OptionalPrincipalDep,
     session: SessionDep,
+    control_http: ControlHttpDep,
+    settings: SettingsDep,
     include: str | None = None,
 ) -> ModelList:
     # Search backends are absent unless asked for by name (ADR 0071). They
@@ -154,7 +157,24 @@ async def list_models(
 
     cards = []
     listed: set[uuid.UUID] = set()
+    # The built-in extractor's models are one per engine, and only those its image
+    # can run are offered. Asked once per endpoint, and only when one is in the rows.
+    reported: dict[str, frozenset[str] | None] = {}
     for model, target, target_provider in rows:
+        if (
+            not model.is_alias
+            and model.provider is not None
+            and model.provider.plugin == "extractor"
+            and extraction.engine_of_model(model.upstream_model or model.name)
+            not in (None, "markitdown")
+        ):
+            endpoint = (model.provider.base_url or "").strip() or settings.extractor.endpoint
+            if endpoint not in reported:
+                reported[endpoint] = await extraction.reported_engines(control_http, endpoint)
+            if not extraction.model_availability(
+                model.upstream_model or model.name, reported[endpoint]
+            ):
+                continue
         # A routed alias comes back once per target (the join fans out, ordered
         # by position). Its card is the first target that can serve: one card per
         # name, and the name is listed as long as any target works.

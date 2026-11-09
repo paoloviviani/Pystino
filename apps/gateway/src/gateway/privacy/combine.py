@@ -10,7 +10,7 @@ first matching rule wins (``evaluate``); across pipelines nothing is first:
   own policies on top of that. The caller does the fold; this module only says
   *which* policies and *who asked for them*.
 * **The reader** is the administrator's choice if any administrator pipeline
-  made one, else a user's, else the default. **The engine** likewise.
+  made one, else a user's, else the default.
 * **Naming**: the rule that set the winning level, and on a tie the
   administrator's. The trace keeps every pipeline in scope and the rule that
   fired in each.
@@ -103,13 +103,11 @@ class Combined:
     #: Some pipeline waits for a fact found while reading: read first, plan again.
     pending: bool = False
     pending_run: PipelineRun | None = None
-    #: The reader of a "read with" level: ``builtin`` or a model name.
+    #: The reader of a "read with" level: an OCR model's name.
     reader: str | None = None
     reader_run: PipelineRun | None = None
     #: Readers other pipelines asked for and that were not used, with who asked.
     overridden: list[PipelineRun] = field(default_factory=list)
-    engine: str | None = None
-    engine_run: PipelineRun | None = None
     #: The reroute could not be carried out (a link to a built-in reader, a reader
     #: the caller may not use): fail closed, naming this reason.
     impossible: str | None = None
@@ -197,7 +195,7 @@ async def run_in_scope(
 
 
 def combine(kind: str, runs: Sequence[PipelineRun]) -> Combined:
-    """The level, the winner, the reader and engine, from the runs that have an answer."""
+    """The level, the winner, the reader, from the runs that have an answer."""
     combined = Combined(kind=kind, runs=list(runs))
     ladder = rulelib.LADDER[kind]
     answered = [r for r in runs if not r.pending]
@@ -221,21 +219,13 @@ def combine(kind: str, runs: Sequence[PipelineRun]) -> Combined:
         admin_withs = [r for r in withs if not r.pipeline.is_user]
         deciding = admin_withs or withs
         first = max(deciding, key=lambda r: r.hop) if deciding else withs[0]
-        combined.reader = str(first.rule.action.get("reader") or rulelib.BUILTIN_READER)
+        combined.reader = str(first.rule.action.get("reader") or rulelib.DEFAULT_READER)
         combined.reader_run = first
         combined.overridden = [
             r
             for r in withs
-            if str(r.rule.action.get("reader") or rulelib.BUILTIN_READER) != combined.reader
+            if str(r.rule.action.get("reader") or rulelib.DEFAULT_READER) != combined.reader
         ]
-        if combined.reader == rulelib.BUILTIN_READER:
-            for run in withs:
-                if str(
-                    run.rule.action.get("reader") or rulelib.BUILTIN_READER
-                ) == rulelib.BUILTIN_READER and run.rule.action.get("engine"):
-                    combined.engine = str(run.rule.action["engine"])
-                    combined.engine_run = run
-                    break
     return combined
 
 
@@ -333,7 +323,7 @@ async def plan(
                 and not run.pending
                 and not run.pipeline.is_user
                 and run.level == LEVEL_READ_WITH
-                and str(run.rule.action.get("reader") or rulelib.BUILTIN_READER) != combined.reader
+                and str(run.rule.action.get("reader") or rulelib.DEFAULT_READER) != combined.reader
             ):
                 combined.impossible = (
                     f"'{run.rule.name}' asks for another reader than the one the file ended on."

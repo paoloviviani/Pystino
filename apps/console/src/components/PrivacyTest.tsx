@@ -253,12 +253,6 @@ export function TestResult({ result }: { result: PrivacyTestResult }) {
                   {o}
                 </Badge>
               ))}
-              {result.engine && (
-                <span>
-                  {m["privacy.test.engine_is"]({ engine: result.engine })}{" "}
-                  <span className={MUTED}>{result.engine_by && m["privacy.test.chosen_by"]({ by: result.engine_by })}</span>
-                </span>
-              )}
             </div>
           </Card>
         </section>

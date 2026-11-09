@@ -52,10 +52,11 @@ CONTENT_KEYS = ("finds", "classified")
 MAX_COUNT = 1000
 
 FILETYPES = ("pdf", "word", "excel", "powerpoint", "image", "text")
-#: The engines of the built-in extractor. Quality, not privacy: not on the ladder.
-ENGINES = ("markitdown", "ocr", "docling")
-#: The stored name of "the built-in extractor", whichever model carries it.
-BUILTIN_READER = "builtin"
+#: The reader a "read with" rule that names none means: the built-in extractor's
+#: default-engine model (``gateway.extraction.DEFAULT_MODEL``). The built-in
+#: extractor's other engines are models of their own (``markitdown-ocr``,
+#: ``docling``), picked like any reader.
+DEFAULT_READER = "markitdown"
 
 #: The ladder, lowest to highest, per kind. The highest level across the
 #: pipelines in scope wins.
@@ -105,7 +106,7 @@ class Condition:
 class Rule:
     """An immutable snapshot of one rule, as the request path holds it.
 
-    ``action`` is ``{level, reader?, engine?, redact_with?}``. The pipeline's
+    ``action`` is ``{level, reader?, redact_with?}``. The pipeline's
     fixed last rule ("everything else") is a ``Rule`` with no conditions.
     """
 
@@ -128,11 +129,7 @@ class Rule:
     @property
     def is_noop(self) -> bool:
         """Adds nothing to what happens anyway."""
-        return (
-            self.level == base_level(self.kind)
-            and not self.action.get("redact_with")
-            and not self.action.get("engine")
-        )
+        return self.level == base_level(self.kind) and not self.action.get("redact_with")
 
     @property
     def protective(self) -> bool:
@@ -168,8 +165,9 @@ class CheckContext:
 
     #: Policies and classifiers by id.
     content: Mapping[str, ContentInfo] = field(default_factory=dict)
-    #: Names of engines this deployment cannot run now (for example docling).
-    unavailable_engines: Sequence[str] = ()
+    #: Names of readers (OCR models) this deployment cannot run now, for example the
+    #: ``docling`` model when the extractor image has no Docling.
+    unavailable_readers: Sequence[str] = ()
 
 
 def condition_from_json(raw: Mapping[str, Any]) -> Condition:
@@ -350,37 +348,29 @@ def clean_action(
 
     ``policy_ids`` and ``readers`` are what may be named (``None``: not checked).
     For a user (``user=True``) only actions that tighten are accepted: read with a
-    reader, refuse, redact with a policy, an engine. A user's rule that adds
+    reader, refuse, redact with a policy. A user's rule that adds
     nothing is refused, except the fixed last rule (``otherwise``), which may.
     """
     ladder = LADDER[kind]
     level = str(action.get("level") or "")
     if level not in ladder:
         raise RuleError(f"Choose where it is handled: {', '.join(ladder)}.")
-    unknown = set(action) - {"level", "reader", "engine", "redact_with"}
+    unknown = set(action) - {"level", "reader", "redact_with"}
     if unknown:
         raise RuleError(f"The action does not take: {', '.join(sorted(unknown))}.")
     clean: dict[str, Any] = {"level": level}
     reader = action.get("reader")
-    engine = action.get("engine")
     if level == LEVEL_READ_WITH:
-        reader = str(reader or BUILTIN_READER)
-        if readers is not None and reader != BUILTIN_READER and reader not in readers:
+        reader = str(reader or DEFAULT_READER)
+        if readers is not None and reader not in readers:
             raise RuleError(
-                f"'{reader}' is not a reader you can use. Pick the built-in extractor "
-                "or a configured OCR model."
+                f"'{reader}' is not a reader you can use. Pick one of the OCR models offered."
                 if user
                 else f"'{reader}' is not a configured OCR model."
             )
         clean["reader"] = reader
-        if engine:
-            if reader != BUILTIN_READER:
-                raise RuleError("An engine can only be chosen for the built-in extractor.")
-            if str(engine) not in ENGINES:
-                raise RuleError(f"Choose an engine: {', '.join(ENGINES)}.")
-            clean["engine"] = str(engine)
-    elif reader or engine:
-        raise RuleError("A reader or engine goes with 'read with'.")
+    elif reader:
+        raise RuleError("A reader goes with 'read with'.")
     policy = action.get("redact_with")
     if policy:
         if level == LEVEL_REFUSE:
@@ -650,12 +640,16 @@ def check(
                     "from, add embed and chat pipelines with a 'finds at least' condition.",
                 )
             )
-        if rule.action.get("engine") in ctx.unavailable_engines:
+        if (
+            rule.level == LEVEL_READ_WITH
+            and str(rule.action.get("reader") or DEFAULT_READER) in ctx.unavailable_readers
+        ):
             out.append(
                 Issue(
                     "unavailable_now",
-                    f"The {rule.action.get('engine')} engine is not installed here; "
-                    "files are read with the default engine.",
+                    f"The reader '{rule.action.get('reader') or DEFAULT_READER}' cannot be used "
+                    "now (this deployment's extractor does not offer it); a file this rule "
+                    "sends there is refused.",
                 )
             )
         if rule.kind == KIND_READ and live and keys & {"filetype", "filename"}:

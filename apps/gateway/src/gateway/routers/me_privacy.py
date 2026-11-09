@@ -140,7 +140,6 @@ async def _clean(
     otherwise: dict[str, Any] | None,
 ) -> dict[str, Any]:
     context = await service.validation_context(session, owner=user)
-    rules, otherwise = service.normalise_readers(rules, otherwise, context.builtin_aliases)
     try:
         clean = validate_pipeline(
             kind,
@@ -198,13 +197,17 @@ async def options(
     providers = {
         m.provider_id: m.provider.name for m in models if m.provider_id and m.provider is not None
     }
-    readers = await service.granted_readers(session, user)
+    gone = await service.unavailable_readers(session, control_http, settings)
+    readers = {
+        n: local
+        for n, local in (await service.granted_readers(session, user)).items()
+        if n not in gone
+    }
     admin_policies = [
         p for p in await service.policy_rows(session) if p.is_active and p.shared_with_users
     ]
     mine = await service.user_policy_rows(session, user.id)
     settings_row = await service.settings_row(session)
-    builtin = any(readers.values())
     report = usable(await effective_engines(session, control_http, settings))
     ner = has_ner(report)
     entity_types = settings_row.user_entity_types
@@ -228,12 +231,7 @@ async def options(
             for m in models
             if not m.is_alias
         ],
-        readers=(
-            [ReaderOption(id=rulelib.BUILTIN_READER, name="Built-in extractor", builtin=True)]
-            if builtin
-            else []
-        )
-        + [ReaderOption(id=n, name=n, builtin=False) for n, b in sorted(readers.items()) if not b],
+        readers=[ReaderOption(id=n, name=n, local=local) for n, local in sorted(readers.items())],
         policies=[NamedId(id=p.id, name=p.name) for p in admin_policies],
         own_policies=[NamedId(id=p.id, name=p.name) for p in mine],
         classifiers=[],
@@ -248,7 +246,6 @@ async def options(
             else None
         ),
         ner_note=no_ner_message(report) if ner is False else None,
-        engines=list(rulelib.ENGINES),
     )
 
 
@@ -360,7 +357,12 @@ async def delete_my_pipeline(
 
 @router.post("/pipelines/check", response_model=PipelineCheckResponse)
 async def check_my_pipeline(
-    payload: PipelineCheckRequest, user: ManagementUserDep, session: SessionDep, request: Request
+    payload: PipelineCheckRequest,
+    user: ManagementUserDep,
+    session: SessionDep,
+    request: Request,
+    control_http: ControlHttpDep,
+    settings: SettingsDep,
 ) -> PipelineCheckResponse:
     try:
         clean = await _clean(
@@ -387,7 +389,12 @@ async def check_my_pipeline(
         otherwise=clean["otherwise"],
     )
     draft: Pipeline = pipeline_from_row(row)
-    found = service.issues_of(draft, state_of(request))
+    found = service.issues_of(
+        draft,
+        state_of(request),
+        None,
+        await service.unavailable_readers(session, control_http, settings),
+    )
     issues: list[IssueView] = []
     for rule_issues in found.values():
         issues.extend(service.issue_views(rule_issues))
