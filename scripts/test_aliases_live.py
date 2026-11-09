@@ -25,7 +25,7 @@ Usage — the same setup as `test_providers_live.py`:
     docker compose --env-file deploy/.env \\
       -f deploy/compose.yaml -f deploy/dev/smoke.yml up -d --wait
     docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/dev/smoke.yml \\
-      exec -T gateway gateway seed --model smoke-model --upstream-model smoke-model
+      exec -T gateway gateway seed --model smoke-model --upstream-model upstream/smoke-model
     set -a; . deploy/.env; set +a; python3 scripts/test_aliases_live.py
 
 The caller is the administrator, whose default billing group must have **no**

@@ -241,6 +241,27 @@ def skip(label: str, reason: str) -> None:
     print(f"  [skip] {label} — {reason}")
 
 
+def grant_model(admin: Any, member: Any, model: str = "smoke-model") -> bool:
+    """Let *member*'s default billing group use *model*.
+
+    `gateway seed` grants its model to the `research` group only, while a member
+    created through the console lands in the deployment's default group
+    (`OIDC_DEFAULT_GROUP`, `users`), which grants no model by itself. A key minted
+    by that member would get a 404 for `smoke-model`, so a check that calls it
+    grants the model first. Idempotent; False when the model is not catalogued.
+    """
+    _, _, raw = request(member, f"{GATEWAY}/api/me")
+    group = (json.loads(raw).get("default_billing_group") or {}).get("id")
+    _, _, listing = request(admin, f"{GATEWAY}/api/admin/models?limit=200")
+    found = next((m for m in json.loads(listing)["items"] if m["name"] == model), None)
+    if group is None or found is None:
+        return False
+    status, _, _ = request(
+        admin, f"{GATEWAY}/api/admin/groups/{group}/models/{found['id']}", method="PUT"
+    )
+    return status in (200, 204)
+
+
 def _provider(opener: urllib.request.OpenerDirector) -> str:
     named = os.environ.get("PYSTINO_LIVE_PROVIDER", "")
     if named:
