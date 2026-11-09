@@ -711,3 +711,33 @@ class TestRerouteHops:
             Evaluator(), pipes, facts("read"), retarget=self.retarget_for(providers)
         )
         assert combined.impossible is not None and "too many reroutes" in combined.impossible
+
+    async def test_a_cycle_of_administrator_reroutes_is_refused(self) -> None:
+        providers = {n: str(uuid.uuid4()) for n in ("M", "R1", "R2")}
+
+        def guard(name: str, on: str, to: str, position: int) -> Pipeline:
+            return pipe(
+                "read",
+                name,
+                otherwise={"level": "read_with", "reader": to},
+                target={"mode": "only", "providers": [providers[on]], "models": []},
+                position=position,
+            )
+
+        pipes = [
+            guard("P1", "M", "R1", 0),
+            guard("P2", "R1", "R2", 1),
+            guard("P3", "R2", "R1", 2),
+        ]
+        current = {"reader": None}
+
+        async def retarget(reader: str) -> Retarget:
+            if current["reader"] == reader:
+                return Retarget(None, same=True)
+            current["reader"] = reader
+            return Retarget(facts("read", provider_id=providers[reader]))
+
+        combined = await plan(
+            Evaluator(), pipes, facts("read", provider_id=providers["M"]), retarget=retarget
+        )
+        assert combined.impossible is not None and "reroute cycle" in combined.impossible

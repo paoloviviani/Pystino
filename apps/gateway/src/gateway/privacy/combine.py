@@ -275,8 +275,20 @@ async def plan(
     hops: list[Hop] = []
     all_runs = list(runs)
     settled = False
+    visited: list[tuple[str, PipelineRun | None]] = []
     for hop in range(1, MAX_HOPS + 1):
         if combined.pending or combined.level != LEVEL_READ_WITH or combined.reader is None:
+            settled = True
+            break
+        if any(name == combined.reader for name, _ in visited):
+            # Back to a reader the request already went to: the pipelines that
+            # guard it were run with the earlier answer, so walking on would skip them.
+            named = ", ".join(f"'{run.rule.name}'" for _, run in visited if run is not None) + (
+                f" and '{combined.reader_run.rule.name}'" if combined.reader_run else ""
+            )
+            combined.impossible = (
+                f"the pipelines send the file round in a circle ({named}): reroute cycle."
+            )
             settled = True
             break
         moved = await retarget(combined.reader)
@@ -288,6 +300,7 @@ async def plan(
             settled = True
             break
         facts = moved.facts
+        visited.append((combined.reader, combined.reader_run))
         added, more_skipped = await run_in_scope(evaluator, pipelines, facts, seen=seen, hop=hop)
         hops.append(Hop(combined.reader, added))
         skipped = [*skipped, *more_skipped]
@@ -310,5 +323,21 @@ async def plan(
         probe = await retarget(combined.reader)
         if not probe.same:
             combined.impossible = "the pipelines keep re-pointing the file (too many reroutes)."
+    if hops and combined.impossible is None and combined.level == LEVEL_READ_WITH:
+        # The pipelines that guard the reader the request ended on ran at the last
+        # hop; if an administrator's of them asks for another reader, it was not
+        # honoured, so the request is refused.
+        for run in combined.runs:
+            if (
+                run.hop == len(hops)
+                and not run.pending
+                and not run.pipeline.is_user
+                and run.level == LEVEL_READ_WITH
+                and str(run.rule.action.get("reader") or rulelib.BUILTIN_READER) != combined.reader
+            ):
+                combined.impossible = (
+                    f"'{run.rule.name}' asks for another reader than the one the file ended on."
+                )
+                break
     combined.hops = hops
     return combined

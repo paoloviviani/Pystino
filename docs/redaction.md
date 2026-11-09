@@ -192,6 +192,7 @@ content, or the deployment policy) has some entity type, the default, or a custo
 pattern in a mode other than `off`, **or** a chat pipeline in scope refuses them
 (audio has no text for a pipeline to judge, so a refusal that names the caller
 counts as much as a policy). A policy that only lists types as `off` does not count.
+**Known limit:** chat pipelines are judged without content here, so a chat pipeline whose rules depend on what the text says (for example "contains health data → refuse") cannot act on audio, and does not by itself block transcription; only a refusal that does not depend on content, or a policy in force, does.
 Leave it `true` only if you accept that audio from those callers reaches the
 provider unscreened, although the same words typed as text would have been
 substituted or blocked by their rule. If you do not accept that, set it to

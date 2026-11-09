@@ -660,6 +660,12 @@ def _downgrade_plan(bind: sa.Connection) -> tuple[list[dict[str, Any]], list[dic
             continue
         seen_scopes.add(scope)
         used.update(p.id for p in mine)
+        if len({p.enabled for p in mine}) > 1:
+            logger.warning(
+                "policy '%s' is on for some kinds only; the older rule applies to every kind, "
+                "so it is written back active (stricter for the kinds that were off)",
+                pol["name"],
+            )
         rules.append(
             {
                 "id": pol["id"],
@@ -667,7 +673,7 @@ def _downgrade_plan(bind: sa.Connection) -> tuple[list[dict[str, Any]], list[dic
                 "scope": scope[0],
                 "scope_id": uuid.UUID(scope[1]) if scope[1] else None,
                 "policy": js(pol["policy"]),
-                "is_active": bool(pol["is_active"]) and all(p.enabled for p in mine),
+                "is_active": bool(pol["is_active"]) and any(p.enabled for p in mine),
                 "reason": pol["reason"] or "",
                 "created_by": pol["created_by"],
                 "created_at": pol["created_at"],

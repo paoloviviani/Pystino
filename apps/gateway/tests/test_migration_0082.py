@@ -360,3 +360,19 @@ def test_converted_rules_that_lost_a_condition_get_their_own_pipeline_and_none_v
     shared = json.loads(pipelines["Routing rules (embed)"]["rules"])
     assert [r["name"] for r in shared] == ["Empty verdict", "Plain"]
     assert shared[0]["conditions"] == []
+
+
+def test_a_policy_with_only_some_kinds_turned_off_is_written_back_active(tmp_path: Path) -> None:
+    """The older rule has no per-kind switch: off for one kind must not turn off the others."""
+    path, url = _old(tmp_path)
+    with closing(sqlite3.connect(path)) as conn:
+        _rule(conn, "all", None, "Everyone")
+        conn.commit()
+    _upgrade(url)
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("UPDATE privacy_pipelines SET enabled = 0 WHERE kind = 'embed'")
+        conn.commit()
+    down = _alembic(url, "downgrade", "0081")
+    assert down.returncode == 0, down.stderr[-1500:]
+    [row] = _rows(path, "redaction_rules")
+    assert row["is_active"] == 1
