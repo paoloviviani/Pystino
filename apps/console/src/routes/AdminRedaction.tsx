@@ -1,40 +1,17 @@
-import {
-  Badge,
-  Button,
-  Card,
-  Dialog,
-  Notice,
-  Select,
-  Spinner,
-  Stat,
-  SummaryStrip,
-  Table,
-  RowActions,
-} from "@llmp/ui";
+import { Badge, Button, Card, Dialog, Notice, Stat, Table } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
-import { useId, useState } from "react";
-import { Link, useNavigate } from "react-router";
-import {
-  useDeleteRedactionRule,
-  usePreviewRedaction,
-  useRedactionStatus,
-  useRedactionRules,
-  useSetRedactionEngine,
-  useUpdateRedactionRule,
-} from "../lib/admin";
-import { entityLabel, modeLabel, summarisePolicy } from "../lib/entities";
+import { useState } from "react";
+import { useSetRedactionEngine } from "../lib/admin";
+import { entityLabel, modeLabel } from "../lib/entities";
 import { useOptionalToast } from "../lib/toast";
 import type {
   RedactionEngineOption,
+  RedactionPreview,
   RedactionPreviewSpan,
-  RedactionScope,
   RedactionStatus,
-  RedactionRule,
 } from "../lib/types";
-import { PageHeader } from "../components/PageHeader";
 import { formatNumber, formatDateTime } from "../lib/format";
 import { m } from "../paraglide/messages.js";
-import { SCOPES, SubjectPicker, scopeNoun } from "../components/SubjectPicker";
 import {
   CHIPS,
   CODE,
@@ -50,14 +27,10 @@ import {
   FIELD,
   FIELD_LABEL,
   FORM,
-  FORM_ROW,
   MUTED,
   NOWRAP,
-  PAGE,
-  ROW_ACTIONS,
   SAMPLE,
   STATS,
-  TEXTAREA,
 } from "../lib/layout";
 
 
@@ -84,34 +57,7 @@ import {
  * is the engine's own, and re-deriving it here would mean the browser knowing
  * which settings each engine needs.
  */
-export function AdminRedaction() {
-  const status = useRedactionStatus();
-
-  return (
-    <div className={PAGE}>
-      <PageHeader
-        title={m["admin_redaction.title"]()}
-        subtitle={m["admin_redaction.subtitle"]()}
-      />
-
-      {status.isPending && <Spinner label={m["admin_redaction.loading"]()} />}
-      {status.error ? (
-        <Notice tone="danger" title={m["admin_redaction.load_error.title"]()}>
-          {/* i18n: server text — the API's own error message. */}
-          {status.error instanceof Error
-            ? status.error.message
-            : m["admin_redaction.unknown_error"]()}
-        </Notice>
-      ) : null}
-
-      {status.data && <Detail status={status.data} />}
-    </div>
-  );
-}
-
-function Detail({ status }: { status: RedactionStatus }) {
-  const { service, activity } = status;
-
+function Warnings({ status }: { status: RedactionStatus }) {
   return (
     <>
       {/* i18n: server text — the API's own wording, rendered verbatim.
@@ -122,7 +68,43 @@ function Detail({ status }: { status: RedactionStatus }) {
           {note}
         </Notice>
       ))}
+    </>
+  );
+}
 
+/**
+ * A titled block inside a profile card: the engine choice and the detection
+ * families used to be cards of their own; they are settings of the profile now.
+ */
+function Section({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-3 border-t border-line-quiet pt-3">
+      <div>
+        <h3 className="m-0 text-body font-semibold">{title}</h3>
+        <p className={`m-0 text-small ${MUTED}`}>{description}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * The engine choice and the Presidio detection families, for the profile card
+ * that is the Presidio engine. The same calls and the same append-only row as
+ * before; only where they are shown changed.
+ */
+export function EngineSettings({ status }: { status: RedactionStatus }) {
+  return (
+    <>
+      <Warnings status={status} />
       <EngineList status={status} />
       {status.installed_engines.includes("http") && (
         <DetectorFamilies
@@ -131,13 +113,29 @@ function Detail({ status }: { status: RedactionStatus }) {
           status={status}
         />
       )}
-      <RulesList
-        service={service}
-        patterns={status.presidio_pattern_matching ?? null}
-        ner={status.presidio_ner ?? null}
-      />
-      <PreviewBox />
+    </>
+  );
+}
 
+/** The activity and configuration read-out, behind a disclosure on the Detectors tab. */
+export function EngineDetails({ status }: { status: RedactionStatus }) {
+  return (
+    <details>
+      <summary className="cursor-pointer text-small font-medium">
+        {m["privacy.detectors.engine_details"]()}
+      </summary>
+      <div className="mt-3 flex flex-col gap-4">
+        <Detail status={status} />
+      </div>
+    </details>
+  );
+}
+
+function Detail({ status }: { status: RedactionStatus }) {
+  const { service, activity } = status;
+
+  return (
+    <>
       <Card>
         <div className={STATS}>
           <Stat
@@ -325,290 +323,13 @@ function Detail({ status }: { status: RedactionStatus }) {
  * it is the one that can protect *less*, and that is what the reason field is
  * for.
  */
-/**
- * Every rule, in force order, with the catch-all first.
- *
- * This is the whole answer to "what does this deployment redact", which is why
- * it is the first thing on the screen after the engine. The previous shape had a
- * deployment policy edited here and rules edited elsewhere, so the screen showed
- * half the answer and gave no sign that the other half existed — reported from
- * the live console, twice.
- *
- * Configuration is a page per rule, not a dialog: a policy is thirty entity
- * types, a set of patterns and an allow-list.
- */
-function RulesList({
-  service,
-  patterns,
-  ner,
+export function RedactionPreviewResult({
+  result,
+  sample,
 }: {
-  service: RedactionStatus["service"];
-  patterns: boolean | null;
-  ner: boolean | null;
+  result: RedactionPreview;
+  sample: string;
 }) {
-  const rules = useRedactionRules({ limit: 200 });
-  const update = useUpdateRedactionRule();
-  const remove = useDeleteRedactionRule();
-  const navigate = useNavigate();
-  // The detector's effective entity list, already narrowed to the enabled
-  // families by the API. Null when the service cannot be asked, in which case
-  // no per-rule warning is drawn rather than a guessed one.
-  const supported =
-    service !== null && service.reachable
-      ? new Set(service.entities.map((entity) => entity.toUpperCase()))
-      : null;
-
-  // The catch-all first, then the narrower scopes in the order they are folded.
-  // Reading order is fold order, so the screen matches how a request is decided.
-  const order: RedactionScope[] = ["all", "provider", "model", "group", "user", "api_key"];
-  const items = [...(rules.data?.items ?? [])].sort(
-    (a, b) => order.indexOf(a.scope) - order.indexOf(b.scope),
-  );
-  const hasCatchAll = items.some((rule) => rule.scope === "all" && rule.is_active);
-
-  const columns: Column<RedactionRule>[] = [
-    {
-      key: "subject",
-      header: m["admin_redaction.rules.column.applies_to"](),
-      render: (rule) => (
-        <>
-          <div>
-            <Link to={`/admin/redaction/rules/${rule.id}`}>
-              {rule.scope === "all"
-                ? m["admin_redaction.rules.every_request"]()
-                : // i18n: server text — the subject's own label.
-                  (rule.subject_label ?? m["admin_redaction.rules.deleted_subject"]())}
-            </Link>
-          </div>
-          <div className={MUTED}>
-            {scopeNoun(rule.scope)}
-            {rule.name ? ` · ${rule.name}` : ""}
-          </div>
-        </>
-      ),
-    },
-    {
-      key: "policy",
-      header: m["admin_redaction.rules.column.policy"](),
-      render: (rule) => (
-        <>
-          <div>{summarisePolicy(rule.policy)}</div>
-          <RuleCoverageWarning rule={rule} supported={supported} patterns={patterns} ner={ner} />
-        </>
-      ),
-    },
-    {
-      key: "state",
-      header: m["admin_redaction.rules.column.state"](),
-      render: (rule) =>
-        rule.is_active ? (
-          <Badge tone="ok">{m["admin_redaction.badge.active"]()}</Badge>
-        ) : (
-          <Badge>{m["admin_redaction.badge.inactive"]()}</Badge>
-        ),
-    },
-    {
-      key: "actions",
-      header: "",
-      render: (rule) => (
-        <div className={ROW_ACTIONS}>
-          <Button variant="secondary" onClick={() => navigate(`/admin/redaction/rules/${rule.id}`)}>
-            {m["admin_redaction.action.edit"]()}
-          </Button>
-          <RowActions
-            label={m["table.row_actions"]({ name: rule.name })}
-            actions={[
-              {
-                key: "clone",
-                label: m["admin_redaction.action.clone"](),
-                onSelect: () => navigate("/admin/redaction/rules/new", { state: { cloneFrom: rule } }),
-              },
-              {
-                key: "toggle",
-                label: rule.is_active
-                  ? m["admin_redaction.action.deactivate"]()
-                  : m["admin_redaction.action.activate"](),
-                onSelect: () => update.mutate({ id: rule.id, is_active: !rule.is_active }),
-                disabled: update.isPending && update.variables?.id === rule.id,
-              },
-              {
-                key: "delete",
-                label: m["admin_redaction.action.delete"](),
-                onSelect: () => remove.mutate(rule.id),
-                destructive: true,
-                disabled: remove.isPending && remove.variables === rule.id,
-              },
-            ]}
-          />
-        </div>
-      ),
-    },
-  ];
-
-  return (
-    <>
-      {/* Not a warning: a deployment that redacts nothing may be the intended
-          one. It is stated because the alternative is a screen that looks
-          configured and is not. */}
-      {!rules.isPending && !hasCatchAll && (
-        <Notice tone="info" title={m["admin_redaction.rules.no_catchall_title"]()}>
-          {m["admin_redaction.rules.no_catchall_body"]()}
-        </Notice>
-      )}
-      <Card
-        title={m["admin_redaction.rules.card"]()}
-        description={m["admin_redaction.rules.description"]()}
-        flush
-      >
-        {rules.isPending ? (
-          <Spinner label={m["admin_redaction.rules.loading"]()} />
-        ) : rules.error ? (
-          <Notice tone="danger" title={m["admin_redaction.rules.load_error.title"]()}>
-            {/* i18n: server text — the API's own error message. */}
-            {rules.error instanceof Error ? rules.error.message : m["admin_redaction.unknown_error"]()}
-          </Notice>
-        ) : (
-          <>
-            {/* Count, coverage state and the creation action in one strip: the
-                catch-all is the fact this table exists to establish, so it
-                sits above the rows rather than three screens away in prose.
-                The button moves here from the card header rather than
-                duplicating it. */}
-            <div className="p-5">
-              <SummaryStrip
-                headline={m["admin_redaction.rules.count"]({ count: items.length })}
-                detail={
-                  hasCatchAll
-                    ? m["admin_redaction.rules.covered"]()
-                    : m["admin_redaction.rules.not_covered"]()
-                }
-                active={items.length > 0}
-                actions={
-                  <Button
-                    variant="primary"
-                    onClick={() => navigate("/admin/redaction/rules/new")}
-                  >
-                    {m["admin_redaction.rules.new_rule"]()}
-                  </Button>
-                }
-              />
-            </div>
-            <Table
-              columns={columns}
-              rows={items}
-              rowKey={(rule) => rule.id}
-              empty={m["admin_redaction.rules.empty"]()}
-              caption={m["admin_redaction.rules.caption"]()}
-            />
-          </>
-        )}
-      </Card>
-    </>
-  );
-}
-
-
-/**
- * The warning sign beside a rule that names something no longer detected.
- *
- * Disabling a detector family does not refuse, deactivate or rewrite rules —
- * everything keeps working, and a rule whose types cannot be found is inert
- * rather than dangerous. But "inert" looks exactly like "working" on this
- * screen, so the affected rule carries the warning instead: the named types
- * below are protected by this rule and undetectable while their family is off,
- * meaning matching values reach providers unprotected.
- *
- * Only explicitly named types with a mode other than off are listed. A rule
- * whose default mode is on gets the generic form instead, since its covered
- * set cannot be enumerated here.
- */
-function RuleCoverageWarning({
-  rule,
-  supported,
-  patterns,
-  ner,
-}: {
-  rule: RedactionRule;
-  supported: Set<string> | null;
-  patterns: boolean | null;
-  ner: boolean | null;
-}) {
-  if (!rule.is_active || supported === null) return null;
-  const unserved = Object.entries(rule.policy.entities)
-    .filter(([type, entry]) => entry.mode !== "off" && !supported.has(type.toUpperCase()))
-    .map(([type]) => type);
-  if (unserved.length > 0) {
-    return (
-      <div className="mt-1">
-        <span title={m["admin_redaction.coverage.unserved_title"]()}>
-          <Badge tone="warn">
-            {m["admin_redaction.coverage.unserved_badge"]({ types: unserved.join(", ") })}
-          </Badge>
-        </span>
-      </div>
-    );
-  }
-  if (rule.policy.default_mode !== "off" && (patterns === false || ner === false)) {
-    return (
-      <div className="mt-1">
-        <span title={m["admin_redaction.coverage.default_title"]()}>
-        <Badge tone="warn">{m["admin_redaction.coverage.default_badge"]()}</Badge>
-      </span>
-      </div>
-    );
-  }
-  return null;
-}
-
-/**
- * What the provider would actually receive.
- *
- * The one place an operator can see what the detector does, which until now was
- * findable only by reading an upstream request body — that is how the Italian
- * bug was found, and it took a packet capture to find a verb read as a person.
- *
- * Three things are shown rather than one, because the rewritten text alone
- * explains nothing: the spans say *why* each substitution happened, the mode
- * says which rule decided, and a block is a state of its own — nothing is
- * rewritten in that case, so there is no text to show and echoing the sample
- * back would read as "this is what would be sent".
- */
-function PreviewBox() {
-  const preview = usePreviewRedaction();
-  const toast = useOptionalToast();
-  const sampleId = useId();
-  const [text, setText] = useState("");
-  const [scope, setScope] = useState<RedactionScope | "">("");
-  const [scopeId, setScopeId] = useState("");
-  // What was sent, kept apart from what is typed: the spans are offsets into
-  // the submitted sample, and slicing the live textarea with them would
-  // mislabel every match the moment a character is typed after a run.
-  const [sample, setSample] = useState("");
-
-  // A scope with no subject is not a narrower preview, it is the deployment
-  // policy wearing a label — so the run waits for the subject rather than
-  // quietly answering a different question.
-  const ready = text.trim().length > 0 && (scope === "" || scopeId.trim().length > 0);
-
-  const run = () => {
-    setSample(text);
-    preview.mutate(
-      scope === "" ? { text } : { text, scope, scope_id: scopeId },
-      {
-        onSuccess: () => toast?.add({ title: m["admin_redaction.preview.toast_ran"](), type: "success" }),
-        onError: (error) =>
-          toast?.add({
-            title: m["admin_redaction.preview.toast_failed"](),
-            // i18n: server text — the API's own error message.
-            description: error instanceof Error ? error.message : m["admin_redaction.unknown_error"](),
-            type: "error",
-          }),
-      },
-    );
-  };
-
-  const result = preview.data;
-
   const columns: Column<RedactionPreviewSpan>[] = [
     {
       key: "match",
@@ -653,69 +374,7 @@ function PreviewBox() {
   ];
 
   return (
-    <Card
-      title={m["admin_redaction.preview.card"]()}
-      description={m["admin_redaction.preview.description"]()}
-    >
-      <div className={FORM}>
-        {preview.error ? (
-          <Notice tone="danger">
-            {/* i18n: server text — the API's own error message. */}
-            {preview.error instanceof Error
-              ? preview.error.message
-              : m["admin_redaction.unknown_error"]()}
-          </Notice>
-        ) : null}
-
-        <div className={FIELD}>
-          <label className={FIELD_LABEL} htmlFor={sampleId}>
-            {m["admin_redaction.preview.sample"]()}
-          </label>
-          <textarea
-            id={sampleId}
-            className={TEXTAREA}
-            rows={4}
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            placeholder={m["admin_redaction.preview.sample_placeholder"]()}
-          />
-          <p className={MUTED}>{m["admin_redaction.preview.not_logged"]()}</p>
-        </div>
-
-        <div className={FORM_ROW}>
-          <Select
-            label={m["admin_redaction.preview.preview_as"]()}
-            value={scope}
-            onChange={(event) => {
-              setScope(event.target.value as RedactionScope | "");
-              setScopeId("");
-            }}
-          >
-            <option value="">{m["admin_redaction.preview.nobody"]()}</option>
-            {SCOPES.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label()}
-              </option>
-            ))}
-          </Select>
-          {scope !== "" && (
-            <SubjectPicker scope={scope} value={scopeId} onChange={setScopeId} />
-          )}
-        </div>
-
-        <div>
-          <Button
-            variant="primary"
-            busy={preview.isPending}
-            disabled={!ready}
-            onClick={run}
-          >
-            {m["admin_redaction.preview.run"]()}
-          </Button>
-        </div>
-
-        {result && (
-          <>
+    <div className={FORM}>
             {/* i18n: server text — rendered verbatim: an engine that detects
                 nothing must say so, or an empty result reads as a clean prompt. */}
             {result.note && <Notice tone="warn">{result.note}</Notice>}
@@ -736,11 +395,10 @@ function PreviewBox() {
             <p className={MUTED}>
               {m["admin_redaction.preview.summary_replaced"]({ count: result.entity_count })} ·{" "}
               {m["admin_redaction.preview.summary_engine"]({ engine: result.engine })} ·{" "}
-              {result.scope === null
-                ? m["admin_redaction.preview.summary_policy"]()
-                : m["admin_redaction.preview.summary_rule"]({ scope: scopeNoun(result.scope) })}
+              {m["admin_redaction.preview.summary_policy"]()}
             </p>
 
+            <div className="overflow-x-auto">
             <Table
               columns={columns}
               rows={result.spans}
@@ -748,13 +406,10 @@ function PreviewBox() {
               empty={m["admin_redaction.preview.empty"]()}
               caption={m["admin_redaction.preview.caption"]()}
             />
-          </>
-        )}
-      </div>
-    </Card>
+            </div>
+    </div>
   );
 }
-
 
 /**
  * The two Presidio recognizer families as big on/off switches.
@@ -830,7 +485,7 @@ function DetectorFamilies({ status, inForce }: { status: RedactionStatus; inForc
   };
 
   return (
-    <Card
+    <Section
       title={m["admin_redaction.families.card"]()}
       description={m["admin_redaction.families.description"]()}
     >
@@ -866,7 +521,7 @@ function DetectorFamilies({ status, inForce }: { status: RedactionStatus; inForc
       </div>
 
       {setEngine.isPending && <p className={MUTED}>{m["admin_redaction.families.saving"]()}</p>}
-    </Card>
+    </Section>
   );
 }
 
@@ -965,7 +620,7 @@ function EngineList({ status }: { status: RedactionStatus }) {
   };
 
   return (
-    <Card
+    <Section
       title={m["admin_redaction.engine.card"]()}
       description={m["admin_redaction.engine.description"]()}
     >
@@ -1062,7 +717,7 @@ function EngineList({ status }: { status: RedactionStatus }) {
           )
         }
       />
-    </Card>
+    </Section>
   );
 }
 

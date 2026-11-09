@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -26,19 +27,20 @@ from gateway.config import (
     EntityMode,
     EntityPolicy,
     RedactionPolicy,
-    RedactionSettings,
 )
 from gateway.deps import get_management_user
 from gateway.models import (
     Base,
-    RedactionRule,
-    RedactionScope,
+    PrivacyPipeline,
+    RedactionPolicyRecord,
     UsageRecord,
     UsageStatus,
     User,
-    UserRedactionRule,
+    UserPolicy,
 )
-from gateway.redaction.resolver import RedactionResolver, _user_rules_of
+from gateway.privacy.combine import plan
+from gateway.privacy.evaluate import Facts
+from gateway.privacy.state import PrivacyState
 from gateway.redaction.user_rules import UserRule, fold, tightens, validate_pattern
 from helpers import chunk, completion_body, sse, usage_only_frame
 from sqlalchemy import select, text
@@ -61,36 +63,86 @@ def pattern_rule(name: str, regex: str, mode: EntityMode = EntityMode.REDACT) ->
     return UserRule(id=uuid.uuid4(), kind="pattern", name=name, regex=regex, mode=mode)
 
 
-def row(user_id: uuid.UUID, rule: UserRule) -> UserRedactionRule:
-    return UserRedactionRule(
-        id=rule.id,
-        user_id=user_id,
-        kind=rule.kind,
-        name=rule.name,
-        regex=rule.regex,
-        mode=rule.mode.value,
+@dataclass
+class AdminSpec:
+    """An administrator's policy, applied to every request of every kind."""
+
+    name: str
+    policy: RedactionPolicy
+    id: uuid.UUID = field(default_factory=uuid.uuid4)
+
+
+def admin_rule(name: str, **kw: Any) -> AdminSpec:
+    return AdminSpec(name=name, policy=policy(**kw))
+
+
+def state_with(
+    admin: list[AdminSpec] | None = None,
+    users: dict[uuid.UUID, list[UserRule]] | None = None,
+) -> PrivacyState:
+    """A privacy state holding these policies, each applied by a pipeline per kind on all."""
+    policies = [
+        RedactionPolicyRecord(
+            id=a.id,
+            name=a.name,
+            policy=a.policy.model_dump(mode="json"),
+            is_active=True,
+            reason="",
+        )
+        for a in admin or []
+    ]
+    pipelines: list[PrivacyPipeline] = []
+    for index, a in enumerate(admin or []):
+        pipelines.append(
+            PrivacyPipeline(
+                id=uuid.uuid4(),
+                owner_id=None,
+                kind="chat",
+                name=a.name,
+                enabled=True,
+                position=index,
+                who={"mode": "all", "ids": []},
+                target={"mode": "all", "providers": [], "models": []},
+                rules=[],
+                otherwise={"level": "pass", "redact_with": str(a.id)},
+            )
+        )
+    user_policies: list[UserPolicy] = []
+    for user_id, rules in (users or {}).items():
+        mine = UserPolicy(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            name="Mine",
+            rules=[
+                {"kind": r.kind, "name": r.name, "regex": r.regex, "mode": r.mode.value}
+                for r in rules
+            ],
+        )
+        user_policies.append(mine)
+        pipelines.append(
+            PrivacyPipeline(
+                id=uuid.uuid4(),
+                owner_id=user_id,
+                kind="chat",
+                name="Mine",
+                enabled=True,
+                position=0,
+                who={"mode": "users", "ids": [str(user_id)]},
+                target={"mode": "all", "providers": [], "models": []},
+                rules=[],
+                otherwise={"level": "pass", "redact_with": str(mine.id)},
+            )
+        )
+    state = PrivacyState()
+    state.load(pipelines, policies, user_policies, [], [], [])
+    return state
+
+
+async def effective(state: PrivacyState, user_id: uuid.UUID) -> Any:
+    combined = await plan(
+        state.evaluator, state.pipelines_of("chat"), Facts(kind="chat", user_id=str(user_id))
     )
-
-
-def admin_rule(
-    scope: RedactionScope, subject: uuid.UUID | None, name: str, **kw: Any
-) -> RedactionRule:
-    return RedactionRule(
-        id=uuid.uuid4(),
-        name=name,
-        scope=scope,
-        scope_id=subject,
-        policy=policy(**kw).model_dump(mode="json"),
-    )
-
-
-def resolver_with(
-    admin: list[RedactionRule] | None = None, users: list[UserRedactionRule] | None = None
-) -> RedactionResolver:
-    resolver = RedactionResolver(RedactionSettings(), lambda: None)  # type: ignore[arg-type]
-    resolver._reload_rules(admin or [])
-    resolver._reload_user_rules(users or [])
-    return resolver
+    return state.effective_policy(combined.policy_uses(), RedactionPolicy())
 
 
 class TestTheFold:
@@ -194,78 +246,91 @@ class TestTheFold:
 class TestResolution:
     """Whose rules apply, and who gets the blame."""
 
-    def test_a_user_pattern_applies_only_to_that_user(self) -> None:
+    async def test_a_user_pattern_applies_only_to_that_user(self) -> None:
         mine, theirs = uuid.uuid4(), uuid.uuid4()
-        resolver = resolver_with(users=[row(mine, pattern_rule("PROJECT", r"PRJ-\d+"))])
+        state = state_with(users={mine: [pattern_rule("PROJECT", r"PRJ-\d+")]})
 
-        assert [p.name for p in resolver.policy_for(user_id=mine).policy.patterns] == ["PROJECT"]
-        assert resolver.policy_for(user_id=theirs).policy.patterns == []
+        assert [p.name for p in (await effective(state, mine)).policy.patterns] == ["PROJECT"]
+        assert (await effective(state, theirs)).policy.patterns == []
 
-    def test_the_user_rule_takes_the_blame_only_where_it_tightened(self) -> None:
+    async def test_the_user_rule_takes_the_blame_only_where_it_tightened(self) -> None:
         user_id = uuid.uuid4()
-        catch_all = admin_rule(
-            RedactionScope.ALL,
-            None,
+        everything = admin_rule(
             "Everything",
             entities={
                 "PERSON": EntityPolicy(mode=EntityMode.REDACT),
                 "URL": EntityPolicy(mode=EntityMode.ANONYMISE_RESTORE),
             },
         )
-        resolver = resolver_with(
-            [catch_all],
-            [
-                row(user_id, mode_rule("PERSON", EntityMode.ANONYMISE)),  # weaker than redact
-                row(user_id, mode_rule("URL", EntityMode.BLOCK)),  # stricter
-            ],
+        state = state_with(
+            [everything],
+            {
+                user_id: [
+                    mode_rule("PERSON", EntityMode.ANONYMISE),  # weaker than redact
+                    mode_rule("URL", EntityMode.BLOCK),  # stricter
+                ]
+            },
         )
-        effective = resolver.policy_for(user_id=user_id)
+        found = await effective(state, user_id)
 
-        person = effective.decider_for("PERSON")
-        url = effective.decider_for("URL")
-        assert person is not None and person.owner == "admin" and person.id == catch_all.id
+        person = found.decider_for("PERSON")
+        url = found.decider_for("URL")
+        assert person is not None and person.owner == "admin" and person.id == everything.id
         assert person.name == "Everything"
         assert url is not None and url.owner == "user" and url.name == "URL"
-        assert effective.policy.mode_for("PERSON") is EntityMode.REDACT
-        assert effective.policy.mode_for("URL") is EntityMode.BLOCK
+        assert found.policy.mode_for("PERSON") is EntityMode.REDACT
+        assert found.policy.mode_for("URL") is EntityMode.BLOCK
 
-    def test_the_administrators_answer_is_unchanged_for_a_user_with_no_rules(self) -> None:
+    async def test_the_administrators_answer_is_unchanged_for_a_user_with_no_rules(self) -> None:
+        everything = admin_rule("Everything", entities={"PERSON": EntityPolicy()})
+        state = state_with([everything], {uuid.uuid4(): [mode_rule("PERSON", EntityMode.BLOCK)]})
+
+        found = await effective(state, uuid.uuid4())
+        assert found.policy.mode_for("PERSON") is EntityMode.ANONYMISE_RESTORE
+
+    async def test_the_fold_is_memoised_and_cleared_when_the_state_reloads(self) -> None:
         user_id = uuid.uuid4()
-        catch_all = admin_rule(
-            RedactionScope.ALL, None, "Everything", entities={"PERSON": EntityPolicy()}
-        )
-        resolver = resolver_with(
-            [catch_all], [row(uuid.uuid4(), mode_rule("PERSON", EntityMode.BLOCK))]
-        )
+        state = state_with(users={user_id: [pattern_rule("A", r"aaa")]})
 
-        admin = resolver.admin_policy_for(user_id=user_id)
-        assert resolver.policy_for(user_id=user_id) == admin
+        first = (await effective(state, user_id)).policy
+        assert (await effective(state, user_id)).policy is first
 
-    def test_the_fold_is_memoised_and_cleared_when_the_rules_change(self) -> None:
-        user_id = uuid.uuid4()
-        resolver = resolver_with(users=[row(user_id, pattern_rule("A", r"aaa"))])
-
-        first = resolver.policy_for(user_id=user_id).policy
-        assert resolver.policy_for(user_id=user_id).policy is first
-
-        resolver.replace_user_rules(user_id, [row(user_id, pattern_rule("B", r"bbb"))])
-        assert [p.name for p in resolver.policy_for(user_id=user_id).policy.patterns] == ["B"]
+        state = state_with(users={user_id: [pattern_rule("B", r"bbb")]})
+        assert [p.name for p in (await effective(state, user_id)).policy.patterns] == ["B"]
 
     def test_an_unreadable_row_is_dropped_not_fatal(self) -> None:
         good = uuid.uuid4()
-        parsed = _user_rules_of(
+        bad = uuid.uuid4()
+        state = PrivacyState()
+        state.load(
+            [],
+            [],
             [
-                UserRedactionRule(
-                    user_id=uuid.uuid4(), kind="pattern", name="X", regex="(?=no)", mode="redact"
+                UserPolicy(
+                    id=uuid.uuid4(),
+                    user_id=bad,
+                    name="Bad",
+                    rules=[{"kind": "pattern", "name": "X", "regex": "(?=no)", "mode": "redact"}],
                 ),
-                UserRedactionRule(
-                    user_id=uuid.uuid4(), kind="mode", name="PERSON", regex=None, mode="off"
+                UserPolicy(
+                    id=uuid.uuid4(),
+                    user_id=bad,
+                    name="Off",
+                    rules=[{"kind": "mode", "name": "PERSON", "regex": None, "mode": "off"}],
                 ),
-                row(good, mode_rule("PERSON", EntityMode.REDACT)),
-            ]
+                UserPolicy(
+                    id=uuid.uuid4(),
+                    user_id=good,
+                    name="Good",
+                    rules=[{"kind": "mode", "name": "PERSON", "regex": None, "mode": "redact"}],
+                ),
+            ],
+            [],
+            [],
+            [],
         )
 
-        assert list(parsed) == [good]
+        assert [p.user_id for p in state.user_policies.values()] == [good]
 
 
 # ---------------------------------------------------------------------------
@@ -280,19 +345,30 @@ def as_user(app: Any, user: User) -> None:
 def install(
     app: Any,
     *,
-    admin: list[RedactionRule] | None = None,
+    admin: list[AdminSpec] | None = None,
+    users: dict[uuid.UUID, list[UserRule]] | None = None,
     detects: dict[str, str] | None = None,
-) -> RedactionResolver:
-    """A detector that finds what it is told to, and a resolver holding these rules."""
+) -> PrivacyState:
+    """A detector that finds what it is told to, and a state holding these policies."""
     detector = FakeDetector(detects if detects is not None else {SECRET_NAME: "PERSON"})
     app.state.redactor = detector.redactor()
-    resolver = resolver_with(admin)
-    app.state.redaction = resolver
-    return resolver
+    app.state._test_admin = list(admin or [])
+    app.state._test_users = dict(users or {})
+    state = state_with(admin, users)
+    # Detached from the database: no poll may put the empty rows back mid-test.
+    app.state.privacy = state
+    return state
 
 
-def catch_all(**entities: EntityPolicy) -> RedactionRule:
-    return admin_rule(RedactionScope.ALL, None, "Cloud providers", entities=entities)
+def give_user_rules(app: Any, user_id: uuid.UUID, *rules: UserRule) -> None:
+    """The user's own rules, as a user policy their chat pipeline applies."""
+    mine = app.state._test_users.setdefault(user_id, [])
+    mine.extend(rules)
+    app.state.privacy = state_with(app.state._test_admin, app.state._test_users)
+
+
+def catch_all(**entities: EntityPolicy) -> AdminSpec:
+    return admin_rule("Cloud providers", entities=entities)
 
 
 def body_for(seeded: Seeded, content: str = f"hello {SECRET_NAME}") -> dict[str, Any]:
@@ -301,244 +377,6 @@ def body_for(seeded: Seeded, content: str = f"hello {SECRET_NAME}") -> dict[str,
 
 SUMMARY = {"x-pystino-redaction-summary": "1"}
 BOTH = {**SUMMARY, "x-pystino-redaction-values": "1"}
-
-
-class TestTheManagementApi:
-    async def test_a_user_creates_lists_and_deletes_a_rule(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
-    ) -> None:
-        install(app, admin=[catch_all(PERSON=EntityPolicy(mode=EntityMode.ANONYMISE_RESTORE))])
-        as_user(app, seeded.user)
-
-        created = await client.post(
-            "/api/me/redaction/rules",
-            json={"kind": "mode", "name": "person", "mode": "redact"},
-        )
-        assert created.status_code == 201, created.text
-        rule = created.json()
-        assert rule["name"] == "PERSON"
-        assert rule["status"] == "adds_protection"
-        assert rule["admin_mode"] == "anonymise_restore"
-
-        listing = (await client.get("/api/me/redaction/rules")).json()
-        assert [item["id"] for item in listing["items"]] == [rule["id"]]
-        assert listing["total"] == 1
-
-        gone = await client.delete(f"/api/me/redaction/rules/{rule['id']}")
-        assert gone.status_code == 204
-        assert (await client.get("/api/me/redaction/rules")).json()["items"] == []
-
-    async def test_a_weaker_rule_is_saved_and_reported_as_covered(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
-    ) -> None:
-        install(app, admin=[catch_all(PERSON=EntityPolicy(mode=EntityMode.BLOCK))])
-        as_user(app, seeded.user)
-
-        created = await client.post(
-            "/api/me/redaction/rules",
-            json={"kind": "mode", "name": "PERSON", "mode": "anonymise"},
-        )
-
-        assert created.status_code == 201
-        assert created.json()["status"] == "covered"
-        assert created.json()["admin_mode"] == "block"
-
-    @pytest.mark.parametrize(
-        "extra",
-        [
-            {"mode": "off"},
-            {"threshold": 0.1},
-            {"allow_list": ["x"]},
-            {"placeholder": "same_length"},
-        ],
-    )
-    async def test_nothing_that_loosens_can_be_written(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, extra: dict[str, Any]
-    ) -> None:
-        install(app)
-        as_user(app, seeded.user)
-
-        response = await client.post(
-            "/api/me/redaction/rules",
-            json={"kind": "mode", "name": "PERSON", "mode": "redact", **extra},
-        )
-
-        assert response.status_code == 400, response.text
-
-    async def test_a_pattern_is_validated_as_an_administrators_is(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
-    ) -> None:
-        install(app)
-        as_user(app, seeded.user)
-
-        lookahead = await client.post(
-            "/api/me/redaction/rules",
-            json={"kind": "pattern", "name": "P", "regex": "(?=x)x", "mode": "redact"},
-        )
-        empty = await client.post(
-            "/api/me/redaction/rules",
-            json={"kind": "pattern", "name": "P", "regex": "a*", "mode": "redact"},
-        )
-
-        assert lookahead.status_code == 400
-        assert "cannot be used" in lookahead.json()["error"]["message"]
-        assert empty.status_code == 400
-        assert "empty string" in empty.json()["error"]["message"]
-
-    async def test_a_second_rule_of_the_same_name_is_a_conflict(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
-    ) -> None:
-        install(app)
-        as_user(app, seeded.user)
-        body = {"kind": "mode", "name": "PERSON", "mode": "redact"}
-
-        assert (await client.post("/api/me/redaction/rules", json=body)).status_code == 201
-        assert (await client.post("/api/me/redaction/rules", json=body)).status_code == 409
-
-    async def test_the_number_of_rules_is_bounded(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
-    ) -> None:
-        from gateway.redaction.user_rules import MAX_RULES_PER_USER
-
-        install(app)
-        as_user(app, seeded.user)
-        for index in range(MAX_RULES_PER_USER):
-            created = await client.post(
-                "/api/me/redaction/rules",
-                json={"kind": "mode", "name": f"TYPE_{index}", "mode": "redact"},
-            )
-            assert created.status_code == 201
-
-        over = await client.post(
-            "/api/me/redaction/rules", json={"kind": "mode", "name": "ONE_MORE", "mode": "redact"}
-        )
-        assert over.status_code == 400
-        assert over.json()["error"]["code"] == "too_many_rules"
-
-    async def test_nobody_reads_or_changes_another_users_rules(
-        self,
-        app: Any,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        install(app)
-        async with session_factory() as db:
-            other = User(issuer="https://idp.test", subject="other", email="other@example.org")
-            db.add(other)
-            await db.flush()
-            theirs = row(other.id, mode_rule("PERSON", EntityMode.BLOCK))
-            db.add(theirs)
-            await db.commit()
-        as_user(app, seeded.user)
-
-        assert (await client.get("/api/me/redaction/rules")).json()["items"] == []
-        assert (await client.delete(f"/api/me/redaction/rules/{theirs.id}")).status_code == 404
-        assert (
-            await client.put(
-                f"/api/me/redaction/rules/{theirs.id}",
-                json={"kind": "mode", "name": "PERSON", "mode": "redact"},
-            )
-        ).status_code == 404
-
-    async def test_the_rules_in_force_are_the_administrators_in_plain_terms(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
-    ) -> None:
-        install(app)
-        as_user(app, seeded.user)
-        async with app.state.session_factory() as db:
-            db.add(
-                RedactionRule(
-                    id=uuid.uuid4(),
-                    name="Cloud providers",
-                    scope=RedactionScope.ALL,
-                    scope_id=None,
-                    policy=policy(
-                        entities={"PERSON": EntityPolicy(mode=EntityMode.ANONYMISE_RESTORE)},
-                        patterns=[CustomPattern(name="SECRET_PROJECT", regex=r"zeus-\d+")],
-                        allow_list=["acme.test"],
-                    ).model_dump(mode="json"),
-                )
-            )
-            await db.commit()
-
-        body = (await client.get("/api/me/redaction/in-force")).json()
-
-        assert body["rules"][0]["name"] == "Cloud providers"
-        assert body["rules"][0]["entities"] == [
-            {"entity_type": "PERSON", "mode": "anonymise_restore"}
-        ]
-        assert body["rules"][0]["patterns"] == [{"name": "SECRET_PROJECT", "mode": "redact"}]
-        assert body["rules"][0]["exceptions"] == 1
-        # The regex of an administrator's pattern and the allow-list's values
-        # are not shown to users.
-        assert "zeus" not in orjson.dumps(body).decode()
-        assert "acme.test" not in orjson.dumps(body).decode()
-
-
-class TestTheTestBox:
-    async def test_it_names_what_would_be_hidden_and_which_rule_decided(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
-    ) -> None:
-        install(app, admin=[catch_all(PERSON=EntityPolicy(mode=EntityMode.ANONYMISE_RESTORE))])
-        as_user(app, seeded.user)
-        await client.post(
-            "/api/me/redaction/rules",
-            json={"kind": "pattern", "name": "PROJECT", "regex": r"PRJ-\d+", "mode": "redact"},
-        )
-        text_ = f"{SECRET_NAME} is on PRJ-42"
-
-        response = await client.post("/api/me/redaction/test", json={"text": text_})
-
-        assert response.status_code == 200, response.text
-        found = {span["entity_type"]: span for span in response.json()["spans"]}
-        assert found["PERSON"]["rule"]["owner"] == "admin"
-        assert found["PERSON"]["rule"]["name"] == "Cloud providers"
-        assert found["PROJECT"]["rule"]["owner"] == "user"
-        assert found["PROJECT"]["mode"] == "redact"
-        assert (found["PROJECT"]["start"], found["PROJECT"]["end"]) == (
-            text_.index("PRJ-42"),
-            text_.index("PRJ-42") + 6,
-        )
-        # Offsets and types: the text is not echoed back.
-        assert SECRET_NAME not in response.text
-        assert "PRJ-42" not in response.text
-
-    async def test_the_text_is_never_logged(
-        self,
-        app: Any,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        install(app, admin=[catch_all(PERSON=EntityPolicy())])
-        as_user(app, seeded.user)
-
-        with caplog.at_level(logging.DEBUG):
-            await client.post("/api/me/redaction/test", json={"text": f"{SECRET_NAME} here"})
-
-        assert SECRET_NAME not in caplog.text
-
-    async def test_a_block_is_reported_not_refused(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
-    ) -> None:
-        install(app, admin=[catch_all(PERSON=EntityPolicy(mode=EntityMode.BLOCK))])
-        as_user(app, seeded.user)
-
-        response = await client.post("/api/me/redaction/test", json={"text": f"{SECRET_NAME} here"})
-
-        assert response.status_code == 200
-        assert response.json()["blocked"] is True
-
-    async def test_with_the_engine_off_it_says_nothing_is_hidden(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
-    ) -> None:
-        as_user(app, seeded.user)
-
-        body = (await client.post("/api/me/redaction/test", json={"text": "x"})).json()
-
-        assert body["engine_active"] is False
-        assert body["spans"] == []
 
 
 class TestOnTheRequestPath:
@@ -550,15 +388,10 @@ class TestOnTheRequestPath:
         fake_upstream: Any,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        resolver = install(app, detects={})
+        # An administrator's policy makes redaction active; the user's pattern adds to it.
+        state = install(app, detects={}, admin=[catch_all(PERSON=EntityPolicy())])
         as_user(app, seeded.user)
-        # An administrator's rule makes redaction active; the user's pattern adds to it.
-        resolver._reload_rules([catch_all(PERSON=EntityPolicy())])
-        created = await client.post(
-            "/api/me/redaction/rules",
-            json={"kind": "pattern", "name": "PROJECT", "regex": r"PRJ-\d+", "mode": "redact"},
-        )
-        assert created.status_code == 201
+        give_user_rules(app, seeded.user.id, pattern_rule("PROJECT", r"PRJ-\d+"))
         fake_upstream.set_json(completion_body())
 
         mine = await client.post(
@@ -578,7 +411,8 @@ class TestOnTheRequestPath:
             )
             db.add(other)
             await db.commit()
-        assert resolver.policy_for(user_id=other.id).policy.patterns == []
+        assert (await effective(app.state.privacy, other.id)).policy.patterns == []
+        del state
 
     async def test_a_user_tightening_applies_and_a_weaker_rule_does_not(
         self,
@@ -589,10 +423,7 @@ class TestOnTheRequestPath:
     ) -> None:
         install(app, admin=[catch_all(PERSON=EntityPolicy(mode=EntityMode.REDACT))])
         as_user(app, seeded.user)
-        await client.post(
-            "/api/me/redaction/rules",
-            json={"kind": "mode", "name": "PERSON", "mode": "anonymise_restore"},
-        )
+        give_user_rules(app, seeded.user.id, mode_rule("PERSON", EntityMode.ANONYMISE_RESTORE))
         fake_upstream.set_json(completion_body())
 
         await client.post("/v1/chat/completions", json=body_for(seeded), headers=seeded.auth)
@@ -606,9 +437,7 @@ class TestOnTheRequestPath:
     ) -> None:
         install(app, admin=[catch_all(PERSON=EntityPolicy(mode=EntityMode.BLOCK))])
         as_user(app, seeded.user)
-        await client.post(
-            "/api/me/redaction/rules", json={"kind": "mode", "name": "PERSON", "mode": "redact"}
-        )
+        give_user_rules(app, seeded.user.id, mode_rule("PERSON", EntityMode.REDACT))
         before = len(fake_upstream.bodies)
 
         response = await client.post(
@@ -1067,16 +896,13 @@ class TestRoundTrips:
         self, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
     ) -> None:
         """The entry rides the insert the request already makes, and the user's rules
-        arrive on the resolver's poll: the budget `test_query_counts.py` pins holds
+        arrive on the state's poll: the budget `test_query_counts.py` pins holds
         for a request that was redacted under a user's own rule."""
         from test_query_counts import counted
 
         install(app, admin=[catch_all(PERSON=EntityPolicy())])
         as_user(app, seeded.user)
-        await client.post(
-            "/api/me/redaction/rules",
-            json={"kind": "pattern", "name": "PROJECT", "regex": r"PRJ-\d+", "mode": "redact"},
-        )
+        give_user_rules(app, seeded.user.id, pattern_rule("PROJECT", r"PRJ-\d+"))
         fake_upstream.set_json(completion_body())
         request = body_for(seeded, f"{SECRET_NAME} on PRJ-1")
         await client.post("/v1/chat/completions", json=request, headers=seeded.auth)
@@ -1091,24 +917,6 @@ class TestRoundTrips:
         ]
         assert len(writes) <= 2, writes
         assert len(selects) <= 5, selects
-
-
-class TestCacheInvalidation:
-    def test_editing_an_administrator_rule_refreshes_a_users_folded_policy(self) -> None:
-        user_id = uuid.uuid4()
-        rule = catch_all(PERSON=EntityPolicy(mode=EntityMode.ANONYMISE_RESTORE))
-        resolver = resolver_with([rule], [row(user_id, mode_rule("PERSON", EntityMode.ANONYMISE))])
-        assert (
-            resolver.policy_for(user_id=user_id).policy.mode_for("PERSON") is EntityMode.ANONYMISE
-        )
-
-        # The same rule id, now stricter than the user's own.
-        rule.policy = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.BLOCK)}).model_dump(
-            mode="json"
-        )
-        resolver._reload_rules([rule])
-
-        assert resolver.policy_for(user_id=user_id).policy.mode_for("PERSON") is EntityMode.BLOCK
 
 
 class TestAUserPatternOnlyAdds:
@@ -1127,11 +935,7 @@ class TestAUserPatternOnlyAdds:
     ) -> str:
         install(app, admin=[catch_all(PERSON=EntityPolicy(mode=EntityMode.REDACT))])
         as_user(app, seeded.user)
-        created = await client.post(
-            "/api/me/redaction/rules",
-            json={"kind": "pattern", "name": "MINE", "regex": regex, "mode": mode},
-        )
-        assert created.status_code == 201, created.text
+        give_user_rules(app, seeded.user.id, pattern_rule("MINE", regex, EntityMode(mode)))
         fake_upstream.set_json(completion_body())
         response = await client.post(
             "/v1/chat/completions", json=body_for(seeded, content), headers=seeded.auth
@@ -1182,25 +986,6 @@ class TestAUserPatternOnlyAdds:
         )
 
         assert sent == "<PERSON> works on <MINE>"
-
-    async def test_the_test_box_reports_the_same(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
-    ) -> None:
-        install(app, admin=[catch_all(PERSON=EntityPolicy(mode=EntityMode.REDACT))])
-        as_user(app, seeded.user)
-        await client.post(
-            "/api/me/redaction/rules",
-            json={"kind": "pattern", "name": "MINE", "regex": "ar", "mode": "block"},
-        )
-
-        body = (
-            await client.post("/api/me/redaction/test", json={"text": f"hi {SECRET_NAME}"})
-        ).json()
-
-        assert [(s["entity_type"], s["rule"]["owner"]) for s in body["spans"]] == [
-            ("PERSON", "admin")
-        ]
-        assert body["blocked"] is False
 
     def test_the_selection_keeps_the_administrators_span_whole(self) -> None:
         from gateway.config import CustomPattern
@@ -1263,81 +1048,7 @@ class TestValuesForASignIn:
         assert "values" not in created_key.json()["pystino_redaction"]
 
 
-class TestTheTestBoxIsRateLimited:
-    async def test_the_thirty_first_call_in_a_minute_is_refused(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
-    ) -> None:
-        as_user(app, seeded.user)
-        for _ in range(30):
-            assert (
-                await client.post("/api/me/redaction/test", json={"text": "x"})
-            ).status_code == 200
-
-        over = await client.post("/api/me/redaction/test", json={"text": "x"})
-
-        assert over.status_code == 429
-        assert "at most 30 texts a minute" in over.json()["error"]["message"]
-
-
 class TestLowerFindings:
-    async def test_rules_in_force_leave_out_another_users_private_provider(
-        self,
-        app: Any,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        from gateway.models import Provider
-
-        install(app)
-        async with session_factory() as db:
-            other = User(issuer="https://idp.test", subject="other", email="o@example.org")
-            db.add(other)
-            await db.flush()
-            private = Provider(
-                name="theirs",
-                base_url="https://x.example/v1",
-                api_key_encrypted="",
-                api_key_hint="",
-                owner_kind="user",
-                owner_id=other.id,
-            )
-            db.add(private)
-            await db.flush()
-            db.add(admin_rule(RedactionScope.PROVIDER, private.id, "Their provider"))
-            db.add(admin_rule(RedactionScope.PROVIDER, seeded.provider.id, "Deployment provider"))
-            await db.commit()
-        as_user(app, seeded.user)
-
-        names = [
-            r["name"] for r in (await client.get("/api/me/redaction/in-force")).json()["rules"]
-        ]
-
-        assert names == ["Deployment provider"]
-
-    async def test_the_admin_preview_as_a_key_includes_its_owners_rules(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
-    ) -> None:
-        install(app)
-        as_user(app, seeded.user)
-        await client.post(
-            "/api/me/redaction/rules",
-            json={"kind": "mode", "name": "EMAIL_ADDRESS", "mode": "redact"},
-        )
-        seeded.user.is_admin = True
-
-        response = await client.post(
-            "/api/admin/redaction/preview",
-            json={
-                "text": "write to a@example.org",
-                "scope": "api_key",
-                "scope_id": str(seeded.api_key.id),
-            },
-        )
-
-        assert response.status_code == 200, response.text
-        assert response.json()["policy"]["entities"]["EMAIL_ADDRESS"]["mode"] == "redact"
-
     async def test_a_held_finish_chunk_is_flushed_before_an_upstream_error(self) -> None:
         from collections.abc import AsyncIterator
 
@@ -1357,24 +1068,3 @@ class TestLowerFindings:
         assert len(seen) == 2
         assert "pystino_redaction" not in seen[0].data
         assert "pystino_redaction" in seen[1].data
-
-    async def test_the_creation_cap_takes_a_row_lock_and_still_holds(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
-    ) -> None:
-        """The count and the insert run under a lock on the user's row; the cap
-        itself is exercised in TestTheManagementApi."""
-        from gateway.redaction.user_rules import MAX_RULES_PER_USER
-
-        install(app)
-        as_user(app, seeded.user)
-        for index in range(MAX_RULES_PER_USER):
-            await client.post(
-                "/api/me/redaction/rules",
-                json={"kind": "mode", "name": f"T{index}", "mode": "redact"},
-            )
-
-        over = await client.post(
-            "/api/me/redaction/rules", json={"kind": "mode", "name": "EXTRA", "mode": "redact"}
-        )
-
-        assert over.status_code == 400

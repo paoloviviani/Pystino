@@ -15,7 +15,8 @@ Each card says what the screen decides, not what it is called.
 |---|---|
 | **Overview** | where you stand this period, your quotas and the API keys you spend with (create and revoke them here; a person without the API-keys capability is told so instead of being offered Create) |
 | **Your usage** | what you spent, and what the figures rest on. Administrators have it too: their own spend is not administration |
-| **Redactions** | what was hidden from providers in your requests and which rule decided (never the values), the administrators' rules in plain words, your own rules (you can only make protection stricter) and a box to try a text. See [User rules](redaction.md#user-rules) |
+| **Redactions** | what was hidden from providers in your requests and which rule decided (never the values), with the pipelines and policies that ran. See [What users can see](redaction.md#what-users-can-see) |
+| **Privacy pipelines** | your own pipelines and policies (you can only add protection), the administrator's pipelines that already apply to you (read-only), and a test box locked to you. See [User pipelines](privacy-routing.md#user-pipelines) |
 
 Money is shown to three decimal places and never rounds a real amount down to
 zero (it reads `< €0.001`). Administrators can switch to full precision with
@@ -29,7 +30,7 @@ the **Exact figures** toggle.
 | list every request, one line each and never its content, filter it and export it | **Requests** | [The request log](accounting-and-quotas.md#the-request-log) |
 | set a ceiling — the group's total or each member — see what it has consumed, check a counter against the ledger (**Quota health**, with **Reconcile**) or read a rule's reset history (resetting itself is done under **Quota usage**) | **Quotas** | [Quotas](accounting-and-quotas.md#quotas), [Group rules: the total, or each member](accounting-and-quotas.md#group-rules-the-total-or-each-member), [Quota health and reconcile](accounting-and-quotas.md#quota-health-and-reconcile) |
 | see each user's quotas: which apply, how much of each they have used, the limit and when it resets, and **reset** any quota on the record, with or without a reason: one user's count of a per-user quota, a user's own quota, or a shared total for everyone it counts | **Quota usage** | [Quotas](accounting-and-quotas.md#quotas) |
-| decide what is stripped from prompts before a provider sees them, and for whom | **Redaction** | [Redaction](redaction.md#operating-it) |
+| decide when and how a request is handled (which reader, refuse), what is stripped from prompts before a provider sees them and for whom, what is looked for (patterns, entities, the NER engine), and try a sample against all of it | **Privacy** (tabs: Pipelines, Redaction policies, Classifiers, Redaction service, Test) | [Privacy](privacy.md), [Redaction](redaction.md#operating-it), [Privacy pipelines](privacy-routing.md) |
 | add a provider, its credentials and what it reports | **Providers** | [Providers and plugins](gateway.md#providers-and-plugins) |
 | change what models are on offer, who may use them and what they cost, and name a model as your clients should show it | **Models** | [Three cost figures](accounting-and-quotas.md#three-cost-figures-one-meaning-each), [A model's name and its display name](gateway.md#a-models-name-and-its-display-name) |
 | choose the search backends, set what a search costs per request (0 for billed out of band), and see how many searches each group spent | **Web search** | [Surfaces](gateway.md#surfaces), [Web search: a price per request](accounting-and-quotas.md#web-search-a-price-per-request) |

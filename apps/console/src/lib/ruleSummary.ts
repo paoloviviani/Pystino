@@ -16,7 +16,7 @@ import type { EntityMode, RedactionPolicy } from "./types";
  * default restated and says nothing.
  */
 
-const STRONGEST_FIRST: EntityMode[] = ["block", "redact", "anonymise", "anonymise_restore"];
+const STRONGEST_FIRST: EntityMode[] = ["block", "redact", "anonymise", "anonymise_restore", "detect_only"];
 
 /** "Payment card number" becomes "payment card number"; "IBAN" and "URL" stay. */
 function lowerFirst(text: string): string {
@@ -36,6 +36,8 @@ function verbPhrase(mode: EntityMode, what: string): string {
       return m["rule_summary.group.anonymise"]({ what });
     case "anonymise_restore":
       return m["rule_summary.group.anonymise_restore"]({ what });
+    case "detect_only":
+      return m["rule_summary.group.detect_only"]({ what });
     case "off":
       return m["rule_summary.group.off"]({ what });
   }
@@ -55,7 +57,7 @@ function describeTypes(entities: string[]): string {
  * promise protection from redaction the rule does not give.
  */
 export function summariseRule(policy: RedactionPolicy, allowListIgnored = false): string {
-  const named = Object.entries(policy.entities);
+  const named = [...Object.entries(policy.formats), ...Object.entries(policy.entities)];
   const parts: string[] = [];
 
   for (const mode of STRONGEST_FIRST) {
@@ -77,6 +79,9 @@ export function summariseRule(policy: RedactionPolicy, allowListIgnored = false)
 
   if (policy.patterns.length > 0) {
     parts.push(m["rule_summary.patterns"]({ count: policy.patterns.length }));
+  }
+  if (policy.keywords.length > 0) {
+    parts.push(m["rule_summary.keywords"]({ count: policy.keywords.length }));
   }
   if (policy.allow_list.length > 0 && allowListIgnored) {
     parts.push(m["rule_summary.allowed_ignored"]());

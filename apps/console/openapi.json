@@ -1,6 +1,105 @@
 {
   "components": {
     "schemas": {
+      "ActionBody": {
+        "additionalProperties": false,
+        "description": "Where it is handled, and what is hidden.\n\n``level`` is on the ladder of the pipeline's kind (read: ``default``,\n``read_with``, ``refuse``; embed and chat: ``pass``, ``refuse``).",
+        "properties": {
+          "engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "reader": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reader"
+          },
+          "redact_with": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redact With"
+          }
+        },
+        "required": [
+          "level"
+        ],
+        "title": "ActionBody",
+        "type": "object"
+      },
+      "ActionView": {
+        "properties": {
+          "engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "reader": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reader"
+          },
+          "redact_with": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redact With"
+          }
+        },
+        "required": [
+          "level",
+          "reader",
+          "engine",
+          "redact_with"
+        ],
+        "title": "ActionView",
+        "type": "object"
+      },
       "AdminAuditEventResponse": {
         "properties": {
           "action": {
@@ -70,77 +169,6 @@
           "changes"
         ],
         "title": "AdminAuditEventResponse",
-        "type": "object"
-      },
-      "AdminRuleView": {
-        "description": "One administrator rule, as a user may read it.\n\nTypes and modes, not the regexes of its patterns (a pattern can name a\nproject that is itself confidential) and not its exceptions' values, only\nhow many there are.",
-        "properties": {
-          "default_mode": {
-            "title": "Default Mode",
-            "type": "string"
-          },
-          "entities": {
-            "items": {
-              "$ref": "#/components/schemas/RedactionEntityView"
-            },
-            "title": "Entities",
-            "type": "array"
-          },
-          "exceptions": {
-            "title": "Exceptions",
-            "type": "integer"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "patterns": {
-            "items": {
-              "$ref": "#/components/schemas/RedactionPatternView"
-            },
-            "title": "Patterns",
-            "type": "array"
-          },
-          "scope": {
-            "enum": [
-              "all",
-              "provider",
-              "model",
-              "group",
-              "user",
-              "api_key"
-            ],
-            "title": "Scope",
-            "type": "string"
-          },
-          "subject_label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Subject Label"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "scope",
-          "subject_label",
-          "default_mode",
-          "entities",
-          "patterns",
-          "exceptions"
-        ],
-        "title": "AdminRuleView",
         "type": "object"
       },
       "AliasCreateRequest": {
@@ -2244,6 +2272,37 @@
         "title": "ChatCompletionRequest",
         "type": "object"
       },
+      "ChatModelOption": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "provider"
+        ],
+        "title": "ChatModelOption",
+        "type": "object"
+      },
       "ChatSharedResource": {
         "description": "One resource of this person that someone else can see, named, with who\ncan see it (§9.2: \"every resource of the user that someone else can see,\nnamed, with who can see it\") -- passed through from the chat's own\nerasure preview verbatim, not recomputed here.",
         "properties": {
@@ -2271,6 +2330,308 @@
           "audience"
         ],
         "title": "ChatSharedResource",
+        "type": "object"
+      },
+      "ClassifierCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "model_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "topic": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ClassifierCreateRequest",
+        "type": "object"
+      },
+      "ClassifierListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ClassifierResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ChatModelOption"
+            },
+            "title": "Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "models"
+        ],
+        "title": "ClassifierListResponse",
+        "type": "object"
+      },
+      "ClassifierResponse": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Name"
+          },
+          "rules_using": {
+            "title": "Rules Using",
+            "type": "integer"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "why_not": {
+            "title": "Why Not",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "topic",
+          "model_id",
+          "model_name",
+          "provider_name",
+          "available",
+          "why_not",
+          "rules_using",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ClassifierResponse",
+        "type": "object"
+      },
+      "ClassifierUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "model_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          }
+        },
+        "title": "ClassifierUpdateRequest",
+        "type": "object"
+      },
+      "ConditionBody": {
+        "additionalProperties": false,
+        "description": "One condition: a key, values (any of them), and ``negate`` (\"is not\").",
+        "properties": {
+          "count": {
+            "default": 1,
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "negate": {
+            "default": false,
+            "title": "Negate",
+            "type": "boolean"
+          },
+          "values": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "ConditionBody",
+        "type": "object"
+      },
+      "ConditionView": {
+        "properties": {
+          "count": {
+            "default": 1,
+            "title": "Count",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "negate": {
+            "default": false,
+            "title": "Negate",
+            "type": "boolean"
+          },
+          "values": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "values",
+          "negate",
+          "count"
+        ],
+        "title": "ConditionView",
+        "type": "object"
+      },
+      "CustomEntity": {
+        "description": "An entity type the NER engine finds from a description (GLiNER) (ADR 0113, section 0c).\n\n``name`` is the entity label (UPPER_SNAKE) and ``label`` the natural-language\ndescription the model is given at inference (\"project code name\"). Only an\nengine that accepts labels (``custom_labels`` in the service's health) can use\none; a policy that names one with another engine is refused when saved.",
+        "properties": {
+          "label": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/EntityMode",
+            "default": "anonymise_restore"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "placeholder": {
+            "$ref": "#/components/schemas/PlaceholderStyle",
+            "default": "tagged"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          }
+        },
+        "required": [
+          "name",
+          "label"
+        ],
+        "title": "CustomEntity",
         "type": "object"
       },
       "CustomPattern": {
@@ -2624,6 +2985,743 @@
         "title": "DiscoveredModel",
         "type": "object"
       },
+      "DryRunHop": {
+        "properties": {
+          "added": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "reader": {
+            "title": "Reader",
+            "type": "string"
+          },
+          "reader_name": {
+            "title": "Reader Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reader",
+          "reader_name",
+          "added"
+        ],
+        "title": "DryRunHop",
+        "type": "object"
+      },
+      "DryRunItem": {
+        "description": "One item a \"finds\" condition counted: which policy, which group, how sure.",
+        "properties": {
+          "engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "policy": {
+            "title": "Policy",
+            "type": "string"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy",
+          "group",
+          "type",
+          "engine",
+          "score",
+          "text"
+        ],
+        "title": "DryRunItem",
+        "type": "object"
+      },
+      "DryRunLevel": {
+        "properties": {
+          "asked_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Asked By",
+            "type": "array"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "winning": {
+            "title": "Winning",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "level",
+          "label",
+          "asked_by",
+          "winning"
+        ],
+        "title": "DryRunLevel",
+        "type": "object"
+      },
+      "DryRunPipeline": {
+        "properties": {
+          "action_text": {
+            "title": "Action Text",
+            "type": "string"
+          },
+          "fired_otherwise": {
+            "default": false,
+            "title": "Fired Otherwise",
+            "type": "boolean"
+          },
+          "fired_rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fired Rule"
+          },
+          "fired_rule_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fired Rule Id"
+          },
+          "hop": {
+            "title": "Hop",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "scope": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scope",
+            "type": "array"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/DryRunStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "summary": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Summary",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "owner",
+          "hop",
+          "scope",
+          "steps",
+          "fired_rule_id",
+          "fired_rule",
+          "fired_otherwise",
+          "level",
+          "action_text",
+          "summary"
+        ],
+        "title": "DryRunPipeline",
+        "type": "object"
+      },
+      "DryRunPolicyType": {
+        "properties": {
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "found": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Found"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "per_policy": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Per Policy",
+            "type": "array"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_type",
+          "mode",
+          "source",
+          "per_policy",
+          "found"
+        ],
+        "title": "DryRunPolicyType",
+        "type": "object"
+      },
+      "DryRunRequest": {
+        "additionalProperties": false,
+        "description": "Facts to judge, or a file or text to derive them from. Nothing is stored or logged.",
+        "properties": {
+          "file_base64": {
+            "anyOf": [
+              {
+                "maxLength": 34000000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Base64"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "is_scan": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Scan"
+          },
+          "kind": {
+            "enum": [
+              "read",
+              "embed",
+              "chat"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "provider_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Id"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "maxLength": 200000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "DryRunRequest",
+        "type": "object"
+      },
+      "DryRunResponse": {
+        "properties": {
+          "blocked_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked By"
+          },
+          "degraded": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Degraded",
+            "type": "array"
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "engine_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine By"
+          },
+          "estimate_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate Ms"
+          },
+          "extractor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extractor"
+          },
+          "facts": {
+            "additionalProperties": true,
+            "title": "Facts",
+            "type": "object"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          },
+          "hops": {
+            "items": {
+              "$ref": "#/components/schemas/DryRunHop"
+            },
+            "title": "Hops",
+            "type": "array"
+          },
+          "impossible": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impossible"
+          },
+          "kind": {
+            "enum": [
+              "read",
+              "embed",
+              "chat"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "ladder": {
+            "items": {
+              "$ref": "#/components/schemas/DryRunLevel"
+            },
+            "title": "Ladder",
+            "type": "array"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "needs": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "outcome_headline": {
+            "title": "Outcome Headline",
+            "type": "string"
+          },
+          "outcome_text": {
+            "title": "Outcome Text",
+            "type": "string"
+          },
+          "pipelines": {
+            "items": {
+              "$ref": "#/components/schemas/DryRunPipeline"
+            },
+            "title": "Pipelines",
+            "type": "array"
+          },
+          "policies": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Policies",
+            "type": "array"
+          },
+          "policy_types": {
+            "items": {
+              "$ref": "#/components/schemas/DryRunPolicyType"
+            },
+            "title": "Policy Types",
+            "type": "array"
+          },
+          "reader": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reader"
+          },
+          "reader_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reader By"
+          },
+          "reader_overridden": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reader Overridden",
+            "type": "array"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/DryRunSkipped"
+            },
+            "title": "Skipped",
+            "type": "array"
+          },
+          "verdicts": {
+            "additionalProperties": true,
+            "title": "Verdicts",
+            "type": "object"
+          },
+          "winner_owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Winner Owner"
+          },
+          "winner_pipeline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Winner Pipeline"
+          },
+          "winner_rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Winner Rule"
+          }
+        },
+        "required": [
+          "kind",
+          "outcome",
+          "outcome_headline",
+          "outcome_text",
+          "level",
+          "ladder",
+          "pipelines",
+          "skipped",
+          "hops",
+          "winner_rule",
+          "winner_pipeline",
+          "winner_owner",
+          "reader",
+          "reader_by",
+          "reader_overridden",
+          "engine",
+          "engine_by",
+          "impossible",
+          "policies",
+          "policy_types",
+          "blocked_by",
+          "facts",
+          "verdicts",
+          "degraded",
+          "needs",
+          "extractor",
+          "fallback_reason",
+          "estimate_ms"
+        ],
+        "title": "DryRunResponse",
+        "type": "object"
+      },
+      "DryRunSkipped": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "why": {
+            "title": "Why",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "owner",
+          "why"
+        ],
+        "title": "DryRunSkipped",
+        "type": "object"
+      },
+      "DryRunStep": {
+        "properties": {
+          "degraded": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Degraded",
+            "type": "array"
+          },
+          "is_otherwise": {
+            "default": false,
+            "title": "Is Otherwise",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DryRunItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "result": {
+            "title": "Result",
+            "type": "string"
+          },
+          "rule_id": {
+            "format": "uuid",
+            "title": "Rule Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id",
+          "name",
+          "position",
+          "result",
+          "reasons",
+          "degraded",
+          "items",
+          "note",
+          "is_otherwise"
+        ],
+        "title": "DryRunStep",
+        "type": "object"
+      },
       "EmailSettingsResponse": {
         "properties": {
           "enabled": {
@@ -2730,10 +3828,45 @@
         "title": "EmbeddingRequest",
         "type": "object"
       },
+      "EnginesResponse": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "engines": {
+            "items": {
+              "$ref": "#/components/schemas/NerEngineView"
+            },
+            "title": "Engines",
+            "type": "array"
+          },
+          "pattern_entities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pattern Entities",
+            "type": "array"
+          },
+          "reachable": {
+            "title": "Reachable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reachable",
+          "detail",
+          "pattern_entities",
+          "engines"
+        ],
+        "title": "EnginesResponse",
+        "type": "object"
+      },
       "EntityMode": {
         "description": "What happens to one kind of detected entity.\n\nTwo independent questions, and collapsing them into one switch is what makes\na redaction screen confusing: *what does the model see*, and *what does the\nreader get back*. Four combinations are useful and the fifth\n(opaque upstream, real value back) is not — an opaque label cannot be mapped\nto anything, which is the whole point of choosing it.\n\nOrdered weakest to strongest, which is also the order the console lists them\nand the order ``weakens`` compares by.",
         "enum": [
           "off",
+          "detect_only",
           "anonymise_restore",
           "anonymise",
           "redact",
@@ -2768,6 +3901,58 @@
           }
         },
         "title": "EntityPolicy",
+        "type": "object"
+      },
+      "FoundItem": {
+        "properties": {
+          "engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group",
+          "type",
+          "engine",
+          "score",
+          "mode",
+          "text"
+        ],
+        "title": "FoundItem",
         "type": "object"
       },
       "GroupAdminResponse": {
@@ -3624,6 +4809,88 @@
           "email_error"
         ],
         "title": "InvitedUserResponse",
+        "type": "object"
+      },
+      "IssueView": {
+        "description": "A save-time warning. Never blocks saving.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "rule_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Id"
+          },
+          "rule_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Name"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "rule_id",
+          "rule_name"
+        ],
+        "title": "IssueView",
+        "type": "object"
+      },
+      "KeywordList": {
+        "description": "A comma-separated list of words and phrases, found as whole words (ADR 0113, section 0c).\n\nOne more pattern type, beside the built-in formats and the regular expressions\nan operator writes: fast, deterministic, evaluated in the gateway. ``name``\nbecomes the entity label exactly as a :class:`CustomPattern`'s does, so a hit is\nsubstituted, counted and logged by the machinery every other type uses.\n\nMatching is by whole words, on letters and digits; spacing and punctuation\nbetween the words of a phrase do not matter. Unless ``case_sensitive``, case is\nignored **and accents are folded** (\"Perche\" finds \"perché\"). It is linear in\nthe text (``gateway.redaction.keywords``): no regular expression is ever built\nfrom what an administrator typed.",
+        "properties": {
+          "case_sensitive": {
+            "default": false,
+            "title": "Case Sensitive",
+            "type": "boolean"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/EntityMode",
+            "default": "redact"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "placeholder": {
+            "$ref": "#/components/schemas/PlaceholderStyle",
+            "default": "tagged"
+          },
+          "words": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Words",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "words"
+        ],
+        "title": "KeywordList",
         "type": "object"
       },
       "LimitRuleCreateRequest": {
@@ -5005,6 +6272,90 @@
         "title": "ModelList",
         "type": "object"
       },
+      "ModelOption": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "provider_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Id"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "provider_id",
+          "provider",
+          "kind"
+        ],
+        "title": "ModelOption",
+        "type": "object"
+      },
+      "ModelSummary": {
+        "description": "What the pipelines in scope for one model do, in short words.",
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "pipelines": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pipelines",
+            "type": "array"
+          },
+          "summary": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Summary",
+            "type": "array"
+          }
+        },
+        "required": [
+          "model",
+          "kind",
+          "summary",
+          "pipelines"
+        ],
+        "title": "ModelSummary",
+        "type": "object"
+      },
       "ModelUpdateRequest": {
         "description": "Every field optional; only what is sent is changed.\n\n``name`` is absent on purpose. Clients send it as ``model`` and usage rows\ndenormalise it, so renaming is a migration, not an edit.",
         "properties": {
@@ -5268,35 +6619,87 @@
         "title": "MyNotificationThresholdsRequest",
         "type": "object"
       },
-      "MyRedactionInForce": {
+      "NamedId": {
         "properties": {
-          "engine": {
-            "title": "Engine",
+          "id": {
+            "format": "uuid",
+            "title": "Id",
             "type": "string"
           },
-          "engine_active": {
-            "title": "Engine Active",
-            "type": "boolean"
-          },
-          "max_user_rules": {
-            "title": "Max User Rules",
-            "type": "integer"
-          },
-          "rules": {
-            "items": {
-              "$ref": "#/components/schemas/AdminRuleView"
-            },
-            "title": "Rules",
-            "type": "array"
+          "name": {
+            "title": "Name",
+            "type": "string"
           }
         },
         "required": [
-          "engine",
-          "engine_active",
-          "rules",
-          "max_user_rules"
+          "id",
+          "name"
         ],
-        "title": "MyRedactionInForce",
+        "title": "NamedId",
+        "type": "object"
+      },
+      "NerEngineView": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "custom_labels": {
+            "title": "Custom Labels",
+            "type": "boolean"
+          },
+          "default": {
+            "title": "Default",
+            "type": "boolean"
+          },
+          "entities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Entities",
+            "type": "array"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "array"
+          },
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Languages",
+            "type": "array"
+          },
+          "ms_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ms Per Token"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "available",
+          "default",
+          "entities",
+          "custom_labels",
+          "labels",
+          "ms_per_token",
+          "languages"
+        ],
+        "title": "NerEngineView",
         "type": "object"
       },
       "OcrDocument": {
@@ -5824,6 +7227,109 @@
         "title": "OidcPolicyUpdateRequest",
         "type": "object"
       },
+      "OptionsResponse": {
+        "properties": {
+          "classifiers": {
+            "items": {
+              "$ref": "#/components/schemas/NamedId"
+            },
+            "title": "Classifiers",
+            "type": "array"
+          },
+          "engines": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Engines",
+            "type": "array"
+          },
+          "entity_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Types"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/NamedId"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/NamedId"
+            },
+            "title": "Keys",
+            "type": "array"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ModelOption"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "own_policies": {
+            "items": {
+              "$ref": "#/components/schemas/NamedId"
+            },
+            "title": "Own Policies",
+            "type": "array"
+          },
+          "policies": {
+            "items": {
+              "$ref": "#/components/schemas/NamedId"
+            },
+            "title": "Policies",
+            "type": "array"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/NamedId"
+            },
+            "title": "Providers",
+            "type": "array"
+          },
+          "readers": {
+            "items": {
+              "$ref": "#/components/schemas/ReaderOption"
+            },
+            "title": "Readers",
+            "type": "array"
+          },
+          "users": {
+            "items": {
+              "$ref": "#/components/schemas/NamedId"
+            },
+            "title": "Users",
+            "type": "array"
+          }
+        },
+        "required": [
+          "users",
+          "groups",
+          "keys",
+          "providers",
+          "models",
+          "readers",
+          "policies",
+          "own_policies",
+          "classifiers",
+          "entity_types",
+          "engines"
+        ],
+        "title": "OptionsResponse",
+        "type": "object"
+      },
       "PageImagesRequest": {
         "description": "Ask the local extractor for pictures of the PDF pages that have no text.",
         "properties": {
@@ -6149,6 +7655,74 @@
         "title": "Page[MyLimitResponse]",
         "type": "object"
       },
+      "Page_PipelineResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[PipelineResponse]",
+        "type": "object"
+      },
+      "Page_PolicyResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PolicyResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[PolicyResponse]",
+        "type": "object"
+      },
       "Page_PriceResponse_": {
         "properties": {
           "items": {
@@ -6285,40 +7859,6 @@
         "title": "Page[RedactionEventRow]",
         "type": "object"
       },
-      "Page_RedactionRuleResponse_": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RedactionRuleResponse"
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "limit": {
-            "minimum": 1.0,
-            "title": "Limit",
-            "type": "integer"
-          },
-          "offset": {
-            "minimum": 0.0,
-            "title": "Offset",
-            "type": "integer"
-          },
-          "total": {
-            "minimum": 0.0,
-            "title": "Total",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "limit",
-          "offset"
-        ],
-        "title": "Page[RedactionRuleResponse]",
-        "type": "object"
-      },
       "Page_RequestLogRow_": {
         "properties": {
           "items": {
@@ -6421,6 +7961,40 @@
         "title": "Page[UserAdminResponse]",
         "type": "object"
       },
+      "Page_UserPolicyResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UserPolicyResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[UserPolicyResponse]",
+        "type": "object"
+      },
       "Page_UserQuotaSummary_": {
         "properties": {
           "items": {
@@ -6453,40 +8027,6 @@
           "offset"
         ],
         "title": "Page[UserQuotaSummary]",
-        "type": "object"
-      },
-      "Page_UserRedactionRuleResponse_": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/UserRedactionRuleResponse"
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "limit": {
-            "minimum": 1.0,
-            "title": "Limit",
-            "type": "integer"
-          },
-          "offset": {
-            "minimum": 0.0,
-            "title": "Offset",
-            "type": "integer"
-          },
-          "total": {
-            "minimum": 0.0,
-            "title": "Total",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "limit",
-          "offset"
-        ],
-        "title": "Page[UserRedactionRuleResponse]",
         "type": "object"
       },
       "PasswordResetResponse": {
@@ -6559,6 +8099,366 @@
         "title": "PeriodResponse",
         "type": "object"
       },
+      "PipelineCheckRequest": {
+        "additionalProperties": false,
+        "description": "A draft, to be checked as it would be saved.",
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "read",
+              "embed",
+              "chat"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "default": "Draft",
+            "title": "Name",
+            "type": "string"
+          },
+          "otherwise": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionBody"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "position": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
+          },
+          "rules": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RuleBody"
+            },
+            "title": "Rules",
+            "type": "array"
+          },
+          "target": {
+            "$ref": "#/components/schemas/TargetBody",
+            "default": {
+              "mode": "all",
+              "models": [],
+              "providers": []
+            }
+          },
+          "who": {
+            "$ref": "#/components/schemas/WhoBody",
+            "default": {
+              "ids": [],
+              "mode": "all"
+            }
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "PipelineCheckRequest",
+        "type": "object"
+      },
+      "PipelineCheckResponse": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/IssueView"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "soft_cap": {
+            "title": "Soft Cap",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "error",
+          "issues",
+          "soft_cap"
+        ],
+        "title": "PipelineCheckResponse",
+        "type": "object"
+      },
+      "PipelineCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "read",
+              "embed",
+              "chat"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "otherwise": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionBody"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "position": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
+          },
+          "rules": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RuleBody"
+            },
+            "title": "Rules",
+            "type": "array"
+          },
+          "target": {
+            "$ref": "#/components/schemas/TargetBody",
+            "default": {
+              "mode": "all",
+              "models": [],
+              "providers": []
+            }
+          },
+          "who": {
+            "$ref": "#/components/schemas/WhoBody",
+            "default": {
+              "ids": [],
+              "mode": "all"
+            }
+          }
+        },
+        "required": [
+          "kind",
+          "name"
+        ],
+        "title": "PipelineCreateRequest",
+        "type": "object"
+      },
+      "PipelineResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "read",
+              "embed",
+              "chat"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "object"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "otherwise": {
+            "$ref": "#/components/schemas/RuleView"
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Id"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/RuleView"
+            },
+            "title": "Rules",
+            "type": "array"
+          },
+          "summary": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Summary",
+            "type": "array"
+          },
+          "target": {
+            "$ref": "#/components/schemas/TargetView"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "who": {
+            "$ref": "#/components/schemas/WhoView"
+          }
+        },
+        "required": [
+          "id",
+          "owner_id",
+          "kind",
+          "name",
+          "enabled",
+          "position",
+          "who",
+          "target",
+          "rules",
+          "otherwise",
+          "labels",
+          "summary",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PipelineResponse",
+        "type": "object"
+      },
+      "PipelineUpdateRequest": {
+        "additionalProperties": false,
+        "description": "Every field optional. The kind is fixed once saved.",
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "otherwise": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionBody"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rules": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RuleBody"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rules"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TargetBody"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "who": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WhoBody"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "PipelineUpdateRequest",
+        "type": "object"
+      },
       "PlaceholderStyle": {
         "description": "How a placeholder is written, for the modes that write a derived one.\n\nApplies to ``anonymise_restore`` and ``anonymise``; ``redact`` writes the\nbare label and has no token to shape.",
         "enum": [
@@ -6585,6 +8485,268 @@
           "label"
         ],
         "title": "PluginBaseURLOption",
+        "type": "object"
+      },
+      "PolicyCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/RedactionPolicy"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          },
+          "shared_with_users": {
+            "default": false,
+            "title": "Shared With Users",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "policy"
+        ],
+        "title": "PolicyCreateRequest",
+        "type": "object"
+      },
+      "PolicyResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "created_by_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Email"
+          },
+          "engine_available": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine Available"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/RedactionPolicy"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "shared_with_users": {
+            "title": "Shared With Users",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "used_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Used By",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "policy",
+          "is_active",
+          "shared_with_users",
+          "engine_available",
+          "reason",
+          "used_by",
+          "created_by",
+          "created_by_email",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PolicyResponse",
+        "type": "object"
+      },
+      "PolicyTryRequest": {
+        "additionalProperties": false,
+        "description": "A policy as it is being edited, and a text to run it over. Nothing is stored or logged.",
+        "properties": {
+          "policy": {
+            "$ref": "#/components/schemas/RedactionPolicy"
+          },
+          "text": {
+            "maxLength": 50000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy",
+          "text"
+        ],
+        "title": "PolicyTryRequest",
+        "type": "object"
+      },
+      "PolicyTryResponse": {
+        "properties": {
+          "blocked": {
+            "default": false,
+            "title": "Blocked",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FoundItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "redacted_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redacted Text"
+          },
+          "unavailable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable"
+          }
+        },
+        "required": [
+          "items",
+          "unavailable",
+          "redacted_text",
+          "blocked"
+        ],
+        "title": "PolicyTryResponse",
+        "type": "object"
+      },
+      "PolicyUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RedactionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "shared_with_users": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared With Users"
+          }
+        },
+        "title": "PolicyUpdateRequest",
         "type": "object"
       },
       "PreassignRequest": {
@@ -6934,6 +9096,30 @@
           "source"
         ],
         "title": "PriceResponse",
+        "type": "object"
+      },
+      "PrivacySummaryResponse": {
+        "properties": {
+          "chat": {
+            "items": {
+              "$ref": "#/components/schemas/ModelSummary"
+            },
+            "title": "Chat",
+            "type": "array"
+          },
+          "embedding": {
+            "items": {
+              "$ref": "#/components/schemas/ModelSummary"
+            },
+            "title": "Embedding",
+            "type": "array"
+          }
+        },
+        "required": [
+          "embedding",
+          "chat"
+        ],
+        "title": "PrivacySummaryResponse",
         "type": "object"
       },
       "ProviderCreateRequest": {
@@ -7829,6 +10015,29 @@
         "title": "QuotaWindowHealth",
         "type": "object"
       },
+      "ReaderOption": {
+        "properties": {
+          "builtin": {
+            "title": "Builtin",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "builtin"
+        ],
+        "title": "ReaderOption",
+        "type": "object"
+      },
       "RedactionActivity": {
         "description": "Evidence that it is working, not merely configured.\n\nThe count of entities actually removed is the only figure that distinguishes\na working redaction layer from one that is switched on and detecting nothing\n— a wrong language or too high a threshold both look like healthy silence.",
         "properties": {
@@ -8025,24 +10234,6 @@
         "title": "RedactionEngineRequest",
         "type": "object"
       },
-      "RedactionEntityView": {
-        "properties": {
-          "entity_type": {
-            "title": "Entity Type",
-            "type": "string"
-          },
-          "mode": {
-            "title": "Mode",
-            "type": "string"
-          }
-        },
-        "required": [
-          "entity_type",
-          "mode"
-        ],
-        "title": "RedactionEntityView",
-        "type": "object"
-      },
       "RedactionEventEntity": {
         "properties": {
           "count": {
@@ -8127,6 +10318,16 @@
             "title": "Request Id",
             "type": "string"
           },
+          "routing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutingInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "user_id": {
             "anyOf": [
               {
@@ -8160,7 +10361,8 @@
           "provider",
           "byok",
           "blocked",
-          "entities"
+          "entities",
+          "routing"
         ],
         "title": "RedactionEventRow",
         "type": "object"
@@ -8200,26 +10402,8 @@
         "title": "RedactionEventRule",
         "type": "object"
       },
-      "RedactionPatternView": {
-        "properties": {
-          "mode": {
-            "title": "Mode",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "mode"
-        ],
-        "title": "RedactionPatternView",
-        "type": "object"
-      },
       "RedactionPolicy": {
-        "description": "Per-entity redaction policy: the admin's answer to \"redact *what*\".\n\nBefore this existed, ``entity_types`` was ``None`` — \"everything the engine\nknows\" — and nobody had chosen it; it was the default of a field never\nfilled in. On a real request that meant *\"Riassumi le notizie del giorno da\nilpost.it\"* reaching the provider as ``<PERSON_…> le notizie del giorno da\n<URL_…>``: the verb read as a name, and the source the user asked for read as\nidentity. See ADR 0037.\n\n``default_mode`` is the answer for a type nobody has listed, and it defaults\nto *on* rather than off. That direction matters: a detector that gains a new\nnational-identifier recogniser next release should start protecting it\nwithout an admin noticing, and an entity type nobody has ruled on is exactly\nthe case to be conservative about.",
+        "description": "What to find in a text, and what to do about it (ADR 0037, 0113 section 0c).\n\nThe items come in two groups that are never mixed, here, in the API or in the\neditor:\n\n* **Patterns** (fast, deterministic): ``formats`` (the service's built-in\n  formats, checksummed where one exists), ``patterns`` (regular expressions an\n  operator wrote, evaluated here with RE2) and ``keywords`` (word lists,\n  evaluated here in linear time).\n* **Entities** (NER, probabilistic): ``entities``, the types of the policy's\n  ``engine``, each with a mode and a confidence threshold, and\n  ``custom_entities``, types a label-taking engine (GLiNER) finds from a\n  description.\n\nEvery item has a mode, ``detect_only`` among them: found and counted for a\ncondition, never hidden.\n\n``default_mode`` is the answer for a type nobody has listed, and it is **off**:\na policy is a statement about the types it lists and silent about the rest.\nAny other default would mean a rule about `IBAN_CODE` quietly deciding for\n`PERSON` too, and — folded across scopes by `max` — a narrow rule could raise\nthe floor for everything (ADR 0037, which this reverses on purpose).",
         "properties": {
           "allow_list": {
             "items": {
@@ -8228,9 +10412,32 @@
             "title": "Allow List",
             "type": "array"
           },
+          "custom_entities": {
+            "items": {
+              "$ref": "#/components/schemas/CustomEntity"
+            },
+            "maxItems": 30,
+            "title": "Custom Entities",
+            "type": "array"
+          },
           "default_mode": {
             "$ref": "#/components/schemas/EntityMode",
             "default": "off"
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "enum": [
+                  "spacy",
+                  "gliner"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
           },
           "entities": {
             "additionalProperties": {
@@ -8238,6 +10445,20 @@
             },
             "title": "Entities",
             "type": "object"
+          },
+          "formats": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EntityPolicy"
+            },
+            "title": "Formats",
+            "type": "object"
+          },
+          "keywords": {
+            "items": {
+              "$ref": "#/components/schemas/KeywordList"
+            },
+            "title": "Keywords",
+            "type": "array"
           },
           "patterns": {
             "items": {
@@ -8251,7 +10472,7 @@
         "type": "object"
       },
       "RedactionPreviewRequest": {
-        "description": "A sample to run the real redaction path over.\n\n``scope``/``scope_id`` preview *as* a subject, so an admin can see what a\ngroup's rule actually does before saving it. Omitted, the deployment policy\napplies.\n\n**This body is never logged.** It will contain real personal data within a\nweek of shipping — an admin pastes the prompt that came back wrong — and a\ntool for inspecting redaction that writes the unredacted sample to a log file\nhas defeated itself.",
+        "description": "A sample to run the real redaction path over, under one policy.\n\n``policy`` is a draft as the form stands; ``policy_id`` a saved one. Omitted,\nthe environment's policy applies.\n\n**This body is never logged.** It will contain real personal data within a\nweek of shipping — an admin pastes the prompt that came back wrong — and a\ntool for inspecting redaction that writes the unredacted sample to a log file\nhas defeated itself.",
         "properties": {
           "policy": {
             "anyOf": [
@@ -8263,26 +10484,7 @@
               }
             ]
           },
-          "scope": {
-            "anyOf": [
-              {
-                "enum": [
-                  "all",
-                  "provider",
-                  "model",
-                  "group",
-                  "user",
-                  "api_key"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scope"
-          },
-          "scope_id": {
+          "policy_id": {
             "anyOf": [
               {
                 "format": "uuid",
@@ -8292,7 +10494,7 @@
                 "type": "null"
               }
             ],
-            "title": "Scope Id"
+            "title": "Policy Id"
           },
           "text": {
             "maxLength": 20000,
@@ -8457,254 +10659,6 @@
           "allow_listed"
         ],
         "title": "RedactionPreviewSpan",
-        "type": "object"
-      },
-      "RedactionRuleCreateRequest": {
-        "description": "Attach a policy to one subject.\n\nNo reason is required, unlike the engine switch and unlike a deployment\npolicy change. A scoped rule can only ever tighten — ``RedactionPolicy.combine``\ntakes the strictest answer for every type — so there is no direction here\nthat a later review would ask about, and demanding a sentence per rule is how\na reason column fills up with \"x\" (ADR 0033's argument, applied one level\ndown).",
-        "properties": {
-          "is_active": {
-            "default": true,
-            "title": "Is Active",
-            "type": "boolean"
-          },
-          "name": {
-            "default": "",
-            "maxLength": 255,
-            "title": "Name",
-            "type": "string"
-          },
-          "policy": {
-            "$ref": "#/components/schemas/RedactionPolicy"
-          },
-          "reason": {
-            "default": "",
-            "maxLength": 500,
-            "title": "Reason",
-            "type": "string"
-          },
-          "scope": {
-            "enum": [
-              "all",
-              "provider",
-              "model",
-              "group",
-              "user",
-              "api_key"
-            ],
-            "title": "Scope",
-            "type": "string"
-          },
-          "scope_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scope Id"
-          }
-        },
-        "required": [
-          "scope",
-          "policy"
-        ],
-        "title": "RedactionRuleCreateRequest",
-        "type": "object"
-      },
-      "RedactionRuleResponse": {
-        "description": "One scoped rule, with enough about its subject to render a row.\n\n``subject_label`` is resolved server-side because the console would otherwise\nhave to hold five listings in memory to turn a ``scope_id`` into a word — and\nwould get it wrong for a subject it has no permission to list.",
-        "properties": {
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "created_by": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created By"
-          },
-          "created_by_email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created By Email"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "is_active": {
-            "title": "Is Active",
-            "type": "boolean"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "policy": {
-            "$ref": "#/components/schemas/RedactionPolicy"
-          },
-          "reason": {
-            "default": "",
-            "title": "Reason",
-            "type": "string"
-          },
-          "scope": {
-            "enum": [
-              "all",
-              "provider",
-              "model",
-              "group",
-              "user",
-              "api_key"
-            ],
-            "title": "Scope",
-            "type": "string"
-          },
-          "scope_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scope Id"
-          },
-          "subject_label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Subject Label"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "scope",
-          "scope_id",
-          "subject_label",
-          "policy",
-          "is_active",
-          "reason",
-          "created_by",
-          "created_by_email",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "RedactionRuleResponse",
-        "type": "object"
-      },
-      "RedactionRuleUpdateRequest": {
-        "description": "Everything about a rule may change, its subject included.\n\nThe subject was frozen once, on the argument that a rule *is* a decision\nabout one subject and re-pointing it would silently make two subjects'\nhistories read as one. That argument does not survive contact with the\nledger: ``usage_records`` stamps the scope and the rule id onto every\nrequest at request time, so the past explains itself no matter what the row\nsays now — and freezing had a real cost the argument ignored. ``scope_id``\nis not a foreign key, so a deleted group leaves its rule pointing at\nnothing: inert, labelled \"deleted subject\", and unrepairable — delete it and\nretype a whole policy, or live with a rule that matches nothing. Re-pointing\nis therefore accepted, validated exactly as creation is, and a subject that\nalready has a rule stays a 409: one rule per subject is the database's\npromise and this endpoint does not get to merge two policies quietly.",
-        "properties": {
-          "is_active": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Is Active"
-          },
-          "name": {
-            "anyOf": [
-              {
-                "maxLength": 255,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "policy": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RedactionPolicy"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "maxLength": 500,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          },
-          "scope": {
-            "anyOf": [
-              {
-                "enum": [
-                  "all",
-                  "provider",
-                  "model",
-                  "group",
-                  "user",
-                  "api_key"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scope"
-          },
-          "scope_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scope Id"
-          }
-        },
-        "title": "RedactionRuleUpdateRequest",
         "type": "object"
       },
       "RedactionServiceHealth": {
@@ -8999,135 +10953,32 @@
         "title": "RedactionStatusResponse",
         "type": "object"
       },
-      "RedactionTestRequest": {
+      "ReorderRequest": {
         "additionalProperties": false,
-        "description": "Text to try the rules on. Never logged.",
         "properties": {
-          "text": {
-            "maxLength": 20000,
-            "minLength": 1,
-            "title": "Text",
-            "type": "string"
-          }
-        },
-        "required": [
-          "text"
-        ],
-        "title": "RedactionTestRequest",
-        "type": "object"
-      },
-      "RedactionTestResponse": {
-        "properties": {
-          "blocked": {
-            "default": false,
-            "title": "Blocked",
-            "type": "boolean"
-          },
-          "engine_active": {
-            "title": "Engine Active",
-            "type": "boolean"
-          },
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+          "kind": {
+            "enum": [
+              "read",
+              "embed",
+              "chat"
             ],
-            "title": "Note"
+            "title": "Kind",
+            "type": "string"
           },
-          "spans": {
+          "order": {
             "items": {
-              "$ref": "#/components/schemas/RedactionTestSpan"
+              "format": "uuid",
+              "type": "string"
             },
-            "title": "Spans",
+            "title": "Order",
             "type": "array"
           }
         },
         "required": [
-          "engine_active",
-          "spans",
-          "blocked",
-          "note"
+          "kind",
+          "order"
         ],
-        "title": "RedactionTestResponse",
-        "type": "object"
-      },
-      "RedactionTestRule": {
-        "properties": {
-          "id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Id"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "owner": {
-            "enum": [
-              "admin",
-              "user"
-            ],
-            "title": "Owner",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "owner"
-        ],
-        "title": "RedactionTestRule",
-        "type": "object"
-      },
-      "RedactionTestSpan": {
-        "description": "One thing that would be hidden: where, what kind, and which rule decided.\n\nOffsets only. The text is the caller's own and is not echoed back.",
-        "properties": {
-          "end": {
-            "title": "End",
-            "type": "integer"
-          },
-          "entity_type": {
-            "title": "Entity Type",
-            "type": "string"
-          },
-          "mode": {
-            "title": "Mode",
-            "type": "string"
-          },
-          "rule": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RedactionTestRule"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "start": {
-            "title": "Start",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "entity_type",
-          "start",
-          "end",
-          "mode",
-          "rule"
-        ],
-        "title": "RedactionTestSpan",
+        "title": "ReorderRequest",
         "type": "object"
       },
       "RequestLogRow": {
@@ -9427,6 +11278,594 @@
           "input"
         ],
         "title": "ResponsesRequest",
+        "type": "object"
+      },
+      "RoutingFilenameMatch": {
+        "properties": {
+          "pattern_index": {
+            "title": "Pattern Index",
+            "type": "integer"
+          },
+          "rule_id": {
+            "format": "uuid",
+            "title": "Rule Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id",
+          "pattern_index"
+        ],
+        "title": "RoutingFilenameMatch",
+        "type": "object"
+      },
+      "RoutingHandled": {
+        "description": "What handled it: the reader, why it was not the one asked for, the rule.",
+        "properties": {
+          "engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "extractor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extractor"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          },
+          "policies": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Policies",
+            "type": "array"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          },
+          "reader": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reader"
+          },
+          "routing_rule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutingRule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "extractor",
+          "fallback_reason",
+          "reader",
+          "engine",
+          "profile",
+          "routing_rule",
+          "policies"
+        ],
+        "title": "RoutingHandled",
+        "type": "object"
+      },
+      "RoutingInfo": {
+        "description": "The ``routing`` block of a log entry and of the per-response summary.",
+        "properties": {
+          "degraded": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Degraded",
+            "type": "array"
+          },
+          "fallbacks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Fallbacks",
+            "type": "array"
+          },
+          "handled": {
+            "$ref": "#/components/schemas/RoutingHandled"
+          },
+          "kind": {
+            "enum": [
+              "read",
+              "embed",
+              "chat"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "observed": {
+            "$ref": "#/components/schemas/RoutingObserved"
+          },
+          "observed_rules": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingRule"
+            },
+            "title": "Observed Rules",
+            "type": "array"
+          },
+          "outcome": {
+            "default": "default",
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pipelines": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingPipelineRun"
+            },
+            "title": "Pipelines",
+            "type": "array"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "kind",
+          "observed",
+          "handled",
+          "outcome",
+          "reason",
+          "pipelines",
+          "observed_rules",
+          "degraded",
+          "fallbacks"
+        ],
+        "title": "RoutingInfo",
+        "type": "object"
+      },
+      "RoutingObserved": {
+        "description": "What Pystino saw in the request (ADR 0113). Labels and names, never content.",
+        "properties": {
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "filename_match": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutingFilenameMatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "filetype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filetype"
+          },
+          "is_scan": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Scan"
+          },
+          "mime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime"
+          },
+          "target": {
+            "$ref": "#/components/schemas/RoutingTarget"
+          },
+          "verdicts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutingVerdicts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "target",
+          "filename",
+          "filename_match",
+          "mime",
+          "filetype",
+          "is_scan",
+          "verdicts"
+        ],
+        "title": "RoutingObserved",
+        "type": "object"
+      },
+      "RoutingPipelineRun": {
+        "description": "One pipeline that was in scope, and the rule that fired in it.",
+        "properties": {
+          "hop": {
+            "default": 0,
+            "title": "Hop",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutingRule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "owner",
+          "hop",
+          "rule",
+          "level"
+        ],
+        "title": "RoutingPipelineRun",
+        "type": "object"
+      },
+      "RoutingRule": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner"
+          },
+          "pipeline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline"
+          },
+          "pipeline_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Id"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "pipeline_id",
+          "pipeline",
+          "owner"
+        ],
+        "title": "RoutingRule",
+        "type": "object"
+      },
+      "RoutingTarget": {
+        "properties": {
+          "alias": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alias"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          }
+        },
+        "required": [
+          "alias",
+          "model",
+          "provider"
+        ],
+        "title": "RoutingTarget",
+        "type": "object"
+      },
+      "RoutingVerdicts": {
+        "properties": {
+          "health": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health"
+          },
+          "ids": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ids"
+          },
+          "lang": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lang"
+          },
+          "method": {
+            "default": "patterns",
+            "title": "Method",
+            "type": "string"
+          }
+        },
+        "required": [
+          "health",
+          "ids",
+          "lang",
+          "method"
+        ],
+        "title": "RoutingVerdicts",
+        "type": "object"
+      },
+      "RuleBody": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ActionBody"
+          },
+          "conditions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ConditionBody"
+            },
+            "title": "Conditions",
+            "type": "array"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "observe_only": {
+            "default": false,
+            "title": "Observe Only",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "action"
+        ],
+        "title": "RuleBody",
+        "type": "object"
+      },
+      "RuleView": {
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ActionView"
+          },
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/ConditionView"
+            },
+            "title": "Conditions",
+            "type": "array"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/IssueView"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "observe_only": {
+            "title": "Observe Only",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "enabled",
+          "observe_only",
+          "conditions",
+          "action",
+          "issues",
+          "note"
+        ],
+        "title": "RuleView",
         "type": "object"
       },
       "SearchBackendDeleteResponse": {
@@ -9877,6 +12316,50 @@
         "title": "SetDefaultBillingGroupRequest",
         "type": "object"
       },
+      "SettingsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "user_entity_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Entity Types"
+          }
+        },
+        "title": "SettingsRequest",
+        "type": "object"
+      },
+      "SettingsResponse": {
+        "properties": {
+          "user_entity_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Entity Types"
+          }
+        },
+        "required": [
+          "user_entity_types"
+        ],
+        "title": "SettingsResponse",
+        "type": "object"
+      },
       "SignInCreateRequest": {
         "description": "``POST /admin/users/{id}/sign-in``: a bundled login for an existing\ngateway user who has none yet (§8.1's \"Create sign-in\" — the\nafter-a-switch and after-break-glass case).",
         "properties": {
@@ -10028,6 +12511,77 @@
           "last_at"
         ],
         "title": "TagUsageRow",
+        "type": "object"
+      },
+      "TargetBody": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "default": "all",
+            "enum": [
+              "all",
+              "only",
+              "except"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "models": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "providers": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "title": "TargetBody",
+        "type": "object"
+      },
+      "TargetView": {
+        "properties": {
+          "mode": {
+            "enum": [
+              "all",
+              "only",
+              "except"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "models": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "providers": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "mode",
+          "providers",
+          "models"
+        ],
+        "title": "TargetView",
         "type": "object"
       },
       "UsageReport": {
@@ -10600,6 +13154,159 @@
         "title": "UserCreateRequest",
         "type": "object"
       },
+      "UserEntryBody": {
+        "additionalProperties": false,
+        "description": "One entry of a user's own policy: a custom pattern, or a stricter mode for a type.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "pattern",
+              "mode"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "regex": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regex"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "mode"
+        ],
+        "title": "UserEntryBody",
+        "type": "object"
+      },
+      "UserEntryView": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "pattern",
+              "mode"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "regex": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regex"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "regex",
+          "mode"
+        ],
+        "title": "UserEntryView",
+        "type": "object"
+      },
+      "UserPolicyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/UserEntryBody"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "UserPolicyRequest",
+        "type": "object"
+      },
+      "UserPolicyResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/UserEntryView"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "used_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Used By",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "entries",
+          "used_by",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "UserPolicyResponse",
+        "type": "object"
+      },
       "UserQuotaEntry": {
         "description": "One rule as it applies to one user (``GET /quota-usage/{user_id}``).",
         "properties": {
@@ -10892,133 +13599,6 @@
         "title": "UserQuotaUsage",
         "type": "object"
       },
-      "UserRedactionRuleRequest": {
-        "additionalProperties": false,
-        "description": "A user's own rule: a pattern, or a stricter mode for one entity type.\n\n**There is no ``off``, no threshold, no allow-list and no placeholder style\nhere, and extra fields are refused**, so a rule that would loosen what the\nadministrators set cannot be expressed, let alone saved. A rule that is\nmerely not stricter than theirs is accepted and inert; the response says so.",
-        "properties": {
-          "kind": {
-            "enum": [
-              "pattern",
-              "mode"
-            ],
-            "title": "Kind",
-            "type": "string"
-          },
-          "mode": {
-            "default": "redact",
-            "enum": [
-              "anonymise_restore",
-              "anonymise",
-              "redact",
-              "block"
-            ],
-            "title": "Mode",
-            "type": "string"
-          },
-          "name": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          },
-          "regex": {
-            "anyOf": [
-              {
-                "maxLength": 512,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Regex"
-          }
-        },
-        "required": [
-          "kind",
-          "name"
-        ],
-        "title": "UserRedactionRuleRequest",
-        "type": "object"
-      },
-      "UserRedactionRuleResponse": {
-        "properties": {
-          "admin_mode": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Admin Mode"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "kind": {
-            "enum": [
-              "pattern",
-              "mode"
-            ],
-            "title": "Kind",
-            "type": "string"
-          },
-          "mode": {
-            "title": "Mode",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "regex": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Regex"
-          },
-          "status": {
-            "enum": [
-              "adds_protection",
-              "covered"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "name",
-          "regex",
-          "mode",
-          "status",
-          "admin_mode",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "UserRedactionRuleResponse",
-        "type": "object"
-      },
       "UserStatusCounts": {
         "description": "The Users page's filter-chip counts (ADR 0095 §7).",
         "properties": {
@@ -11155,6 +13735,61 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "WhoBody": {
+        "additionalProperties": false,
+        "properties": {
+          "ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Ids",
+            "type": "array"
+          },
+          "mode": {
+            "default": "all",
+            "enum": [
+              "all",
+              "users",
+              "groups",
+              "keys"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "title": "WhoBody",
+        "type": "object"
+      },
+      "WhoView": {
+        "properties": {
+          "ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Ids",
+            "type": "array"
+          },
+          "mode": {
+            "enum": [
+              "all",
+              "users",
+              "groups",
+              "keys"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "ids"
+        ],
+        "title": "WhoView",
         "type": "object"
       }
     }
@@ -14437,6 +17072,816 @@
         ]
       }
     },
+    "/api/admin/privacy/classifiers": {
+      "get": {
+        "description": "The decision models: a model and a topic in plain words. Scaffolding, no model bundled.",
+        "operationId": "list_classifiers_api_admin_privacy_classifiers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifierListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Classifiers",
+        "tags": [
+          "administration"
+        ]
+      },
+      "post": {
+        "operationId": "create_classifier_api_admin_privacy_classifiers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClassifierCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifierResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Classifier",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/classifiers/{classifier_id}": {
+      "delete": {
+        "operationId": "delete_classifier_api_admin_privacy_classifiers__classifier_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "classifier_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Classifier Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Classifier",
+        "tags": [
+          "administration"
+        ]
+      },
+      "patch": {
+        "operationId": "update_classifier_api_admin_privacy_classifiers__classifier_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "classifier_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Classifier Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClassifierUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifierResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Classifier",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/engines": {
+      "get": {
+        "description": "What the redaction service offers: pattern formats and the NER engines (spaCy, GLiNER).",
+        "operationId": "engines_api_admin_privacy_engines_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnginesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Engines",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/options": {
+      "get": {
+        "description": "What the editors may pick: scope subjects, targets, readers, policies, classifiers.",
+        "operationId": "options_api_admin_privacy_options_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OptionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Options",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/pipelines": {
+      "get": {
+        "description": "Every administrator pipeline, by kind and in order, each with its warnings.",
+        "operationId": "list_pipelines_api_admin_privacy_pipelines_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PipelineResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Pipelines",
+        "tags": [
+          "administration"
+        ]
+      },
+      "post": {
+        "operationId": "create_pipeline_api_admin_privacy_pipelines_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Pipeline",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/pipelines/check": {
+      "post": {
+        "description": "The warnings a draft would get if saved now, for the editor to show as it is written.",
+        "operationId": "check_pipeline_api_admin_privacy_pipelines_check_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineCheckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineCheckResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Pipeline",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/pipelines/reorder": {
+      "post": {
+        "description": "Put a kind's administrator pipelines in a new order. Must name every one once.",
+        "operationId": "reorder_pipelines_api_admin_privacy_pipelines_reorder_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PipelineResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reorder Pipelines",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/pipelines/{pipeline_id}": {
+      "delete": {
+        "operationId": "delete_pipeline_api_admin_privacy_pipelines__pipeline_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Pipeline",
+        "tags": [
+          "administration"
+        ]
+      },
+      "get": {
+        "operationId": "get_pipeline_api_admin_privacy_pipelines__pipeline_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Pipeline",
+        "tags": [
+          "administration"
+        ]
+      },
+      "patch": {
+        "operationId": "update_pipeline_api_admin_privacy_pipelines__pipeline_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Pipeline",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/policies": {
+      "get": {
+        "operationId": "list_policies_api_admin_privacy_policies_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PolicyResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Policies",
+        "tags": [
+          "administration"
+        ]
+      },
+      "post": {
+        "operationId": "create_policy_api_admin_privacy_policies_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Policy",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/policies/try": {
+      "post": {
+        "description": "Run a policy as it is being edited over a text: the real detection, no side effects.\n\nThe same code a \"finds at least\" condition and the Test tab run\n(``gateway.privacy.finds.find_in``), with every item mode but ``off`` counted,\nand what the redaction would do to the text. Nothing is stored or logged; the\ntext came from the box and is shown back only to the administrator who typed\nit. Rate limited with the test box.",
+        "operationId": "try_policy_api_admin_privacy_policies_try_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyTryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyTryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Try Policy",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/policies/{policy_id}": {
+      "delete": {
+        "description": "Remove a policy that no pipeline applies or counts items of.\n\nRefused while one does: a pipeline that names nothing would silently stop\nhiding what it was written to hide. Nothing in the ledger points at a policy\n(``usage_records.redaction_rule_id`` is a stamp, not a foreign key), so\ndeleting one cannot erase the record of what it did.",
+        "operationId": "delete_policy_api_admin_privacy_policies__policy_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Policy",
+        "tags": [
+          "administration"
+        ]
+      },
+      "patch": {
+        "operationId": "update_policy_api_admin_privacy_policies__policy_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Policy",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/settings": {
+      "get": {
+        "operationId": "get_settings_api_admin_privacy_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Settings",
+        "tags": [
+          "administration"
+        ]
+      },
+      "put": {
+        "description": "The entity types users' own policies may name (null: any the detector offers).",
+        "operationId": "put_settings_api_admin_privacy_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Settings",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/status": {
+      "get": {
+        "description": "Whether this worker has loaded the pipelines, and any row it had to skip.",
+        "operationId": "privacy_status_api_admin_privacy_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Privacy Status Api Admin Privacy Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Privacy Status",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/test": {
+      "post": {
+        "description": "Which pipelines are in scope, what each does, and the combined outcome.\n\nReads the state as saved. The text and the file are judged in memory and never\nstored or logged; the answer carries labels and names, not content. Rate limited.",
+        "operationId": "test_pipelines_api_admin_privacy_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DryRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Pipelines",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
     "/api/admin/provider-catalogue": {
       "get": {
         "description": "The provider catalogue as read at startup, each field with its origin.\n\nRead-only by design: the catalogue is files, edited where they live, and\napplied on restart. Not paginated: a few dozen entries, never a listing that\ngrows with use.",
@@ -15105,236 +18550,6 @@
           }
         },
         "summary": "Preview Redaction",
-        "tags": [
-          "administration"
-        ]
-      }
-    },
-    "/api/admin/redaction/rules": {
-      "get": {
-        "description": "Every scoped rule, with the name of the thing each one attaches to.\n\nPaginated in the database, unlike the quota listing: there are no live\ncounters to read first, so there is nothing to gain by loading them all.",
-        "operationId": "list_redaction_rules_api_admin_redaction_rules_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "scope",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "enum": [
-                    "all",
-                    "provider",
-                    "model",
-                    "group",
-                    "user",
-                    "api_key"
-                  ],
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Scope"
-            }
-          },
-          {
-            "in": "query",
-            "name": "is_active",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "boolean"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Is Active"
-            }
-          },
-          {
-            "description": "Rows to return, at most 200.",
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 50,
-              "description": "Rows to return, at most 200.",
-              "maximum": 200,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "description": "Rows to skip.",
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "default": 0,
-              "description": "Rows to skip.",
-              "minimum": 0,
-              "title": "Offset",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Page_RedactionRuleResponse_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Redaction Rules",
-        "tags": [
-          "administration"
-        ]
-      },
-      "post": {
-        "description": "Attach a policy to one provider, model, group, user or key.\n\nTwo refusals, and neither is about safety — the fold already guarantees that\na scope cannot weaken anything. Both are about a rule that would look right\nand do nothing:\n\n* **a subject that does not exist**, which produces a rule matching no\n  request, indistinguishable on screen from one that matches every request;\n* **a second rule for a subject that already has one**, which the unique\n  index refuses anyway. Caught here so the operator is told to edit the\n  existing rule rather than reading a database constraint's name.",
-        "operationId": "create_redaction_rule_api_admin_redaction_rules_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RedactionRuleCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RedactionRuleResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Create Redaction Rule",
-        "tags": [
-          "administration"
-        ]
-      }
-    },
-    "/api/admin/redaction/rules/{rule_id}": {
-      "delete": {
-        "description": "Remove a rule outright.\n\nSafe to delete, unlike a model or a key: nothing in the ledger points *at* a\nrule. ``usage_records.redaction_rule_id`` is a stamp copied onto each\nrequest, not a foreign key, which is exactly so that deleting a rule cannot\nerase the record of what it did.",
-        "operationId": "delete_redaction_rule_api_admin_redaction_rules__rule_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "rule_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Rule Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Delete Redaction Rule",
-        "tags": [
-          "administration"
-        ]
-      },
-      "patch": {
-        "description": "Change a rule's policy, name, reason, active flag — or its subject.\n\nA subject change runs the same checks creation does, plus one: the subject\nmust be free, with this rule itself excluded from that search. It used to be\nrefused outright, on the argument that re-pointing makes two subjects'\nhistories read as one — but those histories live in ``usage_records``, which\nstamps the scope and rule id onto every request at request time and so does\nnot change when the row does, while the freeze left a rule whose subject had\nbeen deleted permanently unrepairable. See ``RedactionRuleUpdateRequest``.",
-        "operationId": "update_redaction_rule_api_admin_redaction_rules__rule_id__patch",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "rule_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Rule Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RedactionRuleUpdateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RedactionRuleResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Update Redaction Rule",
         "tags": [
           "administration"
         ]
@@ -17752,6 +20967,468 @@
         ]
       }
     },
+    "/api/me/privacy/in-force": {
+      "get": {
+        "description": "The administrators' pipelines that cover this user, read-only.\n\nEvery pipeline whose who names everyone, this user, their billing group or\none of their keys; where a request goes (its target) is shown, not judged\nhere. Rule names and what each does are shown; another user's pipelines\nnever are, and a policy is shown by name.",
+        "operationId": "in_force_api_me_privacy_in_force_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PipelineResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "In Force",
+        "tags": [
+          "self-service"
+        ]
+      }
+    },
+    "/api/me/privacy/options": {
+      "get": {
+        "description": "What this user may pick: their readers, policies, targets and types.",
+        "operationId": "options_api_me_privacy_options_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OptionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Options",
+        "tags": [
+          "self-service"
+        ]
+      }
+    },
+    "/api/me/privacy/pipelines": {
+      "get": {
+        "operationId": "list_my_pipelines_api_me_privacy_pipelines_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PipelineResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List My Pipelines",
+        "tags": [
+          "self-service"
+        ]
+      },
+      "post": {
+        "operationId": "create_my_pipeline_api_me_privacy_pipelines_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create My Pipeline",
+        "tags": [
+          "self-service"
+        ]
+      }
+    },
+    "/api/me/privacy/pipelines/check": {
+      "post": {
+        "operationId": "check_my_pipeline_api_me_privacy_pipelines_check_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineCheckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineCheckResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check My Pipeline",
+        "tags": [
+          "self-service"
+        ]
+      }
+    },
+    "/api/me/privacy/pipelines/{pipeline_id}": {
+      "delete": {
+        "operationId": "delete_my_pipeline_api_me_privacy_pipelines__pipeline_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete My Pipeline",
+        "tags": [
+          "self-service"
+        ]
+      },
+      "get": {
+        "operationId": "get_my_pipeline_api_me_privacy_pipelines__pipeline_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get My Pipeline",
+        "tags": [
+          "self-service"
+        ]
+      },
+      "patch": {
+        "operationId": "update_my_pipeline_api_me_privacy_pipelines__pipeline_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update My Pipeline",
+        "tags": [
+          "self-service"
+        ]
+      }
+    },
+    "/api/me/privacy/policies": {
+      "get": {
+        "operationId": "list_my_policies_api_me_privacy_policies_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_UserPolicyResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List My Policies",
+        "tags": [
+          "self-service"
+        ]
+      },
+      "post": {
+        "operationId": "create_my_policy_api_me_privacy_policies_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPolicyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create My Policy",
+        "tags": [
+          "self-service"
+        ]
+      }
+    },
+    "/api/me/privacy/policies/{policy_id}": {
+      "delete": {
+        "operationId": "delete_my_policy_api_me_privacy_policies__policy_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete My Policy",
+        "tags": [
+          "self-service"
+        ]
+      },
+      "put": {
+        "operationId": "update_my_policy_api_me_privacy_policies__policy_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPolicyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update My Policy",
+        "tags": [
+          "self-service"
+        ]
+      }
+    },
+    "/api/me/privacy/test": {
+      "post": {
+        "description": "The pipelines in scope for *this user* and the combined outcome. Never logged.\n\nThe caller is always the user: ``user_id`` in the body is ignored. Nothing here\nis stored, and the text and file are judged in memory.",
+        "operationId": "test_my_pipelines_api_me_privacy_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DryRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test My Pipelines",
+        "tags": [
+          "self-service"
+        ]
+      }
+    },
     "/api/me/provider-catalogue": {
       "get": {
         "description": "The provider catalogue as read at startup, each field with its origin.\n\nRead-only by design: the catalogue is files, edited where they live, and\napplied on restart. Not paginated: a few dozen entries, never a listing that\ngrows with use.",
@@ -18116,257 +21793,6 @@
           }
         },
         "summary": "My Redaction Events",
-        "tags": [
-          "self-service"
-        ]
-      }
-    },
-    "/api/me/redaction/in-force": {
-      "get": {
-        "description": "The administrators' rules that can apply to this user, read-only.\n\nThe rules that name everyone, this user, one of their groups or keys, and\nevery provider and model rule (those apply by where a request goes). Types\nand modes only: not the regexes of an administrator's patterns, nor the\nvalues on an allow-list.",
-        "operationId": "rules_in_force_api_me_redaction_in_force_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MyRedactionInForce"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Rules In Force",
-        "tags": [
-          "self-service"
-        ]
-      }
-    },
-    "/api/me/redaction/rules": {
-      "get": {
-        "description": "The caller's own rules. The user is the caller's; there is no way to name another.",
-        "operationId": "list_my_rules_api_me_redaction_rules_get",
-        "parameters": [
-          {
-            "description": "Rows to return, at most 200.",
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 50,
-              "description": "Rows to return, at most 200.",
-              "maximum": 200,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "description": "Rows to skip.",
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "default": 0,
-              "description": "Rows to skip.",
-              "minimum": 0,
-              "title": "Offset",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Page_UserRedactionRuleResponse_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List My Rules",
-        "tags": [
-          "self-service"
-        ]
-      },
-      "post": {
-        "operationId": "create_my_rule_api_me_redaction_rules_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UserRedactionRuleRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserRedactionRuleResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Create My Rule",
-        "tags": [
-          "self-service"
-        ]
-      }
-    },
-    "/api/me/redaction/rules/{rule_id}": {
-      "delete": {
-        "operationId": "delete_my_rule_api_me_redaction_rules__rule_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "rule_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Rule Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Delete My Rule",
-        "tags": [
-          "self-service"
-        ]
-      },
-      "put": {
-        "operationId": "update_my_rule_api_me_redaction_rules__rule_id__put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "rule_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Rule Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UserRedactionRuleRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserRedactionRuleResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Update My Rule",
-        "tags": [
-          "self-service"
-        ]
-      }
-    },
-    "/api/me/redaction/test": {
-      "post": {
-        "description": "What would be hidden in this text, by which rule. Offsets, never the text.\n\nRuns the real path (detection, then the same eligibility and overlap rules a\nrequest uses) under the policy this user's requests run under: the\nadministrators' rules for them and their default billing group, then their\nown. A blocked request is a 200 with ``blocked: true``. **Nothing here is\nlogged**: not the text, not the spans.",
-        "operationId": "test_my_rules_api_me_redaction_test_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RedactionTestRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RedactionTestResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Test My Rules",
         "tags": [
           "self-service"
         ]
@@ -20371,6 +23797,28 @@
         "summary": "Extract Document",
         "tags": [
           "openai"
+        ]
+      }
+    },
+    "/v1/pystino/privacy": {
+      "get": {
+        "description": "What the privacy pipelines do for this caller, per embedding and per chat model.\n\nADR 0113: a client such as Cerea shows it beside the embedder choice, so the\nchoice is informed up front (there is no after-the-fact \"switch and\nreindex\" prompt). Read-only, for the calling user, in short words (\"refuses\nhealth data\", \"redacts with Default\"): labels and names, never a pattern, an\nallow-list or another user's pipeline. Only the pipelines that cover this\ncaller and that model count; a pipeline scoped to an API key counts when the\ncall is made with that key. A worker that never loaded the pipelines answers 503.",
+        "operationId": "pystino_privacy_v1_pystino_privacy_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivacySummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Pystino Privacy",
+        "tags": [
+          "pystino"
         ]
       }
     },

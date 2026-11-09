@@ -750,7 +750,7 @@ def _extract(
 ) -> ExtractionResponse:
     """Text from one document, with why it is what it is.
 
-    ``engine`` picks the reader for this one call (`markitdown` or `docling`);
+    ``engine`` picks the reader for this one call (`markitdown`, `ocr` or `docling`);
     None, or a name that is not an engine, means the configured one
     (`EXTRACTOR_ENGINE`). The seam a per-request rule would use.
 
@@ -813,6 +813,17 @@ def _extract(
         return ExtractionResponse(kind=ExtractionKind.UNREADABLE, detail=problem)
 
     config = settings()
+
+    # `ocr` is a reader of its own for one request (a routing rule asks for it):
+    # the markitdown path with OCR switched on, whatever EXTRACTOR_OCR says. A
+    # build without the weights cannot honour it, and says so rather than
+    # quietly reading without OCR.
+    if isinstance(engine, str) and engine.strip().lower() == "ocr":
+        engine = Engine.MARKITDOWN
+        if ocr.available(config):
+            config = dataclasses.replace(config, ocr=True)
+        else:
+            _fallback.append("ocr unavailable")
 
     if resolved in _IMAGES:
         return _read_image_file(data, config)

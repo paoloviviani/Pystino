@@ -128,8 +128,16 @@ def build_summary(
     detail: Mapping[str, Any] | None,
     blocked: bool = False,
     values: list[dict[str, str]] | None = None,
+    routing: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The ``pystino_redaction`` object (the contract in ADR 0112)."""
+    """The ``pystino_redaction`` object (the contract in ADR 0112).
+
+    ``routing`` (ADR 0113) is the observation and attribution block. It is
+    present whenever the summary is sent for a request of a known kind (chat,
+    embedding, reading); the summary itself is sent only when the caller opted in
+    and redaction is in force or a routing rule is enabled, so a caller that never
+    asked sees the shape it always had.
+    """
     entities = list(detail["entities"]) if detail else []
     summary: dict[str, Any] = {
         "applied": bool(entities),
@@ -137,6 +145,10 @@ def build_summary(
         "blocked": blocked,
         "entities": entities,
     }
+    if routing is None and detail and "routing" in detail:
+        routing = detail["routing"]
+    if routing is not None:
+        summary["routing"] = dict(routing)
     if values is not None:
         summary["values"] = values
     return summary

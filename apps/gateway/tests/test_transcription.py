@@ -618,6 +618,38 @@ class TestRedactionSwitch:
         assert fake_upstream.bodies == []
         assert (await session.execute(select(UsageRecord))).first() is None
 
+    async def test_a_chat_refusal_scoped_to_the_caller_blocks_audio_too(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+        settings: Settings,
+    ) -> None:
+        """Audio has no text for a pipeline to judge, so a refusal that names the caller counts."""
+        from privacy_helpers import add_pipeline
+
+        model = await add_model(session, seeded)
+        settings.transcription.allowed_under_redaction = False
+
+        async def make() -> Any:
+            return app.state.session_factory
+
+        await add_pipeline(
+            app,
+            await make(),
+            "chat",
+            "Refuse me",
+            who={"mode": "users", "ids": [str(seeded.user.id)]},
+            otherwise={"level": "refuse"},
+        )
+        fake_upstream.set_json({"text": "never"})
+        response = await post_audio(client, seeded, model.name)
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "transcription_not_allowed_under_redaction"
+        assert fake_upstream.bodies == []
+
     async def test_the_switch_does_nothing_without_a_rule(
         self,
         client: httpx.AsyncClient,

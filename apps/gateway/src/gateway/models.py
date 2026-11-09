@@ -2733,66 +2733,35 @@ class RedactionConfig(Base):
         return f"<RedactionConfig engine={self.engine} at={self.created_at.isoformat()}>"
 
 
-class RedactionRule(Base):
-    """A redaction policy attached to one provider, model, group, user or key.
+class RedactionPolicyRecord(Base):
+    """A named redaction policy: what to hide, with no scope (ADR 0113, section 0).
 
-    See ADR 0038. The shape is
-    ``limit_rules`` deliberately — an operator already understands it and the
-    console already renders it — with three differences worth naming:
+    This is what ADR 0038's scoped redaction rule became. It keeps the whole
+    ``RedactionPolicy`` as JSON (patterns, entity types, a mode for each) and
+    loses the five scopes: *when* a policy applies is a pipeline's business
+    (``PrivacyPipeline``), so one policy can serve several pipelines and a
+    pipeline's scope is edited without touching what is hidden.
 
-    * it carries a whole ``RedactionPolicy`` as JSON rather than a boolean,
-      because since ADR 0037 "redact or not" is not a question anyone asks; the
-      question is per entity type;
-    * there is no time axis, so no metric, window or period;
-    * there is **no global scope**, because ``redaction_config`` is it.
+    Policies combine by ``RedactionPolicy.combine`` (ADR 0038): the strictest
+    mode wins per entity type, patterns are unioned, so adding a pipeline that
+    uses another policy can only tighten.
 
-    Rules are combined by ``RedactionPolicy.combine``, which takes the strictest
-    answer for every type. That is why nothing here needs a priority column, and
-    why a rule saved wrongly is inert rather than dangerous: a scope can only
-    tighten, by construction rather than by validation.
-
-    Mutable, unlike ``redaction_config``. The history a data-protection review
-    asks about is the history of *requests*, and ``usage_records`` stamps the
-    scope and the rule id onto every one — which answers it even after the rule
-    has been edited, and without a second table to keep in step.
+    Mutable. The history a data-protection review asks about is the history of
+    *requests*: ``usage_records`` stamps the policy id onto every one.
     """
 
-    __tablename__ = "redaction_rules"
-    __table_args__ = (
-        # Same COALESCE trick as limit_rules, for the same reason: scope_id is
-        # nullable nowhere here, but the partial-unique-on-active shape needs an
-        # expression index anyway, and matching the neighbouring table keeps one
-        # idiom rather than two.
-        # COALESCE for the same reason limit_rules does it: SQL treats NULLs as
-        # distinct, so a plain UNIQUE would happily accept two catch-all rules
-        # and then pick between them at request time.
-        Index(
-            "uq_redaction_rules_identity",
-            text("scope"),
-            text("coalesce(scope_id, '00000000-0000-0000-0000-000000000000')"),
-            unique=True,
-        ),
-        CheckConstraint(
-            "(scope = 'all' AND scope_id IS NULL) OR (scope <> 'all' AND scope_id IS NOT NULL)",
-            name="ck_redaction_rules_scope_id_presence",
-        ),
-        Index("ix_redaction_rules_lookup", "is_active", "scope", "scope_id"),
-    )
+    __tablename__ = "redaction_policies"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(String(255), default="")
-    scope: Mapped[RedactionScope] = mapped_column(_enum(RedactionScope, "redaction_scope"))
-    #: Not a foreign key: it points at one of five tables, exactly as
-    #: ``limit_rules.scope_id`` does. The scope says which — and it is null for
-    #: exactly one scope, ``all``, whose subject is every request.
-    scope_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
-    #: A whole ``RedactionPolicy``, in the shape ``redaction_config.policy``
-    #: uses, so one editor, one validator and one combiner serve both.
+    #: A whole ``RedactionPolicy``.
     policy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     is_active: Mapped[bool] = mapped_column(default=True)
-    #: Optional, unlike the engine switch's. Every scoped rule can only tighten,
-    #: so there is no direction here that needs explaining — and asking for a
-    #: sentence per checkbox is how a reason field fills up with "x".
+    #: Whether a user's own pipeline may name this policy (in "apply" or in a
+    #: "finds at least N items" condition). Off: only administrators' pipelines may.
+    shared_with_users: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     reason: Mapped[str] = mapped_column(String(500), default="")
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), default=None
@@ -2801,44 +2770,29 @@ class RedactionRule(Base):
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
     def __repr__(self) -> str:
-        return f"<RedactionRule {self.scope}:{self.scope_id} active={self.is_active}>"
+        return f"<RedactionPolicyRecord {self.name!r} active={self.is_active}>"
 
 
-class UserRedactionRule(Base):
-    """One of a user's own redaction rules (ADR 0112).
+class UserPolicy(Base):
+    """A user's own redaction policy (ADR 0113, section 0; it replaces ADR 0112's rules).
 
-    Two kinds, both of which can only tighten what the administrators' rules
-    already say (``redaction.user_rules.fold``): a **pattern** (a custom RE2
-    regex, validated exactly as an administrator's is) and a **mode** for one
-    entity type. A user rule cannot be ``off`` and carries no threshold or
-    exception, which is why there is no column for either.
-
-    One row per rule, unique per user and name within a kind. Not a
-    ``redaction_rules`` row: that table has one row per subject and carries a
-    whole policy an administrator edits, with fields (allow-list, thresholds)
-    that must never be a user's.
+    An ordered list of entries, each a custom pattern or a stricter mode for one
+    entity type, folded in after the administrators' answer by
+    ``redaction.user_rules.fold``: it can only tighten. No ``off``, no threshold,
+    no allow-list, no placeholder style: the entry has no such field, so there is
+    nothing to validate away. A user's pipeline names one to apply.
     """
 
-    __tablename__ = "user_redaction_rules"
-    __table_args__ = (
-        UniqueConstraint("user_id", "kind", "name", name="uq_user_redaction_rules_name"),
-        CheckConstraint(
-            "(kind = 'pattern' AND regex IS NOT NULL) OR (kind = 'mode' AND regex IS NULL)",
-            name="ck_user_redaction_rules_kind",
-        ),
-        CheckConstraint("mode <> 'off'", name="ck_user_redaction_rules_not_off"),
-    )
+    __tablename__ = "user_policies"
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_user_policies_name"),)
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    #: ``pattern`` or ``mode``.
-    kind: Mapped[str] = mapped_column(String(16))
-    #: A pattern's label, or the entity type a mode applies to (upper case).
-    name: Mapped[str] = mapped_column(String(64))
-    regex: Mapped[str | None] = mapped_column(String(512), default=None)
-    mode: Mapped[str] = mapped_column(String(32))
+    name: Mapped[str] = mapped_column(String(120))
+    #: ``[{"kind": "pattern"|"mode", "name": ..., "regex": ...|null, "mode": ...}]``.
+    rules: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
@@ -2892,3 +2846,82 @@ class QuotaReset(Base):
 
     def __repr__(self) -> str:
         return f"<QuotaReset rule={self.rule_id} at={self.effective_at.isoformat()}>"
+
+
+class PrivacyPipeline(Base):
+    """A pipeline: when and how a kind of request is handled (ADR 0113, section 0).
+
+    ``kind`` is read, embed or chat. ``who`` and ``target`` are the scope: a
+    request meets only the pipelines whose scope covers it. ``rules`` is the
+    ordered list of ``{id, name, enabled, observe_only, conditions, action}``,
+    first match wins inside the pipeline; ``otherwise`` is the fixed last rule's
+    action. Every pipeline in scope runs and the results combine
+    (``gateway.privacy.combine``).
+
+    ``owner_id`` null is an administrator's pipeline. A user's pipeline has its
+    owner as the only ``who`` and can only tighten (validated on save, and again
+    when read: a row that loosens is ignored). The rules are JSON, validated by
+    ``gateway.privacy.pipelines``, so a new condition needs no migration.
+    """
+
+    __tablename__ = "privacy_pipelines"
+    __table_args__ = (Index("ix_privacy_pipelines_kind", "kind", "position"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, default=None
+    )
+    kind: Mapped[str] = mapped_column(String(16))
+    name: Mapped[str] = mapped_column(String(120))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    #: ``{"mode": "all"|"users"|"groups"|"keys", "ids": [uuid, ...]}``.
+    who: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    #: ``{"mode": "all"|"only"|"except", "providers": [uuid, ...], "models": [uuid, ...]}``.
+    target: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    rules: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    otherwise: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class PrivacySettings(Base):
+    """What an administrator makes available to users' own pipelines (one row).
+
+    ``user_entity_types`` null means every type the detector offers; a list
+    limits the types a user's policy may name. A policy is offered to users'
+    pipelines by ``RedactionPolicyRecord.shared_with_users``.
+    """
+
+    __tablename__ = "privacy_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    user_entity_types: Mapped[list[str] | None] = mapped_column(JSON, default=None)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class PrivacyClassifier(Base):
+    """A decision model for "classified as <classifier>" conditions (ADR 0113, section 0c).
+
+    Scaffolding for large deployments: a configured chat model, plus a topic
+    in plain words. It decides on meaning rather than on words, reading the text in
+    chunks; any chunk positive makes the text positive. **Classifying sends the text
+    to that model's provider.** Nothing is bundled and no topic is seeded: an
+    administrator writes both. With no model chosen, or one that is inactive, the
+    classifier is unavailable and a rule that names it follows the fail-closed rule.
+    """
+
+    __tablename__ = "privacy_classifiers"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    #: The topic, in plain words ("a message that asks for a refund").
+    topic: Mapped[str] = mapped_column(String(1000), default="", server_default=text("''"))
+    model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("models.id", ondelete="SET NULL"), default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)

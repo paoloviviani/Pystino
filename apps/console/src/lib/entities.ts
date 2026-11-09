@@ -116,6 +116,12 @@ export const MODES: Mode[] = [
     hint: m["redaction_mode.off.hint"],
   },
   {
+    value: "detect_only",
+    label: m["redaction_mode.detect_only.label"],
+    short: m["redaction_mode.detect_only.short"],
+    hint: m["redaction_mode.detect_only.hint"],
+  },
+  {
     value: "anonymise_restore",
     label: m["redaction_mode.anonymise_restore.label"],
     short: m["redaction_mode.anonymise_restore.short"],
@@ -161,11 +167,17 @@ export function modeRank(mode: EntityMode | string): number {
  */
 export function summarisePolicy(policy: RedactionPolicy): string {
   const parts = [m["policy_summary.default_mode"]({ mode: modeLabel(policy.default_mode) })];
-  const entities = Object.keys(policy.entities).length;
+  const entities = Object.keys(policy.entities).length + policy.custom_entities.length;
   if (entities > 0) parts.push(m["policy_summary.types"]({ count: entities }));
+  const formats = Object.keys(policy.formats).length;
+  if (formats > 0) parts.push(m["policy_summary.formats"]({ count: formats }));
   if (policy.patterns.length > 0) {
     parts.push(m["policy_summary.patterns"]({ count: policy.patterns.length }));
   }
+  if (policy.keywords.length > 0) {
+    parts.push(m["policy_summary.keywords"]({ count: policy.keywords.length }));
+  }
+  if (policy.engine) parts.push(m["policy_summary.engine"]({ engine: policy.engine }));
   if (policy.allow_list.length > 0) {
     parts.push(m["policy_summary.allow_list"]({ count: policy.allow_list.length }));
   }

@@ -78,6 +78,10 @@ class RedactionOutcome:
     #: for the one response that may carry it and **never written anywhere**:
     #: nothing that persists reads this field (ADR 0112).
     values: list[dict[str, str]] = field(default_factory=list)
+    #: The routing attribution block (ADR 0113): what was observed and what
+    #: handled the request. Set by the route after redaction ran; labels and
+    #: names only, like :attr:`detail`, which carries a copy of it.
+    routing: dict[str, Any] | None = None
 
     @property
     def changed(self) -> bool:

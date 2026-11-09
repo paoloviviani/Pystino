@@ -1,6 +1,6 @@
 import { Notice, Spinner } from "@llmp/ui";
 import { NoConsole } from "./routes/NoConsole";
-import { Navigate, Route, Routes } from "react-router";
+import { Navigate, Route, Routes, useParams } from "react-router";
 import { RequireAdmin } from "./components/RequireAdmin";
 import { Shell } from "./components/Shell";
 import { NotAuthenticatedError } from "./lib/api";
@@ -13,8 +13,14 @@ import { AdminProviders } from "./routes/AdminProviders";
 import { AdminSearch } from "./routes/AdminSearch";
 import { AdminQuotaUsage } from "./routes/AdminQuotaUsage";
 import { AdminQuotas } from "./routes/AdminQuotas";
-import { AdminRedaction } from "./routes/AdminRedaction";
-import { AdminRedactionRule } from "./routes/AdminRedactionRule";
+import { AdminPrivacy } from "./routes/AdminPrivacy";
+import { AdminPrivacyClassifiers } from "./routes/AdminPrivacyClassifiers";
+import { AdminPrivacyService } from "./routes/AdminPrivacyService";
+import { AdminPrivacyTest } from "./routes/AdminPrivacyTest";
+import { AdminPolicies } from "./routes/AdminPolicies";
+import { AdminPolicy } from "./routes/AdminPolicy";
+import { AdminPipeline, MyPipeline } from "./components/PipelineEditor";
+import { MyPrivacy, MyPrivacyTest } from "./routes/MyPrivacy";
 import { Admin } from "./routes/Admin";
 import { AdminReports } from "./routes/AdminReports";
 import { AdminRequests } from "./routes/AdminRequests";
@@ -29,6 +35,15 @@ import { Login } from "./routes/Login";
 import { NotFound } from "./routes/NotFound";
 import { Overview } from "./routes/Overview";
 import { Reports } from "./routes/Reports";
+
+/**
+ * `/admin/redaction/rules/:id` and `/admin/privacy/hidden/rules/:id`: a redaction rule
+ * is now a policy, and it kept its id, so an old link lands on the same thing.
+ */
+function RedirectRedactionRule() {
+  const { ruleId } = useParams();
+  return <Navigate to={`/admin/privacy/policies/${ruleId ?? "new"}`} replace />;
+}
 
 export function App() {
   const me = useMe();
@@ -80,6 +95,10 @@ export function App() {
         {/* What redaction hid from providers, the rules in force and the user's
             own. Not admin-gated: it is their own requests. */}
         <Route path="/redactions" element={<MyRedactions />} />
+        {/* The user's own privacy pipelines, their policies, and a test box locked to them. */}
+        <Route path="/privacy" element={<MyPrivacy />} />
+        <Route path="/privacy/pipelines/:id" element={<MyPipeline />} />
+        <Route path="/privacy/test" element={<MyPrivacyTest />} />
         {/* Bring your own key. Not admin-gated and not capability-gated in the
             router: the page itself explains a missing capability, so a
             bookmarked link says why rather than reading as a broken deploy. */}
@@ -123,6 +142,74 @@ export function App() {
             </RequireAdmin>
           }
         />
+        <Route
+          path="/admin/privacy"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminPrivacy />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/privacy/pipelines/:id"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminPipeline />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/privacy/policies"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminPolicies />
+            </RequireAdmin>
+          }
+        />
+        {/* One redaction policy; `new` shares the route, as it cannot collide with a uuid. */}
+        <Route
+          path="/admin/privacy/policies/:policyId"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminPolicy />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/privacy/test"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminPrivacyTest />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/privacy/classifiers"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminPrivacyClassifiers />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/privacy/service"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminPrivacyService />
+            </RequireAdmin>
+          }
+        />
+        {/* Old links keep working (ADR 0113): redaction rules became policies under the
+            same ids, "What gets hidden" became Redaction policies, and the routing rules
+            became pipelines. */}
+        <Route path="/admin/privacy/profiles" element={<Navigate to="/admin/privacy/service" replace />} />
+        <Route path="/admin/privacy/detectors" element={<Navigate to="/admin/privacy/service" replace />} />
+        <Route path="/admin/privacy/hidden" element={<Navigate to="/admin/privacy/policies" replace />} />
+        <Route path="/admin/privacy/hidden/rules/:ruleId" element={<RedirectRedactionRule />} />
+        <Route path="/admin/privacy/rules/:ruleId" element={<Navigate to="/admin/privacy" replace />} />
+        <Route path="/admin/redaction" element={<Navigate to="/admin/privacy/policies" replace />} />
+        <Route path="/admin/redaction/rules/:ruleId" element={<RedirectRedactionRule />} />
+        <Route path="/admin/privacy/*" element={<Navigate to="/admin/privacy" replace />} />
         <Route
           path="/admin/routing"
           element={
@@ -193,25 +280,6 @@ export function App() {
           element={
             <RequireAdmin me={me_}>
               <AdminQuotaUsage />
-            </RequireAdmin>
-          }
-        />
-        <Route
-          path="/admin/redaction"
-          element={
-            <RequireAdmin me={me_}>
-              <AdminRedaction />
-            </RequireAdmin>
-          }
-        />
-        {/* One rule, reached by clicking it in the list on the Redaction
-            screen. `new` shares the route: it cannot collide with a uuid, and a
-            second route would duplicate every line of the form. */}
-        <Route
-          path="/admin/redaction/rules/:ruleId"
-          element={
-            <RequireAdmin me={me_}>
-              <AdminRedactionRule />
             </RequireAdmin>
           }
         />

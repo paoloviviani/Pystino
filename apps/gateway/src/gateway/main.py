@@ -31,6 +31,8 @@ from gateway.logging_config import configure_logging
 from gateway.netguard import build_guarded_client
 from gateway.oidc import sweep_env_admin_email_rule
 from gateway.oidc_policy import OIDCPolicyResolver
+from gateway.privacy.classifiers import UpstreamClassifier
+from gateway.privacy.state import PrivacyState
 from gateway.providers import ProviderRegistry
 from gateway.quota import (
     DatabaseCounterStore,
@@ -48,6 +50,7 @@ from gateway.routers import (
     admin,
     admin_audit,
     admin_byok,
+    admin_privacy,
     aliases,
     auth,
     billing,
@@ -62,6 +65,7 @@ from gateway.routers import (
     identity_events,
     images,
     me,
+    me_privacy,
     me_redaction,
     messages,
     models,
@@ -241,6 +245,14 @@ async def init_app_state(
     # logs, rather than refusing to boot over a database blip.
     await resolver.refresh()
     resolver.start()
+    # Privacy pipelines (ADR 0113): pipelines, policies and classifiers, polled like
+    # the redaction rules so the request path stays query-free. Non-fatal at startup
+    # for the same reason: under the test fixtures the schema does not exist yet.
+    privacy_state = PrivacyState(session_factory)
+    privacy_state.classifier_backend = UpstreamClassifier(app.state.providers)
+    app.state.privacy = privacy_state
+    await privacy_state.refresh()
+    privacy_state.start()
     # The identity policy (ADR 0048): console-decided, environment-baselined,
     # polled the same way redaction is. Read once before serving, so a worker
     # never answers a login with the environment's policy when the console has
@@ -307,6 +319,7 @@ async def init_app_state(
     app.state.announce_limiter = SlidingWindowLimiter(max_calls=10, window_seconds=60)
     # ADR 0112: the redaction test box runs the detector for each call.
     app.state.redaction_test_limiter = SlidingWindowLimiter(max_calls=30, window_seconds=60)
+    app.state.privacy_test_limiter = SlidingWindowLimiter(max_calls=30, window_seconds=60)
     # ADR 0093 §9.3: retries a delete's chat call, exponential backoff,
     # never gives up. The inline try after a delete commits covers the
     # common case; this is what a chat that was down at that moment gets
@@ -403,6 +416,8 @@ async def shutdown_app_state(app: FastAPI) -> None:
     # after a console change.
     if (resolver := getattr(app.state, "redaction", None)) is not None:
         await resolver.aclose()
+    if (privacy := getattr(app.state, "privacy", None)) is not None:
+        await privacy.aclose()
     if (policy := getattr(app.state, "oidc_policy", None)) is not None:
         await policy.stop()
     if (notifier := getattr(app.state, "quota_notifier", None)) is not None:
@@ -493,11 +508,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(pystino.router)
     app.include_router(auth.router)
     app.include_router(me.router)
+    app.include_router(me_privacy.router)
     app.include_router(me_redaction.router)
     app.include_router(me_redaction.admin_router)
     app.include_router(admin.router)
     app.include_router(admin.me_router)
     app.include_router(admin_byok.router)
+    app.include_router(admin_privacy.router)
     app.include_router(aliases.router)
     app.include_router(admin_audit.router)
     app.include_router(identity_events.router)

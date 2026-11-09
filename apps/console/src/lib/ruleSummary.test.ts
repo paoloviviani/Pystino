@@ -6,8 +6,12 @@ import type { RedactionPolicy } from "./types";
 function policy(overrides: Partial<RedactionPolicy> = {}): RedactionPolicy {
   return {
     default_mode: "off",
+    engine: null,
+    formats: {},
     entities: {},
+    custom_entities: [],
     patterns: [],
+    keywords: [],
     allow_list: [],
     ...overrides,
   };
@@ -94,19 +98,18 @@ describe("an allowlist the gateway ignores", () => {
 
 describe("isWideRoute", () => {
   it("is wide for the list and for one rule's page, new or edit", () => {
-    expect(isWideRoute("/admin/redaction")).toBe(true);
+    expect(isWideRoute("/admin/privacy/policies")).toBe(true);
     // Usage and summary pages match the listing pages' width.
     expect(isWideRoute("/reports")).toBe(true);
     expect(isWideRoute("/admin/reports")).toBe(true);
     expect(isWideRoute("/")).toBe(true);
     expect(isWideRoute("/admin/settings")).toBe(false);
-    expect(isWideRoute("/admin/redaction/rules/new")).toBe(true);
-    expect(isWideRoute("/admin/redaction/rules/3f2c/")).toBe(true);
+    expect(isWideRoute("/admin/privacy/policies/new")).toBe(true);
+    expect(isWideRoute("/admin/privacy/policies/3f2c/")).toBe(true);
   });
 
   it("is not wide for a form elsewhere", () => {
     expect(isWideRoute("/admin/settings")).toBe(false);
-    expect(isWideRoute("/admin/redaction/rules")).toBe(false);
-    expect(isWideRoute("/admin/redaction/rules/a/b")).toBe(false);
+    expect(isWideRoute("/admin/privacy/policies/a/b")).toBe(false);
   });
 });

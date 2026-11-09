@@ -2,13 +2,39 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
-import type { RedactionPolicy } from "../lib/types";
+import type { PrivacyEngines, RedactionPolicy } from "../lib/types";
 import { PolicyFields, seededPolicy } from "./PolicyFields";
 
 /**
  * The policy form in isolation: what each section shows for a policy, and what
  * each control writes back. The page's own tests cover it wired to the API.
  */
+
+const ENGINES: PrivacyEngines = {
+  reachable: true,
+  detail: "",
+  pattern_entities: ["EMAIL_ADDRESS", "URL"],
+  engines: [
+    {
+      name: "spacy",
+      available: true,
+      default: true,
+      entities: ["PERSON", "LOCATION"],
+      custom_labels: false,
+      ms_per_token: 0.1,
+      languages: ["en", "it"],
+    },
+    {
+      name: "gliner",
+      available: true,
+      default: false,
+      entities: ["PERSON", "ORGANIZATION"],
+      custom_labels: true,
+      ms_per_token: 5,
+      languages: ["en"],
+    },
+  ],
+};
 
 function Harness({
   initial = seededPolicy(),
@@ -20,7 +46,7 @@ function Harness({
       <PolicyFields
         policy={policy}
         onChange={setPolicy}
-        entityTypes={["PERSON", "EMAIL_ADDRESS", "URL"]}
+        engines={ENGINES}
         {...props}
       />
       <output data-testid="policy">{JSON.stringify(policy)}</output>
@@ -32,13 +58,18 @@ const written = (): RedactionPolicy =>
   JSON.parse(screen.getByTestId("policy").textContent ?? "{}") as RedactionPolicy;
 
 describe("PolicyFields", () => {
-  it("lists the sections in the order people think, with plain headings", () => {
+  it("keeps patterns and entities in two separate sections", () => {
     render(<Harness />);
-    expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
-      "What to hide",
-      "Your own patterns",
-      "Never hide",
-    ]);
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent ?? "");
+    expect(headings).toHaveLength(4);
+    expect(headings[0]).toContain("Default action");
+    expect(headings[1]).toContain("Patterns (fast, deterministic)");
+    expect(headings[2]).toContain("Entities (NER, probabilistic)");
+    expect(headings[3]).toContain("Never hide");
+    // Formats, regular expressions and keywords are in the first; the engine in the second.
+    const patterns = screen.getByRole("heading", { name: /^Patterns/ }).closest("section, div")!;
+    expect(patterns).toBeTruthy();
+    expect(screen.getByLabelText("Engine")).toBeInTheDocument();
   });
 
   it("changes the default action from a segmented control", async () => {
@@ -46,38 +77,57 @@ describe("PolicyFields", () => {
     render(<Harness />);
 
     const control = screen.getByRole("group", { name: "Default action" });
-    expect(within(control).getAllByRole("radio")).toHaveLength(5);
+    expect(within(control).getAllByRole("radio")).toHaveLength(6);
     await user.click(within(control).getByRole("radio", { name: "Block" }));
     expect(written().default_mode).toBe("block");
+    // Detect only is between Off and Restore.
+    expect(
+      within(control).getAllByRole("radio").map((r) => (r as HTMLInputElement).value),
+    ).toEqual(["off", "detect_only", "anonymise_restore", "anonymise", "redact", "block"]);
+    await user.click(within(control).getByRole("radio", { name: "Detect" }));
+    expect(written().default_mode).toBe("detect_only");
   });
 
-  it("shows a row for each type the policy names, in plain words with the id kept", () => {
+  it("shows a row for each entity the policy names, in plain words with the id kept", () => {
     render(
       <Harness
         initial={{
           ...seededPolicy(),
-          entities: { EMAIL_ADDRESS: { mode: "block", threshold: 0.7 } },
+          entities: { PERSON: { mode: "block", threshold: 0.7 } },
         }}
       />,
     );
 
-    expect(screen.getByText("Email address")).toBeInTheDocument();
-    expect(screen.getByText("EMAIL_ADDRESS")).toBeInTheDocument();
-    const row = screen.getByRole("group", { name: /EMAIL_ADDRESS/ });
+    expect(screen.getByText("Person name")).toBeInTheDocument();
+    expect(screen.getByText("PERSON")).toBeInTheDocument();
+    const row = screen.getByRole("group", { name: /PERSON/ });
     expect(within(row).getByRole("radio", { name: "Block" })).toBeChecked();
-    expect(screen.getByLabelText("Confidence for Email address")).toHaveValue(0.7);
+    expect(screen.getByLabelText("Confidence for Person name")).toHaveValue(0.7);
     // The other types are not rows; they are on offer.
-    expect(screen.queryByRole("group", { name: /PERSON/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: /LOCATION/ })).not.toBeInTheDocument();
+  });
+
+  it("takes the built-in formats from the service, each with a mode and no confidence", async () => {
+    const user = userEvent.setup({ delay: null });
+    render(<Harness />);
+
+    await user.selectOptions(screen.getByLabelText("Add a format"), "URL");
+    expect(written().formats).toEqual({ URL: { mode: "redact", threshold: null } });
+    expect(written().entities).toEqual({});
+    expect(screen.queryByLabelText(/^Confidence for/)).not.toBeInTheDocument();
+    const row = screen.getByRole("group", { name: /URL/ });
+    await user.click(within(row).getByRole("radio", { name: "Detect" }));
+    expect(written().formats.URL?.mode).toBe("detect_only");
   });
 
   it("starts an added type one step above the default and removes it again", async () => {
     const user = userEvent.setup({ delay: null });
     render(<Harness />);
 
-    await user.selectOptions(screen.getByLabelText("Add a kind of data"), "URL");
-    expect(written().entities).toEqual({ URL: { mode: "redact", threshold: null } });
+    await user.selectOptions(screen.getByLabelText("Add a type"), "LOCATION");
+    expect(written().entities).toEqual({ LOCATION: { mode: "redact", threshold: null } });
 
-    await user.click(screen.getByRole("button", { name: "Reset Web address to the default" }));
+    await user.click(screen.getByRole("button", { name: "Reset Place to the default" }));
     expect(written().entities).toEqual({});
   });
 
@@ -85,7 +135,7 @@ describe("PolicyFields", () => {
     const user = userEvent.setup({ delay: null });
     render(<Harness initial={{ ...seededPolicy(), default_mode: "redact" }} />);
 
-    await user.selectOptions(screen.getByLabelText("Add a kind of data"), "PERSON");
+    await user.selectOptions(screen.getByLabelText("Add a type"), "PERSON");
     expect(written().entities.PERSON?.mode).toBe("block");
   });
 
@@ -119,13 +169,174 @@ describe("PolicyFields", () => {
     const user = userEvent.setup({ delay: null });
     render(<Harness />);
 
-    await user.type(screen.getByLabelText("Allowlist"), "ilpost.it, example.org");
-    expect(written().allow_list).toEqual(["ilpost.it", "example.org"]);
+    await user.type(screen.getByLabelText("Allowlist"), "intranet.example, example.org");
+    expect(written().allow_list).toEqual(["intranet.example", "example.org"]);
   });
 
   it("leaves the allowlist out where the API refuses one", () => {
     render(<Harness allowList={false} />);
     expect(screen.queryByText("Never hide")).not.toBeInTheDocument();
+  });
+
+  describe("keyword lists", () => {
+    it("turns the comma-separated words into a list as they are typed", async () => {
+      const user = userEvent.setup({ delay: null });
+      render(<Harness />);
+
+      await user.click(screen.getByRole("button", { name: "Add keyword list" }));
+      expect(written().keywords).toEqual([{ name: "", words: [], case_sensitive: false, mode: "redact" }]);
+      await user.type(screen.getByLabelText("Keyword list 1 name"), "Code names");
+      await user.type(screen.getByLabelText("Keyword list 1 words"), "alpha, beta gamma ,");
+      expect(written().keywords[0]).toMatchObject({
+        name: "Code names",
+        words: ["alpha", "beta gamma"],
+      });
+      // The typed line is kept as typed, trailing comma and all.
+      expect(screen.getByLabelText("Keyword list 1 words")).toHaveValue("alpha, beta gamma ,");
+    });
+
+    it("writes the case-sensitive checkbox, and says what unchecked means in a tooltip", async () => {
+      const user = userEvent.setup({ delay: null });
+      render(
+        <Harness
+          initial={{
+            ...seededPolicy(),
+            keywords: [{ name: "K", words: ["alpha"], case_sensitive: false, mode: "redact" }],
+          }}
+        />,
+      );
+      const box = screen.getByRole("checkbox", { name: /Case sensitive/ });
+      expect(box).not.toBeChecked();
+      expect(
+        screen.getByRole("button", {
+          name: "Unchecked, capitals and accents are ignored: a word matches however it is written.",
+        }),
+      ).toBeInTheDocument();
+      await user.click(box);
+      expect(written().keywords[0]?.case_sensitive).toBe(true);
+    });
+
+    it("picks a mode, including detect only, and removes the list", async () => {
+      const user = userEvent.setup({ delay: null });
+      render(
+        <Harness
+          initial={{
+            ...seededPolicy(),
+            keywords: [{ name: "K", words: ["alpha"], case_sensitive: false, mode: "redact" }],
+          }}
+        />,
+      );
+      await user.selectOptions(screen.getByLabelText("Keyword list 1 action"), "detect_only");
+      expect(written().keywords[0]?.mode).toBe("detect_only");
+      await user.click(screen.getAllByRole("button", { name: "Remove" })[0] as HTMLElement);
+      expect(written().keywords).toEqual([]);
+    });
+
+    it("shows the words of the next list when an earlier one is removed", async () => {
+      const user = userEvent.setup({ delay: null });
+      render(
+        <Harness
+          initial={{
+            ...seededPolicy(),
+            keywords: [
+              { name: "A", words: ["one"], case_sensitive: false, mode: "redact" },
+              { name: "B", words: ["two", "three"], case_sensitive: false, mode: "redact" },
+            ],
+          }}
+        />,
+      );
+      await user.click(screen.getAllByRole("button", { name: "Remove" })[0] as HTMLElement);
+      expect(screen.getByLabelText("Keyword list 1 words")).toHaveValue("two, three");
+    });
+  });
+
+  describe("the engine picker", () => {
+    it("labels the default engine and lists the entity types of the engine in force", async () => {
+      const user = userEvent.setup({ delay: null });
+      render(<Harness />);
+
+      const picker = screen.getByLabelText("Engine");
+      expect(within(picker).getByRole("option", { name: "Deployment default (spacy)" })).toBeInTheDocument();
+      expect(within(picker).getByRole("option", { name: "spacy (default)" })).toBeEnabled();
+      // spaCy is the default: its types are on offer, GLiNER's own are not.
+      const add = screen.getByLabelText("Add a type");
+      expect(within(add).getByRole("option", { name: /Place/ })).toBeInTheDocument();
+      expect(within(add).queryByRole("option", { name: /ORGANIZATION/ })).not.toBeInTheDocument();
+
+      await user.selectOptions(picker, "gliner");
+      expect(written().engine).toBe("gliner");
+      expect(within(screen.getByLabelText("Add a type")).getByRole("option", { name: /ORGANIZATION/ })).toBeInTheDocument();
+      await user.selectOptions(picker, "");
+      expect(written().engine).toBeNull();
+    });
+
+    it("disables an engine the service reports as unavailable", () => {
+      render(
+        <Harness
+          engines={{
+            ...ENGINES,
+            engines: ENGINES.engines.map((e) => (e.name === "gliner" ? { ...e, available: false } : e)),
+          }}
+        />,
+      );
+      const picker = screen.getByLabelText("Engine");
+      expect(within(picker).getByRole("option", { name: "gliner (unavailable)" })).toBeDisabled();
+      expect(within(picker).getByRole("option", { name: "spacy (default)" })).toBeEnabled();
+    });
+
+    it("offers only the deployment default when the service is unreachable", () => {
+      render(
+        <Harness
+          engines={{ ...ENGINES, reachable: false, detail: "connection refused", pattern_entities: [] }}
+        />,
+      );
+      const picker = screen.getByLabelText("Engine");
+      expect(within(picker).getByRole("option", { name: "Deployment default" })).toBeEnabled();
+      for (const name of ["spacy", "gliner"]) {
+        expect(within(picker).getByRole("option", { name: new RegExp(`^${name}`) })).toBeDisabled();
+      }
+      expect(screen.getByText("The redaction service did not answer")).toBeInTheDocument();
+      expect(screen.getByText("connection refused")).toBeInTheDocument();
+    });
+
+    it("keeps an engine the policy names on screen when the service no longer reports it", () => {
+      render(<Harness initial={{ ...seededPolicy(), engine: "gliner" }} engines={{ ...ENGINES, engines: [] }} />);
+      expect(screen.getByLabelText("Engine")).toHaveValue("gliner");
+    });
+  });
+
+  describe("custom entity types", () => {
+    it("are offered only to an engine that reads labels (GLiNER)", async () => {
+      const user = userEvent.setup({ delay: null });
+      render(<Harness />);
+      expect(screen.queryByRole("button", { name: "Add custom type" })).not.toBeInTheDocument();
+
+      await user.selectOptions(screen.getByLabelText("Engine"), "gliner");
+      await user.click(screen.getByRole("button", { name: "Add custom type" }));
+      expect(written().custom_entities).toEqual([
+        { name: "", label: "", mode: "redact", threshold: null },
+      ]);
+      await user.type(screen.getByLabelText("Custom type 1 name"), "project code name");
+      await user.type(screen.getByLabelText("Custom type 1 label"), "project code name");
+      expect(written().custom_entities[0]).toMatchObject({
+        name: "PROJECT_CODE_NAME",
+        label: "project code name",
+      });
+    });
+
+    it("are kept, with a warning, when the engine does not read them", () => {
+      render(
+        <Harness
+          initial={{
+            ...seededPolicy(),
+            custom_entities: [{ name: "PROJECT", label: "project", mode: "redact", threshold: null }],
+          }}
+        />,
+      );
+      expect(screen.getByLabelText("Custom type 1 name")).toHaveValue("PROJECT");
+      expect(screen.getByText(/does not read custom types/)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Add custom type" })).not.toBeInTheDocument();
+    });
   });
 
   describe("placeholder style", () => {
@@ -135,15 +346,15 @@ describe("PolicyFields", () => {
         <Harness
           initial={{
             ...seededPolicy(),
-            entities: { EMAIL_ADDRESS: { mode: "anonymise_restore", threshold: null } },
+            entities: { PERSON: { mode: "anonymise_restore", threshold: null } },
           }}
         />,
       );
 
-      const select = screen.getByLabelText("Placeholder for Email address");
+      const select = screen.getByLabelText("Placeholder for Person name");
       expect(select).toHaveValue("tagged");
       await user.selectOptions(select, "same_length");
-      expect(written().entities.EMAIL_ADDRESS).toMatchObject({
+      expect(written().entities.PERSON).toMatchObject({
         mode: "anonymise_restore",
         placeholder: "same_length",
       });
@@ -155,8 +366,8 @@ describe("PolicyFields", () => {
           initial={{
             ...seededPolicy(),
             entities: {
-              EMAIL_ADDRESS: { mode: "redact", threshold: null },
-              URL: { mode: "block", threshold: null },
+              PERSON: { mode: "redact", threshold: null },
+              LOCATION: { mode: "block", threshold: null },
             },
           }}
         />,
@@ -171,7 +382,7 @@ describe("PolicyFields", () => {
           initial={{
             ...seededPolicy(),
             entities: {
-              EMAIL_ADDRESS: {
+              PERSON: {
                 mode: "anonymise_restore",
                 threshold: null,
                 placeholder: "same_length",
@@ -180,9 +391,9 @@ describe("PolicyFields", () => {
           }}
         />,
       );
-      const row = screen.getByRole("group", { name: /EMAIL_ADDRESS/ });
+      const row = screen.getByRole("group", { name: /PERSON/ });
       await user.click(within(row).getByRole("radio", { name: "Block" }));
-      expect(written().entities.EMAIL_ADDRESS?.placeholder).toBe("same_length");
+      expect(written().entities.PERSON?.placeholder).toBe("same_length");
     });
 
     it("can be chosen for a custom pattern", async () => {

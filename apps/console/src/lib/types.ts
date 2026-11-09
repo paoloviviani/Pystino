@@ -361,7 +361,7 @@ export type RedactionConfigChange = Schemas["RedactionConfigChange"];
  * Ordered weakest to strongest, which is the order the screen lists them.
  */
 export type EntityMode =
-  "off" | "anonymise_restore" | "anonymise" | "redact" | "block";
+  "off" | "detect_only" | "anonymise_restore" | "anonymise" | "redact" | "block";
 
 /**
  * How a placeholder is written. `same_length` is `#TOKEN#` with the length of
@@ -394,12 +394,46 @@ export type CustomPattern = Narrow<
   }
 >;
 
+/**
+ * A list of words or phrases, found as written. The API accepts the words as a
+ * comma-separated string or a list and always returns the list.
+ */
+export type KeywordList = Narrow<
+  Schemas["KeywordList"],
+  {
+    mode: EntityMode;
+    placeholder?: PlaceholderStyle;
+    case_sensitive?: boolean;
+  }
+>;
+
+/** An entity type named in natural language, for an engine that takes custom labels. */
+export type CustomEntity = Narrow<
+  Schemas["CustomEntity"],
+  {
+    mode: EntityMode;
+    placeholder?: PlaceholderStyle;
+    threshold?: number | null;
+  }
+>;
+
+export type NerEngineName = "spacy" | "gliner";
+
+/**
+ * A policy finds items in two groups that never mix: patterns (`formats`,
+ * `patterns`, `keywords`) and entities (`entities`, `custom_entities`, read by
+ * the policy's NER `engine`; null is the deployment default).
+ */
 export type RedactionPolicy = Narrow<
   Schemas["RedactionPolicy"],
   {
     default_mode: EntityMode;
     entities: Record<string, EntityPolicy>;
+    formats: Record<string, EntityPolicy>;
     patterns: CustomPattern[];
+    keywords: KeywordList[];
+    custom_entities: CustomEntity[];
+    engine: NerEngineName | null;
     allow_list: string[];
   }
 >;
@@ -413,12 +447,9 @@ export type RedactionStatus = Narrow<
   }
 >;
 
-/** The five subjects a redaction rule can name (ADR 0038). */
-export type RedactionScope =
-  "all" | "provider" | "model" | "group" | "user" | "api_key";
-
-export type RedactionRule = Narrow<
-  Schemas["RedactionRuleResponse"],
+/** A named redaction policy: what to hide, with no scope (ADR 0113). */
+export type RedactionPolicyRecord = Narrow<
+  Schemas["PolicyResponse"],
   {
     policy: RedactionPolicy;
   }
@@ -627,19 +658,42 @@ export type AuthMethods = Schemas["AuthMethods"];
 /** The caller's thresholds for one rule: percentages, arbitrary, user-owned. */
 export type MyNotificationThresholdsInput = Schemas["MyNotificationThresholdsRequest"];
 
-/** A user's own redaction rule (a pattern, or a stricter mode for one type). */
-export type UserRedactionRule = Schemas["UserRedactionRuleResponse"];
-
-/** What a user sends to add or change one. There is no `off` and no exception to send. */
-export type UserRedactionRuleInput = Schemas["UserRedactionRuleRequest"];
-
-/** The administrators' rules that can apply to a user, read-only, and the engine's state. */
-export type MyRedactionInForce = Schemas["MyRedactionInForce"];
-
-export type AdminRuleView = Schemas["AdminRuleView"];
-
-/** What the test box answers: where, what kind, which rule. Never the text. */
-export type RedactionTestResult = Schemas["RedactionTestResponse"];
-
 /** One request where redaction hid something or refused. No values. */
 export type RedactionEvent = Schemas["RedactionEventRow"];
+
+// -- privacy pipelines (ADR 0113) ----------------------------------------------
+
+export type PrivacyKind = "read" | "embed" | "chat";
+export type PrivacyPipeline = Schemas["PipelineResponse"];
+export type PrivacyRuleView = Schemas["RuleView"];
+/** A rule as written: what the save sends. */
+export type PrivacyRuleBody = Schemas["RuleBody"];
+export type PrivacyCondition = Schemas["ConditionBody"];
+export type PrivacyAction = Schemas["ActionBody"];
+export type PrivacyIssue = Schemas["IssueView"];
+export type PrivacyWho = Schemas["WhoBody"];
+export type PrivacyTarget = Schemas["TargetBody"];
+export type PrivacyPipelineInput = Schemas["PipelineCreateRequest"];
+export type PrivacyPipelineUpdate = Schemas["PipelineUpdateRequest"];
+export type PrivacyPipelineCheck = Schemas["PipelineCheckResponse"];
+/** The NER engines the redaction service reports, and the pattern formats it has. */
+export type PrivacyEngines = Schemas["EnginesResponse"];
+export type PrivacyEngine = Schemas["NerEngineView"];
+export type PrivacyClassifier = Schemas["ClassifierResponse"];
+export type PrivacyClassifierList = Schemas["ClassifierListResponse"];
+export type PrivacyClassifierInput = Schemas["ClassifierCreateRequest"];
+export type PrivacyClassifierUpdate = Schemas["ClassifierUpdateRequest"];
+export type PolicyTryInput = Schemas["PolicyTryRequest"];
+export type PolicyTryResult = Schemas["PolicyTryResponse"];
+export type PolicyTryItem = Schemas["FoundItem"];
+export type PrivacyTestItem = Schemas["DryRunItem"];
+export type PrivacyOptions = Schemas["OptionsResponse"];
+export type PrivacySettings = Schemas["SettingsResponse"];
+export type PrivacyTestInput = Schemas["DryRunRequest"];
+export type PrivacyTestResult = Schemas["DryRunResponse"];
+export type UserPolicy = Schemas["UserPolicyResponse"];
+export type UserPolicyInput = Schemas["UserPolicyRequest"];
+export type UserPolicyEntry = Schemas["UserEntryBody"];
+export type PrivacySummary = Schemas["PrivacySummaryResponse"];
+/** The `routing` block of a log entry: what was observed and what handled it. */
+export type RoutingInfo = Schemas["RoutingInfo"];

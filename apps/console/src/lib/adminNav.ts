@@ -122,9 +122,11 @@ export const ADMIN_GROUPS: AdminGroup[] = [
     heading: m["shell.nav.group.privacy"],
     sections: [
       {
-        to: "/admin/redaction",
-        title: m["admin.sections.redaction.title"],
-        description: m["admin.sections.redaction.description"],
+        // One area: routing picks the reader, detector and egress per request;
+        // redaction decides what is hidden (ADR 0113).
+        to: "/admin/privacy",
+        title: m["admin.sections.privacy.title"],
+        description: m["admin.sections.privacy.description"],
       },
     ],
   },
@@ -182,7 +184,7 @@ const ADMIN_ICONS: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = {
   "/admin/routing": ShuffleIcon,
   "/admin/search": GlobeIcon,
   "/admin/private-providers": KeyRoundIcon,
-  "/admin/redaction": EyeOffIcon,
+  "/admin/privacy": EyeOffIcon,
   "/admin/users": UserIcon,
   "/admin/groups": UsersRoundIcon,
   "/admin/audit": ShieldIcon,

@@ -1240,6 +1240,299 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/privacy/classifiers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Classifiers
+         * @description The decision models: a model and a topic in plain words. Scaffolding, no model bundled.
+         */
+        get: operations["list_classifiers_api_admin_privacy_classifiers_get"];
+        put?: never;
+        /** Create Classifier */
+        post: operations["create_classifier_api_admin_privacy_classifiers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/classifiers/{classifier_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Classifier */
+        delete: operations["delete_classifier_api_admin_privacy_classifiers__classifier_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Classifier */
+        patch: operations["update_classifier_api_admin_privacy_classifiers__classifier_id__patch"];
+        trace?: never;
+    };
+    "/api/admin/privacy/engines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Engines
+         * @description What the redaction service offers: pattern formats and the NER engines (spaCy, GLiNER).
+         */
+        get: operations["engines_api_admin_privacy_engines_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Options
+         * @description What the editors may pick: scope subjects, targets, readers, policies, classifiers.
+         */
+        get: operations["options_api_admin_privacy_options_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/pipelines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Pipelines
+         * @description Every administrator pipeline, by kind and in order, each with its warnings.
+         */
+        get: operations["list_pipelines_api_admin_privacy_pipelines_get"];
+        put?: never;
+        /** Create Pipeline */
+        post: operations["create_pipeline_api_admin_privacy_pipelines_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/pipelines/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Pipeline
+         * @description The warnings a draft would get if saved now, for the editor to show as it is written.
+         */
+        post: operations["check_pipeline_api_admin_privacy_pipelines_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/pipelines/reorder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reorder Pipelines
+         * @description Put a kind's administrator pipelines in a new order. Must name every one once.
+         */
+        post: operations["reorder_pipelines_api_admin_privacy_pipelines_reorder_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/pipelines/{pipeline_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Pipeline */
+        get: operations["get_pipeline_api_admin_privacy_pipelines__pipeline_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Pipeline */
+        delete: operations["delete_pipeline_api_admin_privacy_pipelines__pipeline_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Pipeline */
+        patch: operations["update_pipeline_api_admin_privacy_pipelines__pipeline_id__patch"];
+        trace?: never;
+    };
+    "/api/admin/privacy/policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Policies */
+        get: operations["list_policies_api_admin_privacy_policies_get"];
+        put?: never;
+        /** Create Policy */
+        post: operations["create_policy_api_admin_privacy_policies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/policies/try": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Try Policy
+         * @description Run a policy as it is being edited over a text: the real detection, no side effects.
+         *
+         *     The same code a "finds at least" condition and the Test tab run
+         *     (``gateway.privacy.finds.find_in``), with every item mode but ``off`` counted,
+         *     and what the redaction would do to the text. Nothing is stored or logged; the
+         *     text came from the box and is shown back only to the administrator who typed
+         *     it. Rate limited with the test box.
+         */
+        post: operations["try_policy_api_admin_privacy_policies_try_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/policies/{policy_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Policy
+         * @description Remove a policy that no pipeline applies or counts items of.
+         *
+         *     Refused while one does: a pipeline that names nothing would silently stop
+         *     hiding what it was written to hide. Nothing in the ledger points at a policy
+         *     (``usage_records.redaction_rule_id`` is a stamp, not a foreign key), so
+         *     deleting one cannot erase the record of what it did.
+         */
+        delete: operations["delete_policy_api_admin_privacy_policies__policy_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Policy */
+        patch: operations["update_policy_api_admin_privacy_policies__policy_id__patch"];
+        trace?: never;
+    };
+    "/api/admin/privacy/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Settings */
+        get: operations["get_settings_api_admin_privacy_settings_get"];
+        /**
+         * Put Settings
+         * @description The entity types users' own policies may name (null: any the detector offers).
+         */
+        put: operations["put_settings_api_admin_privacy_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Privacy Status
+         * @description Whether this worker has loaded the pipelines, and any row it had to skip.
+         */
+        get: operations["privacy_status_api_admin_privacy_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Pipelines
+         * @description Which pipelines are in scope, what each does, and the combined outcome.
+         *
+         *     Reads the state as saved. The text and the file are judged in memory and never
+         *     stored or logged; the answer carries labels and names, not content. Rate limited.
+         */
+        post: operations["test_pipelines_api_admin_privacy_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/provider-catalogue": {
         parameters: {
             query?: never;
@@ -1640,80 +1933,6 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/api/admin/redaction/rules": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Redaction Rules
-         * @description Every scoped rule, with the name of the thing each one attaches to.
-         *
-         *     Paginated in the database, unlike the quota listing: there are no live
-         *     counters to read first, so there is nothing to gain by loading them all.
-         */
-        get: operations["list_redaction_rules_api_admin_redaction_rules_get"];
-        put?: never;
-        /**
-         * Create Redaction Rule
-         * @description Attach a policy to one provider, model, group, user or key.
-         *
-         *     Two refusals, and neither is about safety — the fold already guarantees that
-         *     a scope cannot weaken anything. Both are about a rule that would look right
-         *     and do nothing:
-         *
-         *     * **a subject that does not exist**, which produces a rule matching no
-         *       request, indistinguishable on screen from one that matches every request;
-         *     * **a second rule for a subject that already has one**, which the unique
-         *       index refuses anyway. Caught here so the operator is told to edit the
-         *       existing rule rather than reading a database constraint's name.
-         */
-        post: operations["create_redaction_rule_api_admin_redaction_rules_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/admin/redaction/rules/{rule_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Delete Redaction Rule
-         * @description Remove a rule outright.
-         *
-         *     Safe to delete, unlike a model or a key: nothing in the ledger points *at* a
-         *     rule. ``usage_records.redaction_rule_id`` is a stamp copied onto each
-         *     request, not a foreign key, which is exactly so that deleting a rule cannot
-         *     erase the record of what it did.
-         */
-        delete: operations["delete_redaction_rule_api_admin_redaction_rules__rule_id__delete"];
-        options?: never;
-        head?: never;
-        /**
-         * Update Redaction Rule
-         * @description Change a rule's policy, name, reason, active flag — or its subject.
-         *
-         *     A subject change runs the same checks creation does, plus one: the subject
-         *     must be free, with this rule itself excluded from that search. It used to be
-         *     refused outright, on the argument that re-pointing makes two subjects'
-         *     histories read as one — but those histories live in ``usage_records``, which
-         *     stamps the scope and rule id onto every request at request time and so does
-         *     not change when the row does, while the freeze left a rule whose subject had
-         *     been deleted permanently unrepairable. See ``RedactionRuleUpdateRequest``.
-         */
-        patch: operations["update_redaction_rule_api_admin_redaction_rules__rule_id__patch"];
         trace?: never;
     };
     "/api/admin/reports/usage": {
@@ -2533,6 +2752,164 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/privacy/in-force": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * In Force
+         * @description The administrators' pipelines that cover this user, read-only.
+         *
+         *     Every pipeline whose who names everyone, this user, their billing group or
+         *     one of their keys; where a request goes (its target) is shown, not judged
+         *     here. Rule names and what each does are shown; another user's pipelines
+         *     never are, and a policy is shown by name.
+         */
+        get: operations["in_force_api_me_privacy_in_force_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/privacy/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Options
+         * @description What this user may pick: their readers, policies, targets and types.
+         */
+        get: operations["options_api_me_privacy_options_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/privacy/pipelines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List My Pipelines */
+        get: operations["list_my_pipelines_api_me_privacy_pipelines_get"];
+        put?: never;
+        /** Create My Pipeline */
+        post: operations["create_my_pipeline_api_me_privacy_pipelines_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/privacy/pipelines/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check My Pipeline */
+        post: operations["check_my_pipeline_api_me_privacy_pipelines_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/privacy/pipelines/{pipeline_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get My Pipeline */
+        get: operations["get_my_pipeline_api_me_privacy_pipelines__pipeline_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete My Pipeline */
+        delete: operations["delete_my_pipeline_api_me_privacy_pipelines__pipeline_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update My Pipeline */
+        patch: operations["update_my_pipeline_api_me_privacy_pipelines__pipeline_id__patch"];
+        trace?: never;
+    };
+    "/api/me/privacy/policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List My Policies */
+        get: operations["list_my_policies_api_me_privacy_policies_get"];
+        put?: never;
+        /** Create My Policy */
+        post: operations["create_my_policy_api_me_privacy_policies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/privacy/policies/{policy_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update My Policy */
+        put: operations["update_my_policy_api_me_privacy_policies__policy_id__put"];
+        post?: never;
+        /** Delete My Policy */
+        delete: operations["delete_my_policy_api_me_privacy_policies__policy_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/privacy/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test My Pipelines
+         * @description The pipelines in scope for *this user* and the combined outcome. Never logged.
+         *
+         *     The caller is always the user: ``user_id`` in the body is ignored. Nothing here
+         *     is stored, and the text and file are judged in memory.
+         */
+        post: operations["test_my_pipelines_api_me_privacy_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/provider-catalogue": {
         parameters: {
             query?: never;
@@ -2728,96 +3105,6 @@ export interface paths {
         get: operations["my_redaction_events_api_me_redaction_events_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/me/redaction/in-force": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Rules In Force
-         * @description The administrators' rules that can apply to this user, read-only.
-         *
-         *     The rules that name everyone, this user, one of their groups or keys, and
-         *     every provider and model rule (those apply by where a request goes). Types
-         *     and modes only: not the regexes of an administrator's patterns, nor the
-         *     values on an allow-list.
-         */
-        get: operations["rules_in_force_api_me_redaction_in_force_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/me/redaction/rules": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List My Rules
-         * @description The caller's own rules. The user is the caller's; there is no way to name another.
-         */
-        get: operations["list_my_rules_api_me_redaction_rules_get"];
-        put?: never;
-        /** Create My Rule */
-        post: operations["create_my_rule_api_me_redaction_rules_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/me/redaction/rules/{rule_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Update My Rule */
-        put: operations["update_my_rule_api_me_redaction_rules__rule_id__put"];
-        post?: never;
-        /** Delete My Rule */
-        delete: operations["delete_my_rule_api_me_redaction_rules__rule_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/me/redaction/test": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Test My Rules
-         * @description What would be hidden in this text, by which rule. Offsets, never the text.
-         *
-         *     Runs the real path (detection, then the same eligibility and overlap rules a
-         *     request uses) under the policy this user's requests run under: the
-         *     administrators' rules for them and their default billing group, then their
-         *     own. A blocked request is a 200 with ``blocked: true``. **Nothing here is
-         *     logged**: not the text, not the spans.
-         */
-        post: operations["test_my_rules_api_me_redaction_test_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3467,6 +3754,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/pystino/privacy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pystino Privacy
+         * @description What the privacy pipelines do for this caller, per embedding and per chat model.
+         *
+         *     ADR 0113: a client such as Cerea shows it beside the embedder choice, so the
+         *     choice is informed up front (there is no after-the-fact "switch and
+         *     reindex" prompt). Read-only, for the calling user, in short words ("refuses
+         *     health data", "redacts with Default"): labels and names, never a pattern, an
+         *     allow-list or another user's pipeline. Only the pipelines that cover this
+         *     caller and that model count; a pipeline scoped to an API key counts when the
+         *     call is made with that key. A worker that never loaded the pipelines answers 503.
+         */
+        get: operations["pystino_privacy_v1_pystino_privacy_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/pystino/usage": {
         parameters: {
             query?: never;
@@ -3640,6 +3955,34 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ActionBody
+         * @description Where it is handled, and what is hidden.
+         *
+         *     ``level`` is on the ladder of the pipeline's kind (read: ``default``,
+         *     ``read_with``, ``refuse``; embed and chat: ``pass``, ``refuse``).
+         */
+        ActionBody: {
+            /** Engine */
+            engine?: string | null;
+            /** Level */
+            level: string;
+            /** Reader */
+            reader?: string | null;
+            /** Redact With */
+            redact_with?: string | null;
+        };
+        /** ActionView */
+        ActionView: {
+            /** Engine */
+            engine: string | null;
+            /** Level */
+            level: string;
+            /** Reader */
+            reader: string | null;
+            /** Redact With */
+            redact_with: string | null;
+        };
         /** AdminAuditEventResponse */
         AdminAuditEventResponse: {
             /** Action */
@@ -3668,38 +4011,6 @@ export interface components {
             target_label: string;
             /** Target Type */
             target_type: string;
-        };
-        /**
-         * AdminRuleView
-         * @description One administrator rule, as a user may read it.
-         *
-         *     Types and modes, not the regexes of its patterns (a pattern can name a
-         *     project that is itself confidential) and not its exceptions' values, only
-         *     how many there are.
-         */
-        AdminRuleView: {
-            /** Default Mode */
-            default_mode: string;
-            /** Entities */
-            entities: components["schemas"]["RedactionEntityView"][];
-            /** Exceptions */
-            exceptions: number;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Name */
-            name: string;
-            /** Patterns */
-            patterns: components["schemas"]["RedactionPatternView"][];
-            /**
-             * Scope
-             * @enum {string}
-             */
-            scope: "all" | "provider" | "model" | "group" | "user" | "api_key";
-            /** Subject Label */
-            subject_label: string | null;
         };
         /** AliasCreateRequest */
         AliasCreateRequest: {
@@ -4501,6 +4812,18 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** ChatModelOption */
+        ChatModelOption: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Provider */
+            provider: string | null;
+        };
         /**
          * ChatSharedResource
          * @description One resource of this person that someone else can see, named, with who
@@ -4517,6 +4840,129 @@ export interface components {
             kind: string;
             /** Title */
             title: string;
+        };
+        /** ClassifierCreateRequest */
+        ClassifierCreateRequest: {
+            /** Model Id */
+            model_id?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Topic
+             * @default
+             */
+            topic?: string;
+        };
+        /** ClassifierListResponse */
+        ClassifierListResponse: {
+            /** Items */
+            items: components["schemas"]["ClassifierResponse"][];
+            /** Models */
+            models: components["schemas"]["ChatModelOption"][];
+        };
+        /** ClassifierResponse */
+        ClassifierResponse: {
+            /** Available */
+            available: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Model Id */
+            model_id: string | null;
+            /** Model Name */
+            model_name: string | null;
+            /** Name */
+            name: string;
+            /** Provider Name */
+            provider_name: string | null;
+            /** Rules Using */
+            rules_using: number;
+            /** Topic */
+            topic: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Why Not */
+            why_not: string;
+        };
+        /** ClassifierUpdateRequest */
+        ClassifierUpdateRequest: {
+            /** Model Id */
+            model_id?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Topic */
+            topic?: string | null;
+        };
+        /**
+         * ConditionBody
+         * @description One condition: a key, values (any of them), and ``negate`` ("is not").
+         */
+        ConditionBody: {
+            /**
+             * Count
+             * @default 1
+             */
+            count?: number;
+            /** Key */
+            key: string;
+            /**
+             * Negate
+             * @default false
+             */
+            negate?: boolean;
+            /**
+             * Values
+             * @default []
+             */
+            values?: string[];
+        };
+        /** ConditionView */
+        ConditionView: {
+            /**
+             * Count
+             * @default 1
+             */
+            count: number;
+            /** Key */
+            key: string;
+            /**
+             * Negate
+             * @default false
+             */
+            negate: boolean;
+            /** Values */
+            values: string[];
+        };
+        /**
+         * CustomEntity
+         * @description An entity type the NER engine finds from a description (GLiNER) (ADR 0113, section 0c).
+         *
+         *     ``name`` is the entity label (UPPER_SNAKE) and ``label`` the natural-language
+         *     description the model is given at inference ("project code name"). Only an
+         *     engine that accepts labels (``custom_labels`` in the service's health) can use
+         *     one; a policy that names one with another engine is refused when saved.
+         */
+        CustomEntity: {
+            /** Label */
+            label: string;
+            /** @default anonymise_restore */
+            mode?: components["schemas"]["EntityMode"];
+            /** Name */
+            name: string;
+            /** @default tagged */
+            placeholder?: components["schemas"]["PlaceholderStyle"];
+            /** Threshold */
+            threshold?: number | null;
         };
         /**
          * CustomPattern
@@ -4661,6 +5107,224 @@ export interface components {
             /** Upstream Model */
             upstream_model: string;
         };
+        /** DryRunHop */
+        DryRunHop: {
+            /** Added */
+            added: string[];
+            /** Reader */
+            reader: string;
+            /** Reader Name */
+            reader_name: string;
+        };
+        /**
+         * DryRunItem
+         * @description One item a "finds" condition counted: which policy, which group, how sure.
+         */
+        DryRunItem: {
+            /** Engine */
+            engine: string | null;
+            /** Group */
+            group: string;
+            /** Policy */
+            policy: string;
+            /** Score */
+            score: number | null;
+            /** Text */
+            text: string | null;
+            /** Type */
+            type: string;
+        };
+        /** DryRunLevel */
+        DryRunLevel: {
+            /** Asked By */
+            asked_by: string[];
+            /** Label */
+            label: string;
+            /** Level */
+            level: string;
+            /** Winning */
+            winning: boolean;
+        };
+        /** DryRunPipeline */
+        DryRunPipeline: {
+            /** Action Text */
+            action_text: string;
+            /**
+             * Fired Otherwise
+             * @default false
+             */
+            fired_otherwise: boolean;
+            /** Fired Rule */
+            fired_rule: string | null;
+            /** Fired Rule Id */
+            fired_rule_id: string | null;
+            /** Hop */
+            hop: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Level */
+            level: string;
+            /** Name */
+            name: string;
+            /** Owner */
+            owner: string;
+            /** Scope */
+            scope: string[];
+            /** Steps */
+            steps: components["schemas"]["DryRunStep"][];
+            /** Summary */
+            summary: string[];
+        };
+        /** DryRunPolicyType */
+        DryRunPolicyType: {
+            /** Entity Type */
+            entity_type: string;
+            /** Found */
+            found: boolean | null;
+            /** Mode */
+            mode: string;
+            /** Per Policy */
+            per_policy: string[];
+            /** Source */
+            source: string;
+        };
+        /**
+         * DryRunRequest
+         * @description Facts to judge, or a file or text to derive them from. Nothing is stored or logged.
+         */
+        DryRunRequest: {
+            /** File Base64 */
+            file_base64?: string | null;
+            /** Filename */
+            filename?: string | null;
+            /** Is Scan */
+            is_scan?: boolean | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "read" | "embed" | "chat";
+            /** Mime */
+            mime?: string | null;
+            /** Model Id */
+            model_id?: string | null;
+            /** Provider Id */
+            provider_id?: string | null;
+            /** Text */
+            text?: string | null;
+            /** User Id */
+            user_id?: string | null;
+        };
+        /** DryRunResponse */
+        DryRunResponse: {
+            /** Blocked By */
+            blocked_by: string | null;
+            /** Degraded */
+            degraded: string[];
+            /** Engine */
+            engine: string | null;
+            /** Engine By */
+            engine_by: string | null;
+            /** Estimate Ms */
+            estimate_ms: number | null;
+            /** Extractor */
+            extractor: string | null;
+            /** Facts */
+            facts: {
+                [key: string]: unknown;
+            };
+            /** Fallback Reason */
+            fallback_reason: string | null;
+            /** Hops */
+            hops: components["schemas"]["DryRunHop"][];
+            /** Impossible */
+            impossible: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "read" | "embed" | "chat";
+            /** Ladder */
+            ladder: components["schemas"]["DryRunLevel"][];
+            /** Level */
+            level: string;
+            /** Needs */
+            needs: string | null;
+            /** Outcome */
+            outcome: string;
+            /** Outcome Headline */
+            outcome_headline: string;
+            /** Outcome Text */
+            outcome_text: string;
+            /** Pipelines */
+            pipelines: components["schemas"]["DryRunPipeline"][];
+            /** Policies */
+            policies: string[];
+            /** Policy Types */
+            policy_types: components["schemas"]["DryRunPolicyType"][];
+            /** Reader */
+            reader: string | null;
+            /** Reader By */
+            reader_by: string | null;
+            /** Reader Overridden */
+            reader_overridden: string[];
+            /** Skipped */
+            skipped: components["schemas"]["DryRunSkipped"][];
+            /** Verdicts */
+            verdicts: {
+                [key: string]: unknown;
+            };
+            /** Winner Owner */
+            winner_owner: string | null;
+            /** Winner Pipeline */
+            winner_pipeline: string | null;
+            /** Winner Rule */
+            winner_rule: string | null;
+        };
+        /** DryRunSkipped */
+        DryRunSkipped: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Owner */
+            owner: string;
+            /** Why */
+            why: string;
+        };
+        /** DryRunStep */
+        DryRunStep: {
+            /** Degraded */
+            degraded: string[];
+            /**
+             * Is Otherwise
+             * @default false
+             */
+            is_otherwise: boolean;
+            /** Items */
+            items: components["schemas"]["DryRunItem"][];
+            /** Name */
+            name: string;
+            /** Note */
+            note: string | null;
+            /** Position */
+            position: number;
+            /** Reasons */
+            reasons: string[];
+            /** Result */
+            result: string;
+            /**
+             * Rule Id
+             * Format: uuid
+             */
+            rule_id: string;
+        };
         /** EmailSettingsResponse */
         EmailSettingsResponse: {
             /** Enabled */
@@ -4707,6 +5371,17 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** EnginesResponse */
+        EnginesResponse: {
+            /** Detail */
+            detail: string;
+            /** Engines */
+            engines: components["schemas"]["NerEngineView"][];
+            /** Pattern Entities */
+            pattern_entities: string[];
+            /** Reachable */
+            reachable: boolean;
+        };
         /**
          * EntityMode
          * @description What happens to one kind of detected entity.
@@ -4721,7 +5396,7 @@ export interface components {
          *     and the order ``weakens`` compares by.
          * @enum {string}
          */
-        EntityMode: "off" | "anonymise_restore" | "anonymise" | "redact" | "block";
+        EntityMode: "off" | "detect_only" | "anonymise_restore" | "anonymise" | "redact" | "block";
         /**
          * EntityPolicy
          * @description How one entity type is treated, and how sure the detector must be.
@@ -4733,6 +5408,21 @@ export interface components {
             placeholder?: components["schemas"]["PlaceholderStyle"];
             /** Threshold */
             threshold?: number | null;
+        };
+        /** FoundItem */
+        FoundItem: {
+            /** Engine */
+            engine: string | null;
+            /** Group */
+            group: string;
+            /** Mode */
+            mode: string;
+            /** Score */
+            score: number | null;
+            /** Text */
+            text: string;
+            /** Type */
+            type: string;
         };
         /** GroupAdminResponse */
         GroupAdminResponse: {
@@ -5134,6 +5824,50 @@ export interface components {
             /** Sign In Url */
             sign_in_url: string;
             user: components["schemas"]["UserAdminResponse"];
+        };
+        /**
+         * IssueView
+         * @description A save-time warning. Never blocks saving.
+         */
+        IssueView: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Rule Id */
+            rule_id: string | null;
+            /** Rule Name */
+            rule_name: string | null;
+        };
+        /**
+         * KeywordList
+         * @description A comma-separated list of words and phrases, found as whole words (ADR 0113, section 0c).
+         *
+         *     One more pattern type, beside the built-in formats and the regular expressions
+         *     an operator writes: fast, deterministic, evaluated in the gateway. ``name``
+         *     becomes the entity label exactly as a :class:`CustomPattern`'s does, so a hit is
+         *     substituted, counted and logged by the machinery every other type uses.
+         *
+         *     Matching is by whole words, on letters and digits; spacing and punctuation
+         *     between the words of a phrase do not matter. Unless ``case_sensitive``, case is
+         *     ignored **and accents are folded** ("Perche" finds "perché"). It is linear in
+         *     the text (``gateway.redaction.keywords``): no regular expression is ever built
+         *     from what an administrator typed.
+         */
+        KeywordList: {
+            /**
+             * Case Sensitive
+             * @default false
+             */
+            case_sensitive?: boolean;
+            /** @default redact */
+            mode?: components["schemas"]["EntityMode"];
+            /** Name */
+            name: string;
+            /** @default tagged */
+            placeholder?: components["schemas"]["PlaceholderStyle"];
+            /** Words */
+            words: string[];
         };
         /** LimitRuleCreateRequest */
         LimitRuleCreateRequest: {
@@ -5639,6 +6373,36 @@ export interface components {
              */
             object: "list";
         };
+        /** ModelOption */
+        ModelOption: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Provider */
+            provider: string | null;
+            /** Provider Id */
+            provider_id: string | null;
+        };
+        /**
+         * ModelSummary
+         * @description What the pipelines in scope for one model do, in short words.
+         */
+        ModelSummary: {
+            /** Kind */
+            kind: string;
+            /** Model */
+            model: string;
+            /** Pipelines */
+            pipelines: string[];
+            /** Summary */
+            summary: string[];
+        };
         /**
          * ModelUpdateRequest
          * @description Every field optional; only what is sent is changed.
@@ -5729,16 +6493,34 @@ export interface components {
             /** Thresholds */
             thresholds?: number[];
         };
-        /** MyRedactionInForce */
-        MyRedactionInForce: {
-            /** Engine */
-            engine: string;
-            /** Engine Active */
-            engine_active: boolean;
-            /** Max User Rules */
-            max_user_rules: number;
-            /** Rules */
-            rules: components["schemas"]["AdminRuleView"][];
+        /** NamedId */
+        NamedId: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** NerEngineView */
+        NerEngineView: {
+            /** Available */
+            available: boolean;
+            /** Custom Labels */
+            custom_labels: boolean;
+            /** Default */
+            default: boolean;
+            /** Entities */
+            entities: string[];
+            /** Labels */
+            labels: string[];
+            /** Languages */
+            languages: string[];
+            /** Ms Per Token */
+            ms_per_token: number | null;
+            /** Name */
+            name: string;
         };
         /**
          * OcrDocument
@@ -5947,6 +6729,31 @@ export interface components {
             /** Unknown User Policy */
             unknown_user_policy?: ("refuse" | "create_inactive") | null;
         };
+        /** OptionsResponse */
+        OptionsResponse: {
+            /** Classifiers */
+            classifiers: components["schemas"]["NamedId"][];
+            /** Engines */
+            engines: string[];
+            /** Entity Types */
+            entity_types: string[] | null;
+            /** Groups */
+            groups: components["schemas"]["NamedId"][];
+            /** Keys */
+            keys: components["schemas"]["NamedId"][];
+            /** Models */
+            models: components["schemas"]["ModelOption"][];
+            /** Own Policies */
+            own_policies: components["schemas"]["NamedId"][];
+            /** Policies */
+            policies: components["schemas"]["NamedId"][];
+            /** Providers */
+            providers: components["schemas"]["NamedId"][];
+            /** Readers */
+            readers: components["schemas"]["ReaderOption"][];
+            /** Users */
+            users: components["schemas"]["NamedId"][];
+        };
         /**
          * PageImagesRequest
          * @description Ask the local extractor for pictures of the PDF pages that have no text.
@@ -6062,6 +6869,28 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** Page[PipelineResponse] */
+        Page_PipelineResponse_: {
+            /** Items */
+            items: components["schemas"]["PipelineResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** Page[PolicyResponse] */
+        Page_PolicyResponse_: {
+            /** Items */
+            items: components["schemas"]["PolicyResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /** Page[PriceResponse] */
         Page_PriceResponse_: {
             /** Items */
@@ -6106,17 +6935,6 @@ export interface components {
             /** Total */
             total: number;
         };
-        /** Page[RedactionRuleResponse] */
-        Page_RedactionRuleResponse_: {
-            /** Items */
-            items: components["schemas"]["RedactionRuleResponse"][];
-            /** Limit */
-            limit: number;
-            /** Offset */
-            offset: number;
-            /** Total */
-            total: number;
-        };
         /** Page[RequestLogRow] */
         Page_RequestLogRow_: {
             /** Items */
@@ -6150,10 +6968,10 @@ export interface components {
             /** Total */
             total: number;
         };
-        /** Page[UserQuotaSummary] */
-        Page_UserQuotaSummary_: {
+        /** Page[UserPolicyResponse] */
+        Page_UserPolicyResponse_: {
             /** Items */
-            items: components["schemas"]["UserQuotaSummary"][];
+            items: components["schemas"]["UserPolicyResponse"][];
             /** Limit */
             limit: number;
             /** Offset */
@@ -6161,10 +6979,10 @@ export interface components {
             /** Total */
             total: number;
         };
-        /** Page[UserRedactionRuleResponse] */
-        Page_UserRedactionRuleResponse_: {
+        /** Page[UserQuotaSummary] */
+        Page_UserQuotaSummary_: {
             /** Items */
-            items: components["schemas"]["UserRedactionRuleResponse"][];
+            items: components["schemas"]["UserQuotaSummary"][];
             /** Limit */
             limit: number;
             /** Offset */
@@ -6213,6 +7031,154 @@ export interface components {
             timezone: string;
         };
         /**
+         * PipelineCheckRequest
+         * @description A draft, to be checked as it would be saved.
+         */
+        PipelineCheckRequest: {
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled?: boolean;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "read" | "embed" | "chat";
+            /**
+             * Name
+             * @default Draft
+             */
+            name?: string;
+            otherwise?: components["schemas"]["ActionBody"] | null;
+            /** Position */
+            position?: number | null;
+            /**
+             * Rules
+             * @default []
+             */
+            rules?: components["schemas"]["RuleBody"][];
+            /**
+             * @default {
+             *       "mode": "all",
+             *       "models": [],
+             *       "providers": []
+             *     }
+             */
+            target?: components["schemas"]["TargetBody"];
+            /**
+             * @default {
+             *       "ids": [],
+             *       "mode": "all"
+             *     }
+             */
+            who?: components["schemas"]["WhoBody"];
+        };
+        /** PipelineCheckResponse */
+        PipelineCheckResponse: {
+            /** Error */
+            error: string | null;
+            /** Issues */
+            issues: components["schemas"]["IssueView"][];
+            /** Soft Cap */
+            soft_cap: number;
+        };
+        /** PipelineCreateRequest */
+        PipelineCreateRequest: {
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled?: boolean;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "read" | "embed" | "chat";
+            /** Name */
+            name: string;
+            otherwise?: components["schemas"]["ActionBody"] | null;
+            /** Position */
+            position?: number | null;
+            /**
+             * Rules
+             * @default []
+             */
+            rules?: components["schemas"]["RuleBody"][];
+            /**
+             * @default {
+             *       "mode": "all",
+             *       "models": [],
+             *       "providers": []
+             *     }
+             */
+            target?: components["schemas"]["TargetBody"];
+            /**
+             * @default {
+             *       "ids": [],
+             *       "mode": "all"
+             *     }
+             */
+            who?: components["schemas"]["WhoBody"];
+        };
+        /** PipelineResponse */
+        PipelineResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "read" | "embed" | "chat";
+            /** Labels */
+            labels: {
+                [key: string]: string;
+            };
+            /** Name */
+            name: string;
+            otherwise: components["schemas"]["RuleView"];
+            /** Owner Id */
+            owner_id: string | null;
+            /** Position */
+            position: number;
+            /** Rules */
+            rules: components["schemas"]["RuleView"][];
+            /** Summary */
+            summary: string[];
+            target: components["schemas"]["TargetView"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            who: components["schemas"]["WhoView"];
+        };
+        /**
+         * PipelineUpdateRequest
+         * @description Every field optional. The kind is fixed once saved.
+         */
+        PipelineUpdateRequest: {
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Name */
+            name?: string | null;
+            otherwise?: components["schemas"]["ActionBody"] | null;
+            /** Rules */
+            rules?: components["schemas"]["RuleBody"][] | null;
+            target?: components["schemas"]["TargetBody"] | null;
+            who?: components["schemas"]["WhoBody"] | null;
+        };
+        /**
          * PlaceholderStyle
          * @description How a placeholder is written, for the modes that write a derived one.
          *
@@ -6235,6 +7201,97 @@ export interface components {
             label: string;
             /** Url */
             url: string;
+        };
+        /** PolicyCreateRequest */
+        PolicyCreateRequest: {
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active?: boolean;
+            /** Name */
+            name: string;
+            policy: components["schemas"]["RedactionPolicy"];
+            /**
+             * Reason
+             * @default
+             */
+            reason?: string;
+            /**
+             * Shared With Users
+             * @default false
+             */
+            shared_with_users?: boolean;
+        };
+        /** PolicyResponse */
+        PolicyResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string | null;
+            /** Created By Email */
+            created_by_email: string | null;
+            /** Engine Available */
+            engine_available: boolean | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Name */
+            name: string;
+            policy: components["schemas"]["RedactionPolicy"];
+            /** Reason */
+            reason: string;
+            /** Shared With Users */
+            shared_with_users: boolean;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Used By */
+            used_by: string[];
+        };
+        /**
+         * PolicyTryRequest
+         * @description A policy as it is being edited, and a text to run it over. Nothing is stored or logged.
+         */
+        PolicyTryRequest: {
+            policy: components["schemas"]["RedactionPolicy"];
+            /** Text */
+            text: string;
+        };
+        /** PolicyTryResponse */
+        PolicyTryResponse: {
+            /**
+             * Blocked
+             * @default false
+             */
+            blocked: boolean;
+            /** Items */
+            items: components["schemas"]["FoundItem"][];
+            /** Redacted Text */
+            redacted_text: string | null;
+            /** Unavailable */
+            unavailable: string | null;
+        };
+        /** PolicyUpdateRequest */
+        PolicyUpdateRequest: {
+            /** Is Active */
+            is_active?: boolean | null;
+            /** Name */
+            name?: string | null;
+            policy?: components["schemas"]["RedactionPolicy"] | null;
+            /** Reason */
+            reason?: string | null;
+            /** Shared With Users */
+            shared_with_users?: boolean | null;
         };
         /** PreassignRequest */
         PreassignRequest: {
@@ -6311,6 +7368,13 @@ export interface components {
             per_search: string | null;
             /** Source */
             source: string;
+        };
+        /** PrivacySummaryResponse */
+        PrivacySummaryResponse: {
+            /** Chat */
+            chat: components["schemas"]["ModelSummary"][];
+            /** Embedding */
+            embedding: components["schemas"]["ModelSummary"][];
         };
         /** ProviderCreateRequest */
         ProviderCreateRequest: {
@@ -6647,6 +7711,15 @@ export interface components {
             /** Window Label */
             window_label: string;
         };
+        /** ReaderOption */
+        ReaderOption: {
+            /** Builtin */
+            builtin: boolean;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
         /**
          * RedactionActivity
          * @description Evidence that it is working, not merely configured.
@@ -6748,13 +7821,6 @@ export interface components {
              */
             reason?: string;
         };
-        /** RedactionEntityView */
-        RedactionEntityView: {
-            /** Entity Type */
-            entity_type: string;
-            /** Mode */
-            mode: string;
-        };
         /** RedactionEventEntity */
         RedactionEventEntity: {
             /** Count */
@@ -6789,6 +7855,7 @@ export interface components {
             provider: string | null;
             /** Request Id */
             request_id: string;
+            routing: components["schemas"]["RoutingInfo"] | null;
             /** User Id */
             user_id: string | null;
             /** User Label */
@@ -6806,49 +7873,59 @@ export interface components {
              */
             owner: "admin" | "user";
         };
-        /** RedactionPatternView */
-        RedactionPatternView: {
-            /** Mode */
-            mode: string;
-            /** Name */
-            name: string;
-        };
         /**
          * RedactionPolicy
-         * @description Per-entity redaction policy: the admin's answer to "redact *what*".
+         * @description What to find in a text, and what to do about it (ADR 0037, 0113 section 0c).
          *
-         *     Before this existed, ``entity_types`` was ``None`` — "everything the engine
-         *     knows" — and nobody had chosen it; it was the default of a field never
-         *     filled in. On a real request that meant *"Riassumi le notizie del giorno da
-         *     ilpost.it"* reaching the provider as ``<PERSON_…> le notizie del giorno da
-         *     <URL_…>``: the verb read as a name, and the source the user asked for read as
-         *     identity. See ADR 0037.
+         *     The items come in two groups that are never mixed, here, in the API or in the
+         *     editor:
          *
-         *     ``default_mode`` is the answer for a type nobody has listed, and it defaults
-         *     to *on* rather than off. That direction matters: a detector that gains a new
-         *     national-identifier recogniser next release should start protecting it
-         *     without an admin noticing, and an entity type nobody has ruled on is exactly
-         *     the case to be conservative about.
+         *     * **Patterns** (fast, deterministic): ``formats`` (the service's built-in
+         *       formats, checksummed where one exists), ``patterns`` (regular expressions an
+         *       operator wrote, evaluated here with RE2) and ``keywords`` (word lists,
+         *       evaluated here in linear time).
+         *     * **Entities** (NER, probabilistic): ``entities``, the types of the policy's
+         *       ``engine``, each with a mode and a confidence threshold, and
+         *       ``custom_entities``, types a label-taking engine (GLiNER) finds from a
+         *       description.
+         *
+         *     Every item has a mode, ``detect_only`` among them: found and counted for a
+         *     condition, never hidden.
+         *
+         *     ``default_mode`` is the answer for a type nobody has listed, and it is **off**:
+         *     a policy is a statement about the types it lists and silent about the rest.
+         *     Any other default would mean a rule about `IBAN_CODE` quietly deciding for
+         *     `PERSON` too, and — folded across scopes by `max` — a narrow rule could raise
+         *     the floor for everything (ADR 0037, which this reverses on purpose).
          */
         RedactionPolicy: {
             /** Allow List */
             allow_list?: string[];
+            /** Custom Entities */
+            custom_entities?: components["schemas"]["CustomEntity"][];
             /** @default off */
             default_mode?: components["schemas"]["EntityMode"];
+            /** Engine */
+            engine?: ("spacy" | "gliner") | null;
             /** Entities */
             entities?: {
                 [key: string]: components["schemas"]["EntityPolicy"];
             };
+            /** Formats */
+            formats?: {
+                [key: string]: components["schemas"]["EntityPolicy"];
+            };
+            /** Keywords */
+            keywords?: components["schemas"]["KeywordList"][];
             /** Patterns */
             patterns?: components["schemas"]["CustomPattern"][];
         };
         /**
          * RedactionPreviewRequest
-         * @description A sample to run the real redaction path over.
+         * @description A sample to run the real redaction path over, under one policy.
          *
-         *     ``scope``/``scope_id`` preview *as* a subject, so an admin can see what a
-         *     group's rule actually does before saving it. Omitted, the deployment policy
-         *     applies.
+         *     ``policy`` is a draft as the form stands; ``policy_id`` a saved one. Omitted,
+         *     the environment's policy applies.
          *
          *     **This body is never logged.** It will contain real personal data within a
          *     week of shipping — an admin pastes the prompt that came back wrong — and a
@@ -6857,10 +7934,8 @@ export interface components {
          */
         RedactionPreviewRequest: {
             policy?: components["schemas"]["RedactionPolicy"] | null;
-            /** Scope */
-            scope?: ("all" | "provider" | "model" | "group" | "user" | "api_key") | null;
-            /** Scope Id */
-            scope_id?: string | null;
+            /** Policy Id */
+            policy_id?: string | null;
             /** Text */
             text: string;
         };
@@ -6927,120 +8002,6 @@ export interface components {
             start: number;
             /** Threshold */
             threshold: number;
-        };
-        /**
-         * RedactionRuleCreateRequest
-         * @description Attach a policy to one subject.
-         *
-         *     No reason is required, unlike the engine switch and unlike a deployment
-         *     policy change. A scoped rule can only ever tighten — ``RedactionPolicy.combine``
-         *     takes the strictest answer for every type — so there is no direction here
-         *     that a later review would ask about, and demanding a sentence per rule is how
-         *     a reason column fills up with "x" (ADR 0033's argument, applied one level
-         *     down).
-         */
-        RedactionRuleCreateRequest: {
-            /**
-             * Is Active
-             * @default true
-             */
-            is_active?: boolean;
-            /**
-             * Name
-             * @default
-             */
-            name?: string;
-            policy: components["schemas"]["RedactionPolicy"];
-            /**
-             * Reason
-             * @default
-             */
-            reason?: string;
-            /**
-             * Scope
-             * @enum {string}
-             */
-            scope: "all" | "provider" | "model" | "group" | "user" | "api_key";
-            /** Scope Id */
-            scope_id?: string | null;
-        };
-        /**
-         * RedactionRuleResponse
-         * @description One scoped rule, with enough about its subject to render a row.
-         *
-         *     ``subject_label`` is resolved server-side because the console would otherwise
-         *     have to hold five listings in memory to turn a ``scope_id`` into a word — and
-         *     would get it wrong for a subject it has no permission to list.
-         */
-        RedactionRuleResponse: {
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Created By */
-            created_by: string | null;
-            /** Created By Email */
-            created_by_email: string | null;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Is Active */
-            is_active: boolean;
-            /** Name */
-            name: string;
-            policy: components["schemas"]["RedactionPolicy"];
-            /**
-             * Reason
-             * @default
-             */
-            reason: string;
-            /**
-             * Scope
-             * @enum {string}
-             */
-            scope: "all" | "provider" | "model" | "group" | "user" | "api_key";
-            /** Scope Id */
-            scope_id: string | null;
-            /** Subject Label */
-            subject_label: string | null;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-        };
-        /**
-         * RedactionRuleUpdateRequest
-         * @description Everything about a rule may change, its subject included.
-         *
-         *     The subject was frozen once, on the argument that a rule *is* a decision
-         *     about one subject and re-pointing it would silently make two subjects'
-         *     histories read as one. That argument does not survive contact with the
-         *     ledger: ``usage_records`` stamps the scope and the rule id onto every
-         *     request at request time, so the past explains itself no matter what the row
-         *     says now — and freezing had a real cost the argument ignored. ``scope_id``
-         *     is not a foreign key, so a deleted group leaves its rule pointing at
-         *     nothing: inert, labelled "deleted subject", and unrepairable — delete it and
-         *     retype a whole policy, or live with a rule that matches nothing. Re-pointing
-         *     is therefore accepted, validated exactly as creation is, and a subject that
-         *     already has a rule stays a 409: one rule per subject is the database's
-         *     promise and this endpoint does not get to merge two policies quietly.
-         */
-        RedactionRuleUpdateRequest: {
-            /** Is Active */
-            is_active?: boolean | null;
-            /** Name */
-            name?: string | null;
-            policy?: components["schemas"]["RedactionPolicy"] | null;
-            /** Reason */
-            reason?: string | null;
-            /** Scope */
-            scope?: ("all" | "provider" | "model" | "group" | "user" | "api_key") | null;
-            /** Scope Id */
-            scope_id?: string | null;
         };
         /**
          * RedactionServiceHealth
@@ -7151,56 +8112,15 @@ export interface components {
             /** Warnings */
             warnings: string[];
         };
-        /**
-         * RedactionTestRequest
-         * @description Text to try the rules on. Never logged.
-         */
-        RedactionTestRequest: {
-            /** Text */
-            text: string;
-        };
-        /** RedactionTestResponse */
-        RedactionTestResponse: {
+        /** ReorderRequest */
+        ReorderRequest: {
             /**
-             * Blocked
-             * @default false
-             */
-            blocked: boolean;
-            /** Engine Active */
-            engine_active: boolean;
-            /** Note */
-            note: string | null;
-            /** Spans */
-            spans: components["schemas"]["RedactionTestSpan"][];
-        };
-        /** RedactionTestRule */
-        RedactionTestRule: {
-            /** Id */
-            id: string | null;
-            /** Name */
-            name: string;
-            /**
-             * Owner
+             * Kind
              * @enum {string}
              */
-            owner: "admin" | "user";
-        };
-        /**
-         * RedactionTestSpan
-         * @description One thing that would be hidden: where, what kind, and which rule decided.
-         *
-         *     Offsets only. The text is the caller's own and is not echoed back.
-         */
-        RedactionTestSpan: {
-            /** End */
-            end: number;
-            /** Entity Type */
-            entity_type: string;
-            /** Mode */
-            mode: string;
-            rule: components["schemas"]["RedactionTestRule"] | null;
-            /** Start */
-            start: number;
+            kind: "read" | "embed" | "chat";
+            /** Order */
+            order: string[];
         };
         /**
          * RequestLogRow
@@ -7315,6 +8235,188 @@ export interface components {
             stream?: boolean;
         } & {
             [key: string]: unknown;
+        };
+        /** RoutingFilenameMatch */
+        RoutingFilenameMatch: {
+            /** Pattern Index */
+            pattern_index: number;
+            /**
+             * Rule Id
+             * Format: uuid
+             */
+            rule_id: string;
+        };
+        /**
+         * RoutingHandled
+         * @description What handled it: the reader, why it was not the one asked for, the rule.
+         */
+        RoutingHandled: {
+            /** Engine */
+            engine: string | null;
+            /** Extractor */
+            extractor: string | null;
+            /** Fallback Reason */
+            fallback_reason: string | null;
+            /** Policies */
+            policies: string[];
+            /**
+             * Profile
+             * @default default
+             */
+            profile: string;
+            /** Reader */
+            reader: string | null;
+            routing_rule: components["schemas"]["RoutingRule"] | null;
+        };
+        /**
+         * RoutingInfo
+         * @description The ``routing`` block of a log entry and of the per-response summary.
+         */
+        RoutingInfo: {
+            /** Degraded */
+            degraded: string[];
+            /** Fallbacks */
+            fallbacks: string[];
+            handled: components["schemas"]["RoutingHandled"];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "read" | "embed" | "chat";
+            observed: components["schemas"]["RoutingObserved"];
+            /** Observed Rules */
+            observed_rules: components["schemas"]["RoutingRule"][];
+            /**
+             * Outcome
+             * @default default
+             */
+            outcome: string;
+            /** Pipelines */
+            pipelines: components["schemas"]["RoutingPipelineRun"][];
+            /** Reason */
+            reason: string | null;
+        };
+        /**
+         * RoutingObserved
+         * @description What Pystino saw in the request (ADR 0113). Labels and names, never content.
+         */
+        RoutingObserved: {
+            /** Filename */
+            filename: string | null;
+            filename_match: components["schemas"]["RoutingFilenameMatch"] | null;
+            /** Filetype */
+            filetype: string | null;
+            /** Is Scan */
+            is_scan: boolean | null;
+            /** Mime */
+            mime: string | null;
+            target: components["schemas"]["RoutingTarget"];
+            verdicts: components["schemas"]["RoutingVerdicts"] | null;
+        };
+        /**
+         * RoutingPipelineRun
+         * @description One pipeline that was in scope, and the rule that fired in it.
+         */
+        RoutingPipelineRun: {
+            /**
+             * Hop
+             * @default 0
+             */
+            hop: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Level */
+            level: string;
+            /** Name */
+            name: string;
+            /** Owner */
+            owner: string;
+            rule: components["schemas"]["RoutingRule"] | null;
+        };
+        /** RoutingRule */
+        RoutingRule: {
+            /** Id */
+            id: string | null;
+            /** Name */
+            name: string;
+            /** Owner */
+            owner: string | null;
+            /** Pipeline */
+            pipeline: string | null;
+            /** Pipeline Id */
+            pipeline_id: string | null;
+        };
+        /** RoutingTarget */
+        RoutingTarget: {
+            /** Alias */
+            alias: string | null;
+            /** Model */
+            model: string | null;
+            /** Provider */
+            provider: string | null;
+        };
+        /** RoutingVerdicts */
+        RoutingVerdicts: {
+            /** Health */
+            health: boolean | null;
+            /** Ids */
+            ids: boolean | null;
+            /** Lang */
+            lang: string | null;
+            /**
+             * Method
+             * @default patterns
+             */
+            method: string;
+        };
+        /** RuleBody */
+        RuleBody: {
+            action: components["schemas"]["ActionBody"];
+            /**
+             * Conditions
+             * @default []
+             */
+            conditions?: components["schemas"]["ConditionBody"][];
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled?: boolean;
+            /** Id */
+            id?: string | null;
+            /** Name */
+            name: string;
+            /** Note */
+            note?: string | null;
+            /**
+             * Observe Only
+             * @default false
+             */
+            observe_only?: boolean;
+        };
+        /** RuleView */
+        RuleView: {
+            action: components["schemas"]["ActionView"];
+            /** Conditions */
+            conditions: components["schemas"]["ConditionView"][];
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Issues */
+            issues: components["schemas"]["IssueView"][];
+            /** Name */
+            name: string;
+            /** Note */
+            note: string | null;
+            /** Observe Only */
+            observe_only: boolean;
         };
         /**
          * SearchBackendDeleteResponse
@@ -7547,6 +8649,16 @@ export interface components {
              */
             group_id: string;
         };
+        /** SettingsRequest */
+        SettingsRequest: {
+            /** User Entity Types */
+            user_entity_types?: string[] | null;
+        };
+        /** SettingsResponse */
+        SettingsResponse: {
+            /** User Entity Types */
+            user_entity_types: string[] | null;
+        };
         /**
          * SignInCreateRequest
          * @description ``POST /admin/users/{id}/sign-in``: a bundled login for an existing
@@ -7634,6 +8746,37 @@ export interface components {
             requests: number;
             /** Tag */
             tag: string;
+        };
+        /** TargetBody */
+        TargetBody: {
+            /**
+             * Mode
+             * @default all
+             * @enum {string}
+             */
+            mode?: "all" | "only" | "except";
+            /**
+             * Models
+             * @default []
+             */
+            models?: string[];
+            /**
+             * Providers
+             * @default []
+             */
+            providers?: string[];
+        };
+        /** TargetView */
+        TargetView: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "all" | "only" | "except";
+            /** Models */
+            models: string[];
+            /** Providers */
+            providers: string[];
         };
         /** UsageReport */
         UsageReport: {
@@ -7833,6 +8976,71 @@ export interface components {
             send_email?: boolean;
         };
         /**
+         * UserEntryBody
+         * @description One entry of a user's own policy: a custom pattern, or a stricter mode for a type.
+         */
+        UserEntryBody: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "pattern" | "mode";
+            /** Mode */
+            mode: string;
+            /** Name */
+            name: string;
+            /** Regex */
+            regex?: string | null;
+        };
+        /** UserEntryView */
+        UserEntryView: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "pattern" | "mode";
+            /** Mode */
+            mode: string;
+            /** Name */
+            name: string;
+            /** Regex */
+            regex: string | null;
+        };
+        /** UserPolicyRequest */
+        UserPolicyRequest: {
+            /**
+             * Entries
+             * @default []
+             */
+            entries?: components["schemas"]["UserEntryBody"][];
+            /** Name */
+            name: string;
+        };
+        /** UserPolicyResponse */
+        UserPolicyResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Entries */
+            entries: components["schemas"]["UserEntryView"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Used By */
+            used_by: string[];
+        };
+        /**
          * UserQuotaEntry
          * @description One rule as it applies to one user (``GET /quota-usage/{user_id}``).
          */
@@ -7925,68 +9133,6 @@ export interface components {
             user_id: string;
         };
         /**
-         * UserRedactionRuleRequest
-         * @description A user's own rule: a pattern, or a stricter mode for one entity type.
-         *
-         *     **There is no ``off``, no threshold, no allow-list and no placeholder style
-         *     here, and extra fields are refused**, so a rule that would loosen what the
-         *     administrators set cannot be expressed, let alone saved. A rule that is
-         *     merely not stricter than theirs is accepted and inert; the response says so.
-         */
-        UserRedactionRuleRequest: {
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "pattern" | "mode";
-            /**
-             * Mode
-             * @default redact
-             * @enum {string}
-             */
-            mode?: "anonymise_restore" | "anonymise" | "redact" | "block";
-            /** Name */
-            name: string;
-            /** Regex */
-            regex?: string | null;
-        };
-        /** UserRedactionRuleResponse */
-        UserRedactionRuleResponse: {
-            /** Admin Mode */
-            admin_mode: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "pattern" | "mode";
-            /** Mode */
-            mode: string;
-            /** Name */
-            name: string;
-            /** Regex */
-            regex: string | null;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "adds_protection" | "covered";
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-        };
-        /**
          * UserStatusCounts
          * @description The Users page's filter-chip counts (ADR 0095 §7).
          */
@@ -8053,6 +9199,30 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** WhoBody */
+        WhoBody: {
+            /**
+             * Ids
+             * @default []
+             */
+            ids?: string[];
+            /**
+             * Mode
+             * @default all
+             * @enum {string}
+             */
+            mode?: "all" | "users" | "groups" | "keys";
+        };
+        /** WhoView */
+        WhoView: {
+            /** Ids */
+            ids: string[];
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "all" | "users" | "groups" | "keys";
         };
     };
     responses: never;
@@ -9994,6 +11164,646 @@ export interface operations {
             };
         };
     };
+    list_classifiers_api_admin_privacy_classifiers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassifierListResponse"];
+                };
+            };
+        };
+    };
+    create_classifier_api_admin_privacy_classifiers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClassifierCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassifierResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_classifier_api_admin_privacy_classifiers__classifier_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                classifier_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_classifier_api_admin_privacy_classifiers__classifier_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                classifier_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClassifierUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassifierResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    engines_api_admin_privacy_engines_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnginesResponse"];
+                };
+            };
+        };
+    };
+    options_api_admin_privacy_options_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptionsResponse"];
+                };
+            };
+        };
+    };
+    list_pipelines_api_admin_privacy_pipelines_get: {
+        parameters: {
+            query?: {
+                kind?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_PipelineResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_pipeline_api_admin_privacy_pipelines_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PipelineCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_pipeline_api_admin_privacy_pipelines_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PipelineCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineCheckResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reorder_pipelines_api_admin_privacy_pipelines_reorder_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReorderRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_PipelineResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_pipeline_api_admin_privacy_pipelines__pipeline_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_pipeline_api_admin_privacy_pipelines__pipeline_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_pipeline_api_admin_privacy_pipelines__pipeline_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PipelineUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_policies_api_admin_privacy_policies_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_PolicyResponse_"];
+                };
+            };
+        };
+    };
+    create_policy_api_admin_privacy_policies_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    try_policy_api_admin_privacy_policies_try_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyTryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyTryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_policy_api_admin_privacy_policies__policy_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                policy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_policy_api_admin_privacy_policies__policy_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                policy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_settings_api_admin_privacy_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+        };
+    };
+    put_settings_api_admin_privacy_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    privacy_status_api_admin_privacy_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    test_pipelines_api_admin_privacy_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DryRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_provider_catalogue_api_admin_provider_catalogue_get: {
         parameters: {
             query?: never;
@@ -10424,139 +12234,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RedactionPreviewResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_redaction_rules_api_admin_redaction_rules_get: {
-        parameters: {
-            query?: {
-                scope?: ("all" | "provider" | "model" | "group" | "user" | "api_key") | null;
-                is_active?: boolean | null;
-                /** @description Rows to return, at most 200. */
-                limit?: number;
-                /** @description Rows to skip. */
-                offset?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Page_RedactionRuleResponse_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_redaction_rule_api_admin_redaction_rules_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RedactionRuleCreateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RedactionRuleResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_redaction_rule_api_admin_redaction_rules__rule_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                rule_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_redaction_rule_api_admin_redaction_rules__rule_id__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                rule_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RedactionRuleUpdateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RedactionRuleResponse"];
                 };
             };
             /** @description Validation Error */
@@ -11794,6 +13471,377 @@ export interface operations {
             };
         };
     };
+    in_force_api_me_privacy_in_force_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_PipelineResponse_"];
+                };
+            };
+        };
+    };
+    options_api_me_privacy_options_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptionsResponse"];
+                };
+            };
+        };
+    };
+    list_my_pipelines_api_me_privacy_pipelines_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_PipelineResponse_"];
+                };
+            };
+        };
+    };
+    create_my_pipeline_api_me_privacy_pipelines_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PipelineCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_my_pipeline_api_me_privacy_pipelines_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PipelineCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineCheckResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_my_pipeline_api_me_privacy_pipelines__pipeline_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_my_pipeline_api_me_privacy_pipelines__pipeline_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_my_pipeline_api_me_privacy_pipelines__pipeline_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PipelineUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_my_policies_api_me_privacy_policies_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_UserPolicyResponse_"];
+                };
+            };
+        };
+    };
+    create_my_policy_api_me_privacy_policies_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserPolicyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPolicyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_my_policy_api_me_privacy_policies__policy_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                policy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserPolicyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPolicyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_my_policy_api_me_privacy_policies__policy_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                policy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_my_pipelines_api_me_privacy_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DryRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_provider_catalogue_api_me_provider_catalogue_get: {
         parameters: {
             query?: never;
@@ -12020,190 +14068,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_RedactionEventRow_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rules_in_force_api_me_redaction_in_force_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MyRedactionInForce"];
-                };
-            };
-        };
-    };
-    list_my_rules_api_me_redaction_rules_get: {
-        parameters: {
-            query?: {
-                /** @description Rows to return, at most 200. */
-                limit?: number;
-                /** @description Rows to skip. */
-                offset?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Page_UserRedactionRuleResponse_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_my_rule_api_me_redaction_rules_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UserRedactionRuleRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserRedactionRuleResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_my_rule_api_me_redaction_rules__rule_id__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                rule_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UserRedactionRuleRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserRedactionRuleResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_my_rule_api_me_redaction_rules__rule_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                rule_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    test_my_rules_api_me_redaction_test_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RedactionTestRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RedactionTestResponse"];
                 };
             };
             /** @description Validation Error */
@@ -13397,6 +15261,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pystino_privacy_v1_pystino_privacy_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivacySummaryResponse"];
                 };
             };
         };

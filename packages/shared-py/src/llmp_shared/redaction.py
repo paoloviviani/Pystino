@@ -35,7 +35,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Literal
 
 from pydantic import BaseModel, Field
 
@@ -200,6 +200,9 @@ class EntitySpan(BaseModel):
     end: int = Field(ge=0)
     entity_type: str
     score: float = Field(ge=0.0, le=1.0, default=1.0)
+    # Which recogniser family produced the hit: "pattern" (regex/checksum),
+    # "spacy" or "gliner". None from a detector that does not say.
+    engine: Literal["pattern", "spacy", "gliner"] | None = None
 
     def slice_of(self, text: str) -> str:
         return text[self.start : self.end]
@@ -210,6 +213,16 @@ class TextFindings(BaseModel):
 
     index: int = Field(ge=0)
     spans: list[EntitySpan] = Field(default_factory=list)
+
+
+class CustomLabel(BaseModel):
+    """An extra entity type for a GLiNER request: a type name and the label asked of the model."""
+
+    entity: str = Field(min_length=1, max_length=64)
+    label: str = Field(min_length=1, max_length=80)
+
+
+MAX_CUSTOM_LABELS = 30
 
 
 class DetectionRequest(BaseModel):
@@ -228,6 +241,14 @@ class DetectionRequest(BaseModel):
     # clients and direct detector users on the historical all-recognizers path.
     presidio_pattern_matching: bool | None = None
     presidio_ner: bool | None = None
+    # The NER engine for this request. None means the deployment default.
+    # Naming an engine the service does not have is a 409 (`engine_unavailable`),
+    # never a silent fall back to another engine.
+    ner_engine: Literal["spacy", "gliner"] | None = None
+    # GLiNER only: extra entity types, each the type name to report and the
+    # natural-language label the model is asked for. Ignored by spaCy, and named
+    # in `unsupported_types` there.
+    custom_labels: list[CustomLabel] | None = Field(default=None, max_length=MAX_CUSTOM_LABELS)
 
 
 class DetectionResponse(BaseModel):

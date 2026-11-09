@@ -295,7 +295,7 @@ describe("Shell: the sidebar", () => {
     renderShell(me({ is_admin: true }), "/admin/models");
 
     const sidebar = screen.getByRole("navigation", { name: "Administration" });
-    for (const heading of ["Usage & limits", "Serving", "Privacy", "People", "Deployment"]) {
+    for (const heading of ["Usage & limits", "Serving", "Protection", "People", "Deployment"]) {
       expect(within(sidebar).getByText(heading)).toBeInTheDocument();
     }
 
@@ -315,7 +315,7 @@ describe("Shell: the sidebar", () => {
       "/admin/routing",
       "/admin/search",
       "/admin/private-providers",
-      "/admin/redaction",
+      "/admin/privacy",
       "/admin/users",
       "/admin/groups",
       "/admin/audit",
