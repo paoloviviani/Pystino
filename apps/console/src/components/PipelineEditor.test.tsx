@@ -167,8 +167,26 @@ describe("Pipeline editor", () => {
     await user.click(await screen.findByRole("button", { name: "Add rule" }));
     const add = screen.getByLabelText("Add a condition");
     const names = within(add).getAllByRole("option").map((o) => o.textContent);
-    expect(names).toEqual(["+ Add condition", "File type", "Is a scan", "File name", "Policy finds", "Classified as"]);
+    // Reading decides from the file: only its facts, no content condition.
+    expect(names).toEqual(["+ Add condition", "File type", "Is a scan", "File name"]);
     expect(screen.queryByText(/health|language/i)).toBeNull();
+    // The hint says why, in a (?) that opens on a click.
+    await user.click(
+      screen.getByRole("button", {
+        name: "Reading rules decide from the file, not its content; content is checked when the text is embedded or sent to chat.",
+      }),
+    );
+  });
+
+  it("offers the content conditions for embed and chat", async () => {
+    vi.stubGlobal("fetch", api([]));
+    const user = userEvent.setup();
+    renderEditor(<AdminPipeline />, "/admin/privacy/pipelines/new?kind=embed");
+    await user.click(await screen.findByRole("button", { name: "Add rule" }));
+    const add = screen.getByLabelText("Add a condition");
+    const names = within(add).getAllByRole("option").map((o) => o.textContent);
+    expect(names).toEqual(["+ Add condition", "Policy finds", "Classified as"]);
+    expect(screen.queryByRole("button", { name: /Reading rules decide/ })).toBeNull();
   });
 
   it("builds a classified-as condition and says the text goes to the model's provider", async () => {

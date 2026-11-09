@@ -372,8 +372,10 @@ export function engineLabel(engine: string): string {
  * pipeline cannot name it).
  */
 export function conditionKeys(kind: PrivacyKind, own: boolean): string[] {
-  const base = kind === "read" ? ["filetype", "scan", "filename", "finds"] : ["finds"];
-  return own ? base : [...base, "classified"];
+  // Reading decides from the file (its type, whether it is a scan, its name), never its
+  // text; content is checked when the text is embedded or sent to chat.
+  if (kind === "read") return ["filetype", "scan", "filename"];
+  return own ? ["finds"] : ["finds", "classified"];
 }
 /** Yes/no conditions: they carry no values, only "is" and "is not". */
 export const BOOL_KEYS = ["scan"];

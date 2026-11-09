@@ -3186,6 +3186,7 @@
   "privacy.cond.glob_placeholder": "*draft*",
   "privacy.cond.remove": "Remove {name}",
   "privacy.cond.add": "Add a condition",
+  "privacy.cond.read_hint": "Reading rules decide from the file, not its content; content is checked when the text is embedded or sent to chat.",
   "privacy.cond.add_option": "+ Add condition",
   "privacy.cond.renamed_title": "A renamed file will not be caught",
   "privacy.cond.renamed": "File name and type are a convenience, not protection. To protect content wherever it comes from, add embed and chat pipelines with a \"finds\" condition.",

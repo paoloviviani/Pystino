@@ -174,7 +174,7 @@ export function AdminPrivacyClassifiers() {
                 <Button size="sm" onClick={() => setEditing(c)}>
                   {m["privacy.row.edit"]()}
                 </Button>
-                <Button size="sm" variant="danger" onClick={() => setDeleting(c)}>
+                <Button size="sm" className="text-danger" onClick={() => setDeleting(c)}>
                   {m["privacy.row.delete"]()}
                 </Button>
               </div>

@@ -6513,6 +6513,8 @@ export interface components {
             default: boolean;
             /** Entities */
             entities: string[];
+            /** Labels */
+            labels: string[];
             /** Languages */
             languages: string[];
             /** Ms Per Token */

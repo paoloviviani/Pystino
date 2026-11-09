@@ -27,10 +27,10 @@ function rule(overrides: Record<string, unknown> = {}): PrivacyRuleView {
 }
 
 describe("conditionKeys", () => {
-  it("offers file conditions on a read and nothing about health, ids or language", () => {
+  it("offers only the file facts on a read, and nothing about health, ids or language", () => {
     const all = [...conditionKeys("read", false), ...conditionKeys("embed", false), ...conditionKeys("chat", false)];
     for (const gone of ["health", "ids", "lang"]) expect(all).not.toContain(gone);
-    expect(conditionKeys("read", false)).toEqual(["filetype", "scan", "filename", "finds", "classified"]);
+    expect(conditionKeys("read", false)).toEqual(["filetype", "scan", "filename"]);
   });
 
   it("offers finds and classified on embed and chat", () => {

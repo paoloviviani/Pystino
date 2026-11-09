@@ -294,6 +294,7 @@ function ConditionsEditor({
         );
       })}
       {available.length > 0 && (
+        <div className="flex items-center gap-2">
         <select
           className="w-fit rounded-md border border-line bg-surface px-2 py-1 text-body"
           aria-label={m["privacy.cond.add"]()}
@@ -319,6 +320,8 @@ function ConditionsEditor({
             </option>
           ))}
         </select>
+        {kind === "read" && <Tip text={m["privacy.cond.read_hint"]()} />}
+        </div>
       )}
       {warnNameOnly && (
         <Notice tone="warn" title={m["privacy.cond.renamed_title"]()}>

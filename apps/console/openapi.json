@@ -2594,7 +2594,7 @@
         "description": "An entity type the NER engine finds from a description (GLiNER) (ADR 0113, section 0c).\n\n``name`` is the entity label (UPPER_SNAKE) and ``label`` the natural-language\ndescription the model is given at inference (\"project code name\"). Only an\nengine that accepts labels (``custom_labels`` in the service's health) can use\none; a policy that names one with another engine is refused when saved.",
         "properties": {
           "label": {
-            "maxLength": 100,
+            "maxLength": 80,
             "minLength": 1,
             "title": "Label",
             "type": "string"
@@ -6659,6 +6659,13 @@
             "title": "Entities",
             "type": "array"
           },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "array"
+          },
           "languages": {
             "items": {
               "type": "string"
@@ -6688,6 +6695,7 @@
           "default",
           "entities",
           "custom_labels",
+          "labels",
           "ms_per_token",
           "languages"
         ],
@@ -10408,6 +10416,7 @@
             "items": {
               "$ref": "#/components/schemas/CustomEntity"
             },
+            "maxItems": 30,
             "title": "Custom Entities",
             "type": "array"
           },

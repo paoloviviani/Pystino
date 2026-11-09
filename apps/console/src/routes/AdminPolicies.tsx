@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Dialog, EmptyState, Notice, Spinner } from "@llmp/ui";
+import { Badge, Button, Card, Dialog, EmptyState, Notice, Spinner, buttonClasses } from "@llmp/ui";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 
@@ -80,7 +80,7 @@ export function AdminPolicies() {
               <div className="flex flex-wrap gap-1">
                 <Link
                   to={`/admin/privacy/policies/${p.id}`}
-                  className="inline-flex items-center rounded-lg border border-line px-3 py-1 text-dense no-underline"
+                  className={buttonClasses("secondary", "sm")}
                 >
                   {m["privacy.row.edit"]()}
                 </Link>
@@ -90,7 +90,7 @@ export function AdminPolicies() {
                 >
                   {m["privacy.row.duplicate"]()}
                 </Button>
-                <Button size="sm" variant="danger" onClick={() => setDeleting(p)}>
+                <Button size="sm" className="text-danger" onClick={() => setDeleting(p)}>
                   {m["privacy.row.delete"]()}
                 </Button>
               </div>

@@ -87,7 +87,7 @@ export function PipelineCard({
                 {m["privacy.row.edit"]()}
               </Link>
               {onDelete && (
-                <Button size="sm" variant="danger" onClick={onDelete}>
+                <Button size="sm" className="text-danger" onClick={onDelete}>
                   {m["privacy.row.delete"]()}
                 </Button>
               )}
