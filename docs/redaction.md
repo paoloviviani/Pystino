@@ -799,3 +799,16 @@ whose output is logged.
 - Scoping is a **performance lever** as much as a policy one: not
   running NER where no pipeline applies a policy is the largest single optimisation
   available.
+
+## Screening time limit
+
+`GATEWAY_REDACTION__TIMEOUT_SECONDS` (default 30) is how long the gateway waits
+for the redaction service to screen a request. Named-entity screening of a large
+tool result, such as a LaTeX file from an MCP tool, can take many seconds. When
+the limit passes, the request is refused (fail closed) with the code
+`redaction_timeout`; when the service cannot be reached at all the code is
+`redaction_unreachable`. Both appear in the console's request list as the reason
+for the refusal, and the gateway log gives the input size and the engine, never
+the text. Raise the limit if large inputs still time out. With
+`GATEWAY_REDACTION__FAIL_OPEN` on, either case forwards the request unredacted
+instead, and logs it loudly.

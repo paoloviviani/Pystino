@@ -501,6 +501,37 @@ class TestFailureHandling:
         with pytest.raises(RedactionUnavailableError):
             await detector.redactor().redact_request([{"role": "user", "content": "hello"}])
 
+    async def test_a_timeout_is_named_and_sized_in_the_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        detector = FakeDetector()
+        detector.fail_with = httpx.ReadTimeout("")
+        secret = "SECRETWORD " + "x" * 2000
+        with caplog.at_level(logging.ERROR), pytest.raises(RedactionUnavailableError) as raised:
+            await detector.redactor(timeout_seconds=30).redact_request(
+                [{"role": "user", "content": secret}]
+            )
+        assert raised.value.code == "redaction_timeout"
+        assert "timed out" in raised.value.message
+        assert "could not be reached" not in raised.value.message
+        assert "screening timed out after 30 s (2,011 characters, 1 items, engine default)" in (
+            caplog.text
+        )
+        assert "SECRETWORD" not in caplog.text
+
+    async def test_an_unreachable_service_keeps_its_own_code(self) -> None:
+        detector = FakeDetector()
+        detector.fail_with = httpx.ConnectError("refused")
+        with pytest.raises(RedactionUnavailableError) as raised:
+            await detector.redactor().redact_request([{"role": "user", "content": "hello"}])
+        assert raised.value.code == "redaction_unreachable"
+        assert "could not be reached" in raised.value.message
+
+    def test_the_default_timeout_is_thirty_seconds(self) -> None:
+        assert RedactionSettings().timeout_seconds == 30.0
+
     async def test_an_error_status_also_refuses(self) -> None:
         detector = FakeDetector()
         detector.status = 500

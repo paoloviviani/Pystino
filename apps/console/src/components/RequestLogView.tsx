@@ -36,6 +36,17 @@ const STATUS_LABELS: Record<string, () => string> = {
   in_progress: m["request_log.status.in_progress"],
 };
 
+const REASON_LABELS: Record<string, () => string> = {
+  redaction_timeout: m["request_log.reason.redaction_timeout"],
+  redaction_unreachable: m["request_log.reason.redaction_unreachable"],
+  redaction_unavailable: m["request_log.reason.redaction_unavailable"],
+};
+
+function reasonOf(code: string | null | undefined): string | null {
+  const label = code ? REASON_LABELS[code] : undefined;
+  return label ? label() : null;
+}
+
 function statusTone(status: string): "ok" | "warn" | "danger" | "neutral" {
   if (status === "completed") return "ok";
   if (status === "upstream_error") return "danger";
@@ -159,9 +170,16 @@ export function RequestLogView({ scope }: { scope: RequestLogScope }) {
       key: "status",
       header: m["request_log.column.status"](),
       render: (row) => (
-        <Badge tone={statusTone(row.status)}>
-          {(STATUS_LABELS[row.status] ?? m["request_log.status.other"])()}
-        </Badge>
+        <>
+          <Badge tone={statusTone(row.status)}>
+            {(STATUS_LABELS[row.status] ?? m["request_log.status.other"])()}
+          </Badge>
+          {reasonOf(row.error_code) ? (
+            <div className={`${MUTED} mt-1 max-w-xs whitespace-normal text-xs`}>
+              {reasonOf(row.error_code)}
+            </div>
+          ) : null}
+        </>
       ),
     },
     {

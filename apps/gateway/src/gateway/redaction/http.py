@@ -81,6 +81,12 @@ class RedactionUnavailableError(GatewayError):
     code = "redaction_unavailable"
 
 
+#: Stable codes for why the service did not answer. Stored on the refused
+#: request's row, so the admin console's request list can say which.
+REDACTION_TIMEOUT = "redaction_timeout"
+REDACTION_UNREACHABLE = "redaction_unreachable"
+
+
 class EngineUnavailableError(Exception):
     """The service has no such NER engine now (409 ``engine_unavailable``).
 
@@ -926,16 +932,44 @@ class HttpDetectionRedactor:
                 # Loud, because this is the state in which the gateway is
                 # forwarding unredacted prompts while still reporting an engine.
                 logger.error(
-                    "detection service unavailable (%s); FAILING OPEN and forwarding "
-                    "the prompt unredacted",
-                    exc,
+                    "detection service unavailable (%s; %s characters, engine %s); "
+                    "FAILING OPEN and forwarding the prompt unredacted",
+                    str(exc) or type(exc).__name__,
+                    f"{sum(len(t) for t in request.texts):,}",
+                    request.ner_engine or "default",
                     exc_info=True,
                 )
                 return None, False
-            logger.error("detection service unavailable (%s); refusing the request", exc)
+            timed_out = isinstance(exc, (TimeoutError, httpx.TimeoutException))
+            # An httpx timeout has an empty str(): name the type instead. The size and
+            # engine are logged, never the text.
+            reason = str(exc) or type(exc).__name__
+            characters = sum(len(t) for t in request.texts)
+            size = f"{characters:,} characters, {len(request.texts):,} items"
+            engine = request.ner_engine or "default"
+            if timed_out:
+                logger.error(
+                    "screening timed out after %g s (%s, engine %s); refusing the request",
+                    self._settings.timeout_seconds,
+                    size,
+                    engine,
+                )
+                raise RedactionUnavailableError(
+                    "The redaction service timed out "
+                    f"(no answer within {self._settings.timeout_seconds:g} s), so this request "
+                    "cannot be screened. It is refused rather than forwarded unredacted.",
+                    code=REDACTION_TIMEOUT,
+                ) from exc
+            logger.error(
+                "detection service unavailable (%s; %s, engine %s); refusing the request",
+                reason,
+                size,
+                engine,
+            )
             raise RedactionUnavailableError(
                 "The redaction service could not be reached, so this request cannot be "
-                "screened. It is refused rather than forwarded unredacted."
+                "screened. It is refused rather than forwarded unredacted.",
+                code=REDACTION_UNREACHABLE,
             ) from exc
 
         found = {finding.index: finding.spans for finding in parsed.findings}

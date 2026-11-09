@@ -8181,6 +8181,8 @@ export interface components {
             created_at: string;
             /** Currency */
             currency: string;
+            /** Error Code */
+            error_code: string | null;
             /** Group Id */
             group_id: string | null;
             /** Group Name */

@@ -367,6 +367,45 @@ class TestBlocking:
         assert row.redaction_rule_id == pid
         assert row.error_code == "content_blocked"
 
+    async def test_a_screening_timeout_leaves_a_row_with_its_code(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: Any,
+        fake_upstream: Any,
+    ) -> None:
+        await self.install(
+            app,
+            session_factory,
+            mode=EntityMode.REDACT,
+            who={"mode": "users", "ids": [str(seeded.user.id)]},
+        )
+        app.state.redactor._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: (_ for _ in ()).throw(httpx.ReadTimeout(""))
+            )
+        )
+        before = len(fake_upstream.bodies)
+
+        response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": seeded.model.name,
+                "messages": [{"role": "user", "content": "my ssn is 123-45-6789"}],
+            },
+            headers=seeded.auth,
+        )
+
+        assert response.status_code == 502, response.text
+        assert response.json()["error"]["code"] == "redaction_timeout"
+        assert len(fake_upstream.bodies) == before
+        row = (await session.execute(select(UsageRecord))).scalars().one()
+        assert row.error_code == "redaction_timeout"
+        assert "timed out" in (row.error_message or "")
+        assert "123-45-6789" not in (row.error_message or "")
+
     async def test_the_same_entity_under_a_weaker_mode_is_served(
         self,
         app: Any,
