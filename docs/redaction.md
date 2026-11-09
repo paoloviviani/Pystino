@@ -126,6 +126,11 @@ The policy editor has a **Try it** box (`POST /api/admin/privacy/policies/try`) 
 runs the real detection over a text, with no side effects, and lists each item found
 with its group, and the engine and score for entities.
 
+Send a policy to the API with both keys (`formats` and `entities`): a body with only
+`entities` is read as the older single table and split by name (PERSON, LOCATION, NRP
+and ORGANIZATION are NER, every other name a built-in format), which is also how
+policies written before the two groups, and `GATEWAY_REDACTION__POLICY`, still load.
+
 ### The redaction service's contract
 
 `GET /healthz` reports `pattern_entities` and `ner_engines`, one entry per engine

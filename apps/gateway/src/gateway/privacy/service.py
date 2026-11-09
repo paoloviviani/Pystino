@@ -168,9 +168,7 @@ def check_context(state: PrivacyState, engines: Any = None) -> rulelib.CheckCont
         if engines is not None and ref.policy.engine is not None:
             why = engine_problem(engines, ref.policy.engine, bool(ref.policy.custom_entities)) or ""
         content[pid] = rulelib.ContentInfo(ref.name, not why, why)
-    for pid, (name, _) in (
-        (k, v) for views in state._user_views.values() for k, v in views.items()
-    ):
+    for pid, name in state.own_policy_names().items():
         content[pid] = rulelib.ContentInfo(name)
     for cid, classifier in state.classifiers.items():
         content[cid] = rulelib.ContentInfo(classifier.name, classifier.available, classifier.why)

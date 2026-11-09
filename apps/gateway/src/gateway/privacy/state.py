@@ -231,6 +231,12 @@ class PrivacyState:
             backend=self.classifier_backend,
         )
 
+    def own_policy_names(self) -> dict[str, str]:
+        """id -> name for every user's own policy, whoever owns it (for the checks only)."""
+        return {
+            pid: name for views in self._user_views.values() for pid, (name, _) in views.items()
+        }
+
     def name_of(self, ident: str) -> str | None:
         """The name of a policy or a classifier by id."""
         found = self.policy_name(ident)
