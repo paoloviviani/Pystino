@@ -72,13 +72,14 @@ class UserRule:
 
     def as_policy(self) -> RedactionPolicy:
         """This rule on its own, for attribution (``EffectivePolicy.decider_for``)."""
-        entities = {self.name: EntityPolicy(mode=self.mode)}
         if self.kind == "pattern" and self.regex is not None:
+            # A pattern is evaluated here, never asked of the redaction service: its name
+            # is not an entity type, and listing it under `entities` made the service
+            # answer "cannot serve" (a warning per request, a 503 in strict detection).
             return RedactionPolicy(
-                entities=entities,
                 patterns=[CustomPattern(name=self.name, regex=self.regex, mode=self.mode)],
             )
-        return RedactionPolicy(entities=entities)
+        return RedactionPolicy(entities={self.name: EntityPolicy(mode=self.mode)})
 
     def contributor(self) -> Contributor:
         return Contributor(id=self.id, name=self.label(), owner="user", policy=self.as_policy())
@@ -203,6 +204,23 @@ def tightens(base: RedactionPolicy, rule: UserRule) -> bool:
             return collides is None or rank(rule.mode) > rank(collides[0])
         return rank(rule.mode) > rank(base.mode_for(rule.name))
     return rank(rule.mode) > rank(base.mode_for(rule.name))
+
+
+#: Type names the detectors use (the service's pattern recognisers, spaCy's and GLiNER's
+#: usual labels). A user's pattern may not take one of them as its label: labels share one
+#: name space with the types, and a pattern called PERSON would be read as a statement
+#: about persons. The administrators' own lists (what users may name, the types their
+#: policies use) are added when a policy is saved.
+RESERVED_TYPES = frozenset(
+    {
+        "CREDIT_CARD", "CRYPTO", "DATE_TIME", "EMAIL_ADDRESS", "ES_NIE", "ES_NIF", "IBAN_CODE",
+        "IP_ADDRESS", "IT_DRIVER_LICENSE", "IT_FISCAL_CODE", "IT_IDENTITY_CARD", "IT_PASSPORT",
+        "IT_VAT_CODE", "MAC_ADDRESS", "MEDICAL_LICENSE", "PHONE_NUMBER", "PL_PESEL", "UK_NHS",
+        "UK_NINO", "URL", "US_BANK_NUMBER", "US_DRIVER_LICENSE", "US_ITIN", "US_PASSPORT",
+        "US_SSN", "UUID", "PERSON", "LOCATION", "ORGANIZATION", "DATE", "NRP", "GPE", "LOC",
+        "ORG", "FAC", "EVENT", "MONEY", "TIME",
+    }
+)  # fmt: skip
 
 
 def validate_pattern(name: str, regex: str, mode: EntityMode) -> CustomPattern:

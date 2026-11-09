@@ -231,8 +231,9 @@ services:
       # purpose by any client the issuer will talk to. This deployment has
       # one OIDC client of its own (the console); OIDC_CHAT_CLIENT_ID and
       # OIDC_MACHINE_CLIENT_ID are for an operator's own chat or bearer-token
-      # client, empty unless set.
-      GATEWAY_OIDC__ACCEPTED_CLIENTS: ${OIDC_ACCEPTED_CLIENTS:-${OIDC_CONSOLE_CLIENT_ID:-pystino-console},${OIDC_CHAT_CLIENT_ID:-},${OIDC_MACHINE_CLIENT_ID:-}}
+      # client. The chat's is empty unless set; the machine client defaults to
+      # opencode-enrollment, as GATEWAY_OIDC__MACHINE_CLIENT_ID does above.
+      GATEWAY_OIDC__ACCEPTED_CLIENTS: ${OIDC_ACCEPTED_CLIENTS:-${OIDC_CONSOLE_CLIENT_ID:-pystino-console},${OIDC_CHAT_CLIENT_ID:-},${OIDC_MACHINE_CLIENT_ID:-opencode-enrollment}}
       # Which of those accepted clients may call POST /v1/session/announce.
       # Empty (the default here, with no chat bundled) means announce
       # refuses every token; a startup WARNING says so once an audience is

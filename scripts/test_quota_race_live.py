@@ -27,7 +27,7 @@ Usage:
       <project>-valkey-1)
     VALKEY_URL=redis://$ip:6379/9 uv run python scripts/test_quota_race_live.py
 
-VALKEY_URL defaults to redis://localhost:6379/9. Database 9 is used and flushed.
+VALKEY_URL is required. Database 9 is used and flushed.
 """
 
 from __future__ import annotations
@@ -55,7 +55,10 @@ from gateway.quota.counters import (
 from gateway.quota.windows import WindowSpec
 from gateway.types import utcnow
 
-VALKEY_URL = os.environ.get("VALKEY_URL", "redis://localhost:6379/9")
+VALKEY_URL = os.environ.get("VALKEY_URL", "")
+if not VALKEY_URL:
+    # Database 9 is flushed: never a guessed localhost, which may be a live stack's Valkey.
+    raise SystemExit("set VALKEY_URL (see the usage above): no default Valkey")
 LIMIT = 1000
 EACH = 400
 CALLERS = 40
