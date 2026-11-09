@@ -175,7 +175,7 @@ export function RequestLogView({ scope }: { scope: RequestLogScope }) {
             {(STATUS_LABELS[row.status] ?? m["request_log.status.other"])()}
           </Badge>
           {reasonOf(row.error_code) ? (
-            <div className={`${MUTED} mt-1 max-w-xs whitespace-normal text-xs`}>
+            <div className={`${MUTED} mt-1 max-w-xs whitespace-normal`}>
               {reasonOf(row.error_code)}
             </div>
           ) : null}
