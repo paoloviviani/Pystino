@@ -1,7 +1,7 @@
 import { Badge, Button, Card, Notice, Select } from "@llmp/ui";
 import { useState } from "react";
 
-import { FIELD_LABEL, FORM, MUTED, TEXTAREA } from "../lib/layout";
+import { CODE, FIELD_LABEL, FORM, MUTED, TEXTAREA } from "../lib/layout";
 import {
   KINDS,
   baseLevel,
@@ -92,6 +92,44 @@ export function TestResult({ result }: { result: PrivacyTestResult }) {
                           {s.reasons.join(" ")}
                         </span>
                       )}
+                      {s.items.length > 0 && (
+                        <ul
+                          aria-label={m["privacy.test.items"]()}
+                          className="m-0 mt-0.5 flex list-none flex-col gap-0.5 p-0 text-small font-normal"
+                        >
+                          {s.items.map((item, at) => (
+                            <li key={at} className="flex flex-wrap items-baseline gap-x-2">
+                              {/* i18n: server text, the policy's own name. */}
+                              <strong>{item.policy}</strong>
+                              <span className={MUTED}>
+                                {item.group === "entity"
+                                  ? m["privacy.test.group_entity"]()
+                                  : m["privacy.test.group_pattern"]()}
+                              </span>
+                              <span>{entityLabel(item.type)}</span>
+                              {item.group === "entity" && (
+                                <span className={MUTED}>
+                                  {item.engine}
+                                  {item.score !== null && ` · ${item.score.toFixed(2)}`}
+                                </span>
+                              )}
+                              {item.text !== null && <code className={CODE}>{item.text}</code>}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {s.degraded.length > 0 && (
+                        <span className="block text-small font-normal text-ink">
+                          {/* i18n: server text, the gateway's own sentence. */}
+                          {s.degraded.join(" ")}
+                        </span>
+                      )}
+                      {s.note && (
+                        <span className={`block text-small font-normal ${MUTED}`}>
+                          {/* i18n: server text, the gateway's own note. */}
+                          {s.note}
+                        </span>
+                      )}
                     </span>
                   </li>
                 ))}
@@ -118,6 +156,30 @@ export function TestResult({ result }: { result: PrivacyTestResult }) {
           </details>
         )}
       </section>
+
+      {Object.keys(result.verdicts).length > 0 && (
+        <section className="flex flex-col gap-1" aria-label={m["privacy.test.verdicts"]()}>
+          <h2 className="m-0 flex items-center gap-2 text-heading font-semibold">
+            {m["privacy.test.verdicts"]()}
+            <Tip text={m["privacy.test.verdicts_tip"]()} />
+          </h2>
+          <ul className="m-0 flex list-none flex-col gap-0.5 p-0 text-body">
+            {Object.entries(result.verdicts).map(([name, verdict]) => (
+              <li key={name}>
+                {/* i18n: server text, the classifier's own name. */}
+                <strong>{name}</strong>{" "}
+                <span className={MUTED}>
+                  {verdict === true
+                    ? m["privacy.test.verdict_yes"]()
+                    : verdict === false
+                      ? m["privacy.test.verdict_no"]()
+                      : m["privacy.test.verdict_unknown"]()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {result.hops.map((hop) => (
         <Notice key={hop.reader} tone="info" title={m["privacy.test.rerouted"]({ reader: hop.reader_name })}>

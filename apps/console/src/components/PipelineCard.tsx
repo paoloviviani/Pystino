@@ -34,7 +34,8 @@ export function PipelineCard({
   const kind = pipeline.kind as PrivacyKind;
   const [who, target] = scopeWords(pipeline, own);
   const flags = [...pipeline.rules, pipeline.otherwise].map(issueBadges);
-  const warn = flags.some((f) => f.never || f.partly || f.check);
+  const warn =
+    flags.some((f) => f.never || f.partly || f.check) || pipeline.rules.some((r) => r.note);
   return (
     <Card>
       <div className="flex flex-col gap-3">
@@ -102,6 +103,13 @@ export function PipelineCard({
               <span className={rule.enabled ? "" : MUTED}>
                 {ruleSentence(kind, rule, pipeline.labels)}
                 {!rule.enabled && ` (${m["privacy.badge.off"]()})`}
+                {rule.note && (
+                  <span className="mt-0.5 flex flex-wrap items-center gap-2 text-small">
+                    <Badge tone="warn">{m["privacy.rule.note_badge"]()}</Badge>
+                    {/* i18n: server text, left by the migration on this rule. */}
+                    {rule.note}
+                  </span>
+                )}
               </span>
             </li>
           ))}

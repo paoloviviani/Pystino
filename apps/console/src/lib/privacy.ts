@@ -10,9 +10,12 @@ import type {
   PrivacyPipelineCheck,
   PrivacyPipelineInput,
   PrivacyPipelineUpdate,
-  PrivacyProfile,
-  PrivacyProfileInput,
-  PrivacyProfileUpdate,
+  PolicyTryInput,
+  PolicyTryResult,
+  PrivacyClassifierInput,
+  PrivacyClassifierList,
+  PrivacyClassifierUpdate,
+  PrivacyEngines,
   PrivacyRuleBody,
   PrivacyRuleView,
   PrivacySettings,
@@ -42,7 +45,8 @@ const BASE: Record<Area, string> = { admin: "/api/admin/privacy", me: "/api/me/p
 export const privacyKeys = {
   pipelines: (area: Area) => [area, "privacy", "pipelines"] as const,
   policies: (area: Area) => [area, "privacy", "policies"] as const,
-  profiles: ["admin", "privacy", "profiles"] as const,
+  engines: ["admin", "privacy", "engines"] as const,
+  classifiers: ["admin", "privacy", "classifiers"] as const,
   options: (area: Area) => [area, "privacy", "options"] as const,
   settings: ["admin", "privacy", "settings"] as const,
   inForce: ["me", "privacy", "in-force"] as const,
@@ -77,10 +81,19 @@ export function usePrivacyOptions(area: Area) {
   });
 }
 
-export function usePrivacyProfiles() {
+/** The NER engines the redaction service reports and the pattern formats it has. */
+export function usePrivacyEngines() {
   return useQuery({
-    queryKey: privacyKeys.profiles,
-    queryFn: () => request<Page<PrivacyProfile>>(`${BASE.admin}/profiles?limit=200`),
+    queryKey: privacyKeys.engines,
+    queryFn: () => request<PrivacyEngines>(`${BASE.admin}/engines`),
+    retry: retryUnlessRejected,
+  });
+}
+
+export function useClassifiers() {
+  return useQuery({
+    queryKey: privacyKeys.classifiers,
+    queryFn: () => request<PrivacyClassifierList>(`${BASE.admin}/classifiers`),
     retry: retryUnlessRejected,
   });
 }
@@ -109,7 +122,7 @@ export function usePrivacySettings() {
   });
 }
 
-/** A pipeline changes what the profiles and policies show as "in use". */
+/** A pipeline changes what the policies and classifiers show as "in use". */
 function useRefresh(area: Area) {
   const client = useQueryClient();
   return () =>
@@ -117,7 +130,7 @@ function useRefresh(area: Area) {
       client.invalidateQueries({ queryKey: privacyKeys.pipelines(area) }),
       client.invalidateQueries({ queryKey: privacyKeys.policies(area) }),
       client.invalidateQueries({ queryKey: privacyKeys.options(area) }),
-      client.invalidateQueries({ queryKey: privacyKeys.profiles }),
+      client.invalidateQueries({ queryKey: privacyKeys.classifiers }),
       client.invalidateQueries({ queryKey: privacyKeys.inForce }),
     ]);
 }
@@ -175,8 +188,8 @@ export function useSavePolicy() {
       body: {
         name?: string;
         policy?: RedactionPolicy;
-        profile_id?: string | null;
         is_active?: boolean;
+        shared_with_users?: boolean;
         reason?: string;
       };
     }) =>
@@ -214,29 +227,43 @@ export function useDeleteMyPolicy() {
   });
 }
 
-export function useCreatePrivacyProfile() {
+export function useSaveClassifier() {
   const refresh = useRefresh("admin");
   return useMutation({
-    mutationFn: (body: PrivacyProfileInput) =>
-      request<PrivacyProfile>(`${BASE.admin}/profiles`, { method: "POST", body }),
+    mutationFn: ({
+      id,
+      body,
+    }: {
+      id?: string;
+      body: PrivacyClassifierInput | PrivacyClassifierUpdate;
+    }) =>
+      id
+        ? request<PrivacyClassifierList["items"][number]>(`${BASE.admin}/classifiers/${id}`, {
+            method: "PATCH",
+            body,
+          })
+        : request<PrivacyClassifierList["items"][number]>(`${BASE.admin}/classifiers`, {
+            method: "POST",
+            body,
+          }),
     onSuccess: refresh,
   });
 }
 
-export function useUpdatePrivacyProfile() {
+export function useDeleteClassifier() {
   const refresh = useRefresh("admin");
   return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: PrivacyProfileUpdate }) =>
-      request<PrivacyProfile>(`${BASE.admin}/profiles/${id}`, { method: "PATCH", body }),
+    mutationFn: (id: string) =>
+      request<void>(`${BASE.admin}/classifiers/${id}`, { method: "DELETE" }),
     onSuccess: refresh,
   });
 }
 
-export function useDeletePrivacyProfile() {
-  const refresh = useRefresh("admin");
+/** Try a policy as it is being edited, unsaved, on a sample: real detection, no side effects. */
+export function useTryPolicy() {
   return useMutation({
-    mutationFn: (id: string) => request<void>(`${BASE.admin}/profiles/${id}`, { method: "DELETE" }),
-    onSuccess: refresh,
+    mutationFn: (body: PolicyTryInput) =>
+      request<PolicyTryResult>(`${BASE.admin}/policies/try`, { method: "POST", body }),
   });
 }
 
@@ -339,18 +366,18 @@ export function engineLabel(engine: string): string {
   }
 }
 
-export const CONDITION_KEYS: Record<PrivacyKind, string[]> = {
-  read: ["filetype", "scan", "filename"],
-  embed: ["health", "ids", "lang"],
-  chat: ["health", "ids", "lang"],
-};
+/**
+ * What a rule may test. `finds` is available everywhere; `classified` only to an
+ * administrator (it sends the text to a model's provider, so a user's own
+ * pipeline cannot name it).
+ */
+export function conditionKeys(kind: PrivacyKind, own: boolean): string[] {
+  const base = kind === "read" ? ["filetype", "scan", "filename", "finds"] : ["finds"];
+  return own ? base : [...base, "classified"];
+}
 /** Yes/no conditions: they carry no values, only "is" and "is not". */
-export const BOOL_KEYS = ["scan", "health", "ids"];
-/** Conditions decided by reading the request's own text. */
-export const CONTENT_KEYS = ["health", "ids", "lang"];
+export const BOOL_KEYS = ["scan"];
 export const FILETYPES = ["pdf", "word", "excel", "powerpoint", "image", "text"];
-export const LANGUAGES = ["it", "en", "fr", "de", "es"];
-export const PATTERNS = "patterns";
 
 export function conditionLabel(key: string): string {
   switch (key) {
@@ -360,12 +387,10 @@ export function conditionLabel(key: string): string {
       return m["privacy.cond.scan"]();
     case "filename":
       return m["privacy.cond.filename"]();
-    case "health":
-      return m["privacy.cond.health"]();
-    case "ids":
-      return m["privacy.cond.ids"]();
-    case "lang":
-      return m["privacy.cond.lang"]();
+    case "finds":
+      return m["privacy.cond.finds"]();
+    case "classified":
+      return m["privacy.cond.classified"]();
     default:
       return key;
   }
@@ -379,12 +404,10 @@ export function conditionHint(key: string): string {
       return m["privacy.cond.scan_hint"]();
     case "filename":
       return m["privacy.cond.filename_hint"]();
-    case "health":
-      return m["privacy.cond.health_hint"]();
-    case "ids":
-      return m["privacy.cond.ids_hint"]();
+    case "finds":
+      return m["privacy.cond.finds_hint"]();
     default:
-      return m["privacy.cond.lang_hint"]();
+      return m["privacy.cond.classified_hint"]();
   }
 }
 
@@ -407,26 +430,8 @@ export function filetypeLabel(value: string): string {
   }
 }
 
-export function languageLabel(value: string): string {
-  switch (value) {
-    case "it":
-      return m["privacy.lang.it"]();
-    case "en":
-      return m["privacy.lang.en"]();
-    case "fr":
-      return m["privacy.lang.fr"]();
-    case "de":
-      return m["privacy.lang.de"]();
-    case "es":
-      return m["privacy.lang.es"]();
-    default:
-      return value;
-  }
-}
-
 export function valueLabel(key: string, value: string): string {
   if (key === "filetype") return filetypeLabel(value);
-  if (key === "lang") return languageLabel(value);
   return value;
 }
 
@@ -437,19 +442,28 @@ export interface Cond {
   key: string;
   values: string[];
   negate: boolean;
-  decide?: string | null;
+  /** `finds`: how many items make it true (at least this many). */
+  count?: number;
 }
 
-type Phrasable = Pick<Cond, "key" | "values" | "negate">;
+type Phrasable = Pick<Cond, "key" | "values" | "negate"> & { count?: number };
 
-/** One condition as words: "contains health data", "is a PDF or Word file". */
-export function conditionPhrase(c: Phrasable): string {
+/**
+ * One condition as words: "is a PDF or Word file", "Contact details finds at
+ * least 2 items". `labels` names policies and classifiers by id.
+ */
+export function conditionPhrase(c: Phrasable, labels: Labels = {}): string {
   const values = c.values.map((v) => valueLabel(c.key, v)).join(" / ");
+  const named = c.values.map((v) => labels[v] ?? "?").join(" / ");
   switch (c.key) {
-    case "health":
-      return c.negate ? m["privacy.phrase.no_health"]() : m["privacy.phrase.health"]();
-    case "ids":
-      return c.negate ? m["privacy.phrase.no_ids"]() : m["privacy.phrase.ids"]();
+    case "finds":
+      return c.negate
+        ? m["privacy.phrase.finds_fewer"]({ policy: named, count: String(c.count ?? 1) })
+        : m["privacy.phrase.finds"]({ policy: named, count: String(c.count ?? 1) });
+    case "classified":
+      return c.negate
+        ? m["privacy.phrase.not_classified"]({ classifier: named })
+        : m["privacy.phrase.classified"]({ classifier: named });
     case "scan":
       return c.negate ? m["privacy.phrase.not_scan"]() : m["privacy.phrase.scan"]();
     case "filename":
@@ -460,10 +474,6 @@ export function conditionPhrase(c: Phrasable): string {
       return c.negate
         ? m["privacy.phrase.type_not"]({ values })
         : m["privacy.phrase.type_is"]({ values });
-    case "lang":
-      return c.negate
-        ? m["privacy.phrase.lang_not"]({ values })
-        : m["privacy.phrase.lang_is"]({ values });
     default:
       return values;
   }
@@ -497,7 +507,7 @@ export function actionPhrase(kind: PrivacyKind, a: Actionable, labels: Labels): 
 }
 
 interface SentenceRule {
-  conditions: { key: string; values?: string[]; negate?: boolean }[];
+  conditions: { key: string; values?: string[]; negate?: boolean; count?: number }[];
   action: Actionable;
   observe_only?: boolean;
 }
@@ -505,7 +515,12 @@ interface SentenceRule {
 export function ruleSentence(kind: PrivacyKind, rule: SentenceRule, labels: Labels): string {
   const when = rule.conditions.length
     ? rule.conditions
-        .map((c) => conditionPhrase({ key: c.key, values: c.values ?? [], negate: c.negate ?? false }))
+        .map((c) =>
+          conditionPhrase(
+            { key: c.key, values: c.values ?? [], negate: c.negate ?? false, count: c.count },
+            labels,
+          ),
+        )
         .join(m["privacy.phrase.and"]())
     : m["privacy.phrase.any"]();
   const text = m["privacy.phrase.rule"]({ when, action: actionPhrase(kind, rule.action, labels) });
@@ -554,11 +569,12 @@ export function ruleBody(rule: PrivacyRuleView): PrivacyRuleBody {
     name: rule.name,
     enabled: rule.enabled,
     observe_only: rule.observe_only,
+    note: rule.note ?? null,
     conditions: rule.conditions.map((c) => ({
       key: c.key,
       values: [...(c.values ?? [])],
       negate: c.negate ?? false,
-      ...(c.decide ? { decide: c.decide } : {}),
+      ...(c.key === "finds" ? { count: c.count ?? 1 } : {}),
     })),
     action: actionBody(rule.action),
   };

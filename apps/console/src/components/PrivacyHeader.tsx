@@ -5,17 +5,19 @@ import { HowItWorks } from "./HowItWorks";
 import { m } from "../paraglide/messages.js";
 
 /**
- * The head of the administrator's Privacy area: the title and the four tabs
- * (ADR 0113). Pipelines say when and how; redaction policies say what to hide;
- * detectors say how it is found; Test runs the real path.
+ * The head of the administrator's Privacy area: the title and the tabs
+ * (ADR 0113). Pipelines say when and how; redaction policies say what to find
+ * and hide; classifiers are decision models a rule can ask; the redaction
+ * service is what finds; Test runs the real path.
  */
 
-export type PrivacyTab = "pipelines" | "policies" | "detectors" | "test";
+export type PrivacyTab = "pipelines" | "policies" | "classifiers" | "service" | "test";
 
 const TABS: { tab: PrivacyTab; to: string; label: () => string }[] = [
   { tab: "pipelines", to: "/admin/privacy", label: m["privacy.tab.pipelines"] },
   { tab: "policies", to: "/admin/privacy/policies", label: m["privacy.tab.policies"] },
-  { tab: "detectors", to: "/admin/privacy/detectors", label: m["privacy.tab.detectors"] },
+  { tab: "classifiers", to: "/admin/privacy/classifiers", label: m["privacy.tab.classifiers"] },
+  { tab: "service", to: "/admin/privacy/service", label: m["privacy.tab.service"] },
   { tab: "test", to: "/admin/privacy/test", label: m["privacy.tab.test"] },
 ];
 

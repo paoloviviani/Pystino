@@ -13,12 +13,16 @@ const POLICY = (over: Record<string, unknown>) => ({
   name: "Default",
   policy: {
     default_mode: "off",
+    engine: null,
+    formats: { URL: { mode: "detect_only", threshold: null } },
     entities: { PERSON: { mode: "anonymise_restore", threshold: null, placeholder: "tagged" } },
+    custom_entities: [],
     patterns: [],
+    keywords: [{ name: "K", words: ["alpha"], case_sensitive: false, mode: "redact" }],
     allow_list: [],
   },
-  profile_id: null,
-  profile_name: "Fast",
+  shared_with_users: false,
+  engine_available: null,
   is_active: true,
   reason: "",
   used_by: [],
@@ -55,14 +59,21 @@ function renderPage(items: unknown[], seen: string[] = []) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Redaction policies", () => {
-  it("lists policies with what they hide, their profile and the pipelines that apply them", async () => {
-    renderPage([POLICY({ used_by: ["Remote embeddings", "Chat"] })]);
+  it("lists policies with what they find, whether they are shared, and the pipelines that apply them", async () => {
+    renderPage([POLICY({ used_by: ["Remote embeddings", "Chat"], shared_with_users: true })]);
     expect(await screen.findByText("Default")).toBeInTheDocument();
-    expect(screen.getByText("Fast")).toBeInTheDocument();
+    expect(screen.getByText("Shared")).toBeInTheDocument();
+    // The summary counts both groups.
+    expect(screen.getByText(/1 formats · 1 keyword lists|1 types · 1 formats/)).toBeInTheDocument();
     expect(screen.getByText("used by 2")).toBeInTheDocument();
     expect(screen.getByText("Used by: Remote embeddings, Chat")).toBeInTheDocument();
     // No scope anywhere: nothing says user, group, provider or model.
     expect(screen.queryByText(/group|provider|model/i)).toBeNull();
+  });
+
+  it("flags a policy whose engine cannot run", async () => {
+    renderPage([POLICY({ engine: "gliner", engine_available: false })]);
+    expect(await screen.findByText("Engine unavailable")).toBeInTheDocument();
   });
 
   it("will not delete a policy that a pipeline applies, and says which", async () => {

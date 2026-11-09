@@ -6,8 +6,12 @@ import type { RedactionPolicy } from "./types";
 function policy(overrides: Partial<RedactionPolicy> = {}): RedactionPolicy {
   return {
     default_mode: "off",
+    engine: null,
+    formats: {},
     entities: {},
+    custom_entities: [],
     patterns: [],
+    keywords: [],
     allow_list: [],
     ...overrides,
   };

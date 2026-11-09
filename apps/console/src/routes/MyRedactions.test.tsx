@@ -123,7 +123,7 @@ describe("My redactions", () => {
               outcome: "rule",
               observed: {
                 target: { alias: null, model: "local-reader", provider: "local" },
-                filename: "referto-rossi.pdf",
+                filename: "report-draft.pdf",
                 mime: "application/pdf",
                 filetype: "pdf",
                 is_scan: true,
@@ -136,7 +136,7 @@ describe("My redactions", () => {
                 profile: "default",
                 routing_rule: {
                   id: "r1",
-                  name: "Medical PDFs",
+                  name: "Scanned PDFs",
                   pipeline: "Reports",
                   pipeline_id: "p1",
                   owner: "admin",
@@ -155,7 +155,7 @@ describe("My redactions", () => {
     );
     renderPage();
 
-    expect(await screen.findByText("Reading a file · Rule Reports › Medical PDFs")).toBeInTheDocument();
+    expect(await screen.findByText("Reading a file · Rule Reports › Scanned PDFs")).toBeInTheDocument();
     expect(screen.getByText("Read with docling")).toBeInTheDocument();
     expect(screen.getByText("pdf · scan")).toBeInTheDocument();
     // A fallback is a warning, not a footnote.

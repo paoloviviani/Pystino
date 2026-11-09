@@ -10,7 +10,7 @@ import { AdminPipeline, MyPipeline } from "./PipelineEditor";
 
 const OPTIONS = {
   users: [{ id: "u1", name: "ana@example.org" }],
-  groups: [{ id: "g1", name: "Clinic" }],
+  groups: [{ id: "g1", name: "Finance" }],
   keys: [],
   providers: [{ id: "pv1", name: "OpenAI" }],
   models: [{ id: "m1", name: "text-embedding-3-small", provider_id: "pv1", provider: "OpenAI", kind: "embedding" }],
@@ -20,7 +20,7 @@ const OPTIONS = {
   ],
   policies: [{ id: "pol1", name: "Default" }],
   own_policies: [{ id: "own1", name: "Mine" }],
-  profiles: [{ id: "prof1", name: "Medical" }],
+  classifiers: [{ id: "cl1", name: "Unannounced project" }],
   entity_types: null,
   engines: ["markitdown", "ocr", "docling"],
 };
@@ -41,7 +41,6 @@ function api(seen: Seen[]) {
     if (url.includes("/pipelines") && method === "GET") {
       return jsonResponse({ items: [], total: 0, limit: 200, offset: 0 });
     }
-    if (url.includes("/profiles")) return jsonResponse({ items: [], total: 0, limit: 200, offset: 0 });
     if (url.includes("/pipelines")) return jsonResponse({ id: "new" });
     return jsonResponse({});
   });
@@ -74,7 +73,10 @@ describe("Pipeline editor", () => {
 
     await user.type(await screen.findByLabelText("Name"), "Remote embeddings");
     await user.click(screen.getByRole("button", { name: "Add rule" }));
-    await user.selectOptions(screen.getByLabelText("Add a condition"), "health");
+    await user.selectOptions(screen.getByLabelText("Add a condition"), "finds");
+    await user.selectOptions(screen.getByLabelText("Policy"), "pol1");
+    await user.clear(screen.getByLabelText("Number of items"));
+    await user.type(screen.getByLabelText("Number of items"), "3");
     await user.click(screen.getByRole("radio", { name: /Refuse/ }));
     await user.click(screen.getByRole("button", { name: "Create pipeline" }));
 
@@ -92,7 +94,7 @@ describe("Pipeline editor", () => {
           name: "Rule 1",
           enabled: true,
           observe_only: false,
-          conditions: [{ key: "health", values: [], negate: false, decide: "patterns" }],
+          conditions: [{ key: "finds", values: ["pol1"], negate: false, count: 3 }],
           action: { level: "refuse" },
         },
       ],
@@ -108,7 +110,7 @@ describe("Pipeline editor", () => {
     await screen.findByLabelText("Name");
 
     await user.click(screen.getByRole("button", { name: "Billing groups" }));
-    await user.click(screen.getByRole("button", { name: "Clinic" }));
+    await user.click(screen.getByRole("button", { name: "Finance" }));
     await user.click(screen.getByRole("button", { name: "All except" }));
     await user.click(screen.getByRole("button", { name: "OpenAI" }));
     await user.type(screen.getByLabelText("Name"), "P");
@@ -156,6 +158,129 @@ describe("Pipeline editor", () => {
     await user.selectOptions(screen.getByLabelText("Add a condition"), "filename");
     await user.click(screen.getByRole("radio", { name: /Refuse/ }));
     expect(screen.getByText("A renamed file will not be caught")).toBeInTheDocument();
+  });
+
+  it("offers exactly the conditions of the kind, and none of health, ids or language", async () => {
+    vi.stubGlobal("fetch", api([]));
+    const user = userEvent.setup();
+    renderEditor(<AdminPipeline />, "/admin/privacy/pipelines/new?kind=read");
+    await user.click(await screen.findByRole("button", { name: "Add rule" }));
+    const add = screen.getByLabelText("Add a condition");
+    const names = within(add).getAllByRole("option").map((o) => o.textContent);
+    expect(names).toEqual(["+ Add condition", "File type", "Is a scan", "File name", "Policy finds", "Classified as"]);
+    expect(screen.queryByText(/health|language/i)).toBeNull();
+  });
+
+  it("builds a classified-as condition and says the text goes to the model's provider", async () => {
+    const seen: Seen[] = [];
+    vi.stubGlobal("fetch", api(seen));
+    const user = userEvent.setup();
+    renderEditor(<AdminPipeline />, "/admin/privacy/pipelines/new?kind=chat");
+    await user.type(await screen.findByLabelText("Name"), "Classed");
+    await user.click(screen.getByRole("button", { name: "Add rule" }));
+    await user.selectOptions(screen.getByLabelText("Add a condition"), "classified");
+    await user.selectOptions(screen.getByLabelText("Classifier"), "cl1");
+    expect(
+      screen.getByRole("button", { name: "Classifying sends the text to the model's provider." }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Flip Classified as" }));
+    await user.click(screen.getByRole("radio", { name: /Refuse/ }));
+    await user.click(screen.getByRole("button", { name: "Create pipeline" }));
+    await waitFor(() => expect(seen.some((c) => c.method === "POST" && !c.url.includes("check"))).toBe(true));
+    expect(seen.find((c) => c.method === "POST" && !c.url.includes("check"))?.body).toMatchObject({
+      rules: [{ conditions: [{ key: "classified", values: ["cl1"], negate: true }] }],
+    });
+  });
+
+  it("says there are no classifiers when there are none", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/options")) return jsonResponse({ ...OPTIONS, classifiers: [] });
+        if (url.includes("/pipelines/check")) return jsonResponse({ error: null, issues: [], soft_cap: 20 });
+        return jsonResponse({ items: [], total: 0, limit: 200, offset: 0 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderEditor(<AdminPipeline />, "/admin/privacy/pipelines/new?kind=chat");
+    await user.click(await screen.findByRole("button", { name: "Add rule" }));
+    await user.selectOptions(screen.getByLabelText("Add a condition"), "classified");
+    expect(screen.getByText(/No classifiers yet/)).toBeInTheDocument();
+  });
+
+  it("offers the user's own policies next to the shared ones in 'finds', and never classified", async () => {
+    vi.stubGlobal("fetch", api([]));
+    const user = userEvent.setup();
+    renderEditor(<MyPipeline />, "/privacy/pipelines/new?kind=chat");
+    await user.click(await screen.findByRole("button", { name: "Add rule" }));
+    const add = screen.getByLabelText("Add a condition");
+    expect(within(add).queryByRole("option", { name: "Classified as" })).toBeNull();
+    await user.selectOptions(add, "finds");
+    const policy = screen.getByLabelText("Policy");
+    expect(within(policy).getByRole("option", { name: "Default" })).toBeInTheDocument();
+    expect(within(policy).getByRole("option", { name: "Mine" })).toBeInTheDocument();
+  });
+
+  it("shows a migration note as a warning on the rule and sends it back unchanged", async () => {
+    const seen: Seen[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        seen.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        if (url.endsWith("/options")) return jsonResponse(OPTIONS);
+        if (url.includes("/pipelines/check")) return jsonResponse({ error: null, issues: [], soft_cap: 20 });
+        if (url.includes("/pipelines") && method === "GET") {
+          return jsonResponse({
+            items: [
+              {
+                id: "p1",
+                owner_id: null,
+                kind: "chat",
+                name: "Migrated",
+                enabled: true,
+                position: 0,
+                who: { mode: "all", ids: [] },
+                target: { mode: "all", providers: [], models: [] },
+                rules: [
+                  {
+                    id: "r1",
+                    name: "Old rule",
+                    enabled: false,
+                    observe_only: false,
+                    note: "Switched off: it used a check that no longer exists.",
+                    conditions: [],
+                    action: { level: "refuse" },
+                    issues: [],
+                  },
+                ],
+                otherwise: { id: "o", name: "else", enabled: true, observe_only: false, note: null, conditions: [], action: { level: "pass" }, issues: [] },
+                labels: {},
+                summary: [],
+                created_at: "",
+                updated_at: "",
+              },
+            ],
+            total: 1,
+            limit: 200,
+            offset: 0,
+          });
+        }
+        return jsonResponse({ id: "p1" });
+      }),
+    );
+    const user = userEvent.setup();
+    renderEditor(<AdminPipeline />, "/admin/privacy/pipelines/p1");
+    expect(
+      await screen.findByText("Switched off: it used a check that no longer exists."),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(seen.some((c) => c.method === "PATCH")).toBe(true));
+    expect(seen.find((c) => c.method === "PATCH")?.body).toMatchObject({
+      rules: [{ note: "Switched off: it used a check that no longer exists." }],
+    });
   });
 
   it("fixes a user's who to themselves and does not offer 'nothing' as a rule's action", async () => {

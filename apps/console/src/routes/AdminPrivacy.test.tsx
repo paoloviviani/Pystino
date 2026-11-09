@@ -27,6 +27,7 @@ function pipeline(overrides: Partial<PrivacyPipeline> & { id: string; name: stri
       name: "Everything else",
       enabled: true,
       observe_only: false,
+      note: null,
       conditions: [],
       action: action("pass"),
       issues: [],
@@ -44,14 +45,15 @@ const REMOTE = pipeline({
   name: "Remote embeddings",
   who: { mode: "groups", ids: ["g1"] },
   target: { mode: "only", providers: ["pv1"], models: [] },
-  labels: { g1: "Clinic", pv1: "OpenAI", pol1: "Default" },
+  labels: { g1: "Finance", pv1: "OpenAI", pol1: "Default", pol2: "Names" },
   rules: [
     {
       id: "r1",
-      name: "Health text",
+      name: "Names found",
       enabled: true,
       observe_only: false,
-      conditions: [{ key: "health", values: [], negate: false, decide: "patterns" }],
+      note: null,
+      conditions: [{ key: "finds", values: ["pol2"], negate: false, count: 2 }],
       action: action("refuse"),
       issues: [],
     },
@@ -61,6 +63,7 @@ const REMOTE = pipeline({
     name: "Everything else",
     enabled: true,
     observe_only: false,
+    note: null,
     conditions: [],
     action: action("pass", { redact_with: "pol1" }),
     issues: [],
@@ -77,7 +80,8 @@ const READ = pipeline({
       name: "Scans",
       enabled: true,
       observe_only: false,
-      conditions: [{ key: "scan", values: [], negate: false, decide: null }],
+      note: null,
+      conditions: [{ key: "scan", values: [], negate: false, count: 1 }],
       action: action("read_with", { reader: "builtin", engine: "docling" }),
       issues: [{ code: "never_fires", message: "above catches it", rule_id: null, rule_name: null }],
     },
@@ -87,6 +91,7 @@ const READ = pipeline({
     name: "Everything else",
     enabled: true,
     observe_only: false,
+    note: null,
     conditions: [],
     action: action("default"),
     issues: [],
@@ -128,14 +133,15 @@ function renderPage() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Pipelines", () => {
-  it("has the four tabs and no 'local' anywhere", async () => {
+  it("has the five tabs and no 'local' anywhere", async () => {
     vi.stubGlobal("fetch", api([], []));
     renderPage();
     const nav = await screen.findByRole("navigation", { name: "Privacy sections" });
     expect(within(nav).getAllByRole("link").map((a) => a.textContent)).toEqual([
       "Pipelines",
       "Redaction policies",
-      "Detectors",
+      "Classifiers",
+      "Redaction service",
       "Test",
     ]);
     expect(screen.queryByText(/local/i)).toBeNull();
@@ -147,9 +153,9 @@ describe("Pipelines", () => {
 
     const embed = await screen.findByRole("region", { name: "Embedding" });
     expect(within(embed).getByText("Remote embeddings")).toBeInTheDocument();
-    expect(within(embed).getByText("Billing groups: Clinic")).toBeInTheDocument();
+    expect(within(embed).getByText("Billing groups: Finance")).toBeInTheDocument();
     expect(within(embed).getByText("Only OpenAI")).toBeInTheDocument();
-    expect(within(embed).getByText("it contains health data → refuse")).toBeInTheDocument();
+    expect(within(embed).getByText("Names finds at least 2 items → refuse")).toBeInTheDocument();
     // The fixed last rule is always shown, and names the policy it applies.
     expect(within(embed).getByText("everything else → redact with Default")).toBeInTheDocument();
 
@@ -165,6 +171,31 @@ describe("Pipelines", () => {
         "No pipelines of this kind",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows a note the migration left on a rule as a warning on the pipeline", async () => {
+    const migrated = pipeline({
+      id: "p4",
+      name: "Migrated",
+      rules: [
+        {
+          id: "r4",
+          name: "Old rule",
+          enabled: false,
+          observe_only: false,
+          note: "Switched off by the migration: it used a check that no longer exists.",
+          conditions: [],
+          action: action("refuse"),
+          issues: [{ code: "migrated", message: "Switched off by the migration.", rule_id: "r4", rule_name: "Old rule" }],
+        },
+      ],
+    });
+    vi.stubGlobal("fetch", api([], [migrated]));
+    renderPage();
+    expect(
+      await screen.findByText("Switched off by the migration: it used a check that no longer exists."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Check")).toBeInTheDocument();
   });
 
   it("moves a pipeline within its kind by sending the whole order", async () => {

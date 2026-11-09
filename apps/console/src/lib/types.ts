@@ -361,7 +361,7 @@ export type RedactionConfigChange = Schemas["RedactionConfigChange"];
  * Ordered weakest to strongest, which is the order the screen lists them.
  */
 export type EntityMode =
-  "off" | "anonymise_restore" | "anonymise" | "redact" | "block";
+  "off" | "detect_only" | "anonymise_restore" | "anonymise" | "redact" | "block";
 
 /**
  * How a placeholder is written. `same_length` is `#TOKEN#` with the length of
@@ -394,12 +394,46 @@ export type CustomPattern = Narrow<
   }
 >;
 
+/**
+ * A list of words or phrases, found as written. The API accepts the words as a
+ * comma-separated string or a list and always returns the list.
+ */
+export type KeywordList = Narrow<
+  Schemas["KeywordList"],
+  {
+    mode: EntityMode;
+    placeholder?: PlaceholderStyle;
+    case_sensitive?: boolean;
+  }
+>;
+
+/** An entity type named in natural language, for an engine that takes custom labels. */
+export type CustomEntity = Narrow<
+  Schemas["CustomEntity"],
+  {
+    mode: EntityMode;
+    placeholder?: PlaceholderStyle;
+    threshold?: number | null;
+  }
+>;
+
+export type NerEngineName = "spacy" | "gliner";
+
+/**
+ * A policy finds items in two groups that never mix: patterns (`formats`,
+ * `patterns`, `keywords`) and entities (`entities`, `custom_entities`, read by
+ * the policy's NER `engine`; null is the deployment default).
+ */
 export type RedactionPolicy = Narrow<
   Schemas["RedactionPolicy"],
   {
     default_mode: EntityMode;
     entities: Record<string, EntityPolicy>;
+    formats: Record<string, EntityPolicy>;
     patterns: CustomPattern[];
+    keywords: KeywordList[];
+    custom_entities: CustomEntity[];
+    engine: NerEngineName | null;
     allow_list: string[];
   }
 >;
@@ -642,9 +676,17 @@ export type PrivacyTarget = Schemas["TargetBody"];
 export type PrivacyPipelineInput = Schemas["PipelineCreateRequest"];
 export type PrivacyPipelineUpdate = Schemas["PipelineUpdateRequest"];
 export type PrivacyPipelineCheck = Schemas["PipelineCheckResponse"];
-export type PrivacyProfile = Schemas["ProfileResponse"];
-export type PrivacyProfileInput = Schemas["ProfileCreateRequest"];
-export type PrivacyProfileUpdate = Schemas["ProfileUpdateRequest"];
+/** The NER engines the redaction service reports, and the pattern formats it has. */
+export type PrivacyEngines = Schemas["EnginesResponse"];
+export type PrivacyEngine = Schemas["NerEngineView"];
+export type PrivacyClassifier = Schemas["ClassifierResponse"];
+export type PrivacyClassifierList = Schemas["ClassifierListResponse"];
+export type PrivacyClassifierInput = Schemas["ClassifierCreateRequest"];
+export type PrivacyClassifierUpdate = Schemas["ClassifierUpdateRequest"];
+export type PolicyTryInput = Schemas["PolicyTryRequest"];
+export type PolicyTryResult = Schemas["PolicyTryResponse"];
+export type PolicyTryItem = Schemas["FoundItem"];
+export type PrivacyTestItem = Schemas["DryRunItem"];
 export type PrivacyOptions = Schemas["OptionsResponse"];
 export type PrivacySettings = Schemas["SettingsResponse"];
 export type PrivacyTestInput = Schemas["DryRunRequest"];

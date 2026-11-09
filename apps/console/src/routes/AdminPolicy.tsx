@@ -1,4 +1,4 @@
-import { Button, Card, Input, Notice, Select, Spinner } from "@llmp/ui";
+import { Button, Card, Input, Notice, Spinner } from "@llmp/ui";
 import { useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
 
@@ -6,16 +6,17 @@ import { PageHeader } from "../components/PageHeader";
 import { PolicyFields, seededPolicy } from "../components/PolicyFields";
 import { RulePanel } from "../components/RulePanel";
 import { useRedactionStatus } from "../lib/admin";
+import { Tip } from "../components/Tip";
 import { FORM, PAGE } from "../lib/layout";
-import { usePolicies, usePrivacyProfiles, useSavePolicy } from "../lib/privacy";
+import { usePolicies, usePrivacyEngines, useSavePolicy } from "../lib/privacy";
 import { useOptionalToast } from "../lib/toast";
 import type { RedactionPolicy, RedactionPolicyRecord } from "../lib/types";
 import { m } from "../paraglide/messages.js";
 
 /**
- * One redaction policy, on its own page (ADR 0113): a name, the detector profile
- * that finds the types, and the policy document (patterns, entity types, a mode
- * for each). No scope: pipelines choose where it applies.
+ * One redaction policy, on its own page (ADR 0113): a name and the policy
+ * document in two groups (patterns, and entities read by an engine the policy
+ * picks), a mode for each. No scope: pipelines choose where it applies.
  *
  * A page rather than a dialog because a policy is thirty entity types, a set of
  * patterns and an allow-list. It starts with the credential patterns present
@@ -30,7 +31,7 @@ export function AdminPolicy() {
     (useLocation().state as { cloneFrom?: RedactionPolicyRecord } | null)?.cloneFrom ?? null;
   const status = useRedactionStatus();
   const policies = usePolicies();
-  const profiles = usePrivacyProfiles();
+  const engines = usePrivacyEngines();
   const save = useSavePolicy();
   const toast = useOptionalToast();
   const existing = policies.data?.items.find((p) => p.id === policyId) ?? null;
@@ -39,7 +40,7 @@ export function AdminPolicy() {
   const [policy, setPolicy] = useState<RedactionPolicy>(
     cloneFrom ? structuredClone(cloneFrom.policy) : seededPolicy(),
   );
-  const [profileId, setProfileId] = useState(cloneFrom?.profile_id ?? "");
+  const [shared, setShared] = useState(cloneFrom?.shared_with_users ?? false);
   const [reason, setReason] = useState(cloneFrom?.reason ?? "");
   const [active, setActive] = useState(cloneFrom ? false : true);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
@@ -48,7 +49,7 @@ export function AdminPolicy() {
     setLoadedFor(existing.id);
     setName(existing.name);
     setPolicy(structuredClone(existing.policy));
-    setProfileId(existing.profile_id ?? "");
+    setShared(existing.shared_with_users);
     setReason(existing.reason);
     setActive(existing.is_active);
   }
@@ -79,7 +80,7 @@ export function AdminPolicy() {
           policy,
           reason,
           is_active: active,
-          profile_id: profileId || null,
+          shared_with_users: shared,
         },
       },
       {
@@ -118,21 +119,6 @@ export function AdminPolicy() {
                 value={name}
                 onChange={(event) => setName(event.target.value)}
               />
-              <Select
-                label={m["privacy.policy.profile"]()}
-                hint={m["privacy.policy.profile_later"]()}
-                title={m["privacy.policy.profile_later"]()}
-                disabled
-                value={profileId}
-                onChange={(event) => setProfileId(event.target.value)}
-              >
-                <option value="">{m["privacy.policy.profile_default"]()}</option>
-                {(profiles.data?.items ?? []).map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </Select>
               <Input
                 label={m["privacy.policy.reason"]()}
                 value={reason}
@@ -142,12 +128,21 @@ export function AdminPolicy() {
                 <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
                 {m["privacy.policy.active"]()}
               </label>
+              <label className="flex items-center gap-2 text-body">
+                <input
+                  type="checkbox"
+                  checked={shared}
+                  onChange={(e) => setShared(e.target.checked)}
+                />
+                {m["privacy.policy.shared"]()}
+                <Tip text={m["privacy.policy.shared_tip"]()} />
+              </label>
             </div>
           </Card>
           <PolicyFields
             policy={policy}
             onChange={setPolicy}
-            entityTypes={status.data?.service?.entities ?? []}
+            engines={engines.data ?? null}
             scoreThreshold={status.data?.score_threshold ?? null}
           />
         </div>

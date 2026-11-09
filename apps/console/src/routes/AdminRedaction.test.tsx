@@ -8,8 +8,7 @@ import type {
   RedactionEngineOption,
   RedactionStatus,
 } from "../lib/types";
-import type { PrivacyProfile } from "../lib/types";
-import { AdminPrivacyProfiles } from "./AdminPrivacyProfiles";
+import { AdminPrivacyService } from "./AdminPrivacyService";
 
 /**
  * The screen exists to answer "is redaction on, and is it working". So what is
@@ -60,8 +59,12 @@ function status(overrides: Partial<RedactionStatus> = {}): RedactionStatus {
     entity_types: null,
     policy: {
       default_mode: "anonymise_restore",
+      engine: null,
+      formats: {},
       entities: { URL: { mode: "off", threshold: null } },
+      custom_entities: [],
       patterns: [],
+      keywords: [],
       allow_list: [],
     },
     policy_source: "environment",
@@ -170,50 +173,12 @@ function renderScreen(element: ReactElement) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-/** The default "Fast" profile: the Presidio engine, which hosts the engine controls. */
-const FAST = {
-  id: "p1",
-  name: "Fast",
-  description: "",
-  engine: "presidio",
-  labels: [],
-  fallback: "refuse",
-  fallback_profile_id: null,
-  fallback_profile_name: null,
-  is_default: true,
-  status: "available",
-  status_detail: "The detection service is the one in use for redaction.",
-  decides: true,
-  cost_hint: "instant",
-  rules_using: 2,
-  user_available: false,
-  created_at: "2026-11-08T10:00:00Z",
-  updated_at: "2026-11-08T10:00:00Z",
-} as PrivacyProfile;
-
-/** Answers the profiles list itself and leaves every other call to the stub the test installed. */
-function withProfiles() {
-  const inner = globalThis.fetch;
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
-      String(input).includes("/api/admin/privacy/profiles")
-        ? new Response(JSON.stringify({ items: [FAST], total: 1, limit: 200, offset: 0 }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          })
-        : inner(input, init),
-    ),
-  );
-}
-
-/** Detectors tab: the engine choice and the families live in the Fast profile's card. */
+/** The Redaction service tab: the engine choice and the detection families, with no profile cards. */
 function renderDetectors() {
-  withProfiles();
-  return renderScreen(<AdminPrivacyProfiles />);
+  return renderScreen(<AdminPrivacyService />);
 }
 
-describe("Detectors (the former Redaction screen)", () => {
+describe("Redaction service (the former Redaction screen)", () => {
   it("says whether redaction is on, and which engine", async () => {
     vi.stubGlobal("fetch", respondWith(status()));
     renderDetectors();
@@ -601,8 +566,8 @@ describe("Detectors (the former Redaction screen)", () => {
   });
 });
 
-describe("Detectors: the profile cards", () => {
-  function stubDetectors(profiles: PrivacyProfile[], calls: { method: string; url: string; body: unknown }[] = []) {
+describe("Redaction service: what is left of the detector profiles", () => {
+  function stubService(calls: { method: string; url: string; body: unknown }[] = []) {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -610,73 +575,39 @@ describe("Detectors: the profile cards", () => {
         const method = init?.method ?? "GET";
         const json = (body: unknown) =>
           new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
-        if (method !== "GET") calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : null });
-        if (url.includes("/privacy/profiles")) {
-          return method === "GET"
-            ? json({ items: profiles, total: profiles.length, limit: 200, offset: 0 })
-            : json(profiles[0]);
-        }
+        calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : null });
+        if (url.includes("/privacy/settings")) return json({ user_entity_types: ["PERSON"] });
         return json(status());
       }),
     );
   }
 
-  it("hosts the engine choice and the families in the Fast profile, not in a card of their own", async () => {
-    stubDetectors([FAST, { ...FAST, id: "p2", name: "Medical", engine: "gliner", is_default: false } as PrivacyProfile]);
-    renderScreen(<AdminPrivacyProfiles />);
+  it("hosts the engine choice and the families directly, with no profile cards", async () => {
+    const calls: { method: string; url: string; body: unknown }[] = [];
+    stubService(calls);
+    renderScreen(<AdminPrivacyService />);
 
-    const fast = (await screen.findByRole("heading", { name: /^Fast/ })).closest("section")!;
-    expect(await within(fast).findByText("Presidio (detection service)")).toBeInTheDocument();
-    expect(within(fast).getByRole("switch", { name: "Pattern matching" })).toBeInTheDocument();
-    expect(within(fast).getByRole("switch", { name: "Named-entity recognition" })).toBeInTheDocument();
-
-    const medical = screen.getByRole("heading", { name: /^Medical/ }).closest("section")!;
-    expect(within(medical).queryByRole("switch")).toBeNull();
-    expect(within(medical).queryByText("Presidio (detection service)")).toBeNull();
+    expect(await screen.findByText("Presidio (detection service)")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Pattern matching" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Named-entity recognition" })).toBeInTheDocument();
+    expect(screen.queryByText("Add a profile")).toBeNull();
+    expect(screen.queryByText(/profile/i)).toBeNull();
+    // Profiles are gone from the API, so nothing asks for them.
+    expect(calls.some((c) => c.url.includes("/privacy/profiles"))).toBe(false);
   });
 
-  it("shows health and the fallback, and the default cannot be deleted", async () => {
-    stubDetectors([
-      FAST,
-      {
-        ...FAST,
-        id: "p2",
-        name: "Medical",
-        engine: "gliner",
-        is_default: false,
-        status: "not_installed",
-        status_detail: "This engine is not installed here.",
-        decides: false,
-        fallback: "fallback_to",
-        fallback_profile_id: "p1",
-        fallback_profile_name: "Fast",
-        rules_using: 0,
-      } as PrivacyProfile,
-    ]);
-    renderScreen(<AdminPrivacyProfiles />);
-
-    const fast = (await screen.findByRole("heading", { name: /^Fast/ })).closest("section")!;
-    expect(within(fast).getByText("Available")).toBeInTheDocument();
-    expect(within(fast).getByText("Default")).toBeInTheDocument();
-    expect(within(fast).queryByRole("button", { name: "Delete profile" })).toBeNull();
-
-    const medical = screen.getByRole("heading", { name: /^Medical/ }).closest("section")!;
-    expect(within(medical).getByText("Not installed")).toBeInTheDocument();
-    expect(within(medical).getByText(/protection is weaker, and the log says so/)).toBeInTheDocument();
-    expect(within(medical).getByRole("button", { name: "Delete profile" })).toBeInTheDocument();
-  });
-
-  it("changes a profile's fallback", async () => {
+  it("keeps the setting for what users may add to their own policies", async () => {
     const user = userEvent.setup({ delay: null });
     const calls: { method: string; url: string; body: unknown }[] = [];
-    stubDetectors([FAST, { ...FAST, id: "p2", name: "Medical", engine: "gliner", is_default: false } as PrivacyProfile], calls);
-    renderScreen(<AdminPrivacyProfiles />);
-    const medical = (await screen.findByRole("heading", { name: /^Medical/ })).closest("section")!;
-    await user.selectOptions(within(medical).getByLabelText("If it is unavailable"), "fallback_to");
-    await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0]).toMatchObject({
-      method: "PATCH",
-      body: { fallback: "fallback_to", fallback_profile_id: "p1" },
-    });
+    stubService(calls);
+    renderScreen(<AdminPrivacyService />);
+
+    const field = await screen.findByLabelText("Entity types users may name");
+    await waitFor(() => expect(field).toHaveValue("PERSON"));
+    await user.type(field, ", URL");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ user_entity_types: ["PERSON", "URL"] }),
+    );
   });
 });

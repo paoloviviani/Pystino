@@ -4,7 +4,7 @@ import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
-/** Old Redaction and Privacy routing links keep working; Privacy is one area with four tabs (Pipelines, Redaction policies, Detectors, Test). */
+/** Old Redaction and Privacy routing links keep working; Privacy is one area with five tabs (Pipelines, Redaction policies, Classifiers, Redaction service, Test). */
 
 function Where() {
   const loc = useLocation();
@@ -45,7 +45,9 @@ function go(path: string) {
         ? ME
         : url.endsWith("/api/admin/redaction")
           ? STATUS
-          : { items: [], total: 0, limit: 50, offset: 0 };
+          : url.endsWith("/api/admin/privacy/engines")
+            ? { reachable: false, detail: "", pattern_entities: [], engines: [] }
+            : { items: [], total: 0, limit: 50, offset: 0 };
       return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     }),
   );
@@ -71,7 +73,8 @@ describe("Privacy routes", () => {
     ["/admin/privacy/hidden", "/admin/privacy/policies"],
     ["/admin/privacy/hidden/rules/abc", "/admin/privacy/policies/abc"],
     ["/admin/privacy/rules/abc", "/admin/privacy"],
-    ["/admin/privacy/profiles", "/admin/privacy/detectors"],
+    ["/admin/privacy/profiles", "/admin/privacy/service"],
+    ["/admin/privacy/detectors", "/admin/privacy/service"],
     ["/admin/privacy/anything-else", "/admin/privacy"],
   ])("redirects %s to %s", async (from, to) => {
     go(from);

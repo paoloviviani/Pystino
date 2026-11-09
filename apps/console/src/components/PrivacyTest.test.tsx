@@ -26,8 +26,8 @@ const BASE: PrivacyTestResult = {
       hop: 0,
       scope: ["all users", "all targets"],
       steps: [
-        { rule_id: "r1", name: "Scans", position: 0, result: "fired", reasons: ["The file is a scan."], degraded: [], is_otherwise: false },
-        { rule_id: "e1", name: "Everything else", position: 1, result: "not_reached", reasons: [], degraded: [], is_otherwise: true },
+        { rule_id: "r1", name: "Scans", position: 0, result: "fired", reasons: ["The file is a scan."], degraded: [], items: [], note: null, is_otherwise: false },
+        { rule_id: "e1", name: "Everything else", position: 1, result: "not_reached", reasons: [], degraded: [], items: [], note: null, is_otherwise: true },
       ],
       fired_rule_id: "r1",
       fired_rule: "Scans",
@@ -43,7 +43,7 @@ const BASE: PrivacyTestResult = {
       hop: 0,
       scope: ["only you", "all targets"],
       steps: [
-        { rule_id: "e2", name: "Everything else", position: 0, result: "fired", reasons: [], degraded: [], is_otherwise: true },
+        { rule_id: "e2", name: "Everything else", position: 0, result: "fired", reasons: [], degraded: [], items: [], note: null, is_otherwise: true },
       ],
       fired_rule_id: "e2",
       fired_rule: null,
@@ -71,7 +71,6 @@ const BASE: PrivacyTestResult = {
   blocked_by: null,
   facts: {},
   verdicts: {},
-  fallbacks: [],
   degraded: [],
   needs: null,
   extractor: null,
@@ -129,6 +128,62 @@ describe("Test result", () => {
     const row = within(policies).getByText("Person name").closest("tr") as HTMLElement;
     expect(within(row).getByText("Mine")).toBeInTheDocument();
     expect(within(row).getByText(/Default: anonymise_restore; Mine: redact/)).toBeInTheDocument();
+  });
+
+  it("lists each item that made a condition true, with its group, type, engine and score", () => {
+    const result: PrivacyTestResult = {
+      ...BASE,
+      pipelines: [
+        {
+          ...BASE.pipelines[0]!,
+          steps: [
+            {
+              ...BASE.pipelines[0]!.steps[0]!,
+              items: [
+                { policy: "Contacts", group: "pattern", type: "EMAIL_ADDRESS", engine: null, score: null, text: "ana@example.org" },
+                { policy: "Contacts", group: "entity", type: "PERSON", engine: "spacy", score: 0.91, text: null },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    show(result);
+    const items = screen.getByRole("list", { name: "Items found" });
+    const rows = within(items).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]!).getByText("Contacts")).toBeInTheDocument();
+    expect(within(rows[0]!).getByText("pattern")).toBeInTheDocument();
+    expect(within(rows[0]!).getByText("Email address")).toBeInTheDocument();
+    // The text is only there when the API sent it: the administrator's box.
+    expect(within(rows[0]!).getByText("ana@example.org")).toBeInTheDocument();
+    expect(within(rows[1]!).getByText("entity")).toBeInTheDocument();
+    expect(within(rows[1]!).getByText("spacy · 0.91")).toBeInTheDocument();
+    expect(within(rows[1]!).queryByRole("code")).toBeNull();
+    expect(within(rows[1]!).getByText("Person name")).toBeInTheDocument();
+  });
+
+  it("shows a step's degraded sentence and note", () => {
+    const step = {
+      ...BASE.pipelines[0]!.steps[0]!,
+      degraded: ["The engine did not answer, so the count may be short."],
+      note: "Undecidable: the rule did not fire.",
+    };
+    show({ ...BASE, pipelines: [{ ...BASE.pipelines[0]!, steps: [step] }] });
+    expect(screen.getByText("The engine did not answer, so the count may be short.")).toBeInTheDocument();
+    expect(screen.getByText("Undecidable: the rule did not fire.")).toBeInTheDocument();
+  });
+
+  it("shows classifier verdicts by name", () => {
+    show({ ...BASE, verdicts: { "Unannounced project": true, "Other topic": false } });
+    const verdicts = screen.getByRole("region", { name: "Classifiers" });
+    expect(within(verdicts).getByText("Unannounced project").parentElement).toHaveTextContent("yes");
+    expect(within(verdicts).getByText("Other topic").parentElement).toHaveTextContent("no");
+  });
+
+  it("has no verdicts section when no classifier ran", () => {
+    show(BASE);
+    expect(screen.queryByRole("region", { name: "Classifiers" })).toBeNull();
   });
 
   it("does not show policies for a refused request", () => {

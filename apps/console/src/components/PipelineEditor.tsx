@@ -1,28 +1,23 @@
 import { Badge, Button, Card, Input, Notice, Spinner, Switch } from "@llmp/ui";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { FIELD_LABEL, FORM, MUTED, PAGE } from "../lib/layout";
 import {
-  BOOL_KEYS,
   BUILTIN,
-  CONDITION_KEYS,
-  CONTENT_KEYS,
   ENGINES,
   FILETYPES,
   KINDS,
   LADDER,
-  LANGUAGES,
-  PATTERNS,
   actionBody,
   baseLevel,
   conditionHint,
+  conditionKeys,
   conditionLabel,
   engineLabel,
   filetypeLabel,
   kindHint,
   kindLabel,
-  languageLabel,
   levelHint,
   levelLabel,
   ruleBody,
@@ -30,7 +25,6 @@ import {
   useCheckPipeline,
   usePipelines,
   usePrivacyOptions,
-  usePrivacyProfiles,
   useSavePipeline,
   type Area,
   type Cond,
@@ -63,6 +57,8 @@ interface DraftRule {
   name: string;
   enabled: boolean;
   observe_only: boolean;
+  /** A warning the migration left on a rule it switched off; kept as it came. */
+  note: string | null;
   conditions: Cond[];
   action: PrivacyAction;
 }
@@ -143,18 +139,43 @@ function ConditionsEditor({
   kind,
   conditions,
   onChange,
-  profiles,
+  own,
+  policies,
+  classifiers,
   warnNameOnly,
 }: {
   kind: PrivacyKind;
   conditions: Cond[];
   onChange: (next: Cond[]) => void;
-  profiles: { id: string; name: string }[];
+  /** A user's own editor: no `classified`, and only the policies it may name. */
+  own: boolean;
+  policies: { id: string; name: string }[];
+  classifiers: { id: string; name: string }[];
   warnNameOnly: boolean;
 }) {
-  const unused = CONDITION_KEYS[kind].filter((k) => !conditions.some((c) => c.key === k));
+  // A key may appear once, except `finds` and `classified`, which name one
+  // policy or classifier each and so may be added again.
+  const repeatable = ["finds", "classified"];
+  const available = conditionKeys(kind, own).filter(
+    (k) => repeatable.includes(k) || !conditions.some((c) => c.key === k),
+  );
   const set = (index: number, patch: Partial<Cond>) =>
     onChange(conditions.map((c, i) => (i === index ? { ...c, ...patch } : c)));
+  const flip = (index: number, c: Cond) => (
+    <Button
+      size="sm"
+      aria-label={m["privacy.cond.flip"]({ name: conditionLabel(c.key) })}
+      onClick={() => set(index, { negate: !c.negate })}
+    >
+      {c.key === "filename"
+        ? c.negate
+          ? m["privacy.cond.not_matches"]()
+          : m["privacy.cond.matches"]()
+        : c.negate
+          ? m["privacy.cond.is_not"]()
+          : m["privacy.cond.is"]()}
+    </Button>
+  );
   return (
     <div className="flex flex-col gap-2">
       <div className={`${FIELD_LABEL} flex items-center gap-2`}>
@@ -162,45 +183,20 @@ function ConditionsEditor({
         <Tip text={m["privacy.edit.conditions_tip"]()} />
       </div>
       {conditions.map((c, index) => {
-        const bool = BOOL_KEYS.includes(c.key);
-        const content = CONTENT_KEYS.includes(c.key);
+        const name = conditionLabel(c.key);
         return (
           <div
-            key={c.key}
+            key={`${c.key}-${index}`}
             className="flex flex-wrap items-center gap-2 rounded-lg border border-line-quiet p-2"
           >
             <strong className="text-dense" title={conditionHint(c.key)}>
-              {conditionLabel(c.key)}
+              {name}
             </strong>
-            <Button
-              size="sm"
-              aria-label={m["privacy.cond.flip"]({ name: conditionLabel(c.key) })}
-              onClick={() => set(index, { negate: !c.negate })}
-            >
-              {c.key === "filename"
-                ? c.negate
-                  ? m["privacy.cond.not_matches"]()
-                  : m["privacy.cond.matches"]()
-                : bool && c.key !== "scan"
-                  ? c.negate
-                    ? m["privacy.cond.not_contains"]()
-                    : m["privacy.cond.contains"]()
-                  : c.negate
-                    ? m["privacy.cond.is_not"]()
-                    : m["privacy.cond.is"]()}
-            </Button>
+            {flip(index, c)}
             {c.key === "filetype" && (
               <Chips
-                label={conditionLabel(c.key)}
+                label={name}
                 options={FILETYPES.map((v) => ({ value: v, label: filetypeLabel(v) }))}
-                selected={c.values}
-                onToggle={(v) => set(index, { values: toggled(c.values, v) })}
-              />
-            )}
-            {c.key === "lang" && (
-              <Chips
-                label={conditionLabel(c.key)}
-                options={LANGUAGES.map((v) => ({ value: v, label: languageLabel(v) }))}
                 selected={c.values}
                 onToggle={(v) => set(index, { values: toggled(c.values, v) })}
               />
@@ -221,28 +217,75 @@ function ConditionsEditor({
                 }
               />
             )}
-            {content && (
+            {c.key === "finds" && (
               <>
                 <select
                   className="rounded-md border border-line bg-surface px-2 py-1 text-body"
-                  aria-label={m["privacy.cond.decide_label"]({ name: conditionLabel(c.key) })}
-                  value={c.decide ?? PATTERNS}
-                  onChange={(event) => set(index, { decide: event.target.value })}
+                  aria-label={m["privacy.cond.finds_policy"]()}
+                  value={c.values[0] ?? ""}
+                  onChange={(event) => set(index, { values: event.target.value ? [event.target.value] : [] })}
                 >
-                  <option value={PATTERNS}>{m["privacy.cond.quick"]()}</option>
-                  {profiles.map((p) => (
+                  <option value="">{m["privacy.cond.choose_policy"]()}</option>
+                  {policies.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {m["privacy.cond.model"]({ name: p.name })}
+                      {p.name}
                     </option>
                   ))}
                 </select>
-                <Tip text={m["privacy.cond.decide_tip"]()} />
+                <span className="flex items-center gap-1 text-dense">
+                  {m["privacy.cond.at_least"]()}
+                  <input
+                    type="number"
+                    min={1}
+                    max={1000}
+                    className="w-16 rounded-md border border-line bg-surface px-2 py-1 text-body"
+                    aria-label={m["privacy.cond.finds_count"]()}
+                    value={c.count ?? ""}
+                    onChange={(event) =>
+                      // Empty while it is being retyped; the save sends 1 for it.
+                      set(index, {
+                        count:
+                          event.target.value === ""
+                            ? undefined
+                            : Math.min(1000, Math.max(1, Math.trunc(Number(event.target.value)) || 1)),
+                      })
+                    }
+                  />
+                  {m["privacy.cond.items"]()}
+                </span>
+                {policies.length === 0 && (
+                  <span className={`text-small ${MUTED}`}>{m["privacy.cond.no_policies"]()}</span>
+                )}
+              </>
+            )}
+            {c.key === "classified" && (
+              <>
+                <select
+                  className="rounded-md border border-line bg-surface px-2 py-1 text-body"
+                  aria-label={m["privacy.cond.classified_pick"]()}
+                  value={c.values[0] ?? ""}
+                  onChange={(event) => set(index, { values: event.target.value ? [event.target.value] : [] })}
+                >
+                  <option value="">{m["privacy.cond.choose_classifier"]()}</option>
+                  {classifiers.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.name}
+                    </option>
+                  ))}
+                </select>
+                <Tip text={m["privacy.cond.classified_warning"]()} />
+                {classifiers.length === 0 && (
+                  <span className={`text-small ${MUTED}`}>
+                    {m["privacy.cond.no_classifiers"]()}{" "}
+                    <Link to="/admin/privacy/classifiers">{m["privacy.cond.classifiers_link"]()}</Link>
+                  </span>
+                )}
               </>
             )}
             <Button
               size="sm"
               variant="ghost"
-              aria-label={m["privacy.cond.remove"]({ name: conditionLabel(c.key) })}
+              aria-label={m["privacy.cond.remove"]({ name })}
               onClick={() => onChange(conditions.filter((_, i) => i !== index))}
             >
               ×
@@ -250,7 +293,7 @@ function ConditionsEditor({
           </div>
         );
       })}
-      {unused.length > 0 && (
+      {available.length > 0 && (
         <select
           className="w-fit rounded-md border border-line bg-surface px-2 py-1 text-body"
           aria-label={m["privacy.cond.add"]()}
@@ -262,15 +305,15 @@ function ConditionsEditor({
               ...conditions,
               {
                 key,
-                values: [],
+                values: key === "finds" && policies[0] ? [policies[0].id] : [],
                 negate: false,
-                ...(CONTENT_KEYS.includes(key) ? { decide: PATTERNS } : {}),
+                ...(key === "finds" ? { count: 1 } : {}),
               },
             ]);
           }}
         >
           <option value="">{m["privacy.cond.add_option"]()}</option>
-          {unused.map((k) => (
+          {available.map((k) => (
             <option key={k} value={k}>
               {conditionLabel(k)}
             </option>
@@ -473,6 +516,7 @@ function newRule(index: number, kind: PrivacyKind): DraftRule {
     name: m["privacy.edit.rule_default_name"]({ number: String(index + 1) }),
     enabled: true,
     observe_only: false,
+    note: null,
     conditions: [],
     action: { level: kind === "read" ? "default" : "pass" },
   };
@@ -489,7 +533,6 @@ export function PipelineEditorPage({ area }: { area: Area }) {
 
   const pipelines = usePipelines(area);
   const options = usePrivacyOptions(area);
-  const profiles = usePrivacyProfiles();
   const save = useSavePipeline(area);
   const check = useCheckPipeline(area);
   const existing = pipelines.data?.items.find((p) => p.id === id) ?? null;
@@ -531,11 +574,12 @@ export function PipelineEditorPage({ area }: { area: Area }) {
           name: body.name,
           enabled: body.enabled ?? true,
           observe_only: body.observe_only ?? false,
+          note: body.note ?? null,
           conditions: (body.conditions ?? []).map((c) => ({
             key: c.key,
             values: c.values ?? [],
             negate: c.negate ?? false,
-            decide: c.decide ?? null,
+            ...(c.key === "finds" ? { count: c.count ?? 1 } : {}),
           })),
           action: body.action,
         };
@@ -556,7 +600,13 @@ export function PipelineEditorPage({ area }: { area: Area }) {
         name: r.name,
         enabled: r.enabled,
         observe_only: r.observe_only,
-        conditions: r.conditions,
+        note: r.note,
+        conditions: r.conditions.map((c) => ({
+          key: c.key,
+          values: c.values,
+          negate: c.negate,
+          ...(c.key === "finds" ? { count: c.count ?? 1 } : {}),
+        })),
         action: r.action,
       })),
       otherwise,
@@ -622,7 +672,9 @@ export function PipelineEditorPage({ area }: { area: Area }) {
   );
   const whoOptions =
     whoMode === "users" ? opts.users : whoMode === "groups" ? opts.groups : whoMode === "keys" ? opts.keys : [];
-  const profileList = (profiles.data?.items ?? []).map((p) => ({ id: p.id, name: p.name }));
+  // What `finds` may name: the administrators' shared policies and the user's own.
+  const policyList = [...opts.policies, ...opts.own_policies];
+  const classifierList = opts.classifiers;
 
   const changeKind = (next: PrivacyKind) => {
     setKind(next);
@@ -642,7 +694,7 @@ export function PipelineEditorPage({ area }: { area: Area }) {
     setRules(next);
   };
   const labels: Record<string, string> = {};
-  for (const p of [...opts.policies, ...opts.own_policies]) labels[p.id] = p.name;
+  for (const p of [...opts.policies, ...opts.own_policies, ...opts.classifiers]) labels[p.id] = p.name;
 
   const submit = () =>
     save.mutate(
@@ -810,6 +862,13 @@ export function PipelineEditorPage({ area }: { area: Area }) {
                     <span className={`block text-dense ${MUTED}`}>
                       {ruleSentence(kind, { ...rule, conditions: rule.conditions }, labels)}
                     </span>
+                    {rule.note && (
+                      <span className="mt-1 flex flex-wrap items-center gap-2 text-dense">
+                        <Badge tone="warn">{m["privacy.rule.note_badge"]()}</Badge>
+                        {/* i18n: server text, left by the migration on this rule. */}
+                        {rule.note}
+                      </span>
+                    )}
                   </span>
                   <Button
                     size="sm"
@@ -846,11 +905,19 @@ export function PipelineEditorPage({ area }: { area: Area }) {
                       value={rule.name}
                       onChange={(event) => patchRule(rule.uid, { name: event.target.value })}
                     />
+                    {rule.note && (
+                      <Notice tone="warn" title={m["privacy.rule.note_title"]()}>
+                        {/* i18n: server text, left by the migration on this rule. */}
+                        {rule.note}
+                      </Notice>
+                    )}
                     <ConditionsEditor
                       kind={kind}
                       conditions={rule.conditions}
                       onChange={(conditions) => patchRule(rule.uid, { conditions })}
-                      profiles={profileList}
+                      own={own}
+                      policies={policyList}
+                      classifiers={classifierList}
                       warnNameOnly={nameOnly}
                     />
                     <ActionEditor

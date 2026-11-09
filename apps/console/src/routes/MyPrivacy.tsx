@@ -85,7 +85,6 @@ function PolicyDialog({
   const save = useSaveMyPolicy();
   const options = usePrivacyOptions("me");
   const [name, setName] = useState(policy?.name ?? "");
-  const [profile, setProfile] = useState(policy?.profile_id ?? "");
   const [entries, setEntries] = useState<EntryForm[]>(
     (policy?.entries ?? []).map((e) => ({
       kind: e.kind,
@@ -115,7 +114,6 @@ function PolicyDialog({
                   id: policy?.id,
                   body: {
                     name: name.trim(),
-                    profile_id: profile || null,
                     entries: entries.map(
                       (e): UserPolicyEntry => ({
                         kind: e.kind,
@@ -148,23 +146,6 @@ function PolicyDialog({
           maxLength={120}
           onChange={(event) => setName(event.target.value)}
         />
-        {(options.data?.profiles.length ?? 0) > 0 && (
-          <Select
-            label={m["privacy.policy.profile"]()}
-            hint={m["privacy.policy.profile_later"]()}
-            title={m["privacy.policy.profile_later"]()}
-            disabled
-            value={profile}
-            onChange={(event) => setProfile(event.target.value)}
-          >
-            <option value="">{m["privacy.policy.profile_default"]()}</option>
-            {options.data?.profiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
-        )}
         {entries.map((e, index) => (
           <div key={index} className="flex flex-col gap-2 rounded-lg border border-line-quiet p-2">
             <div className={FORM_ROW}>

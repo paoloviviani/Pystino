@@ -8,12 +8,13 @@ import { MyPrivacy, MyPrivacyTest } from "./MyPrivacy";
 
 /** A user's own pipelines and policies, under what the administrator already set (read only). */
 
-const rule = (id: string, name: string, level: string, key = "health") => ({
+const rule = (id: string, name: string, level: string, key = "finds") => ({
   id,
   name,
   enabled: true,
   observe_only: false,
-  conditions: [{ key, values: [], negate: false, decide: "patterns" }],
+  conditions: [{ key, values: ["pol1"], negate: false, count: 1 }],
+  note: null,
   action: { level, reader: null, engine: null, redact_with: null },
   issues: [],
 });
@@ -28,7 +29,7 @@ function pipeline(id: string, name: string, owner: string | null, level: string)
     position: 0,
     who: owner ? { mode: "users", ids: [owner] } : { mode: "all", ids: [] },
     target: { mode: "all", providers: [], models: [] },
-    rules: [rule(`r-${id}`, "Health", level)],
+    rules: [rule(`r-${id}`, "Names found", level)],
     otherwise: { ...rule(`o-${id}`, "Everything else", "pass"), conditions: [] },
     labels: {},
     summary: [],
@@ -53,7 +54,7 @@ function render_(element: React.ReactElement, seen: Seen[] = []) {
       if (url.includes("/in-force"))
         return jsonResponse({ items: [pipeline("a1", "Remote embeddings", null, "refuse")], total: 1, limit: 200, offset: 0 });
       if (url.includes("/api/me/privacy/pipelines?"))
-        return jsonResponse({ items: [pipeline("m1", "My health rule", "me", "refuse")], total: 1, limit: 200, offset: 0 });
+        return jsonResponse({ items: [pipeline("m1", "My names rule", "me", "refuse")], total: 1, limit: 200, offset: 0 });
       if (url.includes("/policies") && method === "GET")
         return jsonResponse({
           items: [
@@ -61,7 +62,6 @@ function render_(element: React.ReactElement, seen: Seen[] = []) {
               id: "pol1",
               name: "My names",
               entries: [{ kind: "mode", name: "PERSON", regex: null, mode: "redact" }],
-              profile_id: null,
               used_by: [],
               created_at: "",
               updated_at: "",
@@ -81,7 +81,7 @@ function render_(element: React.ReactElement, seen: Seen[] = []) {
           readers: [],
           policies: [],
           own_policies: [],
-          profiles: [],
+          classifiers: [],
           entity_types: ["PERSON", "IBAN_CODE"],
           engines: [],
         });
@@ -101,7 +101,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe("My privacy pipelines", () => {
   it("lists mine, then the administrator's pipelines read only", async () => {
     render_(<MyPrivacy />);
-    expect(await screen.findByText("My health rule")).toBeInTheDocument();
+    expect(await screen.findByText("My names rule")).toBeInTheDocument();
     const admin = screen.getByRole("region", { name: "Set by your administrator" });
     expect(within(admin).getByText("Remote embeddings")).toBeInTheDocument();
     expect(within(admin).getByText("Read only")).toBeInTheDocument();
@@ -112,7 +112,7 @@ describe("My privacy pipelines", () => {
 
   it("shows mine as only for me, with edit and delete", async () => {
     render_(<MyPrivacy />);
-    await screen.findByText("My health rule");
+    await screen.findByText("My names rule");
     expect(screen.getAllByText("Only me").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: "Edit" })).toHaveAttribute("href", "/privacy/pipelines/m1");
   });
@@ -136,9 +136,17 @@ describe("My privacy pipelines", () => {
     await waitFor(() => expect(seen.some((c) => c.method === "POST" && c.url.endsWith("/policies"))).toBe(true));
     expect(seen.find((c) => c.method === "POST" && c.url.endsWith("/policies"))?.body).toEqual({
       name: "Mine",
-      profile_id: null,
       entries: [{ kind: "mode", name: "IBAN_CODE", mode: "redact", regex: null }],
     });
+  });
+
+  it("has no detector-profile picker in a user's policy", async () => {
+    render_(<MyPrivacy />);
+    const user = userEvent.setup();
+    await screen.findByText("My names");
+    await user.click(within(screen.getByRole("region", { name: "My policies" })).getByRole("button", { name: "New policy" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByLabelText("Detector profile")).toBeNull();
   });
 
   it("has a test box locked to the user", async () => {

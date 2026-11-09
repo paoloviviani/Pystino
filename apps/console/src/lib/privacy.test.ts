@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   actionPhrase,
+  conditionKeys,
   issueBadges,
   ruleBody,
   ruleSentence,
@@ -9,52 +10,73 @@ import {
 } from "./privacy";
 import type { PrivacyPipeline, PrivacyRuleView } from "./types";
 
-const labels = { pol1: "Default", pol2: "Strict" };
+const labels = { pol1: "Default", pol2: "Strict", cl1: "Unannounced project" };
 
 function rule(overrides: Record<string, unknown> = {}): PrivacyRuleView {
   return {
     id: "r1",
-    name: "Health text",
+    name: "Names found",
     enabled: true,
     observe_only: false,
-    conditions: [{ key: "health", values: [], negate: false, decide: "patterns" }],
+    note: null,
+    conditions: [{ key: "finds", values: ["pol2"], negate: false, count: 1 }],
     action: { level: "refuse", reader: null, engine: null, redact_with: null },
     issues: [],
     ...overrides,
   } as PrivacyRuleView;
 }
 
-describe("ruleSentence", () => {
-  it("says a refusal on health data in one line", () => {
-    expect(ruleSentence("embed", rule(), labels)).toBe("it contains health data → refuse");
+describe("conditionKeys", () => {
+  it("offers file conditions on a read and nothing about health, ids or language", () => {
+    const all = [...conditionKeys("read", false), ...conditionKeys("embed", false), ...conditionKeys("chat", false)];
+    for (const gone of ["health", "ids", "lang"]) expect(all).not.toContain(gone);
+    expect(conditionKeys("read", false)).toEqual(["filetype", "scan", "filename", "finds", "classified"]);
   });
 
-  it("joins conditions with 'and' and names the policy", () => {
+  it("offers finds and classified on embed and chat", () => {
+    expect(conditionKeys("embed", false)).toEqual(["finds", "classified"]);
+    expect(conditionKeys("chat", false)).toEqual(["finds", "classified"]);
+  });
+
+  it("leaves classified to administrators", () => {
+    expect(conditionKeys("chat", true)).toEqual(["finds"]);
+    expect(conditionKeys("read", true)).not.toContain("classified");
+  });
+});
+
+describe("ruleSentence", () => {
+  it("says a refusal on a finds condition in one line", () => {
+    expect(ruleSentence("embed", rule(), labels)).toBe("Strict finds at least 1 items → refuse");
+  });
+
+  it("joins conditions with 'and' and names the policy and the classifier", () => {
     const text = ruleSentence(
       "chat",
       rule({
         conditions: [
-          { key: "ids", values: [], negate: false },
-          { key: "lang", values: ["it"], negate: false },
+          { key: "finds", values: ["pol1"], negate: true, count: 3 },
+          { key: "classified", values: ["cl1"], negate: false, count: 1 },
         ],
         action: { level: "pass", redact_with: "pol1" },
       }),
       labels,
     );
-    expect(text).toBe("it contains IDs and it is written in Italian → redact with Default");
+    expect(text).toBe(
+      "Default finds fewer than 3 items and it is classified as Unannounced project → redact with Default",
+    );
   });
 
   it("names the reader and the engine of a read", () => {
     const text = ruleSentence(
       "read",
       rule({
-        conditions: [{ key: "filename", values: ["*referto*"], negate: false }],
+        conditions: [{ key: "filename", values: ["*draft*"], negate: false }],
         action: { level: "read_with", reader: "builtin", engine: "ocr" },
       }),
       labels,
     );
     expect(text).toBe(
-      "its name matches *referto* → read with the built-in extractor · engine OCR (markitdown + RapidOCR)",
+      "its name matches *draft* → read with the built-in extractor · engine OCR (markitdown + RapidOCR)",
     );
   });
 
@@ -93,7 +115,7 @@ describe("scopeWords", () => {
       target: { mode: "all", providers: [], models: [] },
       rules: [],
       otherwise: rule({ id: "o", conditions: [] }),
-      labels: { g1: "Clinic", pv1: "OpenAI" },
+      labels: { g1: "Finance", pv1: "OpenAI" },
       summary: [],
       owner_id: null,
       created_at: "",
@@ -114,7 +136,7 @@ describe("scopeWords", () => {
         }),
         false,
       ),
-    ).toEqual(["Billing groups: Clinic", "All except OpenAI"]);
+    ).toEqual(["Billing groups: Finance", "All except OpenAI"]);
   });
 
   it("is only me for a user's own", () => {
@@ -128,7 +150,7 @@ describe("issueBadges and ruleBody", () => {
       rule({
         issues: [
           { code: "never_fires", message: "x", rule_id: null, rule_name: null },
-          { code: "weakens", message: "y", rule_id: null, rule_name: null },
+          { code: "migrated", message: "y", rule_id: null, rule_name: null },
         ],
       }),
     );
@@ -138,16 +160,18 @@ describe("issueBadges and ruleBody", () => {
   it("round-trips a rule into what the save sends, keeping its id", () => {
     const body = ruleBody(
       rule({
-        conditions: [{ key: "health", values: [], negate: true, decide: "patterns" }],
+        conditions: [{ key: "finds", values: ["pol1"], negate: true, count: 4 }],
         action: { level: "pass", redact_with: "pol1", reader: null, engine: null },
+        note: "Switched off by the migration.",
       }),
     );
     expect(body).toEqual({
       id: "r1",
-      name: "Health text",
+      name: "Names found",
       enabled: true,
       observe_only: false,
-      conditions: [{ key: "health", values: [], negate: true, decide: "patterns" }],
+      note: "Switched off by the migration.",
+      conditions: [{ key: "finds", values: ["pol1"], negate: true, count: 4 }],
       action: { level: "pass", redact_with: "pol1" },
     });
   });

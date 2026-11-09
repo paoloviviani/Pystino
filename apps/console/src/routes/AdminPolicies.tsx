@@ -64,7 +64,12 @@ export function AdminPolicies() {
                   {/* i18n: server text, the name the administrator gave the policy. */}
                   <strong>{p.name}</strong>
                 </Link>
-                {p.profile_name && <Badge tone="accent">{p.profile_name}</Badge>}
+                {p.shared_with_users && (
+                  <Badge tone="accent">{m["privacy.policies.shared_badge"]()}</Badge>
+                )}
+                {p.engine_available === false && (
+                  <Badge tone="warn">{m["privacy.policies.engine_down"]()}</Badge>
+                )}
                 {!p.is_active && <Badge tone="neutral">{m["privacy.badge.off"]()}</Badge>}
                 {p.used_by.length > 0 && (
                   <Badge tone="neutral">
