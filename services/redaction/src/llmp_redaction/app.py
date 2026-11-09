@@ -30,7 +30,12 @@ from llmp_shared import (
 from pydantic import BaseModel, Field
 
 from llmp_redaction import gliner_engine
-from llmp_redaction.detector import Detector, EngineSlot, EngineUnavailableError
+from llmp_redaction.detector import (
+    Detector,
+    EngineBusyError,
+    EngineSlot,
+    EngineUnavailableError,
+)
 from llmp_redaction.documents import DEFAULT_LONG_SIDE, extract
 from llmp_redaction.engines import ENGINE_HEADER
 
@@ -371,6 +376,9 @@ class NerEngineInfo(BaseModel):
     entities: list[str]
     # GLiNER takes labels at inference; spaCy has a fixed set.
     custom_labels: bool
+    # The labels this engine always asks of its model (GLiNER's), case-folded; a custom
+    # label may not equal one. Empty for spaCy.
+    labels: list[str] = Field(default_factory=list)
     # Measured once at startup on a synthetic text; null when not measured.
     ms_per_token: float | None
     languages: list[str]
@@ -434,6 +442,11 @@ def create_app(detector: Detector | None = None) -> FastAPI:
                     default=slot.name == engine.default_engine,
                     entities=list(slot.ner_entities) if slot.available else [],
                     custom_labels=slot.custom_labels,
+                    labels=(
+                        sorted(gliner_engine.default_label_texts())
+                        if slot.name == "gliner" and slot.available
+                        else []
+                    ),
                     ms_per_token=slot.ms_per_token if slot.available else None,
                     languages=list(slot.languages) if slot.available else [],
                 )
@@ -512,6 +525,18 @@ def create_app(detector: Detector | None = None) -> FastAPI:
                 detail={"code": "engine_unavailable", "engine": error.engine},
             ) from error
         capabilities = engine.capabilities_of(slot)
+        clash = sorted(
+            c.label
+            for c in request.custom_labels or []
+            if slot.name == "gliner" and c.label.casefold() in gliner_engine.default_label_texts()
+        )
+        if clash:
+            # Taking it would re-type what the model finds under a built-in label as the
+            # custom entity (the label map is keyed by label text), so it is refused.
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "label_taken", "labels": clash},
+            )
         effective = set(
             Detector.family_entities(
                 capabilities,
@@ -548,14 +573,20 @@ def create_app(detector: Detector | None = None) -> FastAPI:
         if not effective or (requested is not None and not servable):
             found: list[list[Any]] = [[] for _ in request.texts]
         else:
-            found = await engine.analyse(
-                request.texts,
-                language=request.language,
-                score_threshold=request.score_threshold,
-                entity_types=servable,
-                engine=request.ner_engine,
-                custom_labels=customs if custom_served else None,
-            )
+            try:
+                found = await engine.analyse(
+                    request.texts,
+                    language=request.language,
+                    score_threshold=request.score_threshold,
+                    entity_types=servable,
+                    engine=request.ner_engine,
+                    custom_labels=customs if custom_served else None,
+                )
+            except EngineBusyError as busy:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"code": "engine_busy", "engine": busy.engine},
+                ) from busy
         return DetectionResponse(
             findings=[TextFindings(index=index, spans=spans) for index, spans in enumerate(found)],
             engine=engine.engine,

@@ -115,6 +115,12 @@ two are different in kind:
   GLiNER an administrator may add **custom entity types**: an UPPER_SNAKE name and a
   natural-language label the model is given at inference ("project code name").
 
+When policies combine, the mode of a name is the strictest across **every** table that
+names it, in every policy (formats, entities, custom entities, patterns, keyword lists):
+a quieter statement (`detect only`, `off`) in one place never lowers a stricter one in
+another, such as a keyword list `LOCATION` at `redact` next to another policy's entity
+`LOCATION` at `detect only`.
+
 Every item has a mode, including **`detect only`**: found and counted, **never
 hidden**. It sits just above `off` in the order, so the strictest-mode fold and the
 tighten-only user rules are unchanged: a policy that only decides sets its items to
@@ -134,14 +140,17 @@ policies written before the two groups, and `GATEWAY_REDACTION__POLICY`, still l
 ### The redaction service's contract
 
 `GET /healthz` reports `pattern_entities` and `ner_engines`, one entry per engine
-(`name`, `available`, `default`, `entities`, `custom_labels`, `ms_per_token`,
+(`name`, `available`, `default`, `entities`, `custom_labels`, `labels` (the labels
+the engine always asks of its model), `ms_per_token`,
 `languages`). `POST /detect` takes `ner_engine` (null is the service default) and
 `custom_labels` (`[{entity, label}]`) and answers **409 `{"detail": {"code":
 "engine_unavailable"}}`** for an engine it has not got. Spans carry `score` and
 `engine` (`pattern`, `spacy` or `gliner`). When several policies in force choose
 different engines the gateway calls the service **once per engine** and merges the
 spans (identical range and type: the higher score), and the strictest mode of the
-fold applies. An engine the service reports unavailable can neither be chosen nor,
+fold applies. Requested types or labels the answer names in `unsupported_types` are a
+log line for redaction and, for a "finds" condition, make the count unavailable (never
+"found nothing"); such an answer is not cached. An engine the service reports unavailable can neither be chosen nor,
 if it goes away, be skipped: a request that needs it is refused with a 503 naming
 the policy.
 

@@ -804,7 +804,7 @@ class CustomEntity(BaseModel):
     """
 
     name: str = Field(min_length=1, max_length=64)
-    label: str = Field(min_length=1, max_length=100)
+    label: str = Field(min_length=1, max_length=80)
     mode: EntityMode = EntityMode.ANONYMISE_RESTORE
     placeholder: PlaceholderStyle = PlaceholderStyle.TAGGED
     threshold: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -874,7 +874,7 @@ class RedactionPolicy(BaseModel):
     formats: dict[str, EntityPolicy] = Field(default_factory=dict)
     #: NER entity types of ``engine`` (``ner_engines[].entities``).
     entities: dict[str, EntityPolicy] = Field(default_factory=dict)
-    custom_entities: list[CustomEntity] = Field(default_factory=list)
+    custom_entities: list[CustomEntity] = Field(default_factory=list, max_length=30)
     #: Operator-written regexes, unioned across scopes when policies combine:
     #: adding a pattern can only find more, so union is the tightening direction.
     patterns: list[CustomPattern] = Field(default_factory=list)
@@ -944,26 +944,29 @@ class RedactionPolicy(BaseModel):
         return out
 
     def _named(self, name: str) -> tuple[EntityMode, PlaceholderStyle, float | None] | None:
+        """What this policy says about *name*: the strictest mode over every table naming it.
+
+        A name can sit in several tables at once (a keyword list called LOCATION next to
+        an entity LOCATION, a pattern PERSON next to the entity PERSON). When policies
+        combine, a quieter statement in one table (``detect_only`` or ``off``) must never
+        lower a stricter one in another, so the mode is the strictest across all of them
+        and the placeholder style and threshold come from the entry that set it.
+        """
         name = name.upper()
-        entry = self.entities.get(name) or self.formats.get(name)
-        if entry is not None:
-            return entry.mode, entry.placeholder, entry.threshold
-        for custom in self.custom_entities:
-            if custom.name == name:
-                return custom.mode, custom.placeholder, custom.threshold
-        # A custom pattern is one more entity type, and its own mode is where it
-        # is written. Checked after the entity tables so an admin can still
-        # override a pattern's mode by naming it there — the narrower statement
-        # wins, which is the same rule the rest of this file follows.
-        for pattern in self.patterns:
-            if pattern.name == name:
-                return pattern.mode, pattern.placeholder, None
+        found: list[tuple[EntityMode, PlaceholderStyle, float | None]] = []
+        for table in (self.entities, self.formats):
+            entry = table.get(name)
+            if entry is not None:
+                found.append((entry.mode, entry.placeholder, entry.threshold))
+        found.extend(
+            (c.mode, c.placeholder, c.threshold) for c in self.custom_entities if c.name == name
+        )
+        found.extend((p.mode, p.placeholder, None) for p in self.patterns if p.name == name)
+        found.extend((k.mode, k.placeholder, None) for k in self.keywords if k.name == name)
+        if not found:
+            return None
         order = list(EntityMode)
-        lists = [k for k in self.keywords if k.name == name]
-        if lists:
-            best = max(lists, key=lambda k: order.index(k.mode))
-            return best.mode, best.placeholder, None
-        return None
+        return max(found, key=lambda entry: order.index(entry[0]))
 
     def mode_for(self, entity_type: str) -> EntityMode:
         found = self._named(entity_type)
@@ -1283,10 +1286,10 @@ class EffectivePolicy:
         """The calls to the redaction service this request needs, one per engine.
 
         Each contributing policy asks for its own engine and types. Policies of
-        the same engine share one call; formats (patterns) are asked once, in the
-        first call, because they do not depend on the engine. The redactor merges
-        the spans of the calls, and the folded policy's strictest mode applies to
-        each span.
+        the same engine share one call; formats (patterns) go with every call,
+        because which engine finds a format can depend on the model (DATE_TIME is
+        spaCy's). The redactor merges the spans of the calls, and the folded
+        policy's strictest mode applies to each span.
         """
         if not self.contributors:
             return self.policy.ner_asks(acting=acting)
@@ -1307,13 +1310,13 @@ class EffectivePolicy:
         if not per_engine:
             return [NerAsk(None, tuple(sorted(formats)), ())]
         asks: list[NerAsk] = []
-        for index, engine in enumerate(sorted(per_engine, key=lambda e: (e is not None, e or ""))):
+        for engine in sorted(per_engine, key=lambda e: (e is not None, e or "")):
             wanted, labels = per_engine[engine]
-            ask_types = (
-                None
-                if wanted is None
-                else tuple(sorted(wanted | (formats if index == 0 else set())))
-            )
+            # Formats go with every call, not only the first: some are backed by the NER
+            # model itself (DATE_TIME is spaCy's, and GLiNER maps it from its own label),
+            # so which engine finds one depends on the call. The spans merge by range
+            # and type, so asking twice costs a little and never double counts.
+            ask_types = None if wanted is None else tuple(sorted(wanted | formats))
             asks.append(NerAsk(engine, ask_types, tuple(sorted(labels.items()))))
         return asks
 

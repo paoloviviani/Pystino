@@ -35,10 +35,11 @@ SOFT_CAP = 20
 #: A hard bound, because rules are held in memory on every worker.
 MAX_RULES = 100
 
-#: Which condition keys each kind offers. For reading, the two content conditions
-#: judge the text after a local read (the scan-probe flow).
+#: Which condition keys each kind offers. Reading decides from the request's facts about
+#: the file only (its type, whether it is a scan, its name); what the text says is checked
+#: when it is embedded or sent to chat.
 CONDITION_KEYS: dict[str, tuple[str, ...]] = {
-    KIND_READ: ("filetype", "scan", "filename", "finds", "classified"),
+    KIND_READ: ("filetype", "scan", "filename"),
     KIND_EMBED: ("finds", "classified"),
     KIND_CHAT: ("finds", "classified"),
 }
@@ -79,6 +80,16 @@ _MAX_NAME = 120
 
 class RuleError(ValueError):
     """A rule that cannot be saved. The message names the field and what is wrong."""
+
+
+class ContentOnReadError(RuleError):
+    """A content condition on a reading rule: answered as a 400, not a field error."""
+
+
+CONTENT_ON_READ = (
+    "Reading rules decide from the file, not its content; content is checked when the text "
+    "is embedded or sent to chat."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -441,6 +452,8 @@ def validate_rule(
     conditions: list[dict[str, Any]] = []
     for item in raw.get("conditions") or []:
         key = str(item.get("key") or "")
+        if kind == KIND_READ and key in CONTENT_KEYS:
+            raise ContentOnReadError(CONTENT_ON_READ)
         if key not in CONDITION_KEYS[kind]:
             allowed = ", ".join(CONDITION_KEYS[kind])
             raise RuleError(

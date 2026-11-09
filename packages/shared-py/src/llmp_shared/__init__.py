@@ -2,6 +2,7 @@
 
 from llmp_shared.documents import ExtractionKind, ExtractionResponse, PageImage
 from llmp_shared.redaction import (
+    MAX_CUSTOM_LABELS,
     PLACEHOLDER_RE,
     SAME_LENGTH_MIN,
     CustomLabel,
@@ -19,6 +20,7 @@ from llmp_shared.redaction import (
 )
 
 __all__ = [
+    "MAX_CUSTOM_LABELS",
     "PLACEHOLDER_RE",
     "SAME_LENGTH_MIN",
     "CustomLabel",

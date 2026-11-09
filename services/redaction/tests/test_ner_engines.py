@@ -111,6 +111,7 @@ class TestHealthz:
                 "default",
                 "entities",
                 "custom_labels",
+                "labels",
                 "ms_per_token",
                 "languages",
             }
@@ -472,3 +473,79 @@ class TestBuild:
             "blood type": "BLOOD_TYPE",
             "hospital": "ORGANIZATION",
         }
+
+
+class TestReview:
+    def test_the_model_is_not_asked_for_pattern_type_names(self) -> None:
+        model = FakeGliner()
+        slot = EngineSlot(
+            name="gliner",
+            analyzer=_presidio_gliner_analyzer(model),
+            languages=["it"],
+            ner_entities=sorted(set(gliner_engine.configured_labels().values())),
+            custom_labels=True,
+        )
+        detector = Detector(FakeAnalyzer(), languages=["it"], models={"it": "m"}, gliner=slot)
+        detector.analyse_one(
+            TEXT,
+            language="it",
+            score_threshold=0.5,
+            entity_types=None,
+            engine="gliner",
+            custom_labels={"project code name": "PROJECT_NAME"},
+        )
+        asked = {label for labels in model.calls for label in labels}
+        allowed = set(gliner_engine.configured_labels()) | {"project code name"}
+        assert asked and asked <= allowed, asked - allowed
+
+    async def test_a_custom_label_equal_to_a_default_one_is_refused(self) -> None:
+        async with serving(two_engine_detector()) as client:
+            health = (await client.get("/healthz")).json()
+            gliner = next(e for e in health["ner_engines"] if e["name"] == "gliner")
+            assert "person" in gliner["labels"]
+            response = await client.post(
+                "/detect",
+                json={
+                    "texts": [TEXT],
+                    "ner_engine": "gliner",
+                    "custom_labels": [{"entity": "WHO", "label": "Person"}],
+                },
+            )
+            assert response.status_code == 422
+            assert response.json()["detail"] == {"code": "label_taken", "labels": ["Person"]}
+            ok = await client.post(
+                "/detect",
+                json={
+                    "texts": [TEXT],
+                    "ner_engine": "gliner",
+                    "custom_labels": [{"entity": "WHO", "label": "project owner"}],
+                },
+            )
+            assert ok.status_code == 200
+            # spaCy never takes labels, so the clash cannot arise there.
+            spacy = await client.post(
+                "/detect",
+                json={
+                    "texts": [TEXT],
+                    "ner_engine": "spacy",
+                    "custom_labels": [{"entity": "WHO", "label": "person"}],
+                },
+            )
+            assert spacy.status_code == 200
+
+    async def test_a_full_gliner_queue_is_a_503_engine_busy(self) -> None:
+        detector = two_engine_detector()
+        detector.gliner_queue_seconds = 0.05
+        async with serving(detector) as client:
+            await detector._gliner_gate.acquire()  # someone else is running a long text
+            try:
+                busy = await client.post("/detect", json={"texts": [TEXT], "ner_engine": "gliner"})
+                assert busy.status_code == 503
+                assert busy.json()["detail"] == {"code": "engine_busy", "engine": "gliner"}
+                # spaCy is not behind that gate.
+                fine = await client.post("/detect", json={"texts": [TEXT], "ner_engine": "spacy"})
+                assert fine.status_code == 200
+            finally:
+                detector._gliner_gate.release()
+            after = await client.post("/detect", json={"texts": [TEXT], "ner_engine": "gliner"})
+            assert after.status_code == 200

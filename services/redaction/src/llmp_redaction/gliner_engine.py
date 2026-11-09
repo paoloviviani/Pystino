@@ -62,6 +62,15 @@ def configured_labels() -> dict[str, str]:
     return labels or dict(DEFAULT_GLINER_LABELS)
 
 
+def default_label_texts() -> set[str]:
+    """The configured labels, case-folded: what a custom label must not equal.
+
+    A custom label equal to one of these would replace that label's entity type in the
+    mapping (``mapping.update``), silently re-typing what the model finds as its own.
+    """
+    return {label.casefold() for label in configured_labels()}
+
+
 def configured_model() -> str:
     """The GLiNER checkpoint baked into the image; empty when the image has none."""
     return os.getenv("REDACTION_GLINER_MODEL", "").strip()
@@ -87,15 +96,24 @@ def make_recognizer_class() -> type:
                 super().load()
 
         def analyze(self, text: str, entities: list[str], nlp_artifacts: Any = None) -> list[Any]:
-            extra = CUSTOM_LABELS.get()
+            extra = CUSTOM_LABELS.get() or {}
+            # Presidio hands every recogniser the entities of the whole registry when the
+            # caller named none, and GLiNER's own wrapper turns each unknown name into one
+            # more label to ask the model for: every pattern type (EMAIL_ADDRESS, IBAN_CODE,
+            # ...) would be a label, which costs inference time and finds nothing. Only
+            # this model's own types and the request's custom types are asked for.
+            own = set(self.model_to_presidio_entity_mapping.values()) | set(extra.values())
+            asked = [e for e in entities or [] if e in own]
+            if entities and not asked:
+                return []
             if not extra:
-                return cast(list[Any], super().analyze(text, entities, nlp_artifacts))
+                return cast(list[Any], super().analyze(text, asked, nlp_artifacts))
             # Instance state is shared between requests, so the extra labels are
             # added on a shallow copy for this call only. Presidio hands the
             # recogniser the entities it was *selected* for: a custom entity is
             # not one of its supported entities, so it is let through here.
             clone = _with_labels(self, extra)
-            wanted = list(entities or []) + [e for e in extra.values() if e not in (entities or [])]
+            wanted = asked + [e for e in extra.values() if e not in asked]
             return cast(list[Any], GLiNERRecognizer.analyze(clone, text, wanted, nlp_artifacts))
 
     return PerRequestGLiNERRecognizer

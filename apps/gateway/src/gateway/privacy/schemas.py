@@ -351,6 +351,8 @@ class NerEngineView(ResponseModel):
     entities: list[str]
     #: Whether the engine takes custom entity types (a label per type) at inference.
     custom_labels: bool
+    #: Labels the engine always asks of its model, case-folded: a custom label may not equal one.
+    labels: list[str] = Field(default_factory=list)
     ms_per_token: float | None = None
     languages: list[str]
 

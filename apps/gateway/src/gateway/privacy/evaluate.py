@@ -22,6 +22,7 @@ from typing import Any
 from gateway.privacy.finds import Item, Judge
 from gateway.privacy.rules import (
     CONTENT_KEYS,
+    LADDER,
     Condition,
     Rule,
     glob_matches,
@@ -110,6 +111,17 @@ class Evaluation:
     #: Distinct items each "finds" condition counted, by policy name: counts only.
     found: dict[str, int] = field(default_factory=dict)
     degraded: list[str] = field(default_factory=list)
+    #: How strict the strictest later enabled rule of the pipeline is (set while a rule is
+    #: judged): an undecided condition may stand in for a match only on a rule at least as
+    #: strict, or the rule would fire in place of a stricter one it was shadowing.
+    later_strictness: tuple[int, bool] = (0, False)
+
+
+def strictness(rule: Rule) -> tuple[int, bool]:
+    """Where an action sits on the ladder, and whether it also redacts."""
+    ladder = LADDER[rule.kind]
+    level = ladder.index(rule.level) if rule.level in ladder else 0
+    return level, bool(rule.action.get("redact_with"))
 
 
 _CHEAP_FIRST = ("filetype", "filename", "scan", "finds", "classified")
@@ -161,7 +173,7 @@ class Evaluator:
     """Evaluates rules against facts. Stateless: the judge and the facts are the whole input."""
 
     def _undecided(
-        self, condition: Condition, rule: Rule, degraded: list[str], why: str
+        self, condition: Condition, rule: Rule, degraded: list[str], why: str, ev: Evaluation
     ) -> tuple[State, str]:
         """What an undecidable condition counts as, so that it can only ever add protection.
 
@@ -173,7 +185,7 @@ class Evaluator:
         if rule.observe_only:
             degraded.append(f"{why}; not matched.")
             return State.FALSE, f"{why}; not matched."
-        if rule.protective and not condition.negate:
+        if rule.protective and not condition.negate and strictness(rule) >= ev.later_strictness:
             degraded.append(f"{why}; treated as a match.")
             return State.TRUE, f"{why}; treated as a match."
         raise Undecidable(rule, why)
@@ -188,14 +200,18 @@ class Evaluator:
         step_items: dict[str, list[Item]],
     ) -> tuple[State, str]:
         """ "<policy> finds at least N items" and "classified as <classifier>"."""
-        if facts.kind == "read" and facts.is_scan is None:
-            # The text of a file is only there once it has been read here.
-            return State.UNKNOWN, "The file's text is only known after reading it."
+        if facts.kind == "read":
+            # Reading decides from the file's facts, never its text. A stored row that still
+            # carries a content condition (it cannot be saved any more) is undecidable, so a
+            # protective rule acts and anything else is refused, never read as "found nothing".
+            return self._undecided(
+                condition, rule, degraded, "A reading rule cannot judge what the file says", ev
+            )
         judge = facts.judge
         target = condition.values[0] if condition.values else ""
         if judge is None:
             return self._undecided(
-                condition, rule, degraded, "Nothing is available to judge the text"
+                condition, rule, degraded, "Nothing is available to judge the text", ev
             )
         texts = facts.inputs
         if condition.key == "finds":
@@ -207,12 +223,16 @@ class Evaluator:
                 step_items[name] = list(result.items)
             if result.incomplete and n < condition.count:
                 return self._undecided(
-                    condition, rule, degraded, "The text was too large to check in full"
+                    condition, rule, degraded, "The text was too large to check in full", ev
                 )
             if result.unavailable and n < condition.count:
                 # The count may be short, so "fewer than N" cannot be claimed.
                 return self._undecided(
-                    condition, rule, degraded, f"'{name}' cannot be checked ({result.unavailable})"
+                    condition,
+                    rule,
+                    degraded,
+                    f"'{name}' cannot be checked ({result.unavailable})",
+                    ev,
                 )
             hit = n >= condition.count
             text = (
@@ -231,7 +251,7 @@ class Evaluator:
                     if verdict.unavailable
                     else "The text was too large to classify in full"
                 )
-                return self._undecided(condition, rule, degraded, why)
+                return self._undecided(condition, rule, degraded, why, ev)
             else:
                 hit = False
             text = f"The text {'is' if hit else 'is not'} classified as '{name}'."
@@ -253,6 +273,14 @@ class Evaluator:
             items: dict[str, list[Item]] = {}
             unknown = False
             matched = True
+            ev.later_strictness = max(
+                (
+                    strictness(later)
+                    for later in rules
+                    if later.position > rule.position and later.enabled and not later.observe_only
+                ),
+                default=(0, False),
+            )
             for condition in _ordered(rule.conditions):
                 state, why = await self._condition(condition, facts, ev, degraded, rule, items)
                 reasons.append(why)

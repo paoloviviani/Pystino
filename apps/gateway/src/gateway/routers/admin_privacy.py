@@ -20,6 +20,7 @@ exist) is a 422.
 from __future__ import annotations
 
 import logging
+import secrets
 import uuid
 from typing import Any
 
@@ -241,6 +242,8 @@ async def _clean(
             policy_ids=context.policy_ids,
             readers=context.readers,
         )
+    except rulelib.ContentOnReadError as exc:
+        raise BadRequestError(str(exc)) from exc
     except rulelib.RuleError as exc:
         raise UnprocessableError(str(exc)) from exc
     await _check_subjects(session, clean["who"], clean["target"])
@@ -569,11 +572,28 @@ def _check_engine(policy: Any, engines: EnginesResponse) -> None:
         (e for e in engines.engines if e.name == policy.engine),
         next((e for e in engines.engines if e.default), None),
     )
+    if chosen is not None and policy.entities and not chosen.entities:
+        # An engine that reports no entity types has no NER model (a pattern-only image, or
+        # a model that failed to load): every entity item would be unserved, and a
+        # condition that counts them could never answer.
+        raise UnprocessableError(
+            f"The engine '{chosen.name}' reports no entity types (it has no NER model), so "
+            f"it cannot find: {', '.join(sorted(policy.entities))}."
+        )
     if chosen is not None and chosen.entities:
         unknown = sorted(set(policy.entities) - {e.upper() for e in chosen.entities})
         if unknown:
             raise UnprocessableError(
                 f"The engine '{chosen.name}' does not find: {', '.join(unknown)}."
+            )
+    if chosen is not None and chosen.labels:
+        taken = sorted(
+            c.label for c in policy.custom_entities if c.label.casefold() in chosen.labels
+        )
+        if taken:
+            raise UnprocessableError(
+                f"The label {', '.join(repr(t) for t in taken)} is one the engine '{chosen.name}' "
+                "already uses for its own types: choose another description."
             )
     if engines.pattern_entities:
         unknown = sorted(set(policy.formats) - {e.upper() for e in engines.pattern_entities})
@@ -581,6 +601,51 @@ def _check_engine(policy: Any, engines: EnginesResponse) -> None:
             raise UnprocessableError(
                 f"The redaction service has no built-in format: {', '.join(unknown)}."
             )
+
+
+async def _check_label_budget(
+    session: SessionDep, policy: Any, engines: EnginesResponse, ignore: uuid.UUID | None = None
+) -> None:
+    """Refuse a policy that could push one engine's custom labels over what the service takes.
+
+    The policies in force together are asked of each engine in one call, and the service
+    accepts at most ``MAX_CUSTOM_LABELS`` labels in it. Counted over every active policy
+    of the same engine (the default engine counts as the one the service reports), so the
+    request path does not meet the limit as an error.
+    """
+    from llmp_shared import MAX_CUSTOM_LABELS
+
+    default = next((e.name for e in engines.engines if e.default), None)
+
+    def key(engine: str | None) -> str | None:
+        return engine or default
+
+    mine = {(c.name, c.label) for c in policy.custom_entities}
+    if not mine:
+        return
+    rows = (
+        await session.execute(
+            select(RedactionPolicyRecord).where(RedactionPolicyRecord.is_active.is_(True))
+        )
+    ).scalars()
+    together = set(mine)
+    for row in rows:
+        if row.id == ignore:
+            continue
+        other = dict(row.policy or {})
+        if key(other.get("engine")) != key(policy.engine):
+            continue
+        together |= {
+            (str(c.get("name")), str(c.get("label")))
+            for c in other.get("custom_entities") or []
+            if isinstance(c, dict)
+        }
+    if len(together) > MAX_CUSTOM_LABELS:
+        raise UnprocessableError(
+            f"With the other active policies of this engine, {len(together)} custom entity "
+            f"types could be asked of the engine at once; the service takes {MAX_CUSTOM_LABELS}. "
+            "Remove some or turn a policy off."
+        )
 
 
 async def _name_free(session: SessionDep, name: str, ignore: uuid.UUID | None = None) -> None:
@@ -639,6 +704,8 @@ async def create_policy(
     await _name_free(session, name)
     report = await fetch_engines(control_http, settings)
     _check_engine(payload.policy, report)
+    if payload.is_active:
+        await _check_label_budget(session, payload.policy, report)
     row = RedactionPolicyRecord(
         id=uuid.uuid4(),
         name=name,
@@ -685,6 +752,8 @@ async def update_policy(
         row.name = name
     if payload.policy is not None:
         _check_engine(payload.policy, report)
+        if payload.is_active is not False and row.is_active:
+            await _check_label_budget(session, payload.policy, report, ignore=row.id)
         row.policy = payload.policy.model_dump(mode="json")
     if payload.shared_with_users is not None:
         if payload.shared_with_users is False and row.shared_with_users:
@@ -776,9 +845,9 @@ async def try_policy(
     """
     from llmp_shared import PlaceholderMap
 
-    from gateway.errors import ContentBlockedError
+    from gateway.errors import ContentBlockedError, ServiceUnavailableError
     from gateway.privacy.finds import find_in
-    from gateway.redaction.http import apply_spans
+    from gateway.redaction.http import EngineUnavailableError, apply_spans
 
     limiter = getattr(request.app.state, "privacy_test_limiter", None)
     if limiter is not None and not limiter.allow(("privacy-test", str(admin.id))):
@@ -806,19 +875,25 @@ async def try_policy(
     blocked = False
     if policy.is_active() and result.unavailable is None:
         # The same spans the redaction would act on: detect_only items are left alone.
-        from gateway.redaction.http import eligible_for  # noqa: F401
-
         detect = getattr(redactor, "detect", None)
         spans = []
         if detect is not None and getattr(redactor, "name", "noop") != "noop":
-            spans = (
-                await detect([payload.text], policy=policy, asks=policy.ner_asks(), strict=True)
-            )[0]
+            try:
+                spans = (
+                    await detect([payload.text], policy=policy, asks=policy.ner_asks(), strict=True)
+                )[0]
+            except EngineUnavailableError as exc:
+                raise ServiceUnavailableError(
+                    f"The NER engine {exc.engine or 'chosen by default'} cannot run: "
+                    f"{exc.reason or 'it is not available'}."
+                ) from exc
         try:
             redacted, _ = apply_spans(
                 payload.text,
                 spans,
-                key=settings.redaction.placeholder_key.get_secret_value().encode() or b"try-it",
+                # A throwaway key: what comes back is a preview, never a placeholder anyone
+                # could match against a real request's.
+                key=secrets.token_bytes(32),
                 placeholders=PlaceholderMap(),
                 policy=policy,
                 default_threshold=settings.redaction.score_threshold,

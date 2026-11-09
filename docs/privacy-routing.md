@@ -56,7 +56,7 @@ The kind comes from the endpoint and is fixed when a pipeline is saved.
 
 | Kind | Endpoints | What a rule can see |
 |---|---|---|
-| Read | `/v1/ocr` | file name, file type, whether it is a scan, and (after a local read) what a policy finds in the text |
+| Read | `/v1/ocr` | file name, file type, whether it is a scan: facts about the file, never its text |
 | Embed | `/v1/embeddings`, `/v1/rerank` | what a policy finds in each input, what a classifier says |
 | Chat | `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, and the other chat surfaces | what a policy finds in the messages, what a classifier says |
 
@@ -89,12 +89,16 @@ several different policies or classifiers.
 | `filetype` | read | `pdf`, `word`, `excel`, `powerpoint`, `image`, `text` |
 | `scan` | read | yes or no: the file is a scan |
 | `filename` | read | globs: `*`, `?`, `[abc]`, case-insensitive, matched on the base name |
-| `finds` | read, embed, chat | "**\<policy\> finds at least N items**" (N from 1 to 1000; "is" or "is not") |
-| `classified` | read, embed, chat | "**classified as \<classifier\>**" ("is" or "is not"); administrators only |
+| `finds` | embed, chat | "**\<policy\> finds at least N items**" (N from 1 to 1000; "is" or "is not") |
+| `classified` | embed, chat | "**classified as \<classifier\>**" ("is" or "is not"); administrators only |
 
 There is no built-in topic, no quick check and no language condition: nothing in
 Pystino is about health or any other subject. What is looked for is written by an
 administrator, in a policy.
+
+A reading rule decides from the file, not its content; content is checked when the
+text is embedded or sent to chat. The API refuses `finds` and `classified` on a reading
+rule with a 400 saying so, and the console offers only the three facts there.
 
 ### Finds at least N items
 
@@ -102,9 +106,7 @@ The condition runs the policy's own items over the request's text and counts the
 **distinct** items found, in any mode but `off` (a `detect only` item counts and
 is never hidden). Two mentions of one name are one item. It judges the text of
 **every input separately and in full**: embedding judges each input, chat the
-messages and tool results, and reading the text **after a local read** (the file is
-read on the built-in extractor first, as for a scan; it never leaves the
-deployment for that). A text over 2,000,000 characters (a request over 4,000,000
+messages and tool results. A text over 2,000,000 characters (a request over 4,000,000
 in all) cannot be checked in full.
 
 The two groups of a policy behave differently when something is down:
@@ -133,13 +135,24 @@ rest a rule that must not fail on a classifier alone. Only administrators use
 
 ### An undecidable condition never fails open
 
+An engine that cannot serve a type the policy asks for counts as unable to look: when
+the service answers that a requested entity type or custom label is in its
+`unsupported_types` (an engine with no NER model, or a default switched from spaCy to
+GLiNER where a type such as NRP does not exist), a "finds" condition is undecided, not
+"found nothing". A policy that lists entity items against an engine that reports no
+entities is refused when saved.
+
 When a policy's NER part or a classifier cannot answer, or the input is too large to
 check in full, the condition counts as a match only on a rule that protects (a level
 above the base, or a policy) and whose condition is not negated: then the rule acts.
 A negated condition ("finds no names, so pass") or a rule that adds nothing could
 let the text it exists to catch through, so the request is refused with a 503
 (`privacy_undecidable`) naming the rule and its pipeline. An observe-only rule
-simply does not match. Items the patterns already found are certain: "at least 2"
+simply does not match. A match is assumed only when the rule's action is at least as strict as every later
+enabled rule of the pipeline (and its last rule): otherwise it would fire in place of a
+stricter one it was shadowing (for example "finds at least 3 -> read with the local
+reader" ahead of "pdf -> refuse"), so the request gets the 503 instead. Items the
+patterns already found are certain: "at least 2"
 is true with two keyword hits whatever the NER part would add. `fail_open` does not
 apply: it is about redaction, and a condition must never read an outage as "found
 nothing".
@@ -303,8 +316,17 @@ choice is saved only if the service says the engine is available (and, for custo
 entity types, that it takes labels). When several policies of different engines
 apply to one request, the redaction service is called **once per engine** and the
 spans are merged: one span per identical range and type, and the strictest mode of
-the folded policy decides. Patterns do not depend on the engine and always run.
-See [Redaction](redaction.md#items-two-groups-never-mixed).
+the folded policy decides. Built-in formats go with **every** call, because which
+engine finds one can depend on the model (DATE_TIME is spaCy's; GLiNER maps it from its
+own label). Keyword lists and regular expressions do not depend on the engine and
+always run. At most 30 custom entity types (each label at most 80 characters) can be
+asked of one engine at once: a policy is refused when saved if, with the other active
+policies of its engine, the merged count could pass 30, and a request that still does
+gets a named 503, never a 500. A custom label may not equal one the engine already uses
+(case-folded): the gateway refuses it when saving and the service answers 422
+`label_taken`. A GLiNER queue that stays full past `REDACTION_GLINER_QUEUE_SECONDS`
+(30) answers 503 `engine_busy`, which the gateway treats as the engine being
+unavailable. See [Redaction](redaction.md#items-two-groups-never-mixed).
 
 ## Migration
 
@@ -329,7 +351,10 @@ exactly as before.
   adjacent rules, which keeps first-match meaning. A `local` action becomes
   `refuse` (it failed closed without a local model).
 - `providers.is_local` is dropped.
-- **Migration `0083`** (one detection vocabulary): see below.
+- **Migration `0083`** (one detection vocabulary): see below. It is reversible: the
+  downgrade merges `formats` back into `entities`, writes `detect_only` as `off`, turns a
+  "finds at least 1 item" of the migrated identifiers policy back into `ids`, and
+  refuses (unless `PYSTINO_ALLOW_LOSSY_DOWNGRADE=1`) what the older shape cannot say.
 - A routing rule that lost a condition (a `local`/`cloud` target, a mixed who) goes in a pipeline of its own so it can only add; a verdict condition with no values always holds.
 - **Downgrading** writes a policy plus its three plain pipelines back as the scoped rule, and a user's policy back as their rules. If anything cannot be said in the older model (pipelines with rules, an unusual scope, two policies on one scope, a limit on users' entity types) the downgrade is **refused** with the list; `PYSTINO_ALLOW_LOSSY_DOWNGRADE=1` drops it anyway.
 
@@ -352,6 +377,12 @@ exist only on unreleased builds so far, but nothing is dropped silently:
 - A condition on **IDs** becomes "finds at least 1 item" of a policy named
   **Identifiers (migrated)**, which lists the formats the quick check knew
   (fiscal code, VAT number, IBAN, card, US SSN, NHS number) as `detect only`.
+- A **reading** rule carrying `finds`, `classified` (or `ids`) is kept switched off with
+  the condition removed and a note, and named in the log: reading decides from the
+  file, not its text.
+- The `ids` conversion now depends on the redaction service (the quick check ran inside
+  the gateway and always answered); US_SSN and UK_NHS are English-only and low-scoring.
+  The migration log says so.
 - A condition on **health data** or **language** has no equivalent. The rule is
   **kept, switched off, with the condition removed and a note** the console shows as
   a warning. A protective rule can then only apply to more requests when turned on;

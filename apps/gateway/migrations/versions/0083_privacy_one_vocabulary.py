@@ -4,8 +4,10 @@ Revision ID: 0083
 Revises: 0082
 Create Date: 2026-11-09
 
-#52 is unreleased, so this only ever sees rows made on a branch build, but it is
-written as if it saw real ones: nothing is dropped silently.
+The pipelines are new on #52 and unreleased, but ``redaction_policies`` are not just
+branch data: migration 0082 made them from the released ``redaction_rules`` (and users'
+own rules), so they hold what administrators wrote before. This is written as if it saw
+real rows everywhere: nothing is dropped silently.
 
 * **Policies.** ``redaction_policies.policy`` is re-written in the two-group shape
   (``formats`` for built-in pattern formats, ``entities`` for NER types, plus the
@@ -35,12 +37,14 @@ written as if it saw real ones: nothing is dropped silently.
     rule is named in the migration log.
 
 Plain DDL plus Python-side row conversion, so it runs on SQLite as on PostgreSQL. The
-downgrade restores the schema only (see its docstring).
+downgrade writes the rows back where the older shape can say it, and refuses
+(``PYSTINO_ALLOW_LOSSY_DOWNGRADE=1`` drops them) where it cannot.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -121,7 +125,7 @@ def split_policy(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def convert_rules(
-    rules: list[dict[str, Any]], ids_policy: str, *, pipeline: str, user: bool
+    rules: list[dict[str, Any]], ids_policy: str, *, pipeline: str, user: bool, kind: str = "chat"
 ) -> tuple[list[dict[str, Any]], bool, list[str]]:
     """The rules with the removed conditions converted: (rules, used the ids policy, log lines)."""
     out: list[dict[str, Any]] = []
@@ -133,7 +137,14 @@ def convert_rules(
         removed: list[str] = []
         for condition in conditions:
             key = condition.get("key")
-            if key == "ids":
+            if kind == "read" and key in ("ids", "finds", "classified"):
+                # Reading decides from the file's facts, never its text: a content
+                # condition on a reading rule has nowhere to go. Kept, switched off.
+                what = {"ids": "contains IDs", "finds": "a policy finds items"}.get(
+                    str(key), "classified as a topic"
+                )
+                removed.append(f"{'does not have: ' if condition.get('negate') else ''}{what}")
+            elif key == "ids":
                 used_ids = True
                 kept.append(
                     {
@@ -162,7 +173,7 @@ def convert_rules(
             note = (
                 "Migrated: this rule had the condition '"
                 + "; ".join(removed)
-                + "', which no longer exists (no list of topics ships any more), so the condition "
+                + "', which no longer exists (no list of topics ships any more, and reading decides from the file, not its text), so the condition "
                 "was removed and the rule switched off. "
             )
             if protective:
@@ -202,6 +213,7 @@ def _convert(bind: sa.Connection) -> None:
         "privacy_pipelines",
         sa.column("id", sa.Uuid()),
         sa.column("owner_id", sa.Uuid()),
+        sa.column("kind", sa.String()),
         sa.column("name", sa.String()),
         sa.column("rules", sa.JSON()),
         sa.column("otherwise", sa.JSON()),
@@ -232,17 +244,29 @@ def _convert(bind: sa.Connection) -> None:
     used_by_admin = used_by_user = False
     log: list[str] = []
     for row in bind.execute(
-        sa.select(pipelines.c.id, pipelines.c.owner_id, pipelines.c.name, pipelines.c.rules)
+        sa.select(
+            pipelines.c.id,
+            pipelines.c.owner_id,
+            pipelines.c.name,
+            pipelines.c.rules,
+            pipelines.c.kind,
+        )
     ).all():
         rules = list(row.rules or [])
         if not any(
-            c.get("key") in ("ids", "health", "lang") or "decide" in c
+            c.get("key") in ("ids", "health", "lang")
+            or "decide" in c
+            or (row.kind == "read" and c.get("key") in ("finds", "classified"))
             for rule in rules
             for c in rule.get("conditions") or []
         ):
             continue
         new_rules, used, lines = convert_rules(
-            rules, str(ids_policy), pipeline=row.name, user=row.owner_id is not None
+            rules,
+            str(ids_policy),
+            pipeline=row.name,
+            user=row.owner_id is not None,
+            kind=row.kind,
         )
         log.extend(lines)
         if used:
@@ -280,14 +304,142 @@ def _convert(bind: sa.Connection) -> None:
             f"made the policy '{IDS_POLICY}' (detect only: {', '.join(IDENTIFIER_FORMATS)})"
             + (" and shared it with users." if used_by_user else ".")
         )
+        log.append(
+            f"'{IDS_POLICY}' now depends on the redaction service: the quick check ran inside "
+            "the gateway and always answered; these formats are found by the service's "
+            "recognisers, so when it is down a protective rule that counts them acts, and any "
+            "other is refused with a 503. US_SSN and UK_NHS are English-only and score low "
+            "(they may miss a number the quick check caught); IBAN, card and the Italian "
+            "codes are checksummed."
+        )
     for line in log:
         logger.warning("privacy migration 0083: %s", line)
 
 
+def _downgrade_rows(bind: sa.Connection) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    """The policies and pipeline rules as the older shape holds them, and what it cannot say."""
+    policies = sa.table(
+        "redaction_policies",
+        sa.column("id", sa.Uuid()),
+        sa.column("name", sa.String()),
+        sa.column("policy", sa.JSON()),
+    )
+    pipelines = sa.table(
+        "privacy_pipelines",
+        sa.column("id", sa.Uuid()),
+        sa.column("name", sa.String()),
+        sa.column("rules", sa.JSON()),
+        sa.column("otherwise", sa.JSON()),
+    )
+    lost: list[str] = []
+    policy_rows = list(bind.execute(sa.select(policies.c.id, policies.c.name, policies.c.policy)))
+    pipeline_rows = list(
+        bind.execute(
+            sa.select(pipelines.c.id, pipelines.c.name, pipelines.c.rules, pipelines.c.otherwise)
+        )
+    )
+    applied = {
+        str((row.otherwise or {}).get("redact_with"))
+        for row in pipeline_rows
+        if (row.otherwise or {}).get("redact_with")
+    } | {
+        str((rule.get("action") or {}).get("redact_with"))
+        for row in pipeline_rows
+        for rule in row.rules or []
+        if (rule.get("action") or {}).get("redact_with")
+    }
+    ids_policy = {
+        str(uuid.UUID(str(row.id))): row
+        for row in policy_rows
+        if row.name == IDS_POLICY
+    }
+
+    new_policies: list[dict[str, Any]] = []
+    for row in policy_rows:
+        raw = dict(row.policy or {})
+        pid = str(uuid.UUID(str(row.id)))
+        if pid in ids_policy and pid not in applied:
+            new_policies.append({"id": row.id, "delete": True})
+            continue
+        if "formats" not in raw:
+            continue
+        hidden_loss = [
+            k["name"] for k in raw.get("keywords") or [] if k.get("mode") not in ("off", "detect_only")
+        ] + [
+            c["name"]
+            for c in raw.get("custom_entities") or []
+            if c.get("mode") not in ("off", "detect_only")
+        ]
+        if hidden_loss:
+            lost.append(
+                f"policy '{row.name}' has keyword lists or custom entity types "
+                f"({', '.join(hidden_loss)}) the older shape cannot hold"
+            )
+        if raw.get("engine"):
+            lost.append(f"policy '{row.name}' chooses the NER engine '{raw['engine']}'")
+        merged: dict[str, Any] = {}
+        for table in (raw.get("formats") or {}, raw.get("entities") or {}):
+            for name, entry in table.items():
+                entry = dict(entry)
+                if entry.get("mode") == "detect_only":
+                    entry["mode"] = "off"
+                merged[name] = entry
+        old = {k: v for k, v in raw.items() if k in ("default_mode", "patterns", "allow_list")}
+        old["entities"] = merged
+        new_policies.append({"id": row.id, "policy": old})
+
+    new_pipelines: list[dict[str, Any]] = []
+    for row in pipeline_rows:
+        rules = []
+        for rule in row.rules or []:
+            rule = {k: v for k, v in rule.items() if k != "note"}
+            conditions = []
+            for cond in rule.get("conditions") or []:
+                key = cond.get("key")
+                if key == "finds":
+                    target = str((cond.get("values") or [""])[0])
+                    if target in ids_policy and int(cond.get("count") or 1) == 1:
+                        conditions.append(
+                            {"key": "ids", "values": [], "negate": bool(cond.get("negate"))}
+                        )
+                        continue
+                    lost.append(
+                        f"rule '{rule.get('name')}' of '{row.name}' counts the items of a policy "
+                        "(finds at least N)"
+                    )
+                    continue
+                if key == "classified":
+                    lost.append(
+                        f"rule '{rule.get('name')}' of '{row.name}' uses a classifier"
+                    )
+                    continue
+                conditions.append(cond)
+            rule["conditions"] = conditions
+            rules.append(rule)
+        new_pipelines.append({"id": row.id, "rules": rules})
+    return new_policies, new_pipelines, lost
+
+
 def downgrade() -> None:
-    """Back to the profiles schema, so the chain stays walkable. The rows are not
-    converted back: migrations only go forward, and the earlier downgrades only need
-    the tables and columns to exist."""
+    """Back to the profiles shape, writing the rows back where the older shape can say it.
+
+    A policy's ``formats`` and ``entities`` merge into the one ``entities`` table, and
+    ``detect_only`` becomes ``off`` (it hid nothing). A "finds at least 1 item" of the
+    migrated identifiers policy becomes the ``ids`` condition again (that policy is
+    removed when nothing applies it). What the older shape cannot say (keyword lists and
+    custom entity types that hid something, a chosen engine, "finds at least N" of any
+    other policy, classifiers) is **refused** with the list, so a downgrade never
+    silently stops protecting; ``PYSTINO_ALLOW_LOSSY_DOWNGRADE=1`` drops it anyway.
+    """
+    bind = op.get_bind()
+    new_policies, new_pipelines, lost = _downgrade_rows(bind)
+    if lost and os.environ.get("PYSTINO_ALLOW_LOSSY_DOWNGRADE") != "1":
+        raise RuntimeError(
+            "Downgrading 0083 would lose what the older shape cannot express: "
+            + "; ".join(lost)
+            + ". Nothing was changed. Remove or simplify them first, or set "
+            "PYSTINO_ALLOW_LOSSY_DOWNGRADE=1 to drop them."
+        )
     op.create_table(
         "detector_profiles",
         sa.Column("id", sa.Uuid(), nullable=False),
@@ -310,12 +462,38 @@ def downgrade() -> None:
     with op.batch_alter_table("redaction_policies", schema=None) as batch_op:
         batch_op.add_column(sa.Column("profile_id", sa.Uuid(), nullable=True))
         batch_op.create_foreign_key(
-            "fk_redaction_policies_profile", "detector_profiles", ["profile_id"], ["id"], ondelete="SET NULL"
+            "fk_redaction_policies_profile",
+            "detector_profiles",
+            ["profile_id"],
+            ["id"],
+            ondelete="SET NULL",
         )
     with op.batch_alter_table("user_policies", schema=None) as batch_op:
         batch_op.add_column(sa.Column("profile_id", sa.Uuid(), nullable=True))
         batch_op.create_foreign_key(
-            "fk_user_policies_profile", "detector_profiles", ["profile_id"], ["id"], ondelete="SET NULL"
+            "fk_user_policies_profile",
+            "detector_profiles",
+            ["profile_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+
+    policies = sa.table(
+        "redaction_policies", sa.column("id", sa.Uuid()), sa.column("policy", sa.JSON())
+    )
+    for change in new_policies:
+        if change.get("delete"):
+            bind.execute(policies.delete().where(policies.c.id == change["id"]))
+        else:
+            bind.execute(
+                policies.update().where(policies.c.id == change["id"]).values(policy=change["policy"])
+            )
+    pipelines = sa.table(
+        "privacy_pipelines", sa.column("id", sa.Uuid()), sa.column("rules", sa.JSON())
+    )
+    for change in new_pipelines:
+        bind.execute(
+            pipelines.update().where(pipelines.c.id == change["id"]).values(rules=change["rules"])
         )
 
     op.drop_table("privacy_classifiers")

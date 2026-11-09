@@ -171,7 +171,10 @@ async def find_in(
                     usable, policy=policy, asks=policy.ner_asks(acting=False), strict=True
                 )
             except EngineUnavailableError as exc:
-                result.unavailable = f"the NER engine {exc.engine or '(default)'} is not available"
+                result.unavailable = (
+                    f"the NER engine {exc.engine or '(default)'} cannot answer: "
+                    f"{exc.reason or 'it is not available'}"
+                )
             except RedactionUnavailableError:
                 result.unavailable = "the redaction service could not be reached"
 

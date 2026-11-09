@@ -421,7 +421,6 @@ async def extract_document(
         principal,
         model,
         requested_name=resolved.requested_name,
-        judge=_metered.judge_of(request, principal),
     )
     mime = inline[1] if inline is not None else _declared_mime(body)
     name = attribution.clean_filename(_document_name(request, body))
@@ -470,8 +469,6 @@ async def extract_document(
                     principal,
                     moved.model,
                     requested_name=moved.requested_name,
-                    judge=facts.judge,
-                    texts=facts.texts,
                 ),
                 filename=name,
                 mime=mime,
@@ -511,9 +508,9 @@ async def extract_document(
                 combined=combined,
                 rule=combined.pending_run,
                 why=(
-                    "this file has to be read by the built-in extractor to be judged, and that "
-                    "is not possible for this request (the document is a link, or no built-in "
-                    "reader is available to you)."
+                    "this file has to be read by the built-in extractor to tell whether it is a "
+                    "scan, and that is not possible for this request (the document is a link, "
+                    "or no built-in reader is available to you)."
                 ),
             )
         assert probe_model is not None and inline is not None
@@ -535,8 +532,6 @@ async def extract_document(
         facts = replace(
             facts,
             is_scan=_scan_of(probe),
-            # The text the content conditions judge: read here, never sent anywhere.
-            texts=(probe.text,) if probe.text else (),
         )
         holder["resolved"] = named
         combined = await plan(privacy.evaluator, pipelines, facts, retarget=retarget)

@@ -38,6 +38,7 @@ def parse_engines(body: dict[str, Any]) -> tuple[list[str], list[NerEngineView]]
                 default=bool(raw.get("default")),
                 entities=[str(e) for e in raw.get("entities") or []],
                 custom_labels=bool(raw.get("custom_labels")),
+                labels=[str(item).casefold() for item in raw.get("labels") or []],
                 ms_per_token=float(speed) if isinstance(speed, int | float) else None,
                 languages=[str(item) for item in raw.get("languages") or []],
             )

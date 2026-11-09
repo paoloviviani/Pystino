@@ -32,7 +32,7 @@ from sqlalchemy import func, or_, select
 
 from gateway.access import accessible_models
 from gateway.deps import ControlHttpDep, ManagementUserDep, SessionDep, SettingsDep
-from gateway.errors import GatewayError, NotFoundError, TooManyRequestsError
+from gateway.errors import BadRequestError, GatewayError, NotFoundError, TooManyRequestsError
 from gateway.models import (
     ApiKey,
     ModelDef,
@@ -146,6 +146,8 @@ async def _clean(
             policy_ids=context.policy_ids,
             readers=context.readers,
         )
+    except rulelib.ContentOnReadError as exc:
+        raise BadRequestError(str(exc)) from exc
     except rulelib.RuleError as exc:
         raise UnprocessableError(str(exc)) from exc
     await _check_targets(session, user, clean["target"])

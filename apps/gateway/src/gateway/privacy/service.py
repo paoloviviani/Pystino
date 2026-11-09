@@ -579,7 +579,6 @@ async def dry_run(
     filename = attribution.clean_filename(payload.filename)
     mime = payload.mime
     is_scan = payload.is_scan
-    read_text: str | None = None
     extractor: str | None = None
     fallback_reason: str | None = None
     if payload.kind == "read" and payload.file_base64:
@@ -599,7 +598,6 @@ async def dry_run(
         except Exception as exc:  # the built-in extractor may simply not be there
             raise BadRequestError(f"The file could not be read here: {exc}") from exc
         extractor, fallback_reason = read.extractor or None, read.fallback_reason or None
-        read_text = read.text or None
         is_scan = attribution.is_scan_from(read.extractor, read.kind.value, bool(read.page_images))
     group = request_group_id(user) if user is not None else None
 
@@ -616,7 +614,10 @@ async def dry_run(
             target_provider=p.name if p is not None else None,
             provider_id=str(p.id) if p is not None else None,
             model_id=str(m.id) if m is not None else None,
-            text=(read_text or payload.text) if state.uses_verdicts(payload.kind) else None,
+            # Reading decides from the file's facts; only embed and chat judge text.
+            text=payload.text
+            if payload.kind != "read" and state.uses_verdicts(payload.kind)
+            else None,
             judge=judge,
         )
 
@@ -705,7 +706,8 @@ async def dry_run(
             )[0]
         except EngineUnavailableError as exc:
             raise ServiceUnavailableError(
-                f"The NER engine {exc.engine or 'chosen by default'} is not available."
+                f"The NER engine {exc.engine or 'chosen by default'} cannot run: "
+                f"{exc.reason or 'it is not available'}."
             ) from exc
         eligible = eligible_for(
             payload.text,
@@ -816,16 +818,6 @@ async def dry_run(
     for run in combined.runs:
         verdicts.update(run.evaluation.verdicts)
     degraded = [d for run in combined.runs for d in run.evaluation.degraded]
-    if (
-        payload.kind == "read"
-        and not combined.pending
-        and facts.text is None
-        and state.uses_verdicts("read")
-    ):
-        degraded.append(
-            "No text was given or read, so conditions that judge the text saw nothing. "
-            "Give a file to read, or a text."
-        )
 
     # --- outcome ---
     winner = combined.winner

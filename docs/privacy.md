@@ -12,9 +12,10 @@ for both: **Privacy**.
 | Lives in | console: **Privacy, Redaction policies** | console: **Privacy, Pipelines** |
 
 A policy is also what **conditions** look things up with: a rule can say "*policy*
-finds at least N items" (read, embed, chat), next to the file type, the file name,
-whether a file is a scan, and "classified as *classifier*" (a decision model, for
-large deployments). There is no built-in topic and no quick check.
+finds at least N items" (embed, chat), next to the file type, the file name,
+whether a file is a scan (reading decides from the file, never its text), and
+"classified as *classifier*" (embed and chat; a decision model, for large
+deployments). There is no built-in topic and no quick check.
 
 The two are documented separately: [Privacy pipelines](privacy-routing.md) (when
 and how: the kinds, the ladder, conditions, readers, user pipelines, migration) and

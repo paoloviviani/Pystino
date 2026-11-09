@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import os
 import re
 import time
 from collections.abc import Mapping
@@ -136,6 +137,14 @@ class EngineSlot:
     ms_per_token: float | None = None
 
 
+class EngineBusyError(Exception):
+    """The engine's queue is full for longer than the configured wait (503 ``engine_busy``)."""
+
+    def __init__(self, engine: str) -> None:
+        super().__init__(f"the {engine} engine is busy")
+        self.engine = engine
+
+
 class EngineUnavailableError(Exception):
     """A request named a NER engine this deployment does not have."""
 
@@ -200,6 +209,8 @@ class Detector:
         # GLiNER runs one request at a time: it is memory-hungry and uses every
         # core for each forward pass, so two at once only make both slower.
         self._gliner_gate = asyncio.Semaphore(1)
+        #: How long a request waits for the GLiNER slot before it is refused as busy.
+        self.gliner_queue_seconds = float(os.getenv("REDACTION_GLINER_QUEUE_SECONDS", "30"))
 
     @property
     def slots(self) -> list[EngineSlot]:
@@ -392,8 +403,17 @@ class Detector:
             custom_labels=self.label_map(custom_labels, entity_types),
         )
         if slot.name == "gliner":
-            async with self._gliner_gate:
+            # Bounded: GLiNER runs one batch at a time, so a queue of long texts would
+            # hold every caller until its client times out. A wait past the limit is a
+            # clean "busy" the gateway treats as the engine being unavailable.
+            try:
+                await asyncio.wait_for(self._gliner_gate.acquire(), self.gliner_queue_seconds)
+            except TimeoutError as error:
+                raise EngineBusyError(slot.name) from error
+            try:
                 return await asyncio.to_thread(work)
+            finally:
+                self._gliner_gate.release()
         return await asyncio.to_thread(work)
 
     @staticmethod

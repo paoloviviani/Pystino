@@ -25,6 +25,7 @@ from typing import Any
 
 import httpx
 from llmp_shared import (
+    MAX_CUSTOM_LABELS,
     CustomLabel,
     DetectionRequest,
     DetectionResponse,
@@ -35,6 +36,7 @@ from llmp_shared import (
     placeholder_for,
     same_length_placeholder,
 )
+from pydantic import ValidationError
 
 from gateway.config import (
     DEFAULT_REDACTION_POLICY,
@@ -83,9 +85,11 @@ class EngineUnavailableError(Exception):
     the engine, so the caller turns it into the 503 that names the policy.
     """
 
-    def __init__(self, engine: str | None) -> None:
-        super().__init__(f"NER engine {engine or '(default)'} is not available")
+    def __init__(self, engine: str | None, reason: str | None = None) -> None:
+        super().__init__(reason or f"NER engine {engine or '(default)'} is not available")
         self.engine = engine
+        #: Why, when it is not simply "the service has no such engine".
+        self.reason = reason
 
 
 class _Cache:
@@ -693,6 +697,15 @@ def _engine_unavailable(response: httpx.Response) -> bool:
     return isinstance(detail, dict) and detail.get("code") == "engine_unavailable"
 
 
+def _engine_busy(response: httpx.Response) -> bool:
+    """Whether a 503 is the service saying the engine's queue is full (``engine_busy``)."""
+    try:
+        detail = response.json().get("detail")
+    except ValueError:
+        return False
+    return isinstance(detail, dict) and detail.get("code") == "engine_busy"
+
+
 class HttpDetectionRedactor:
     """Redaction backed by an HTTP detection service."""
 
@@ -802,17 +815,27 @@ class HttpDetectionRedactor:
         if not pending:
             return [spans or [] for spans in results]
 
-        request = DetectionRequest(
-            texts=[texts[index] for index in pending],
-            language=settings.language,
-            score_threshold=floor,
-            entity_types=wanted,
-            presidio_pattern_matching=settings.presidio_pattern_matching,
-            presidio_ner=settings.presidio_ner,
-            ner_engine=ask.engine,
-            custom_labels=[CustomLabel(entity=e, label=label) for e, label in ask.labels] or None,
-        )
-        found = await self._post(request, strict=strict)
+        try:
+            request = DetectionRequest(
+                texts=[texts[index] for index in pending],
+                language=settings.language,
+                score_threshold=floor,
+                entity_types=wanted,
+                presidio_pattern_matching=settings.presidio_pattern_matching,
+                presidio_ner=settings.presidio_ner,
+                ner_engine=ask.engine,
+                custom_labels=[CustomLabel(entity=e, label=label) for e, label in ask.labels]
+                or None,
+            )
+        except ValidationError as exc:
+            # The policies in force together ask for more than the service takes (for
+            # example more than 30 custom labels for one engine): a named 503, never a 500.
+            raise EngineUnavailableError(
+                ask.engine,
+                "the policies in force ask the NER engine for more than it accepts "
+                f"({len(ask.labels)} custom entity types; the limit is {MAX_CUSTOM_LABELS})",
+            ) from exc
+        found, partial = await self._post(request, strict=strict)
 
         for position, index in enumerate(pending):
             spans = [] if found is None else found.get(position, [])
@@ -820,19 +843,26 @@ class HttpDetectionRedactor:
             # A fail-open outage yields no findings, which must not be cached:
             # one outage would otherwise leave every text seen during it marked
             # "clean" for the life of the process.
-            if found is not None:
+            # Nor an answer that left types out (the engine could not serve them): a later
+            # strict call must see the report again.
+            if found is not None and not partial:
                 self._cache.put(keys[index], spans)
 
         return [spans or [] for spans in results]
 
     async def _post(
         self, request: DetectionRequest, *, strict: bool = False
-    ) -> dict[int, list[EntitySpan]] | None:
-        """Findings by position, or None when failing open on an outage."""
+    ) -> tuple[dict[int, list[EntitySpan]] | None, bool]:
+        """Findings by position (None when failing open on an outage), and whether the
+        engine reported types it could not serve."""
         try:
             response = await self._client.post(self._endpoint, json=request.model_dump(mode="json"))
             if response.status_code == 409 and _engine_unavailable(response):
                 raise EngineUnavailableError(request.ner_engine)
+            if response.status_code == 503 and _engine_busy(response):
+                raise EngineUnavailableError(
+                    request.ner_engine, "the engine is busy; try again shortly"
+                )
             response.raise_for_status()
             parsed = DetectionResponse.model_validate(response.json())
         except (TimeoutError, httpx.HTTPError, ValueError) as exc:
@@ -845,7 +875,7 @@ class HttpDetectionRedactor:
                     exc,
                     exc_info=True,
                 )
-                return None
+                return None, False
             logger.error("detection service unavailable (%s); refusing the request", exc)
             raise RedactionUnavailableError(
                 "The redaction service could not be reached, so this request cannot be "
@@ -854,7 +884,14 @@ class HttpDetectionRedactor:
 
         found = {finding.index: finding.spans for finding in parsed.findings}
         self._report_unsupported(parsed.unsupported_types)
-        return found
+        if parsed.unsupported_types and strict:
+            # A condition that counts items cannot read "the engine cannot serve this
+            # type" as "found nothing": that is undecided, and the caller fails closed.
+            raise EngineUnavailableError(
+                request.ner_engine,
+                "the engine cannot find: " + ", ".join(sorted(parsed.unsupported_types)),
+            )
+        return found, bool(parsed.unsupported_types)
 
     def _report_unsupported(self, unsupported: list[str]) -> None:
         """Name the policy types this engine cannot serve, when it changes.
@@ -924,7 +961,7 @@ class HttpDetectionRedactor:
                 asks=policy.asks() if policy is not None else None,
             )
         except EngineUnavailableError as exc:
-            raise engine_unavailable_error(exc.engine, policy) from exc
+            raise engine_unavailable_error(exc.engine, policy, exc.reason) from exc
 
         placeholders = PlaceholderMap()
         total = 0
@@ -1040,7 +1077,7 @@ class HttpDetectionRedactor:
 
 
 def engine_unavailable_error(
-    engine: str | None, policy: EffectivePolicy | None
+    engine: str | None, policy: EffectivePolicy | None, reason: str | None = None
 ) -> ServiceUnavailableError:
     """The 503 for a policy whose NER engine the service no longer has (fail closed).
 
@@ -1050,7 +1087,8 @@ def engine_unavailable_error(
     names = policy.policies_of_engine(engine) if policy is not None else []
     which = ", ".join(f"'{n}'" for n in names) or "a redaction policy"
     return ServiceUnavailableError(
-        f"The NER engine {engine or 'chosen by default'} for {which} is not available, so "
+        f"The NER engine {engine or 'chosen by default'} for {which} cannot run"
+        f"{': ' + reason if reason else ' (it is not available)'}, so "
         "this request cannot be screened. It is refused rather than let through.",
         code="redaction_engine_unavailable",
     )

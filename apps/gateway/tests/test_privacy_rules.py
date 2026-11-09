@@ -13,6 +13,7 @@ from gateway.privacy.rules import (
     CheckContext,
     Condition,
     ContentInfo,
+    ContentOnReadError,
     Rule,
     RuleError,
     check,
@@ -221,17 +222,19 @@ class TestValidation:
         )
         assert [c["values"] for c in out["conditions"]] == [["p"], ["q"]]
 
-    def test_read_may_count_items_after_a_local_read(self) -> None:
-        out = validate_rule(
-            "read",
-            {
-                "name": "R",
-                "action": {"level": "refuse"},
-                "conditions": [{"key": "finds", "values": ["p"]}],
-            },
-            finds_policy_ids={"p"},
-        )
-        assert out["conditions"][0]["key"] == "finds"
+    @pytest.mark.parametrize("key", ["finds", "classified"])
+    def test_reading_rules_decide_from_the_file_not_its_content(self, key: str) -> None:
+        with pytest.raises(ContentOnReadError, match="decide from the file, not its content"):
+            validate_rule(
+                "read",
+                {
+                    "name": "R",
+                    "action": {"level": "refuse"},
+                    "conditions": [{"key": key, "values": ["p"]}],
+                },
+                finds_policy_ids={"p"},
+                classifier_ids={"p"},
+            )
 
     def test_a_user_may_count_a_policy_they_may_name_but_never_classify(self) -> None:
         validate_rule(
@@ -612,13 +615,17 @@ class TestEvaluation:
         ev = await Evaluator().evaluate([r], Facts(kind="chat", text="x", judge=no))
         assert ev.fired is None and ev.verdicts == {"classifier-c": False}
 
-    async def test_a_read_rule_waits_for_the_file_to_be_read_before_judging_its_text(self) -> None:
-        r = rule("Names", "read", conditions=(cond("finds", "p"),))
+    async def test_a_stored_read_rule_with_a_content_condition_is_never_read_as_found_nothing(
+        self,
+    ) -> None:
+        # It cannot be saved any more, but a row from before may still carry one.
         judge = FakeJudge({"p": FindResult(items=(item(),))})
-        ev = await Evaluator().evaluate([r], read_facts(judge=judge))
-        assert ev.pending == "scan" and judge.asked == []
-        done = await Evaluator().evaluate([r], read_facts(judge=judge, is_scan=False, texts=("x",)))
-        assert done.fired is r and judge.asked == ["p"]
+        protective = rule("Names", "read", conditions=(cond("finds", "p"),))
+        ev = await Evaluator().evaluate([protective], read_facts(judge=judge, is_scan=False))
+        assert ev.fired is protective and judge.asked == [] and ev.degraded
+        negated = rule("None", "read", conditions=(cond("finds", "p", negate=True),))
+        with pytest.raises(Undecidable):
+            await Evaluator().evaluate([negated], read_facts(judge=judge, is_scan=False))
 
     async def test_content_is_not_judged_when_a_cheaper_condition_already_failed(self) -> None:
         judge = FakeJudge({"p": FindResult(items=(item(),))})
@@ -691,6 +698,47 @@ class TestFailClosed:
         r = rule("Watch", "embed", conditions=(cond("finds", "p"),), observe_only=True)
         ev = await Evaluator().evaluate([r], Facts(kind="embed", text="x", judge=self.down()))
         assert ev.fired is None and ev.observed == []
+
+    async def test_an_undecided_rule_never_fires_in_place_of_a_stricter_later_one(self) -> None:
+        # "finds >= 3 -> read with local", then "pdf -> refuse", with the NER part down:
+        # treating the first as a match would read the pdf where the second refuses it.
+        first = rule(
+            "Many",
+            "read",
+            position=0,
+            conditions=(cond("finds", "p", count=3),),
+            action={"level": "read_with", "reader": "builtin"},
+        )
+        second = rule("Pdf", "read", position=1, conditions=(cond("filetype", "pdf"),))
+        facts = read_facts(judge=self.down(), is_scan=False, filetype="pdf")
+        with pytest.raises(Undecidable):
+            await Evaluator().evaluate([first, second], facts)
+
+    async def test_it_may_stand_in_for_a_match_when_nothing_later_is_stricter(self) -> None:
+        first = rule(
+            "Many",
+            "read",
+            position=0,
+            conditions=(cond("finds", "p", count=3),),
+            action={"level": "refuse"},
+        )
+        later = rule(
+            "Pdf",
+            "read",
+            position=1,
+            conditions=(cond("filetype", "pdf"),),
+            action={"level": "read_with", "reader": "builtin"},
+        )
+        facts = read_facts(judge=self.down(), is_scan=False, filetype="pdf")
+        assert (await Evaluator().evaluate([first, later], facts)).fired is first
+
+    async def test_an_equally_strict_later_rule_does_not_block_it(self) -> None:
+        first = rule("A", "embed", position=0, conditions=(cond("finds", "p"),))
+        later = rule("B", "embed", position=1)
+        ev = await Evaluator().evaluate(
+            [first, later], Facts(kind="embed", text="x", judge=self.down())
+        )
+        assert ev.fired is first
 
     async def test_a_classifier_that_cannot_answer_fails_closed(self) -> None:
         r = rule("Topic", "chat", conditions=(cond("classified", "c"),))

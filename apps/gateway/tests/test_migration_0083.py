@@ -314,3 +314,37 @@ def test_the_migration_is_quiet_about_what_it_did_not_touch(
     _, url = _old(tmp_path)
     up = _upgrade(url)
     assert "privacy migration 0083" not in up.stdout + up.stderr
+
+
+def test_a_reading_rule_with_a_content_condition_is_kept_switched_off_with_a_note(
+    tmp_path: Path,
+) -> None:
+    path, url = _old(tmp_path)
+    ident = str(uuid.uuid4())
+    with closing(sqlite3.connect(path)) as conn:
+        _pipeline(
+            conn,
+            "read",
+            "Files",
+            [
+                _rule("Names", [{"key": "finds", "values": [ident], "negate": False, "count": 2}]),
+                _rule(
+                    "Topic",
+                    [{"key": "classified", "values": [ident], "negate": False}],
+                    level="pass",
+                ),
+                _rule("Scans", [{"key": "scan", "values": [], "negate": False}]),
+            ],
+        )
+        conn.commit()
+    up = _upgrade(url)
+    rules = {r["name"]: r for r in json.loads(_rows(path, "privacy_pipelines")[0]["rules"])}
+    assert list(rules) == ["Names", "Topic", "Scans"]  # nothing dropped
+    names = rules["Names"]
+    assert names["enabled"] is False and names["conditions"] == []
+    assert "a policy finds items" in names["note"] and "switched off" in names["note"]
+    topic = rules["Topic"]
+    assert topic["enabled"] is False and topic["observe_only"] is True
+    assert rules["Scans"]["enabled"] is True and "note" not in rules["Scans"]
+    log = up.stdout + up.stderr
+    assert "rule 'Names'" in log and "rule 'Topic'" in log

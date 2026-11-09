@@ -157,7 +157,7 @@ class TestAsks:
             )
         ]
 
-    def test_policies_of_different_engines_ask_once_per_engine_and_formats_once(self) -> None:
+    def test_policies_of_different_engines_ask_once_per_engine_and_formats_with_each(self) -> None:
         a = RedactionPolicy(
             engine="spacy",
             formats={"IBAN_CODE": E(mode=M.REDACT)},
@@ -176,7 +176,8 @@ class TestAsks:
                 ("CODENAME", "EMAIL_ADDRESS", "IBAN_CODE"),
                 (("CODENAME", "project code name"),),
             ),
-            NerAsk("spacy", ("LOCATION", "PERSON"), ()),
+            # Formats go with every call: which engine finds one can depend on the model.
+            NerAsk("spacy", ("EMAIL_ADDRESS", "IBAN_CODE", "LOCATION", "PERSON"), ()),
         ]
 
     def test_a_policy_with_only_patterns_makes_one_ask_with_the_default_engine(self) -> None:
