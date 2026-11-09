@@ -1240,6 +1240,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/privacy/classifiers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Classifiers
+         * @description The decision models: a model and a topic in plain words. Scaffolding, no model bundled.
+         */
+        get: operations["list_classifiers_api_admin_privacy_classifiers_get"];
+        put?: never;
+        /** Create Classifier */
+        post: operations["create_classifier_api_admin_privacy_classifiers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/privacy/classifiers/{classifier_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Classifier */
+        delete: operations["delete_classifier_api_admin_privacy_classifiers__classifier_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Classifier */
+        patch: operations["update_classifier_api_admin_privacy_classifiers__classifier_id__patch"];
+        trace?: never;
+    };
+    "/api/admin/privacy/engines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Engines
+         * @description What the redaction service offers: pattern formats and the NER engines (spaCy, GLiNER).
+         */
+        get: operations["engines_api_admin_privacy_engines_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/privacy/options": {
         parameters: {
             query?: never;
@@ -1249,7 +1308,7 @@ export interface paths {
         };
         /**
          * Options
-         * @description What the editors may pick: scope subjects, targets, readers, policies, profiles.
+         * @description What the editors may pick: scope subjects, targets, readers, policies, classifiers.
          */
         get: operations["options_api_admin_privacy_options_get"];
         put?: never;
@@ -1358,6 +1417,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/privacy/policies/try": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Try Policy
+         * @description Run a policy as it is being edited over a text: the real detection, no side effects.
+         *
+         *     The same code a "finds at least" condition and the Test tab run
+         *     (``gateway.privacy.finds.find_in``), with every item mode but ``off`` counted,
+         *     and what the redaction would do to the text. Nothing is stored or logged; the
+         *     text came from the box and is shown back only to the administrator who typed
+         *     it. Rate limited with the test box.
+         */
+        post: operations["try_policy_api_admin_privacy_policies_try_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/privacy/policies/{policy_id}": {
         parameters: {
             query?: never;
@@ -1370,7 +1455,7 @@ export interface paths {
         post?: never;
         /**
          * Delete Policy
-         * @description Remove a policy that no pipeline applies.
+         * @description Remove a policy that no pipeline applies or counts items of.
          *
          *     Refused while one does: a pipeline that names nothing would silently stop
          *     hiding what it was written to hide. Nothing in the ledger points at a policy
@@ -1382,42 +1467,6 @@ export interface paths {
         head?: never;
         /** Update Policy */
         patch: operations["update_policy_api_admin_privacy_policies__policy_id__patch"];
-        trace?: never;
-    };
-    "/api/admin/privacy/profiles": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Profiles */
-        get: operations["list_profiles_api_admin_privacy_profiles_get"];
-        put?: never;
-        /** Create Profile */
-        post: operations["create_profile_api_admin_privacy_profiles_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/admin/privacy/profiles/{profile_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete Profile */
-        delete: operations["delete_profile_api_admin_privacy_profiles__profile_id__delete"];
-        options?: never;
-        head?: never;
-        /** Update Profile */
-        patch: operations["update_profile_api_admin_privacy_profiles__profile_id__patch"];
         trace?: never;
     };
     "/api/admin/privacy/settings": {
@@ -2737,7 +2786,7 @@ export interface paths {
         };
         /**
          * Options
-         * @description What this user may pick: their readers, policies, targets, types and profiles.
+         * @description What this user may pick: their readers, policies, targets and types.
          */
         get: operations["options_api_me_privacy_options_get"];
         put?: never;
@@ -4763,6 +4812,18 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** ChatModelOption */
+        ChatModelOption: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Provider */
+            provider: string | null;
+        };
         /**
          * ChatSharedResource
          * @description One resource of this person that someone else can see, named, with who
@@ -4780,13 +4841,78 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** ClassifierCreateRequest */
+        ClassifierCreateRequest: {
+            /** Model Id */
+            model_id?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Topic
+             * @default
+             */
+            topic?: string;
+        };
+        /** ClassifierListResponse */
+        ClassifierListResponse: {
+            /** Items */
+            items: components["schemas"]["ClassifierResponse"][];
+            /** Models */
+            models: components["schemas"]["ChatModelOption"][];
+        };
+        /** ClassifierResponse */
+        ClassifierResponse: {
+            /** Available */
+            available: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Model Id */
+            model_id: string | null;
+            /** Model Name */
+            model_name: string | null;
+            /** Name */
+            name: string;
+            /** Provider Name */
+            provider_name: string | null;
+            /** Rules Using */
+            rules_using: number;
+            /** Topic */
+            topic: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Why Not */
+            why_not: string;
+        };
+        /** ClassifierUpdateRequest */
+        ClassifierUpdateRequest: {
+            /** Model Id */
+            model_id?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Topic */
+            topic?: string | null;
+        };
         /**
          * ConditionBody
          * @description One condition: a key, values (any of them), and ``negate`` ("is not").
          */
         ConditionBody: {
-            /** Decide */
-            decide?: string | null;
+            /**
+             * Count
+             * @default 1
+             */
+            count?: number;
             /** Key */
             key: string;
             /**
@@ -4802,8 +4928,11 @@ export interface components {
         };
         /** ConditionView */
         ConditionView: {
-            /** Decide */
-            decide: string | null;
+            /**
+             * Count
+             * @default 1
+             */
+            count: number;
             /** Key */
             key: string;
             /**
@@ -4813,6 +4942,27 @@ export interface components {
             negate: boolean;
             /** Values */
             values: string[];
+        };
+        /**
+         * CustomEntity
+         * @description An entity type the NER engine finds from a description (GLiNER) (ADR 0113, section 0c).
+         *
+         *     ``name`` is the entity label (UPPER_SNAKE) and ``label`` the natural-language
+         *     description the model is given at inference ("project code name"). Only an
+         *     engine that accepts labels (``custom_labels`` in the service's health) can use
+         *     one; a policy that names one with another engine is refused when saved.
+         */
+        CustomEntity: {
+            /** Label */
+            label: string;
+            /** @default anonymise_restore */
+            mode?: components["schemas"]["EntityMode"];
+            /** Name */
+            name: string;
+            /** @default tagged */
+            placeholder?: components["schemas"]["PlaceholderStyle"];
+            /** Threshold */
+            threshold?: number | null;
         };
         /**
          * CustomPattern
@@ -4966,6 +5116,24 @@ export interface components {
             /** Reader Name */
             reader_name: string;
         };
+        /**
+         * DryRunItem
+         * @description One item a "finds" condition counted: which policy, which group, how sure.
+         */
+        DryRunItem: {
+            /** Engine */
+            engine: string | null;
+            /** Group */
+            group: string;
+            /** Policy */
+            policy: string;
+            /** Score */
+            score: number | null;
+            /** Text */
+            text: string | null;
+            /** Type */
+            type: string;
+        };
         /** DryRunLevel */
         DryRunLevel: {
             /** Asked By */
@@ -5070,8 +5238,6 @@ export interface components {
             };
             /** Fallback Reason */
             fallback_reason: string | null;
-            /** Fallbacks */
-            fallbacks: string[];
             /** Hops */
             hops: components["schemas"]["DryRunHop"][];
             /** Impossible */
@@ -5141,8 +5307,12 @@ export interface components {
              * @default false
              */
             is_otherwise: boolean;
+            /** Items */
+            items: components["schemas"]["DryRunItem"][];
             /** Name */
             name: string;
+            /** Note */
+            note: string | null;
             /** Position */
             position: number;
             /** Reasons */
@@ -5201,6 +5371,17 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** EnginesResponse */
+        EnginesResponse: {
+            /** Detail */
+            detail: string;
+            /** Engines */
+            engines: components["schemas"]["NerEngineView"][];
+            /** Pattern Entities */
+            pattern_entities: string[];
+            /** Reachable */
+            reachable: boolean;
+        };
         /**
          * EntityMode
          * @description What happens to one kind of detected entity.
@@ -5215,7 +5396,7 @@ export interface components {
          *     and the order ``weakens`` compares by.
          * @enum {string}
          */
-        EntityMode: "off" | "anonymise_restore" | "anonymise" | "redact" | "block";
+        EntityMode: "off" | "detect_only" | "anonymise_restore" | "anonymise" | "redact" | "block";
         /**
          * EntityPolicy
          * @description How one entity type is treated, and how sure the detector must be.
@@ -5227,6 +5408,21 @@ export interface components {
             placeholder?: components["schemas"]["PlaceholderStyle"];
             /** Threshold */
             threshold?: number | null;
+        };
+        /** FoundItem */
+        FoundItem: {
+            /** Engine */
+            engine: string | null;
+            /** Group */
+            group: string;
+            /** Mode */
+            mode: string;
+            /** Score */
+            score: number | null;
+            /** Text */
+            text: string;
+            /** Type */
+            type: string;
         };
         /** GroupAdminResponse */
         GroupAdminResponse: {
@@ -5642,6 +5838,36 @@ export interface components {
             rule_id: string | null;
             /** Rule Name */
             rule_name: string | null;
+        };
+        /**
+         * KeywordList
+         * @description A comma-separated list of words and phrases, found as whole words (ADR 0113, section 0c).
+         *
+         *     One more pattern type, beside the built-in formats and the regular expressions
+         *     an operator writes: fast, deterministic, evaluated in the gateway. ``name``
+         *     becomes the entity label exactly as a :class:`CustomPattern`'s does, so a hit is
+         *     substituted, counted and logged by the machinery every other type uses.
+         *
+         *     Matching is by whole words, on letters and digits; spacing and punctuation
+         *     between the words of a phrase do not matter. Unless ``case_sensitive``, case is
+         *     ignored **and accents are folded** ("Perche" finds "perché"). It is linear in
+         *     the text (``gateway.redaction.keywords``): no regular expression is ever built
+         *     from what an administrator typed.
+         */
+        KeywordList: {
+            /**
+             * Case Sensitive
+             * @default false
+             */
+            case_sensitive?: boolean;
+            /** @default redact */
+            mode?: components["schemas"]["EntityMode"];
+            /** Name */
+            name: string;
+            /** @default tagged */
+            placeholder?: components["schemas"]["PlaceholderStyle"];
+            /** Words */
+            words: string[];
         };
         /** LimitRuleCreateRequest */
         LimitRuleCreateRequest: {
@@ -6277,6 +6503,23 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** NerEngineView */
+        NerEngineView: {
+            /** Available */
+            available: boolean;
+            /** Custom Labels */
+            custom_labels: boolean;
+            /** Default */
+            default: boolean;
+            /** Entities */
+            entities: string[];
+            /** Languages */
+            languages: string[];
+            /** Ms Per Token */
+            ms_per_token: number | null;
+            /** Name */
+            name: string;
+        };
         /**
          * OcrDocument
          * @description The document to read, in the shape Cortecs and Mistral both accept.
@@ -6486,6 +6729,8 @@ export interface components {
         };
         /** OptionsResponse */
         OptionsResponse: {
+            /** Classifiers */
+            classifiers: components["schemas"]["NamedId"][];
             /** Engines */
             engines: string[];
             /** Entity Types */
@@ -6500,8 +6745,6 @@ export interface components {
             own_policies: components["schemas"]["NamedId"][];
             /** Policies */
             policies: components["schemas"]["NamedId"][];
-            /** Profiles */
-            profiles: components["schemas"]["NamedId"][];
             /** Providers */
             providers: components["schemas"]["NamedId"][];
             /** Readers */
@@ -6650,17 +6893,6 @@ export interface components {
         Page_PriceResponse_: {
             /** Items */
             items: components["schemas"]["PriceResponse"][];
-            /** Limit */
-            limit: number;
-            /** Offset */
-            offset: number;
-            /** Total */
-            total: number;
-        };
-        /** Page[ProfileResponse] */
-        Page_ProfileResponse_: {
-            /** Items */
-            items: components["schemas"]["ProfileResponse"][];
             /** Limit */
             limit: number;
             /** Offset */
@@ -6978,13 +7210,16 @@ export interface components {
             /** Name */
             name: string;
             policy: components["schemas"]["RedactionPolicy"];
-            /** Profile Id */
-            profile_id?: string | null;
             /**
              * Reason
              * @default
              */
             reason?: string;
+            /**
+             * Shared With Users
+             * @default false
+             */
+            shared_with_users?: boolean;
         };
         /** PolicyResponse */
         PolicyResponse: {
@@ -6997,6 +7232,8 @@ export interface components {
             created_by: string | null;
             /** Created By Email */
             created_by_email: string | null;
+            /** Engine Available */
+            engine_available: boolean | null;
             /**
              * Id
              * Format: uuid
@@ -7007,12 +7244,10 @@ export interface components {
             /** Name */
             name: string;
             policy: components["schemas"]["RedactionPolicy"];
-            /** Profile Id */
-            profile_id: string | null;
-            /** Profile Name */
-            profile_name: string | null;
             /** Reason */
             reason: string;
+            /** Shared With Users */
+            shared_with_users: boolean;
             /**
              * Updated At
              * Format: date-time
@@ -7021,6 +7256,29 @@ export interface components {
             /** Used By */
             used_by: string[];
         };
+        /**
+         * PolicyTryRequest
+         * @description A policy as it is being edited, and a text to run it over. Nothing is stored or logged.
+         */
+        PolicyTryRequest: {
+            policy: components["schemas"]["RedactionPolicy"];
+            /** Text */
+            text: string;
+        };
+        /** PolicyTryResponse */
+        PolicyTryResponse: {
+            /**
+             * Blocked
+             * @default false
+             */
+            blocked: boolean;
+            /** Items */
+            items: components["schemas"]["FoundItem"][];
+            /** Redacted Text */
+            redacted_text: string | null;
+            /** Unavailable */
+            unavailable: string | null;
+        };
         /** PolicyUpdateRequest */
         PolicyUpdateRequest: {
             /** Is Active */
@@ -7028,10 +7286,10 @@ export interface components {
             /** Name */
             name?: string | null;
             policy?: components["schemas"]["RedactionPolicy"] | null;
-            /** Profile Id */
-            profile_id?: string | null;
             /** Reason */
             reason?: string | null;
+            /** Shared With Users */
+            shared_with_users?: boolean | null;
         };
         /** PreassignRequest */
         PreassignRequest: {
@@ -7115,103 +7373,6 @@ export interface components {
             chat: components["schemas"]["ModelSummary"][];
             /** Embedding */
             embedding: components["schemas"]["ModelSummary"][];
-        };
-        /** ProfileCreateRequest */
-        ProfileCreateRequest: {
-            /**
-             * Description
-             * @default
-             */
-            description?: string;
-            /** Engine */
-            engine: string;
-            /**
-             * Fallback
-             * @default refuse
-             * @enum {string}
-             */
-            fallback?: "refuse" | "fallback_to";
-            /** Fallback Profile Id */
-            fallback_profile_id?: string | null;
-            /**
-             * Labels
-             * @default []
-             */
-            labels?: string[];
-            /** Name */
-            name: string;
-            /**
-             * User Available
-             * @default false
-             */
-            user_available?: boolean;
-        };
-        /** ProfileResponse */
-        ProfileResponse: {
-            /** Cost Hint */
-            cost_hint: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Decides */
-            decides: boolean;
-            /** Description */
-            description: string;
-            /** Engine */
-            engine: string;
-            /**
-             * Fallback
-             * @enum {string}
-             */
-            fallback: "refuse" | "fallback_to";
-            /** Fallback Profile Id */
-            fallback_profile_id: string | null;
-            /** Fallback Profile Name */
-            fallback_profile_name: string | null;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Is Default */
-            is_default: boolean;
-            /** Labels */
-            labels: string[];
-            /** Name */
-            name: string;
-            /** Rules Using */
-            rules_using: number;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "available" | "down" | "not_installed";
-            /** Status Detail */
-            status_detail: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-            /** User Available */
-            user_available: boolean;
-        };
-        /** ProfileUpdateRequest */
-        ProfileUpdateRequest: {
-            /** Description */
-            description?: string | null;
-            /** Fallback */
-            fallback?: ("refuse" | "fallback_to") | null;
-            /** Fallback Profile Id */
-            fallback_profile_id?: string | null;
-            /** Labels */
-            labels?: string[] | null;
-            /** Name */
-            name?: string | null;
-            /** User Available */
-            user_available?: boolean | null;
         };
         /** ProviderCreateRequest */
         ProviderCreateRequest: {
@@ -7712,30 +7873,48 @@ export interface components {
         };
         /**
          * RedactionPolicy
-         * @description Per-entity redaction policy: the admin's answer to "redact *what*".
+         * @description What to find in a text, and what to do about it (ADR 0037, 0113 section 0c).
          *
-         *     Before this existed, ``entity_types`` was ``None`` — "everything the engine
-         *     knows" — and nobody had chosen it; it was the default of a field never
-         *     filled in. On a real request that meant *"Riassumi le notizie del giorno da
-         *     ilpost.it"* reaching the provider as ``<PERSON_…> le notizie del giorno da
-         *     <URL_…>``: the verb read as a name, and the source the user asked for read as
-         *     identity. See ADR 0037.
+         *     The items come in two groups that are never mixed, here, in the API or in the
+         *     editor:
          *
-         *     ``default_mode`` is the answer for a type nobody has listed, and it defaults
-         *     to *on* rather than off. That direction matters: a detector that gains a new
-         *     national-identifier recogniser next release should start protecting it
-         *     without an admin noticing, and an entity type nobody has ruled on is exactly
-         *     the case to be conservative about.
+         *     * **Patterns** (fast, deterministic): ``formats`` (the service's built-in
+         *       formats, checksummed where one exists), ``patterns`` (regular expressions an
+         *       operator wrote, evaluated here with RE2) and ``keywords`` (word lists,
+         *       evaluated here in linear time).
+         *     * **Entities** (NER, probabilistic): ``entities``, the types of the policy's
+         *       ``engine``, each with a mode and a confidence threshold, and
+         *       ``custom_entities``, types a label-taking engine (GLiNER) finds from a
+         *       description.
+         *
+         *     Every item has a mode, ``detect_only`` among them: found and counted for a
+         *     condition, never hidden.
+         *
+         *     ``default_mode`` is the answer for a type nobody has listed, and it is **off**:
+         *     a policy is a statement about the types it lists and silent about the rest.
+         *     Any other default would mean a rule about `IBAN_CODE` quietly deciding for
+         *     `PERSON` too, and — folded across scopes by `max` — a narrow rule could raise
+         *     the floor for everything (ADR 0037, which this reverses on purpose).
          */
         RedactionPolicy: {
             /** Allow List */
             allow_list?: string[];
+            /** Custom Entities */
+            custom_entities?: components["schemas"]["CustomEntity"][];
             /** @default off */
             default_mode?: components["schemas"]["EntityMode"];
+            /** Engine */
+            engine?: ("spacy" | "gliner") | null;
             /** Entities */
             entities?: {
                 [key: string]: components["schemas"]["EntityPolicy"];
             };
+            /** Formats */
+            formats?: {
+                [key: string]: components["schemas"]["EntityPolicy"];
+            };
+            /** Keywords */
+            keywords?: components["schemas"]["KeywordList"][];
             /** Patterns */
             patterns?: components["schemas"]["CustomPattern"][];
         };
@@ -8208,6 +8387,8 @@ export interface components {
             id?: string | null;
             /** Name */
             name: string;
+            /** Note */
+            note?: string | null;
             /**
              * Observe Only
              * @default false
@@ -8230,6 +8411,8 @@ export interface components {
             issues: components["schemas"]["IssueView"][];
             /** Name */
             name: string;
+            /** Note */
+            note: string | null;
             /** Observe Only */
             observe_only: boolean;
         };
@@ -8830,8 +9013,6 @@ export interface components {
             entries?: components["schemas"]["UserEntryBody"][];
             /** Name */
             name: string;
-            /** Profile Id */
-            profile_id?: string | null;
         };
         /** UserPolicyResponse */
         UserPolicyResponse: {
@@ -8849,8 +9030,6 @@ export interface components {
             id: string;
             /** Name */
             name: string;
-            /** Profile Id */
-            profile_id: string | null;
             /**
              * Updated At
              * Format: date-time
@@ -10983,6 +11162,143 @@ export interface operations {
             };
         };
     };
+    list_classifiers_api_admin_privacy_classifiers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassifierListResponse"];
+                };
+            };
+        };
+    };
+    create_classifier_api_admin_privacy_classifiers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClassifierCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassifierResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_classifier_api_admin_privacy_classifiers__classifier_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                classifier_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_classifier_api_admin_privacy_classifiers__classifier_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                classifier_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClassifierUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassifierResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    engines_api_admin_privacy_engines_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnginesResponse"];
+                };
+            };
+        };
+    };
     options_api_admin_privacy_options_get: {
         parameters: {
             query?: never;
@@ -11281,6 +11597,39 @@ export interface operations {
             };
         };
     };
+    try_policy_api_admin_privacy_policies_try_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyTryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyTryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_policy_api_admin_privacy_policies__policy_id__delete: {
         parameters: {
             query?: never;
@@ -11332,123 +11681,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PolicyResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_profiles_api_admin_privacy_profiles_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Page_ProfileResponse_"];
-                };
-            };
-        };
-    };
-    create_profile_api_admin_privacy_profiles_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ProfileCreateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProfileResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_profile_api_admin_privacy_profiles__profile_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                profile_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_profile_api_admin_privacy_profiles__profile_id__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                profile_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ProfileUpdateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProfileResponse"];
                 };
             };
             /** @description Validation Error */

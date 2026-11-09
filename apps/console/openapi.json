@@ -2272,6 +2272,37 @@
         "title": "ChatCompletionRequest",
         "type": "object"
       },
+      "ChatModelOption": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "provider"
+        ],
+        "title": "ChatModelOption",
+        "type": "object"
+      },
       "ChatSharedResource": {
         "description": "One resource of this person that someone else can see, named, with who\ncan see it (§9.2: \"every resource of the user that someone else can see,\nnamed, with who can see it\") -- passed through from the chat's own\nerasure preview verbatim, not recomputed here.",
         "properties": {
@@ -2301,11 +2332,93 @@
         "title": "ChatSharedResource",
         "type": "object"
       },
-      "ConditionBody": {
+      "ClassifierCreateRequest": {
         "additionalProperties": false,
-        "description": "One condition: a key, values (any of them), and ``negate`` (\"is not\").",
         "properties": {
-          "decide": {
+          "model_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "topic": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ClassifierCreateRequest",
+        "type": "object"
+      },
+      "ClassifierListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ClassifierResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ChatModelOption"
+            },
+            "title": "Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "models"
+        ],
+        "title": "ClassifierListResponse",
+        "type": "object"
+      },
+      "ClassifierResponse": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "model_name": {
             "anyOf": [
               {
                 "type": "string"
@@ -2314,7 +2427,111 @@
                 "type": "null"
               }
             ],
-            "title": "Decide"
+            "title": "Model Name"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Name"
+          },
+          "rules_using": {
+            "title": "Rules Using",
+            "type": "integer"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "why_not": {
+            "title": "Why Not",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "topic",
+          "model_id",
+          "model_name",
+          "provider_name",
+          "available",
+          "why_not",
+          "rules_using",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ClassifierResponse",
+        "type": "object"
+      },
+      "ClassifierUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "model_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          }
+        },
+        "title": "ClassifierUpdateRequest",
+        "type": "object"
+      },
+      "ConditionBody": {
+        "additionalProperties": false,
+        "description": "One condition: a key, values (any of them), and ``negate`` (\"is not\").",
+        "properties": {
+          "count": {
+            "default": 1,
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
           },
           "key": {
             "title": "Key",
@@ -2342,16 +2559,10 @@
       },
       "ConditionView": {
         "properties": {
-          "decide": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Decide"
+          "count": {
+            "default": 1,
+            "title": "Count",
+            "type": "integer"
           },
           "key": {
             "title": "Key",
@@ -2374,9 +2585,53 @@
           "key",
           "values",
           "negate",
-          "decide"
+          "count"
         ],
         "title": "ConditionView",
+        "type": "object"
+      },
+      "CustomEntity": {
+        "description": "An entity type the NER engine finds from a description (GLiNER) (ADR 0113, section 0c).\n\n``name`` is the entity label (UPPER_SNAKE) and ``label`` the natural-language\ndescription the model is given at inference (\"project code name\"). Only an\nengine that accepts labels (``custom_labels`` in the service's health) can use\none; a policy that names one with another engine is refused when saved.",
+        "properties": {
+          "label": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/EntityMode",
+            "default": "anonymise_restore"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "placeholder": {
+            "$ref": "#/components/schemas/PlaceholderStyle",
+            "default": "tagged"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          }
+        },
+        "required": [
+          "name",
+          "label"
+        ],
+        "title": "CustomEntity",
         "type": "object"
       },
       "CustomPattern": {
@@ -2756,6 +3011,66 @@
         "title": "DryRunHop",
         "type": "object"
       },
+      "DryRunItem": {
+        "description": "One item a \"finds\" condition counted: which policy, which group, how sure.",
+        "properties": {
+          "engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "policy": {
+            "title": "Policy",
+            "type": "string"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy",
+          "group",
+          "type",
+          "engine",
+          "score",
+          "text"
+        ],
+        "title": "DryRunItem",
+        "type": "object"
+      },
       "DryRunLevel": {
         "properties": {
           "asked_by": {
@@ -3117,13 +3432,6 @@
             ],
             "title": "Fallback Reason"
           },
-          "fallbacks": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Fallbacks",
-            "type": "array"
-          },
           "hops": {
             "items": {
               "$ref": "#/components/schemas/DryRunHop"
@@ -3305,7 +3613,6 @@
           "blocked_by",
           "facts",
           "verdicts",
-          "fallbacks",
           "degraded",
           "needs",
           "extractor",
@@ -3358,9 +3665,27 @@
             "title": "Is Otherwise",
             "type": "boolean"
           },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DryRunItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
           },
           "position": {
             "title": "Position",
@@ -3390,6 +3715,8 @@
           "result",
           "reasons",
           "degraded",
+          "items",
+          "note",
           "is_otherwise"
         ],
         "title": "DryRunStep",
@@ -3501,10 +3828,45 @@
         "title": "EmbeddingRequest",
         "type": "object"
       },
+      "EnginesResponse": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "engines": {
+            "items": {
+              "$ref": "#/components/schemas/NerEngineView"
+            },
+            "title": "Engines",
+            "type": "array"
+          },
+          "pattern_entities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pattern Entities",
+            "type": "array"
+          },
+          "reachable": {
+            "title": "Reachable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reachable",
+          "detail",
+          "pattern_entities",
+          "engines"
+        ],
+        "title": "EnginesResponse",
+        "type": "object"
+      },
       "EntityMode": {
         "description": "What happens to one kind of detected entity.\n\nTwo independent questions, and collapsing them into one switch is what makes\na redaction screen confusing: *what does the model see*, and *what does the\nreader get back*. Four combinations are useful and the fifth\n(opaque upstream, real value back) is not — an opaque label cannot be mapped\nto anything, which is the whole point of choosing it.\n\nOrdered weakest to strongest, which is also the order the console lists them\nand the order ``weakens`` compares by.",
         "enum": [
           "off",
+          "detect_only",
           "anonymise_restore",
           "anonymise",
           "redact",
@@ -3539,6 +3901,58 @@
           }
         },
         "title": "EntityPolicy",
+        "type": "object"
+      },
+      "FoundItem": {
+        "properties": {
+          "engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group",
+          "type",
+          "engine",
+          "score",
+          "mode",
+          "text"
+        ],
+        "title": "FoundItem",
         "type": "object"
       },
       "GroupAdminResponse": {
@@ -4439,6 +4853,44 @@
           "rule_name"
         ],
         "title": "IssueView",
+        "type": "object"
+      },
+      "KeywordList": {
+        "description": "A comma-separated list of words and phrases, found as whole words (ADR 0113, section 0c).\n\nOne more pattern type, beside the built-in formats and the regular expressions\nan operator writes: fast, deterministic, evaluated in the gateway. ``name``\nbecomes the entity label exactly as a :class:`CustomPattern`'s does, so a hit is\nsubstituted, counted and logged by the machinery every other type uses.\n\nMatching is by whole words, on letters and digits; spacing and punctuation\nbetween the words of a phrase do not matter. Unless ``case_sensitive``, case is\nignored **and accents are folded** (\"Perche\" finds \"perché\"). It is linear in\nthe text (``gateway.redaction.keywords``): no regular expression is ever built\nfrom what an administrator typed.",
+        "properties": {
+          "case_sensitive": {
+            "default": false,
+            "title": "Case Sensitive",
+            "type": "boolean"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/EntityMode",
+            "default": "redact"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "placeholder": {
+            "$ref": "#/components/schemas/PlaceholderStyle",
+            "default": "tagged"
+          },
+          "words": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Words",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "words"
+        ],
+        "title": "KeywordList",
         "type": "object"
       },
       "LimitRuleCreateRequest": {
@@ -6186,6 +6638,62 @@
         "title": "NamedId",
         "type": "object"
       },
+      "NerEngineView": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "custom_labels": {
+            "title": "Custom Labels",
+            "type": "boolean"
+          },
+          "default": {
+            "title": "Default",
+            "type": "boolean"
+          },
+          "entities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Entities",
+            "type": "array"
+          },
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Languages",
+            "type": "array"
+          },
+          "ms_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ms Per Token"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "available",
+          "default",
+          "entities",
+          "custom_labels",
+          "ms_per_token",
+          "languages"
+        ],
+        "title": "NerEngineView",
+        "type": "object"
+      },
       "OcrDocument": {
         "additionalProperties": true,
         "description": "The document to read, in the shape Cortecs and Mistral both accept.\n\nTwo forms, and the difference is not cosmetic — it decides whether this\ndeployment ever sees the bytes:\n\n* ``document_url`` / ``image_url`` pointing at an address. The *provider*\n  fetches it, so the document never passes through the gateway, and nothing\n  here can inspect or redact it. That is a property of the request, not a\n  gap to fix: we cannot read what we never receive.\n* a ``data:`` URI in either field, which is the document itself. That one we\n  hold, and it is the form local extraction and inspection can act on.",
@@ -6713,6 +7221,13 @@
       },
       "OptionsResponse": {
         "properties": {
+          "classifiers": {
+            "items": {
+              "$ref": "#/components/schemas/NamedId"
+            },
+            "title": "Classifiers",
+            "type": "array"
+          },
           "engines": {
             "items": {
               "type": "string"
@@ -6769,13 +7284,6 @@
             "title": "Policies",
             "type": "array"
           },
-          "profiles": {
-            "items": {
-              "$ref": "#/components/schemas/NamedId"
-            },
-            "title": "Profiles",
-            "type": "array"
-          },
           "providers": {
             "items": {
               "$ref": "#/components/schemas/NamedId"
@@ -6807,7 +7315,7 @@
           "readers",
           "policies",
           "own_policies",
-          "profiles",
+          "classifiers",
           "entity_types",
           "engines"
         ],
@@ -7239,40 +7747,6 @@
           "offset"
         ],
         "title": "Page[PriceResponse]",
-        "type": "object"
-      },
-      "Page_ProfileResponse_": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ProfileResponse"
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "limit": {
-            "minimum": 1.0,
-            "title": "Limit",
-            "type": "integer"
-          },
-          "offset": {
-            "minimum": 0.0,
-            "title": "Offset",
-            "type": "integer"
-          },
-          "total": {
-            "minimum": 0.0,
-            "title": "Total",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "limit",
-          "offset"
-        ],
-        "title": "Page[ProfileResponse]",
         "type": "object"
       },
       "Page_ProviderResponse_": {
@@ -8022,23 +8496,16 @@
           "policy": {
             "$ref": "#/components/schemas/RedactionPolicy"
           },
-          "profile_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Profile Id"
-          },
           "reason": {
             "default": "",
             "maxLength": 500,
             "title": "Reason",
             "type": "string"
+          },
+          "shared_with_users": {
+            "default": false,
+            "title": "Shared With Users",
+            "type": "boolean"
           }
         },
         "required": [
@@ -8078,6 +8545,17 @@
             ],
             "title": "Created By Email"
           },
+          "engine_available": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine Available"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -8094,32 +8572,13 @@
           "policy": {
             "$ref": "#/components/schemas/RedactionPolicy"
           },
-          "profile_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Profile Id"
-          },
-          "profile_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Profile Name"
-          },
           "reason": {
             "title": "Reason",
             "type": "string"
+          },
+          "shared_with_users": {
+            "title": "Shared With Users",
+            "type": "boolean"
           },
           "updated_at": {
             "format": "date-time",
@@ -8138,9 +8597,9 @@
           "id",
           "name",
           "policy",
-          "profile_id",
-          "profile_name",
           "is_active",
+          "shared_with_users",
+          "engine_available",
           "reason",
           "used_by",
           "created_by",
@@ -8149,6 +8608,73 @@
           "updated_at"
         ],
         "title": "PolicyResponse",
+        "type": "object"
+      },
+      "PolicyTryRequest": {
+        "additionalProperties": false,
+        "description": "A policy as it is being edited, and a text to run it over. Nothing is stored or logged.",
+        "properties": {
+          "policy": {
+            "$ref": "#/components/schemas/RedactionPolicy"
+          },
+          "text": {
+            "maxLength": 50000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy",
+          "text"
+        ],
+        "title": "PolicyTryRequest",
+        "type": "object"
+      },
+      "PolicyTryResponse": {
+        "properties": {
+          "blocked": {
+            "default": false,
+            "title": "Blocked",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FoundItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "redacted_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redacted Text"
+          },
+          "unavailable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable"
+          }
+        },
+        "required": [
+          "items",
+          "unavailable",
+          "redacted_text",
+          "blocked"
+        ],
+        "title": "PolicyTryResponse",
         "type": "object"
       },
       "PolicyUpdateRequest": {
@@ -8188,18 +8714,6 @@
               }
             ]
           },
-          "profile_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Profile Id"
-          },
           "reason": {
             "anyOf": [
               {
@@ -8211,6 +8725,17 @@
               }
             ],
             "title": "Reason"
+          },
+          "shared_with_users": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared With Users"
           }
         },
         "title": "PolicyUpdateRequest",
@@ -8587,277 +9112,6 @@
           "chat"
         ],
         "title": "PrivacySummaryResponse",
-        "type": "object"
-      },
-      "ProfileCreateRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "description": {
-            "default": "",
-            "maxLength": 500,
-            "title": "Description",
-            "type": "string"
-          },
-          "engine": {
-            "maxLength": 32,
-            "minLength": 1,
-            "pattern": "^[a-z0-9_-]+$",
-            "title": "Engine",
-            "type": "string"
-          },
-          "fallback": {
-            "default": "refuse",
-            "enum": [
-              "refuse",
-              "fallback_to"
-            ],
-            "title": "Fallback",
-            "type": "string"
-          },
-          "fallback_profile_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Fallback Profile Id"
-          },
-          "labels": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Labels",
-            "type": "array"
-          },
-          "name": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          },
-          "user_available": {
-            "default": false,
-            "title": "User Available",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "name",
-          "engine"
-        ],
-        "title": "ProfileCreateRequest",
-        "type": "object"
-      },
-      "ProfileResponse": {
-        "properties": {
-          "cost_hint": {
-            "title": "Cost Hint",
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "decides": {
-            "title": "Decides",
-            "type": "boolean"
-          },
-          "description": {
-            "title": "Description",
-            "type": "string"
-          },
-          "engine": {
-            "title": "Engine",
-            "type": "string"
-          },
-          "fallback": {
-            "enum": [
-              "refuse",
-              "fallback_to"
-            ],
-            "title": "Fallback",
-            "type": "string"
-          },
-          "fallback_profile_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Fallback Profile Id"
-          },
-          "fallback_profile_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Fallback Profile Name"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "is_default": {
-            "title": "Is Default",
-            "type": "boolean"
-          },
-          "labels": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Labels",
-            "type": "array"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "rules_using": {
-            "title": "Rules Using",
-            "type": "integer"
-          },
-          "status": {
-            "enum": [
-              "available",
-              "down",
-              "not_installed"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "status_detail": {
-            "title": "Status Detail",
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          },
-          "user_available": {
-            "title": "User Available",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "description",
-          "engine",
-          "labels",
-          "fallback",
-          "fallback_profile_id",
-          "fallback_profile_name",
-          "is_default",
-          "user_available",
-          "status",
-          "status_detail",
-          "decides",
-          "cost_hint",
-          "rules_using",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "ProfileResponse",
-        "type": "object"
-      },
-      "ProfileUpdateRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "description": {
-            "anyOf": [
-              {
-                "maxLength": 500,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "fallback": {
-            "anyOf": [
-              {
-                "enum": [
-                  "refuse",
-                  "fallback_to"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Fallback"
-          },
-          "fallback_profile_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Fallback Profile Id"
-          },
-          "labels": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Labels"
-          },
-          "name": {
-            "anyOf": [
-              {
-                "maxLength": 64,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "user_available": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "User Available"
-          }
-        },
-        "title": "ProfileUpdateRequest",
         "type": "object"
       },
       "ProviderCreateRequest": {
@@ -10141,7 +10395,7 @@
         "type": "object"
       },
       "RedactionPolicy": {
-        "description": "Per-entity redaction policy: the admin's answer to \"redact *what*\".\n\nBefore this existed, ``entity_types`` was ``None`` — \"everything the engine\nknows\" — and nobody had chosen it; it was the default of a field never\nfilled in. On a real request that meant *\"Riassumi le notizie del giorno da\nilpost.it\"* reaching the provider as ``<PERSON_…> le notizie del giorno da\n<URL_…>``: the verb read as a name, and the source the user asked for read as\nidentity. See ADR 0037.\n\n``default_mode`` is the answer for a type nobody has listed, and it defaults\nto *on* rather than off. That direction matters: a detector that gains a new\nnational-identifier recogniser next release should start protecting it\nwithout an admin noticing, and an entity type nobody has ruled on is exactly\nthe case to be conservative about.",
+        "description": "What to find in a text, and what to do about it (ADR 0037, 0113 section 0c).\n\nThe items come in two groups that are never mixed, here, in the API or in the\neditor:\n\n* **Patterns** (fast, deterministic): ``formats`` (the service's built-in\n  formats, checksummed where one exists), ``patterns`` (regular expressions an\n  operator wrote, evaluated here with RE2) and ``keywords`` (word lists,\n  evaluated here in linear time).\n* **Entities** (NER, probabilistic): ``entities``, the types of the policy's\n  ``engine``, each with a mode and a confidence threshold, and\n  ``custom_entities``, types a label-taking engine (GLiNER) finds from a\n  description.\n\nEvery item has a mode, ``detect_only`` among them: found and counted for a\ncondition, never hidden.\n\n``default_mode`` is the answer for a type nobody has listed, and it is **off**:\na policy is a statement about the types it lists and silent about the rest.\nAny other default would mean a rule about `IBAN_CODE` quietly deciding for\n`PERSON` too, and — folded across scopes by `max` — a narrow rule could raise\nthe floor for everything (ADR 0037, which this reverses on purpose).",
         "properties": {
           "allow_list": {
             "items": {
@@ -10150,9 +10404,31 @@
             "title": "Allow List",
             "type": "array"
           },
+          "custom_entities": {
+            "items": {
+              "$ref": "#/components/schemas/CustomEntity"
+            },
+            "title": "Custom Entities",
+            "type": "array"
+          },
           "default_mode": {
             "$ref": "#/components/schemas/EntityMode",
             "default": "off"
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "enum": [
+                  "spacy",
+                  "gliner"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
           },
           "entities": {
             "additionalProperties": {
@@ -10160,6 +10436,20 @@
             },
             "title": "Entities",
             "type": "object"
+          },
+          "formats": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EntityPolicy"
+            },
+            "title": "Formats",
+            "type": "object"
+          },
+          "keywords": {
+            "items": {
+              "$ref": "#/components/schemas/KeywordList"
+            },
+            "title": "Keywords",
+            "type": "array"
           },
           "patterns": {
             "items": {
@@ -11483,6 +11773,18 @@
             "title": "Name",
             "type": "string"
           },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
           "observe_only": {
             "default": false,
             "title": "Observe Only",
@@ -11528,6 +11830,17 @@
             "title": "Name",
             "type": "string"
           },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
           "observe_only": {
             "title": "Observe Only",
             "type": "boolean"
@@ -11540,7 +11853,8 @@
           "observe_only",
           "conditions",
           "action",
-          "issues"
+          "issues",
+          "note"
         ],
         "title": "RuleView",
         "type": "object"
@@ -12929,18 +13243,6 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
-          },
-          "profile_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Profile Id"
           }
         },
         "required": [
@@ -12972,18 +13274,6 @@
             "title": "Name",
             "type": "string"
           },
-          "profile_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Profile Id"
-          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -13001,7 +13291,6 @@
           "id",
           "name",
           "entries",
-          "profile_id",
           "used_by",
           "created_at",
           "updated_at"
@@ -16774,9 +17063,179 @@
         ]
       }
     },
+    "/api/admin/privacy/classifiers": {
+      "get": {
+        "description": "The decision models: a model and a topic in plain words. Scaffolding, no model bundled.",
+        "operationId": "list_classifiers_api_admin_privacy_classifiers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifierListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Classifiers",
+        "tags": [
+          "administration"
+        ]
+      },
+      "post": {
+        "operationId": "create_classifier_api_admin_privacy_classifiers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClassifierCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifierResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Classifier",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/classifiers/{classifier_id}": {
+      "delete": {
+        "operationId": "delete_classifier_api_admin_privacy_classifiers__classifier_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "classifier_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Classifier Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Classifier",
+        "tags": [
+          "administration"
+        ]
+      },
+      "patch": {
+        "operationId": "update_classifier_api_admin_privacy_classifiers__classifier_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "classifier_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Classifier Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClassifierUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifierResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Classifier",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
+    "/api/admin/privacy/engines": {
+      "get": {
+        "description": "What the redaction service offers: pattern formats and the NER engines (spaCy, GLiNER).",
+        "operationId": "engines_api_admin_privacy_engines_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnginesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Engines",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
     "/api/admin/privacy/options": {
       "get": {
-        "description": "What the editors may pick: scope subjects, targets, readers, policies, profiles.",
+        "description": "What the editors may pick: scope subjects, targets, readers, policies, classifiers.",
         "operationId": "options_api_admin_privacy_options_get",
         "responses": {
           "200": {
@@ -17157,9 +17616,51 @@
         ]
       }
     },
+    "/api/admin/privacy/policies/try": {
+      "post": {
+        "description": "Run a policy as it is being edited over a text: the real detection, no side effects.\n\nThe same code a \"finds at least\" condition and the Test tab run\n(``gateway.privacy.finds.find_in``), with every item mode but ``off`` counted,\nand what the redaction would do to the text. Nothing is stored or logged; the\ntext came from the box and is shown back only to the administrator who typed\nit. Rate limited with the test box.",
+        "operationId": "try_policy_api_admin_privacy_policies_try_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyTryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyTryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Try Policy",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
     "/api/admin/privacy/policies/{policy_id}": {
       "delete": {
-        "description": "Remove a policy that no pipeline applies.\n\nRefused while one does: a pipeline that names nothing would silently stop\nhiding what it was written to hide. Nothing in the ledger points at a policy\n(``usage_records.redaction_rule_id`` is a stamp, not a foreign key), so\ndeleting one cannot erase the record of what it did.",
+        "description": "Remove a policy that no pipeline applies or counts items of.\n\nRefused while one does: a pipeline that names nothing would silently stop\nhiding what it was written to hide. Nothing in the ledger points at a policy\n(``usage_records.redaction_rule_id`` is a stamp, not a foreign key), so\ndeleting one cannot erase the record of what it did.",
         "operationId": "delete_policy_api_admin_privacy_policies__policy_id__delete",
         "parameters": [
           {
@@ -17240,153 +17741,6 @@
           }
         },
         "summary": "Update Policy",
-        "tags": [
-          "administration"
-        ]
-      }
-    },
-    "/api/admin/privacy/profiles": {
-      "get": {
-        "operationId": "list_profiles_api_admin_privacy_profiles_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Page_ProfileResponse_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Profiles",
-        "tags": [
-          "administration"
-        ]
-      },
-      "post": {
-        "operationId": "create_profile_api_admin_privacy_profiles_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ProfileCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Create Profile",
-        "tags": [
-          "administration"
-        ]
-      }
-    },
-    "/api/admin/privacy/profiles/{profile_id}": {
-      "delete": {
-        "operationId": "delete_profile_api_admin_privacy_profiles__profile_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "profile_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Profile Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Delete Profile",
-        "tags": [
-          "administration"
-        ]
-      },
-      "patch": {
-        "operationId": "update_profile_api_admin_privacy_profiles__profile_id__patch",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "profile_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Profile Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ProfileUpdateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Update Profile",
         "tags": [
           "administration"
         ]
@@ -20628,7 +20982,7 @@
     },
     "/api/me/privacy/options": {
       "get": {
-        "description": "What this user may pick: their readers, policies, targets, types and profiles.",
+        "description": "What this user may pick: their readers, policies, targets and types.",
         "operationId": "options_api_me_privacy_options_get",
         "responses": {
           "200": {
