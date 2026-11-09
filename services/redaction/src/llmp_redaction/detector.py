@@ -19,10 +19,15 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import re
+import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
-from llmp_shared import EntitySpan
+from llmp_shared import CustomLabel, EntitySpan
+
+from llmp_redaction.gliner_engine import CUSTOM_LABELS
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +69,18 @@ PATTERN_ONLY_ENTITIES = frozenset(
 )
 
 # Entity types that come from the NLP engine and therefore need a language model.
-MODEL_BACKED_ENTITIES = frozenset({"PERSON", "LOCATION", "NRP", "ORGANIZATION"})
+MODEL_BACKED_ENTITIES = frozenset(
+    {
+        "PERSON",
+        "LOCATION",
+        "NRP",
+        "ORGANIZATION",
+        # Only produced by the GLiNER engine's default label map.
+        "HEALTH_INSURANCE_ID",
+        "MEDICAL_CONDITION",
+        "MEDICATION",
+    }
+)
 MODEL_BACKED_UPPER = frozenset(entity.upper() for entity in MODEL_BACKED_ENTITIES)
 
 
@@ -97,8 +113,59 @@ class Capabilities:
     degraded: list[str] = field(default_factory=list)
 
 
+EngineName = Literal["spacy", "gliner"]
+
+# What ``/healthz`` and the engine picker need to know about one NER engine.
+# ``available`` means "can be asked for by name"; the default slot is always
+# usable for requests that name no engine, so a no-model deployment keeps
+# answering pattern-only requests exactly as before.
+
+
+@dataclass(slots=True)
+class EngineSlot:
+    """One NER engine hosted by this process, with the analyzer that runs it."""
+
+    name: EngineName
+    analyzer: Analyzer
+    languages: list[str]
+    models: dict[str, str] = field(default_factory=dict)
+    available: bool = True
+    # Model-backed entity types this engine can return.
+    ner_entities: list[str] = field(default_factory=list)
+    custom_labels: bool = False
+    ms_per_token: float | None = None
+
+
+class EngineUnavailableError(Exception):
+    """A request named a NER engine this deployment does not have."""
+
+    def __init__(self, engine: str) -> None:
+        super().__init__(f"NER engine {engine!r} is not available")
+        self.engine = engine
+
+
+_TOKEN = re.compile(r"\w+|[^\w\s]")
+
+# Synthetic Italian text used once at startup to measure each engine's speed.
+CALIBRATION_TEXT = (
+    "Il paziente Mario Bianchi, nato a Torino il 12 marzo 1970, abita in via Roma 15 a Milano. "
+    "Il codice fiscale è BNCMRA70C12L219X e la visita è fissata presso l'Ospedale San Giovanni. "
+    "Prende metformina ogni mattina per il diabete e il medico Laura Verdi ha scritto a "
+    "laura.verdi@example.com il giorno dopo."
+)
+
+
+def _ner_entities_of(capabilities: Capabilities) -> list[str]:
+    return list(capabilities.model_entities)
+
+
 class Detector:
-    """Runs detection and converts Presidio's results into contract spans."""
+    """Runs detection and converts Presidio's results into contract spans.
+
+    Hosts one or two NER engines. The constructor's ``analyzer`` is the spaCy one
+    (or the no-model pattern-only one); ``gliner`` is an optional second slot.
+    ``default_engine`` is what a request that names no engine gets.
+    """
 
     def __init__(
         self,
@@ -108,14 +175,66 @@ class Detector:
         models: dict[str, str] | None = None,
         engine: str = "presidio",
         engine_version: str = "unknown",
+        gliner: EngineSlot | None = None,
+        default_engine: EngineName = "spacy",
     ) -> None:
         self._analyzer = analyzer
         self._languages = languages
         self._models = models or {}
         self.engine = engine
         self.engine_version = engine_version
+        spacy_slot = EngineSlot(
+            name="spacy",
+            analyzer=analyzer,
+            languages=list(languages) if self._models else [],
+            models=self._models,
+            available=bool(self._models),
+        )
+        spacy_slot.ner_entities = _ner_entities_of(self.capabilities_of(spacy_slot))
+        self._slots: dict[str, EngineSlot] = {"spacy": spacy_slot}
+        if gliner is not None:
+            self._slots["gliner"] = gliner
+        if default_engine not in self._slots:
+            raise ValueError(f"default NER engine {default_engine!r} is not hosted by this process")
+        self.default_engine: EngineName = default_engine
+        # GLiNER runs one request at a time: it is memory-hungry and uses every
+        # core for each forward pass, so two at once only make both slower.
+        self._gliner_gate = asyncio.Semaphore(1)
 
-    def capabilities(self) -> Capabilities:
+    @property
+    def slots(self) -> list[EngineSlot]:
+        """Every engine slot, spaCy first, with gliner listed even when absent."""
+        gliner = self._slots.get("gliner") or EngineSlot(
+            name="gliner",
+            analyzer=self._analyzer,
+            languages=[],
+            available=False,
+            custom_labels=True,
+        )
+        return [self._slots["spacy"], gliner]
+
+    def slot(self, name: str | None) -> EngineSlot:
+        """The slot a request runs on. ``None`` is the default and is always served."""
+        if name is None:
+            return self._slots[self.default_engine]
+        slot = self._slots.get(name)
+        if slot is None or not slot.available:
+            raise EngineUnavailableError(name)
+        return slot
+
+    def capabilities(self, engine: str | None = None) -> Capabilities:
+        """What this instance can detect on the default (or the named) engine."""
+        return self.capabilities_of(self.slot(engine))
+
+    def capabilities_of(self, slot: EngineSlot) -> Capabilities:
+        analyzer = slot.analyzer
+        languages = self._languages if slot.name == "spacy" else slot.languages
+        models = slot.models
+        return self._capabilities(analyzer, languages, models)
+
+    def _capabilities(
+        self, analyzer: Analyzer, languages: list[str], models: dict[str, str]
+    ) -> Capabilities:
         """What this instance can detect, asked of the analyzer rather than assumed.
 
         Originally a hardcoded list, which was wrong in the way that matters:
@@ -125,11 +244,11 @@ class Detector:
         registry is worth more than one that reads well.
         """
         try:
-            entities = sorted(self._analyzer.get_supported_entities())
+            entities = sorted(analyzer.get_supported_entities())
         except Exception:
             logger.warning("could not read supported entities from the analyzer", exc_info=True)
             entities = []
-        degraded = [language for language in self._languages if language not in self._models]
+        degraded = [language for language in languages if language not in models]
         model_entities = sorted(
             entity for entity in entities if entity.upper() in MODEL_BACKED_UPPER
         )
@@ -137,8 +256,8 @@ class Detector:
             entity for entity in entities if entity.upper() not in MODEL_BACKED_UPPER
         )
         return Capabilities(
-            languages=list(self._languages),
-            models=dict(self._models),
+            languages=list(languages),
+            models=dict(models),
             entities=entities,
             pattern_entities=pattern_entities,
             model_entities=model_entities,
@@ -195,16 +314,38 @@ class Detector:
         language: str,
         score_threshold: float,
         entity_types: list[str] | None,
+        engine: str | None = None,
+        custom_labels: Mapping[str, str] | None = None,
     ) -> list[EntitySpan]:
-        """Synchronous, single text. Called on a worker thread."""
+        """Synchronous, single text. Called on a worker thread.
+
+        ``custom_labels`` maps GLiNER label -> entity type and only means anything
+        on the GLiNER engine; the caller has already dropped the ones the request
+        did not ask for.
+        """
         if not text:
             return []
-        results = self._analyzer.analyze(
-            text=text,
-            language=language,
-            entities=entity_types or None,
-            score_threshold=score_threshold,
-        )
+        slot = self.slot(engine)
+        extra = dict(custom_labels or {}) if slot.name == "gliner" else {}
+        entities = entity_types or None
+        if extra and entities is not None:
+            # Presidio picks recognisers by entity, and a custom type is not one
+            # of the GLiNER recogniser's supported entities: hand it the built-in
+            # types the caller named (or any one of them when only custom types
+            # were named) and filter to the request afterwards.
+            custom_entities = set(extra.values())
+            builtin = [t for t in entities if t.upper() not in custom_entities]
+            entities = builtin or [next(iter(slot.ner_entities), "PERSON")]
+        token = CUSTOM_LABELS.set(extra or None)
+        try:
+            results = slot.analyzer.analyze(
+                text=text,
+                language=language,
+                entities=entities,
+                score_threshold=score_threshold,
+            )
+        finally:
+            CUSTOM_LABELS.reset(token)
         spans = [
             EntitySpan(
                 start=result.start,
@@ -214,8 +355,10 @@ class Detector:
                 # says so and a recogniser returning 1.0000001 should not 422 a
                 # whole batch.
                 score=min(1.0, max(0.0, float(result.score))),
+                engine=_origin(result, slot),
             )
             for result in results
+            if not (extra and entity_types) or _wanted(result.entity_type, entity_types)
         ]
         spans.sort(key=lambda span: (span.start, span.end))
         return spans
@@ -227,6 +370,8 @@ class Detector:
         language: str,
         score_threshold: float,
         entity_types: list[str] | None,
+        engine: str | None = None,
+        custom_labels: list[CustomLabel] | None = None,
     ) -> list[list[EntitySpan]]:
         """Analyse a batch off the event loop.
 
@@ -236,14 +381,38 @@ class Detector:
         — the GIL is held by spaCy either way.
         """
         resolved = self.resolve_language(language)
+        slot = self.slot(engine)
         work = functools.partial(
             self._analyse_batch,
             texts,
             language=resolved,
             score_threshold=score_threshold,
             entity_types=entity_types,
+            engine=engine,
+            custom_labels=self.label_map(custom_labels, entity_types),
         )
+        if slot.name == "gliner":
+            async with self._gliner_gate:
+                return await asyncio.to_thread(work)
         return await asyncio.to_thread(work)
+
+    @staticmethod
+    def label_map(
+        custom_labels: list[CustomLabel] | None, entity_types: list[str] | None
+    ) -> dict[str, str]:
+        """GLiNER label -> upper-cased entity, for the labels this request wants.
+
+        When the request enumerates entity types, a custom label whose entity is
+        not among them is dropped: asking the model for it would cost inference
+        time for spans that would be thrown away.
+        """
+        wanted = {t.upper() for t in entity_types} if entity_types is not None else None
+        mapping: dict[str, str] = {}
+        for custom in custom_labels or []:
+            entity = custom.entity.upper()
+            if wanted is None or entity in wanted:
+                mapping[custom.label] = entity
+        return mapping
 
     def _analyse_batch(
         self,
@@ -252,6 +421,8 @@ class Detector:
         language: str,
         score_threshold: float,
         entity_types: list[str] | None,
+        engine: str | None = None,
+        custom_labels: Mapping[str, str] | None = None,
     ) -> list[list[EntitySpan]]:
         return [
             self.analyse_one(
@@ -259,6 +430,59 @@ class Detector:
                 language=language,
                 score_threshold=score_threshold,
                 entity_types=entity_types,
+                engine=engine,
+                custom_labels=custom_labels,
             )
             for text in texts
         ]
+
+    def calibrate(self) -> None:
+        """Measure each available engine once, on a fixed synthetic text.
+
+        Fills ``ms_per_token`` so ``/healthz`` reports what this box actually
+        does rather than a number from a document. The first pass is a warm-up
+        and is discarded. A failure leaves ``None``: a missing figure is honest, a
+        crash at startup over a statistic is not.
+        """
+        tokens = len(_TOKEN.findall(CALIBRATION_TEXT))
+        for slot in self.slots:
+            if not slot.available or not self._languages:
+                continue
+            language = self.resolve_language("it" if "it" in slot.languages else slot.languages[0])
+            try:
+                for attempt in range(2):
+                    started = time.perf_counter()
+                    self.analyse_one(
+                        CALIBRATION_TEXT,
+                        language=language,
+                        score_threshold=0.5,
+                        entity_types=None,
+                        engine=slot.name,
+                    )
+                    elapsed = time.perf_counter() - started
+                    if attempt:
+                        slot.ms_per_token = round(elapsed * 1000 / tokens, 3)
+            except Exception:
+                logger.warning("could not time the %s engine", slot.name, exc_info=True)
+
+
+def _wanted(entity: str, requested: list[str]) -> bool:
+    return entity.upper() in {t.upper() for t in requested}
+
+
+def _origin(result: Any, slot: EngineSlot) -> Literal["pattern", "spacy", "gliner"]:
+    """Which family produced a Presidio result: a pattern recogniser or the slot's NER."""
+    metadata = getattr(result, "recognition_metadata", None) or {}
+    name = str(metadata.get("recognizer_name", "")).lower()
+    if "gliner" in name:
+        return "gliner"
+    if "spacy" in name:
+        return "spacy"
+    if name:
+        return "pattern"
+    # No metadata (a test double): fall back on the entity's kind.
+    entity = str(result.entity_type).upper()
+    model_backed = entity in MODEL_BACKED_UPPER or entity in {e.upper() for e in slot.ner_entities}
+    if model_backed and entity not in PATTERN_ONLY_ENTITIES:
+        return slot.name
+    return "pattern"

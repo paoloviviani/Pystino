@@ -178,6 +178,73 @@ reports no model-backed entities. Use the console switch to choose among
 installed capabilities, and the image/build setting to choose which
 capabilities are installed.
 
+## NER engines: spaCy and GLiNER
+
+The detector service can host **two NER engines in one process** and a policy
+picks one per request (`ner_engine` on `POST /detect`). Pattern and checksum
+recognisers (cards, IBANs, fiscal codes, phones, emails) run whatever the engine;
+only the model-backed types (names, places, organisations, and for GLiNER the
+medical ones) come from the engine.
+
+| | spaCy | GLiNER |
+|---|---|---|
+| Model | per-language `en_core_web_*` / `it_core_news_*` | `urchade/gliner_multi_pii-v1` (Apache-2.0, multilingual) |
+| Entity types | `PERSON`, `LOCATION`, `ORGANIZATION`, `NRP` | `PERSON`, `LOCATION`, `ORGANIZATION`, `DATE_TIME`, `HEALTH_INSURANCE_ID`, `MEDICAL_CONDITION`, `MEDICATION` (the label map, `REDACTION_GLINER_LABELS`) |
+| Custom entity types | no | yes, per request |
+| Speed | about 0.2 ms per token | about 5 to 10 ms per token (CPU, this box) |
+| Memory | about 0.7 GB (md) | about 2.5 GB resident (about 4.2 GB at load) |
+| In every image | yes | only when built with `GLINER_MODEL` |
+
+GLiNER is **optional at build time**: pass the model and pinned revisions as build
+arguments, and the weights are baked in so the running container never needs the
+network (`HF_HUB_OFFLINE=1`).
+
+```bash
+docker build -f services/redaction/Dockerfile \
+  --build-arg GLINER_MODEL=urchade/gliner_multi_pii-v1 \
+  --build-arg GLINER_REVISION=1fcf13e85f4eef5394e1fcd406cf2ca9ea82351d \
+  --build-arg GLINER_TOKENIZER_REVISION=a0484667b22365f84929a935b5e50a51f71f159d .
+```
+
+Measured on a 5-core box with `en_core_web_md` and `it_core_news_md`: the image is
+1.27 GB without GLiNER and 4.81 GB with it (CPU-only PyTorch, the `gliner`
+package and 1.1 GB of weights). When the image has GLiNER it loads at startup
+(about 20 s, with a one-off timing pass), and `GET /healthz` lists it in
+`ner_engines` as available. When it has not, `ner_engines` still lists `gliner`
+with `available: false`, and a request naming it is answered `409`
+`{"detail": {"code": "engine_unavailable", "engine": "gliner"}}`: the gateway
+fails closed rather than receive another engine's findings.
+
+`GET /healthz` gains `ner_engines`, one element per engine:
+`{name, available, default, entities, custom_labels, ms_per_token, languages}`.
+`ms_per_token` is measured once at startup on a short synthetic text, so it
+reflects the hardware the service is on; it is `null` when not measured.
+
+Which engine a request without `ner_engine` gets is `REDACTION_NER_DEFAULT`
+(`spacy` unless set to `gliner`, which needs an image with GLiNER). With `ner_engine`
+null the answer is the deployment default's, as before. Every span carries
+`engine` (`pattern`, `spacy` or `gliner`) next to its `score`, so a console can show
+where a hit came from. GLiNER inference runs one request at a time (a semaphore in
+the process), because a forward pass uses every core and two at once only slow
+each other down.
+
+### Custom labels
+
+GLiNER takes its labels at inference, so an admin can add an entity type without
+retraining anything. `custom_labels` is a list of `{entity, label}`: `entity` is an
+`UPPER_SNAKE` type name (at most 64 characters) and `label` the natural-language
+phrase the model is asked for (at most 80), at most 30 per request.
+
+```json
+{"texts": ["..."], "ner_engine": "gliner",
+ "custom_labels": [{"entity": "PROJECT_NAME", "label": "project code name"}]}
+```
+
+Spans of that type are returned like any other (with `engine: "gliner"`). A
+request that lists `entity_types` gets a custom type only if it names it. With
+spaCy, or with the NER family switched off, custom labels are ignored and their
+entity names come back in `unsupported_types`.
+
 ## Deploying less of it
 
 Three shapes, and all three work:

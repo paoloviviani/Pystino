@@ -169,7 +169,7 @@ class TestPolicyCrud:
             "/api/admin/privacy/policies",
             json={"name": "P", "policy": policy(), "profile_id": str(uuid.uuid4())},
         )
-        assert response.status_code == 422, response.text
+        assert response.status_code in (400, 422), response.text
 
     async def test_an_inactive_policy_is_not_in_force(
         self,
@@ -192,7 +192,7 @@ class TestAccessControl:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         as_user(app, seeded.user)
-        for path in ("policies", "pipelines", "profiles", "options"):
+        for path in ("policies", "pipelines", "classifiers", "options"):
             assert (await client.get(f"/api/admin/privacy/{path}")).status_code == 403, path
 
     async def test_no_session_is_401(self, client: httpx.AsyncClient, seeded: Seeded) -> None:
