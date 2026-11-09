@@ -400,38 +400,34 @@ class TestPolicies:
 
 
 class TestReaders:
-    def with_reader(self, name: str, reader: str, engine: str | None = None, **kw: Any) -> Pipeline:
-        action = {"level": "read_with", "reader": reader, **({"engine": engine} if engine else {})}
-        return pipe("read", name, rules=[rule(name, [], **action)], **kw)
+    def with_reader(self, name: str, reader: str, **kw: Any) -> Pipeline:
+        return pipe("read", name, rules=[rule(name, [], level="read_with", reader=reader)], **kw)
 
-    async def test_the_administrators_reader_and_engine_hold(self) -> None:
-        admin = self.with_reader("Admin", "builtin", "docling")
-        mine = self.with_reader("Mine", "builtin", "ocr", owner=USER)
+    async def test_the_administrators_engine_model_holds_over_a_users(self) -> None:
+        # The extractor's engines are models, so "the engine" is just the reader.
+        admin = self.with_reader("Admin", "docling")
+        mine = self.with_reader("Mine", "markitdown-ocr", owner=USER)
         combined = await run("read", [mine, admin], facts("read"))
-        assert combined.level == "read_with" and combined.reader == "builtin"
-        assert combined.engine == "docling"
-        assert combined.engine_run is not None and not combined.engine_run.pipeline.is_user
+        assert combined.level == "read_with" and combined.reader == "docling"
+        assert combined.reader_run is not None and not combined.reader_run.pipeline.is_user
+        assert [r.pipeline.name for r in combined.overridden] == ["Mine"]
 
-    async def test_a_users_engine_applies_when_no_administrator_chose_one(self) -> None:
-        admin = self.with_reader("Admin", "builtin")
-        mine = self.with_reader("Mine", "builtin", "ocr", owner=USER)
+    async def test_a_users_reader_applies_when_no_administrator_chose_one(self) -> None:
+        admin = pipe("read", "Admin")
+        mine = self.with_reader("Mine", "markitdown-ocr", owner=USER)
         combined = await run("read", [admin, mine], facts("read"))
-        assert combined.engine == "ocr" and combined.engine_run is not None
-        assert combined.engine_run.pipeline.is_user
-
-    async def test_the_default_engine_when_nobody_chose(self) -> None:
-        combined = await run("read", [self.with_reader("A", "builtin")], facts("read"))
-        assert combined.engine is None
+        assert combined.reader == "markitdown-ocr"
+        assert combined.reader_run is not None and combined.reader_run.pipeline.is_user
 
     async def test_the_administrators_reader_overrides_the_users(self) -> None:
         admin = self.with_reader("Admin", "facility")
-        mine = self.with_reader("Mine", "builtin", owner=USER)
+        mine = self.with_reader("Mine", "markitdown", owner=USER)
         combined = await run("read", [mine, admin], facts("read"))
         assert combined.reader == "facility"
         assert [r.pipeline.name for r in combined.overridden] == ["Mine"]
 
     async def test_refuse_is_above_read_with(self) -> None:
-        admin = self.with_reader("Admin", "builtin")
+        admin = self.with_reader("Admin", "markitdown")
         refuse = pipe("read", "Refuse", otherwise={"level": "refuse"})
         combined = await run("read", [admin, refuse], facts("read"))
         assert combined.refused and combined.reader is None
@@ -470,7 +466,7 @@ class TestRerouteRunsTheNewReadersPipelines:
         assert [r.pipeline.name for r in combined.hops[0].added] == [guard.name]
 
     async def test_a_reroute_that_is_impossible_is_reported_not_guessed(self) -> None:
-        route = pipe("read", "Route", otherwise={"level": "read_with", "reader": "builtin"})
+        route = pipe("read", "Route", otherwise={"level": "read_with", "reader": "markitdown"})
 
         async def retarget(reader: str) -> Retarget:
             return Retarget(None, impossible="the document is a link")
@@ -530,9 +526,9 @@ class TestWords:
         p = pipe(
             "read",
             "P",
-            rules=[rule("Scans", [{"key": "scan"}], level="read_with", reader="builtin")],
+            rules=[rule("Scans", [{"key": "scan"}], level="read_with", reader="markitdown")],
         )
-        assert summarize(p, {}) == ["reads scans with the built-in extractor"]
+        assert summarize(p, {}) == ["reads scans with markitdown"]
 
 
 class TestUndecidableConditionsNeverFailOpen:

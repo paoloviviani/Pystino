@@ -56,7 +56,7 @@ Two things follow from the design and are worth saying once:
 
 A user can write **pipelines of their own**, for themselves only, and they can
 only **add** protection: read with a reader they are granted, refuse, redact with
-a policy (an administrator's, or their own), choose an engine. The combination
+a policy (an administrator's, or their own). The combination
 takes the highest level and the strictest mode, so a user's pipeline can never
 lower anything an administrator's did. A user may name an administrator's policy
 only if it is marked **shared with users**, in "apply" and in "finds at least N
@@ -72,7 +72,7 @@ administrator has made available (Redaction service tab). See [User pipelines](p
 | **Redaction policies** | one editor with two sections: *Patterns (fast, deterministic)*: built-in formats, regular expressions, keyword lists with a case checkbox; *Entities (NER, probabilistic)*: the engine picker (what is available), its entity types with a mode and a threshold, custom GLiNER types. A mode per item, `detect only` among them, same-length placeholders, the allow-list, and a **Try it** box |
 | **Classifiers** | decision models: a chat model and a topic in plain words; says when no model provider is configured and that classifying sends the text to that provider |
 | **Redaction service** | the redaction engine choice (with its append-only record), the Presidio pattern and named-entity switches, what the service reports, and what users may add to their own policies |
-| **Test** | one box: a kind of request, a user and a target, a text or file; every pipeline in scope with its trace (each item that made a condition true, with its group and, for entities, engine and score), the reroute, the ladder, who chose the reader and engine, and the policies added up. Nothing is stored |
+| **Test** | one box: a kind of request, a user and a target, a text or file; every pipeline in scope with its trace (each item that made a condition true, with its group and, for entities, engine and score), the reroute, the ladder, who chose the reader, and the policies added up. Nothing is stored |
 
 Users have **Privacy pipelines** (their own pipelines and policies, the
 administrator's read-only list, and a test box locked to themselves) and

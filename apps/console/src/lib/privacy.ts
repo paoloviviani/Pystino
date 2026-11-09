@@ -350,21 +350,8 @@ export function levelHint(level: string): string {
   }
 }
 
-export const BUILTIN = "builtin";
-export const ENGINES = ["markitdown", "ocr", "docling"];
-
-export function engineLabel(engine: string): string {
-  switch (engine) {
-    case "markitdown":
-      return m["privacy.engine.markitdown"]();
-    case "ocr":
-      return m["privacy.engine.ocr"]();
-    case "docling":
-      return m["privacy.engine.docling"]();
-    default:
-      return m["privacy.engine.default"]();
-  }
-}
+/** What a "read with" rule that names no reader means: the default-engine model of the built-in extractor. */
+export const DEFAULT_READER = "markitdown";
 
 /**
  * What a rule may test. `finds` is available everywhere; `classified` only to an
@@ -484,7 +471,6 @@ export function conditionPhrase(c: Phrasable, labels: Labels = {}): string {
 interface Actionable {
   level: string;
   reader?: string | null;
-  engine?: string | null;
   redact_with?: string | null;
 }
 
@@ -493,10 +479,7 @@ export function actionPhrase(kind: PrivacyKind, a: Actionable, labels: Labels): 
   const parts: string[] = [];
   if (a.level === "refuse") parts.push(m["privacy.action.refuse"]());
   else if (a.level === "read_with") {
-    const reader =
-      !a.reader || a.reader === BUILTIN ? m["privacy.reader.builtin"]() : a.reader;
-    parts.push(m["privacy.action.read_with"]({ reader }));
-    if (a.engine) parts.push(m["privacy.action.engine"]({ engine: engineLabel(a.engine) }));
+    parts.push(m["privacy.action.read_with"]({ reader: a.reader || DEFAULT_READER }));
   } else if (a.level === baseLevel(kind) && !a.redact_with) {
     parts.push(
       kind === "read" ? m["privacy.action.default"]() : m["privacy.action.pass"](),
@@ -586,7 +569,6 @@ export function actionBody(a: Actionable): PrivacyAction {
   return {
     level: a.level,
     ...(a.reader ? { reader: a.reader } : {}),
-    ...(a.engine ? { engine: a.engine } : {}),
     ...(a.redact_with ? { redact_with: a.redact_with } : {}),
   };
 }

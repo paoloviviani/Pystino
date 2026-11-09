@@ -11,8 +11,9 @@ What only this can prove, that the unit suite on SQLite cannot:
 * `/v1/ocr` reads a real PDF on the real extractor service: a file-name rule
   refuses before anything is read, a scan rule reads first on the built-in
   extractor and then refuses (and lets a PDF with a text layer through), and a
-  "read with" rule's engine reaches the service, whose own answer (and fallback
-  reason) lands in the log;
+  "read with" rule names the extractor's model for an engine: a model whose engine
+  the service does not run (docling on the pattern image) is refused rather than read
+  by another engine, and the default model's read lands in the log;
 * every refusal is a 403 naming the rule and its pipeline and never the content.
 
 Usage: see test_providers_live.py (same stack, same environment). Needs the
@@ -277,19 +278,18 @@ def main() -> int:
         expect("a PDF with text goes through", status == 200, f"HTTP {status}: {str(body)[:200]}")
 
         print()
-        print("=== reading: a read-with rule's engine reaches the extractor, and it is logged ===")
+        print("=== reading: a read-with rule names the extractor's model, and it is logged ===")
         wipe(dave)
         pipeline(
             dave,
             "read",
-            "PDFs with Docling",
+            "PDFs with the default reader",
             [
                 rule(
-                    "PDFs with Docling",
+                    "PDFs with the default reader",
                     [{"key": "filetype", "values": ["pdf"]}],
                     level="read_with",
-                    reader="builtin",
-                    engine="docling",
+                    reader="markitdown",
                 )
             ],
         )
@@ -315,17 +315,13 @@ def main() -> int:
         expect("the request was read", bool(payload.get("pages")), str(payload)[:160])
         expect(
             "the rule and its pipeline are recorded",
-            (handled.get("routing_rule") or {}).get("name") == "PDFs with Docling"
-            and (handled.get("routing_rule") or {}).get("pipeline") == "PDFs with Docling",
+            (handled.get("routing_rule") or {}).get("name") == "PDFs with the default reader"
+            and (handled.get("routing_rule") or {}).get("pipeline")
+            == "PDFs with the default reader",
             str(handled),
         )
-        expect("with the engine it asked for", handled.get("engine") == "docling")
-        # The pattern image has no Docling: the extractor falls back and says why.
-        expect(
-            "and the extractor's own answer (the fallback reason) is in the log",
-            bool(handled.get("extractor")) and "docling" in (handled.get("fallback_reason") or ""),
-            str(handled),
-        )
+        expect("by the default reader (no engine asked for)", handled.get("engine") is None)
+        expect("and the extractor's own answer is in the log", bool(handled.get("extractor")))
         row = sql(
             "select redaction_detail->'routing'->'observed'->>'filetype', "
             "redaction_detail->'routing'->'handled'->>'extractor' "

@@ -37,7 +37,7 @@ from llmp_redaction.detector import (
     EngineUnavailableError,
 )
 from llmp_redaction.documents import DEFAULT_LONG_SIDE, extract
-from llmp_redaction.engines import ENGINE_HEADER
+from llmp_redaction.engines import ENGINE_HEADER, available_engines
 
 logger = logging.getLogger(__name__)
 
@@ -403,6 +403,10 @@ class HealthResponse(BaseModel):
     # treat an unpartitioned entity list as narrowed support.
     family_partition: bool = False
     ner_engines: list[NerEngineInfo] = Field(default_factory=list)
+    # The document readers this build can run now, a subset of markitdown, ocr
+    # and docling: `ocr` only with the RapidOCR weights, `docling` only in the
+    # docling variant. The gateway offers one OCR model per name listed here.
+    extractor_engines: list[str] = Field(default_factory=list)
 
 
 def create_app(detector: Detector | None = None) -> FastAPI:
@@ -452,6 +456,7 @@ def create_app(detector: Detector | None = None) -> FastAPI:
                 )
                 for slot in engine.slots
             ],
+            extractor_engines=available_engines(),
         )
 
     @app.post("/extract", response_model=ExtractionResponse)

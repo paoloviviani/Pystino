@@ -96,12 +96,12 @@ class TestValidation:
             "read",
             name="  Scans stay here ",
             conditions=[{"key": "filetype", "values": ["PDF"]}, {"key": "scan"}],
-            action={"level": "read_with", "reader": "builtin", "engine": "ocr"},
+            action={"level": "read_with", "reader": "markitdown-ocr"},
         )
         assert out["name"] == "Scans stay here"
         assert out["conditions"][0]["values"] == ["pdf"]
         assert out["conditions"][1] == {"key": "scan", "values": [], "negate": False}
-        assert out["action"] == {"level": "read_with", "reader": "builtin", "engine": "ocr"}
+        assert out["action"] == {"level": "read_with", "reader": "markitdown-ocr"}
         uuid.UUID(out["id"])
 
     def test_a_rule_keeps_its_id_across_saves(self) -> None:
@@ -160,20 +160,15 @@ class TestValidation:
             ("embed", {"action": {"level": "local"}}, "Choose where"),
             (
                 "read",
-                {"action": {"level": "read_with", "reader": "x", "engine": "ocr"}},
-                "built-in",
-            ),
-            (
-                "read",
-                {"action": {"level": "read_with", "reader": "builtin", "engine": "tesseract"}},
-                "engine",
+                {"action": {"level": "read_with", "reader": "docling", "engine": "ocr"}},
+                "does not take: engine",
             ),
             (
                 "read",
                 {"action": {"level": "refuse", "redact_with": str(uuid.uuid4())}},
                 "no policy",
             ),
-            ("embed", {"action": {"level": "pass", "reader": "builtin"}}, "goes with"),
+            ("embed", {"action": {"level": "pass", "reader": "markitdown"}}, "goes with"),
             ("read", {"action": {"level": "default", "redact_with": "nope"}}, "does not exist"),
             ("read", {"name": "  "}, "name"),
         ],

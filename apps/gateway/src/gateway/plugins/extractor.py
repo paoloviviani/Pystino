@@ -111,7 +111,7 @@ class LocalExtractorPlugin(GenericOpenAIPlugin):
         return {}
 
     def builtin_catalogue(self) -> dict[str, Any] | None:
-        """What this deployment's extractor offers: one model, itself.
+        """What this deployment's extractor offers: one model per engine.
 
         Answered here rather than fetched, because there is nothing to fetch —
         the service serves `/extract`, not `/models`, and Discover against it
@@ -129,20 +129,43 @@ class LocalExtractorPlugin(GenericOpenAIPlugin):
                     "id": "markitdown",
                     "description": (
                         "Word, Excel, PowerPoint and text-layer PDFs, read inside this "
-                        "deployment. Scanned pages are refused rather than guessed at."
+                        "deployment with the extractor's default reader. Scanned pages "
+                        "are refused rather than guessed at."
                     ),
                     "tags": ["OCR"],
                     "input_modalities": ["file"],
                     "output_modalities": ["text"],
                     # No `pricing`, so the parser reports it unpriced rather
-                    # than free — the distinction the console renders as a
-                    # warning.
-                }
+                    # than free: the distinction the console renders as a warning.
+                },
+                {
+                    "id": "markitdown-ocr",
+                    "description": (
+                        "As markitdown, plus scanned PDF pages and pictures, read with "
+                        "RapidOCR inside this deployment. Text only: tables in scans "
+                        "keep no structure. Offered when the extractor image has OCR."
+                    ),
+                    "tags": ["OCR"],
+                    "input_modalities": ["file"],
+                    "output_modalities": ["text"],
+                },
+                {
+                    "id": "docling",
+                    "description": (
+                        "Layout, reading order and tables as Markdown for PDFs, Word, "
+                        "PowerPoint and Excel, with OCR for scans, read inside this "
+                        "deployment. Slower and heavier. Offered with the docling "
+                        "extractor image."
+                    ),
+                    "tags": ["OCR"],
+                    "input_modalities": ["file"],
+                    "output_modalities": ["text"],
+                },
             ]
         }
 
     def catalogue_tag_all(self) -> str | None:
-        """No tag filter here — the catalogue is one row and all of it."""
+        """No tag filter here — the catalogue is these rows and all of them."""
         return None
 
     async def probe(

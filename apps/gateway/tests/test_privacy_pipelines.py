@@ -346,9 +346,9 @@ class TestAdminApi:
         options = (await client.get("/api/admin/privacy/options")).json()
         assert seeded.group.name in [g["name"] for g in options["groups"]]
         readers = {r["id"]: r for r in options["readers"]}
-        # The extractor's own model is the Built-in extractor, listed once, not by its model name.
-        assert readers["builtin"]["builtin"] is True and "local-reader" not in readers
-        assert options["engines"] == ["markitdown", "ocr", "docling"]
+        # The extractor's models are readers by name, flagged local; there is no engine list.
+        assert readers["local-reader"]["local"] is True
+        assert "engines" not in options
 
     async def test_there_is_no_local_flag_on_a_provider(
         self, admin: None, client: httpx.AsyncClient, seeded: Seeded
@@ -717,12 +717,21 @@ class TestChat:
 # -- reading -----------------------------------------------------------------------
 
 
+async def add_engine_models(session: AsyncSession, seeded: Seeded) -> None:
+    """The built-in extractor's engines as models: `markitdown-ocr` and `docling`."""
+    for name in ("markitdown-ocr", "docling"):
+        model = await add_local_model(session, seeded, name=name)
+        model.upstream_model = name
+    await session.commit()
+
+
 class TestReading:
     async def setup_readers(
         self, session: AsyncSession, seeded: Seeded, fake_upstream: FakeUpstream
     ) -> FakeExtractor:
         await add_ocr_model(session, seeded, name="mistral", upstream="mistral-ocr")
         await add_local_model(session, seeded, name="local-reader")
+        await add_engine_models(session, seeded)
         fake_upstream.set_json(ocr_response(pages=1))
         extractor = FakeExtractor()
         return extractor
@@ -771,8 +780,7 @@ class TestReading:
                     "Referto",
                     [{"key": "filename", "values": ["*referto*"]}],
                     level="read_with",
-                    reader="builtin",
-                    engine="ocr",
+                    reader="markitdown-ocr",
                 )
             ],
         )
@@ -872,7 +880,7 @@ class TestReading:
             session_factory,
             "read",
             "Built in only",
-            otherwise={"level": "read_with", "reader": "builtin"},
+            otherwise={"level": "read_with", "reader": "local-reader"},
         )
         # A link: the built-in extractor reads only documents sent with the request.
         link = await ocr(client, seeded, "mistral", "https://files.example/referto.pdf")
@@ -987,7 +995,7 @@ class TestReading:
             "read",
             "Mine",
             owner=seeded.user.id,
-            otherwise={"level": "read_with", "reader": "builtin", "engine": "ocr"},
+            otherwise={"level": "read_with", "reader": "markitdown-ocr"},
         )
         response = await ocr(client, seeded, "mistral", **SUMMARY)
         assert response.status_code == 200, response.text
@@ -1019,8 +1027,7 @@ class TestReading:
                     "My reports",
                     [{"key": "filename", "values": ["*referto*"]}],
                     level="read_with",
-                    reader="builtin",
-                    engine="docling",
+                    reader="docling",
                 )
             ],
         )
@@ -1589,14 +1596,18 @@ class TestTheTestBox:
         session: AsyncSession,
         session_factory: Any,
     ) -> None:
+        from test_ocr_surface import FakeExtractor
+
+        app.state.control_http = FakeExtractor().client()
         await add_local_model(session, seeded, name="local-reader")
+        await add_engine_models(session, seeded)
         mistral = await add_ocr_model(session, seeded, name="mistral", upstream="m")
         await add_pipeline(
             app,
             session_factory,
             "read",
             "Admin",
-            otherwise={"level": "read_with", "reader": "builtin", "engine": "docling"},
+            otherwise={"level": "read_with", "reader": "docling"},
         )
         await add_pipeline(
             app,
@@ -1604,7 +1615,7 @@ class TestTheTestBox:
             "read",
             "Mine",
             owner=seeded.user.id,
-            otherwise={"level": "read_with", "reader": "builtin", "engine": "ocr"},
+            otherwise={"level": "read_with", "reader": "markitdown-ocr"},
         )
         result = (
             await client.post(
@@ -1619,8 +1630,9 @@ class TestTheTestBox:
             )
         ).json()
         assert result["outcome"] == "read_with"
-        assert result["engine"] == "docling" and "administrator" in result["engine_by"]
-        assert [h["reader"] for h in result["hops"]] == ["builtin"]
+        assert result["reader"] == "docling" and "administrator" in result["reader_by"]
+        assert "engine" not in result
+        assert [h["reader"] for h in result["hops"]] == ["docling"]
 
     async def test_it_reads_a_file_on_the_built_in_extractor(
         self,

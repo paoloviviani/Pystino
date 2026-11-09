@@ -100,3 +100,23 @@ def settings() -> Settings:
         max_pages=_int("EXTRACTOR_MAX_PAGES", DEFAULT_MAX_PAGES),
         timeout_seconds=_int("EXTRACTOR_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS),
     )
+
+
+def available_engines(config: Settings | None = None) -> list[str]:
+    """The readers this process can run now, in the order the gateway lists them.
+
+    ``markitdown`` always. ``ocr`` (markitdown with OCR switched on for one
+    request) needs RapidOCR and its weights; ``docling`` needs Docling, its
+    weights and RapidOCR. Answered from the same checks the readers use, so the
+    list cannot promise an engine that would answer "unavailable" and fall back.
+    The imports are here, not at the top: the default image has neither library.
+    """
+    from llmp_redaction import docling_engine, ocr
+
+    config = config or settings()
+    found = [Engine.MARKITDOWN.value]
+    if ocr.available(config):
+        found.append("ocr")
+    if docling_engine.available(config):
+        found.append(Engine.DOCLING.value)
+    return found

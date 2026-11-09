@@ -345,10 +345,7 @@ def summarize(
             continue
         if rule.level == rulelib.LEVEL_READ_WITH:
             reader = rule.action.get("reader")
-            label = (reader_names or {}).get(
-                str(reader),
-                "the built-in extractor" if reader == rulelib.BUILTIN_READER else str(reader),
-            )
+            label = (reader_names or {}).get(str(reader), str(reader or rulelib.DEFAULT_READER))
             words.append(f"reads {when} with {label}" if when else f"reads with {label}")
         policy = rule.action.get("redact_with")
         if policy:

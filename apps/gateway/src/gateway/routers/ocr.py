@@ -64,7 +64,7 @@ from gateway.errors import BadRequestError, ContentBlockedError, GatewayError
 from gateway.models import ApiSurface, ModelDef
 from gateway.privacy import attribution
 from gateway.privacy.combine import Combined, Retarget, plan
-from gateway.privacy.rules import BUILTIN_READER, filetype_of
+from gateway.privacy.rules import DEFAULT_READER, filetype_of
 from gateway.privacy.state import state_of
 from gateway.redaction.report import SOURCE_DOCUMENT, build_detail, build_summary, relabel
 from gateway.routers import _metered
@@ -273,39 +273,48 @@ def _declared_mime(body: OcrRequest) -> str | None:
 async def _reader_model(
     session: Any,
     reader: str,
-    builtin_names: tuple[str, ...],
     *,
     principal: Any,
     template: _metered.ResolvedModel,
+    http: Any,
+    settings: Settings,
 ) -> _metered.ResolvedModel | None:
     """The model a "read with" rule names, if this caller may use it, else None.
 
-    A rule cannot grant access: each candidate goes through the same resolution
-    a direct call does, so a caller without the grant gets None, and the route
-    then fails closed rather than quietly using the model they named. "The
-    built-in extractor" is the first deployment model on the extractor plugin
-    the caller may use.
+    A rule cannot grant access: the name goes through the same resolution a
+    direct call does, so a caller without the grant gets None, and the route then
+    fails closed rather than quietly using another model. A built-in extractor
+    model whose engine the extractor does not run now is None too: the file is
+    refused rather than read by an engine nobody chose.
     """
-    names = list(builtin_names) if reader == BUILTIN_READER else [reader]
-    for name in names:
-        try:
-            found = await _metered.resolve_model(
-                session, name, principal=principal, surface=SURFACE
-            )
-        except GatewayError:
-            continue
-        provider = found.model.provider
-        is_builtin = provider is not None and provider.plugin == LOCAL_EXTRACTOR
-        if reader == BUILTIN_READER and not is_builtin:
-            continue
-        return _metered.ResolvedModel(
-            model=found.model,
-            requested_name=template.requested_name,
-            attempt=template.attempt,
-            last=template.last,
-            routed=template.routed,
-        )
-    return None
+    try:
+        found = await _metered.resolve_model(session, reader, principal=principal, surface=SURFACE)
+    except GatewayError:
+        return None
+    if not await _engine_runs(found.model, http, settings):
+        return None
+    return _metered.ResolvedModel(
+        model=found.model,
+        requested_name=template.requested_name,
+        attempt=template.attempt,
+        last=template.last,
+        routed=template.routed,
+    )
+
+
+async def _engine_runs(model: ModelDef, http: Any, settings: Settings) -> bool:
+    """False only when the built-in extractor answered and does not run this model's engine.
+
+    A model that is not the extractor's, the default reader, and an extractor that
+    cannot be asked all pass: the call itself then fails as an unreachable
+    extractor does, which is the existing answer and not a new one.
+    """
+    if model.provider is None or model.provider.plugin != LOCAL_EXTRACTOR:
+        return True
+    if extraction.engine_of_model(model.upstream_model or model.name) is None:
+        return True  # the default reader runs on every build: nothing to ask
+    engines = await extraction.reported_engines(http, _extractor_endpoint(model, settings))
+    return extraction.model_availability(model.upstream_model or model.name, engines) is not False
 
 
 def _routing(
@@ -430,35 +439,32 @@ async def extract_document(
 
     async def retarget(reader: str) -> Retarget:
         current = holder["resolved"]
-        current_local = (
-            current.model.provider is not None and current.model.provider.plugin == LOCAL_EXTRACTOR
-        )
-        if reader == BUILTIN_READER and current_local:
+        if reader in (current.model.name, current.requested_name):
             return Retarget(None, same=True)
-        if reader != BUILTIN_READER and reader in (current.model.name, current.requested_name):
-            return Retarget(None, same=True)
-        if reader == BUILTIN_READER and inline is None:
-            return Retarget(
-                None,
-                impossible=(
-                    "it must be read by the built-in extractor, which reads only documents "
-                    "sent with the request, and this document is a link."
-                ),
-            )
         moved = await _reader_model(
-            session, reader, privacy.builtin_readers, principal=principal, template=named
+            session,
+            reader,
+            principal=principal,
+            template=named,
+            http=control_http,
+            settings=settings,
         )
         if moved is None:
             return Retarget(
                 None,
                 impossible=(
-                    "it must be read with "
-                    + (
-                        "the built-in extractor"
-                        if reader == BUILTIN_READER
-                        else f"the reader '{reader}'"
-                    )
-                    + ", and that reader is not available to you."
+                    f"it must be read with '{reader}', and that reader is not available to you."
+                ),
+            )
+        if inline is None and (
+            moved.model.provider is not None and moved.model.provider.plugin == LOCAL_EXTRACTOR
+        ):
+            # The built-in extractor reads only documents sent with the request.
+            return Retarget(
+                None,
+                impossible=(
+                    f"it must be read by '{reader}', which is on the built-in extractor and reads "
+                    "only documents sent with the request, and this document is a link."
                 ),
             )
         holder["resolved"] = moved
@@ -484,17 +490,23 @@ async def extract_document(
         # The answer depends on a fact found while reading: read once on the
         # built-in extractor (the file stays here), then plan again.
         holder["resolved"] = named
-        probe_model = (
-            await _reader_model(
-                session,
-                BUILTIN_READER,
-                privacy.builtin_readers,
-                principal=principal,
-                template=named,
-            )
-            if inline is not None
-            else None
-        )
+        probe_model = None
+        if inline is not None:
+            # The default reader first (every build has it), then any other of the
+            # built-in extractor's models the caller may use.
+            for probe_name in sorted(
+                privacy.builtin_readers, key=lambda n: (n != DEFAULT_READER, n)
+            ):
+                probe_model = await _reader_model(
+                    session,
+                    probe_name,
+                    principal=principal,
+                    template=named,
+                    http=control_http,
+                    settings=settings,
+                )
+                if probe_model is not None:
+                    break
         if probe_model is None:
             assert combined.pending_run is not None
             await _refuse(
@@ -553,7 +565,15 @@ async def extract_document(
     resolved = holder["resolved"]
     model = resolved.model
     local = model.provider is not None and model.provider.plugin == LOCAL_EXTRACTOR
-    engine = combined.engine if local else None
+    engine = extraction.engine_of_model(model.upstream_model or model.name) if local else None
+    if local and not await _engine_runs(model, control_http, settings):
+        # The model exists (grants, prices) but this extractor image cannot run its
+        # engine; reading it with another engine under this name would be a lie.
+        raise BadRequestError(
+            f"The model '{model.name}' is not available on this deployment's extractor "
+            "(its engine is not installed). Choose another reader.",
+            code="extractor_engine_unavailable",
+        )
     policy = _metered.effective_policy_of(request, combined)
     rerouted = resolved is not named
     if rerouted:
@@ -651,7 +671,7 @@ async def extract_document(
             rerouted=rerouted,
             extractor=outcome.extractor or None,
             fallback_reason=outcome.fallback_reason,
-            reader=engine,
+            reader=model.name,
             engine=engine,
         )
 

@@ -10,7 +10,7 @@ import { AdminPrivacy } from "./AdminPrivacy";
 /** The Pipelines tab: pipelines by kind, each with its scope, its rules as sentences and the fixed last rule. */
 
 function action(level: string, extra: Record<string, unknown> = {}) {
-  return { level, reader: null, engine: null, redact_with: null, ...extra };
+  return { level, reader: null, redact_with: null, ...extra };
 }
 
 function pipeline(overrides: Partial<PrivacyPipeline> & { id: string; name: string }): PrivacyPipeline {
@@ -82,7 +82,7 @@ const READ = pipeline({
       observe_only: false,
       note: null,
       conditions: [{ key: "scan", values: [], negate: false, count: 1 }],
-      action: action("read_with", { reader: "builtin", engine: "docling" }),
+      action: action("read_with", { reader: "docling" }),
       issues: [{ code: "never_fires", message: "above catches it", rule_id: null, rule_name: null }],
     },
   ],
@@ -161,7 +161,7 @@ describe("Pipelines", () => {
 
     const read = screen.getByRole("region", { name: "Reading a file" });
     expect(
-      within(read).getByText(/the file is a scan → read with the built-in extractor · engine Docling/),
+      within(read).getByText(/the file is a scan → read with docling/),
     ).toBeInTheDocument();
     // A rule that never fires is flagged on its pipeline.
     expect(within(read).getByText("Check")).toBeInTheDocument();

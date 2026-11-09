@@ -25,10 +25,11 @@ from __future__ import annotations
 import base64
 import binascii
 import uuid
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Collection, Iterable, Sequence
+from dataclasses import dataclass
 from typing import Any, cast
 
+import httpx
 from llmp_shared import EntitySpan
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -153,7 +154,9 @@ def pipeline_view_json(row: PrivacyPipeline) -> dict[str, Any]:
 # -- checks and views --------------------------------------------------------------
 
 
-def check_context(state: PrivacyState, engines: Any = None) -> rulelib.CheckContext:
+def check_context(
+    state: PrivacyState, engines: Any = None, unavailable_readers: Collection[str] = ()
+) -> rulelib.CheckContext:
     """What the save-time checks may know: which policies and classifiers can answer now.
 
     *engines* is an ``EnginesResponse`` when the caller has just asked the service;
@@ -172,13 +175,20 @@ def check_context(state: PrivacyState, engines: Any = None) -> rulelib.CheckCont
         content[pid] = rulelib.ContentInfo(name)
     for cid, classifier in state.classifiers.items():
         content[cid] = rulelib.ContentInfo(classifier.name, classifier.available, classifier.why)
-    return rulelib.CheckContext(content=content)
+    return rulelib.CheckContext(content=content, unavailable_readers=tuple(unavailable_readers))
 
 
 def issues_of(
-    pipeline: Pipeline, state: PrivacyState, engines: Any = None
+    pipeline: Pipeline,
+    state: PrivacyState,
+    engines: Any = None,
+    unavailable_readers: Collection[str] = (),
 ) -> dict[uuid.UUID, list[rulelib.Issue]]:
-    return rulelib.check(list(pipeline.rules), pipeline.otherwise, check_context(state, engines))
+    return rulelib.check(
+        list(pipeline.rules),
+        pipeline.otherwise,
+        check_context(state, engines, unavailable_readers),
+    )
 
 
 def issue_views(found: Iterable[rulelib.Issue]) -> list[IssueView]:
@@ -330,8 +340,8 @@ async def views_for(
 # -- the validation context ----------------------------------------------------------
 
 
-async def deployment_readers(session: AsyncSession) -> dict[str, tuple[str, bool]]:
-    """Active deployment OCR models: name -> (name, is the built-in extractor)."""
+async def deployment_readers(session: AsyncSession) -> dict[str, bool]:
+    """Active deployment OCR models: name -> is it served by the built-in extractor."""
     rows = (
         await session.execute(
             select(ModelDef.name, Provider.plugin)
@@ -346,13 +356,13 @@ async def deployment_readers(session: AsyncSession) -> dict[str, tuple[str, bool
             .order_by(ModelDef.name)
         )
     ).all()
-    return {str(n): (str(n), p == "extractor") for n, p in rows}
+    return {str(n): p == "extractor" for n, p in rows}
 
 
 async def granted_readers(
     session: AsyncSession, user: User, *, group_ids: Sequence[uuid.UUID] | None = None
 ) -> dict[str, bool]:
-    """The OCR models this user may use: name -> is the built-in extractor."""
+    """The OCR models this user may use: name -> is it served by the built-in extractor."""
     groups = (
         list(group_ids) if group_ids is not None else ([g] if (g := request_group_id(user)) else [])
     )
@@ -384,6 +394,44 @@ async def granted_readers(
     }
 
 
+async def unavailable_readers(
+    session: AsyncSession, http: httpx.AsyncClient, settings: Settings
+) -> set[str]:
+    """Names of the built-in extractor's models that cannot run now.
+
+    A model is the engine it reads with, and an engine is available when the
+    extractor says so (``/healthz``). Not stored: an image change or an outage
+    changes it, and a stored flag would be wrong the moment it was written. An
+    extractor that cannot be asked leaves every model but the default reader out
+    (``extraction.model_availability``), which is also what the model listing does.
+    """
+    rows = (
+        await session.execute(
+            select(ModelDef.name, ModelDef.upstream_model, Provider.base_url)
+            .join(Provider, Provider.id == ModelDef.provider_id)
+            .where(
+                ModelDef.is_active.is_(True),
+                ModelDef.owner_id.is_(None),
+                ModelDef.kind == ModelKind.OCR,
+                Provider.is_active.is_(True),
+                Provider.owner_id.is_(None),
+                Provider.plugin == "extractor",
+            )
+        )
+    ).all()
+    reported: dict[str, frozenset[str] | None] = {}
+    gone: set[str] = set()
+    for name, upstream, base_url in rows:
+        if extraction.engine_of_model(upstream or name) is None:
+            continue  # the default reader runs on every build: nothing to ask
+        endpoint = (base_url or "").strip() or settings.extractor.endpoint
+        if endpoint not in reported:
+            reported[endpoint] = await extraction.reported_engines(http, endpoint)
+        if extraction.model_availability(upstream or name, reported[endpoint]) is not True:
+            gone.add(str(name))
+    return gone
+
+
 @dataclass(slots=True)
 class ValidationContext:
     """What a rule may name: policies to apply, policies to count, classifiers, readers."""
@@ -394,9 +442,6 @@ class ValidationContext:
     finds_policy_ids: set[str]
     classifier_ids: set[str]
     readers: set[str]
-    #: Names of OCR models that are the built-in extractor (the seeded "markitdown" model):
-    #: a rule naming one is saved as naming the Built-in extractor.
-    builtin_aliases: set[str] = field(default_factory=set)
 
 
 async def validation_context(session: AsyncSession, *, owner: User | None) -> ValidationContext:
@@ -404,42 +449,14 @@ async def validation_context(session: AsyncSession, *, owner: User | None) -> Va
     admin = [p for p in await policy_rows(session) if p.is_active]
     if owner is None:
         policies = {str(p.id) for p in admin}
-        deployment = await deployment_readers(session)
-        readers = set(deployment)
-        aliases = {name for name, (_, builtin) in deployment.items() if builtin}
+        readers = set(await deployment_readers(session))
         classifiers = {str(c.id) for c in await classifier_rows(session)}
     else:
         policies = {str(p.id) for p in admin if p.shared_with_users}
         policies |= {str(p.id) for p in await user_policy_rows(session, owner.id)}
-        granted = await granted_readers(session, owner)
-        readers = set(granted)
-        aliases = {name for name, builtin in granted.items() if builtin}
+        readers = set(await granted_readers(session, owner))
         classifiers = set()
-    return ValidationContext(policies, set(policies), classifiers, readers, aliases)
-
-
-def normalise_readers(
-    rules: list[dict[str, Any]], otherwise: dict[str, Any] | None, aliases: set[str]
-) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    """Rules that name the built-in extractor's own model name the Built-in extractor.
-
-    Both were ever the same reader under two names; only the Built-in extractor is
-    offered now, and an older rule (or a client that still sends the model name) keeps
-    working as that.
-    """
-    if not aliases:
-        return rules, otherwise
-
-    def fix(action: Any) -> Any:
-        if isinstance(action, dict) and action.get("reader") in aliases:
-            return {**action, "reader": rulelib.BUILTIN_READER}
-        return action
-
-    fixed = [
-        {**rule, "action": fix(rule.get("action"))} if isinstance(rule, dict) else rule
-        for rule in rules
-    ]
-    return fixed, fix(otherwise) if otherwise is not None else None
+    return ValidationContext(policies, set(policies), classifiers, readers)
 
 
 # -- user policies --------------------------------------------------------------------
@@ -537,12 +554,7 @@ def _scope_words(pipeline: Pipeline, labels: dict[str, str]) -> list[str]:
 def _action_text(rule: rulelib.Rule, labels: dict[str, str]) -> str:
     parts = [LEVEL_LABELS.get(rule.level, rule.level)]
     if rule.level == rulelib.LEVEL_READ_WITH:
-        reader = str(rule.action.get("reader") or rulelib.BUILTIN_READER)
-        parts = [
-            f"Read with {'the built-in extractor' if reader == rulelib.BUILTIN_READER else reader}"
-        ]
-        if rule.action.get("engine"):
-            parts.append(f"engine {rule.action['engine']}")
+        parts = [f"Read with {rule.action.get('reader') or rulelib.DEFAULT_READER}"]
     if rule.action.get("redact_with"):
         parts.append(f"redact with {labels.get(str(rule.action['redact_with']), 'a policy')}")
     return ", ".join(parts)
@@ -663,39 +675,28 @@ async def dry_run(
     granted: dict[str, bool] = (
         await granted_readers(session, user)
         if user is not None
-        else {n: b for n, (_, b) in (await deployment_readers(session)).items()}
+        else await deployment_readers(session)
     )
+    # A reader the extractor cannot run now is not one a reroute can reach.
+    gone = await unavailable_readers(session, control_http, settings)
     holder: dict[str, Any] = {"model": model}
 
     async def retarget(reader: str) -> Retarget:
         current: ModelDef | None = holder["model"]
-        cur_builtin = False
-        if current is not None and current.provider_id:
-            cp = await session.get(Provider, current.provider_id)
-            cur_builtin = cp is not None and cp.plugin == "extractor"
-        if reader == rulelib.BUILTIN_READER and cur_builtin:
+        if current is not None and current.name == reader:
             return Retarget(None, same=True)
-        if reader != rulelib.BUILTIN_READER and current is not None and current.name == reader:
-            return Retarget(None, same=True)
-        names = (
-            [n for n, b in granted.items() if b] if reader == rulelib.BUILTIN_READER else [reader]
-        )
-        for name in names:
-            if name not in granted:
-                continue
+        if reader in granted and reader not in gone:
             target = (
                 await session.execute(
-                    select(ModelDef).where(ModelDef.name == name, ModelDef.owner_id.is_(None))
+                    select(ModelDef).where(ModelDef.name == reader, ModelDef.owner_id.is_(None))
                 )
             ).scalar_one_or_none()
-            if target is None:
-                continue
-            tp = await session.get(Provider, target.provider_id) if target.provider_id else None
-            holder["model"] = target
-            return Retarget(facts_for(target, tp, facts.is_scan))
-        label = "the built-in extractor" if reader == rulelib.BUILTIN_READER else f"'{reader}'"
+            if target is not None:
+                tp = await session.get(Provider, target.provider_id) if target.provider_id else None
+                holder["model"] = target
+                return Retarget(facts_for(target, tp, facts.is_scan))
         return Retarget(
-            None, impossible=f"it must be read with {label}, which is not available here."
+            None, impossible=f"it must be read with '{reader}', which is not available here."
         )
 
     pipelines = state.pipelines_of(payload.kind)
@@ -828,9 +829,7 @@ async def dry_run(
     for run in combined.runs:
         if not run.pending and run.level != ladder_levels[0]:
             asked.setdefault(run.level, []).append(run.pipeline.name)
-    reader_label = (
-        "the built-in extractor" if combined.reader == rulelib.BUILTIN_READER else combined.reader
-    )
+    reader_label = combined.reader
     ladder = [
         DryRunLevel(
             level=level,
@@ -880,14 +879,10 @@ async def dry_run(
         if combined.level == rulelib.LEVEL_READ_WITH:
             moved = bool(combined.hops)
             outcome = "read_with"
-            headline = (
-                f"Read here by the built-in extractor ({combined.engine or 'default engine'})"
-                if combined.reader == rulelib.BUILTIN_READER
-                else f"Read by {reader_label}"
-            )
+            headline = f"Read by {reader_label}"
             text = (
                 "The file goes whole to the reader chosen, instead of the one the caller named. "
-                if moved and combined.reader != rulelib.BUILTIN_READER
+                if moved
                 else "The file is read by the reader chosen. "
             )
         else:
@@ -927,9 +922,7 @@ async def dry_run(
         hops=[
             DryRunHop(
                 reader=h.reader,
-                reader_name="the built-in extractor"
-                if h.reader == rulelib.BUILTIN_READER
-                else h.reader,
+                reader_name=h.reader,
                 added=[r.pipeline.name for r in h.added],
             )
             for h in combined.hops
@@ -945,16 +938,9 @@ async def dry_run(
             f"pipeline {combined.reader_run.pipeline.name}"
         ),
         reader_overridden=[
-            f"{r.pipeline.name} asked for {r.rule.action.get('reader') or 'the built-in extractor'}"
+            f"{r.pipeline.name} asked for {r.rule.action.get('reader') or rulelib.DEFAULT_READER}"
             for r in combined.overridden
         ],
-        engine=combined.engine,
-        engine_by=(
-            None
-            if combined.engine_run is None
-            else f"{'your' if combined.engine_run.pipeline.is_user else 'administrator'} "
-            f"pipeline {combined.engine_run.pipeline.name}"
-        ),
         impossible=combined.impossible,
         policies=policy_names,
         policy_types=types,

@@ -15,7 +15,7 @@ const rule = (id: string, name: string, level: string, key = "finds") => ({
   observe_only: false,
   conditions: [{ key, values: ["pol1"], negate: false, count: 1 }],
   note: null,
-  action: { level, reader: null, engine: null, redact_with: null },
+  action: { level, reader: null, redact_with: null },
   issues: [],
 });
 
@@ -83,7 +83,6 @@ function render_(element: React.ReactElement, seen: Seen[] = []) {
           own_policies: [],
           classifiers: [],
           entity_types: ["PERSON", "IBAN_CODE"],
-          engines: [],
         });
       return jsonResponse({});
     }),

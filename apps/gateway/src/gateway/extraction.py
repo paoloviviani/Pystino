@@ -47,6 +47,87 @@ PROBE_TIMEOUT_SECONDS = 30.0
 _CONNECT_TIMEOUT_SECONDS = 10.0
 
 
+#: The built-in extractor's models and the reader each one means (docs/extractor-engines.md).
+#: The key is the model's upstream name, what the gateway sends nowhere but
+#: reads here; the value is the ``X-Extractor-Engine`` it sends. ``markitdown``
+#: sends none: it is "the deployment's default reader" (``EXTRACTOR_ENGINE``,
+#: markitdown unless the operator set docling), which is what it has always
+#: meant, so a deployment's existing calls and rules read exactly as before.
+ENGINE_OF_MODEL: dict[str, str | None] = {
+    "markitdown": None,
+    "markitdown-ocr": "ocr",
+    "docling": "docling",
+}
+#: The default reader's model: always offered, since every build has markitdown.
+DEFAULT_MODEL = "markitdown"
+
+
+def engine_of_model(upstream_model: str | None) -> str | None:
+    """The engine header a built-in extractor model sends; None for the default reader
+    and for a model this build does not know (an operator's own extractor row)."""
+    return ENGINE_OF_MODEL.get(upstream_model or "")
+
+
+#: How long a ``/healthz`` answer is trusted. Engines change when the image
+#: does, so a minute-old answer is as good as a fresh one, and listings and
+#: pickers must not each cost a round trip.
+_ENGINES_TTL_SECONDS = 60.0
+_ENGINES_FAILED_TTL_SECONDS = 5.0
+_engines_cache: dict[str, tuple[float, frozenset[str] | None]] = {}
+
+
+async def reported_engines(client: httpx.AsyncClient, endpoint: str) -> frozenset[str] | None:
+    """The engines the extractor at *endpoint* says it can run, or None when it cannot be asked.
+
+    ``/healthz``'s ``extractor_engines``. A service that predates the field
+    reports markitdown only, which is true of every older image's *offering*
+    (the others were reached by header and silently fell back). Never raises;
+    an unreachable service is None, cached briefly so an outage is not a storm.
+    """
+    now = time.monotonic()
+    held = _engines_cache.get(endpoint)
+    if held is not None and held[0] > now:
+        return held[1]
+    found: frozenset[str] | None
+    try:
+        response = await client.get(f"{endpoint.rstrip('/')}/healthz", timeout=5.0)
+        response.raise_for_status()
+        body = response.json()
+        listed = body.get("extractor_engines") if isinstance(body, dict) else None
+        found = (
+            frozenset(str(e) for e in listed)
+            if isinstance(listed, list)
+            else frozenset({"markitdown"})
+        )
+    except Exception as exc:
+        logger.info("could not ask the extractor for its engines: %s", exc)
+        found = None
+    ttl = _ENGINES_TTL_SECONDS if found is not None else _ENGINES_FAILED_TTL_SECONDS
+    _engines_cache[endpoint] = (now + ttl, found)
+    return found
+
+
+def forget_reported_engines() -> None:
+    """Drop the cache (tests, and a provider's base URL changing)."""
+    _engines_cache.clear()
+
+
+def model_availability(upstream_model: str | None, engines: frozenset[str] | None) -> bool | None:
+    """Whether a built-in extractor model can run: True, False, or None when unknown.
+
+    The default reader is always True. A model for another engine is True when the
+    extractor reports the engine, False when it answered and does not, None when
+    it could not be asked (listings then leave the model out; a call is let through
+    and fails as an unreachable extractor would anyway).
+    """
+    engine = engine_of_model(upstream_model)
+    if engine is None:
+        return True
+    if engines is None:
+        return None
+    return engine in engines
+
+
 class ExtractionTimeout(UpstreamError):
     """The extraction service did not answer within the document timeout.
 

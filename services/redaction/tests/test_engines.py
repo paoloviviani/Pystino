@@ -483,3 +483,25 @@ def test_the_notice_names_every_model_and_carries_the_cdla_text(tmp_path: Path) 
     fetch_models.write_notice(lock, ocr_only, docling=False)
     assert "CDLA" not in (ocr_only / "NOTICE.md").read_text()
     assert not (ocr_only / "CDLA-Permissive-2.0.txt").exists()
+
+
+def test_healthz_reports_the_engines_this_build_can_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gateway offers one OCR model per name here, so the list must be true."""
+    monkeypatch.setenv("REDACTION_NLP_ENGINE", "disabled")
+    with TestClient(create_app()) as client:
+        # No weights, no libraries: markitdown only.
+        monkeypatch.setattr(ocr, "available", lambda config=None: False)
+        monkeypatch.setattr(docling_engine, "available", lambda config: False)
+        assert client.get("/healthz").json()["extractor_engines"] == ["markitdown"]
+
+        # The ocr variant: RapidOCR and its weights, no Docling.
+        monkeypatch.setattr(ocr, "available", lambda config=None: True)
+        assert client.get("/healthz").json()["extractor_engines"] == ["markitdown", "ocr"]
+
+        # The docling variant.
+        monkeypatch.setattr(docling_engine, "available", lambda config: True)
+        assert client.get("/healthz").json()["extractor_engines"] == [
+            "markitdown",
+            "ocr",
+            "docling",
+        ]

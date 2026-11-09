@@ -31,7 +31,7 @@ first: every pipeline in scope runs, and the results combine.**
 |---|---|
 | Where it is handled | the **ladder**: the highest level across all pipelines wins |
 | What is hidden | the policies each pipeline chose are **added up**; for each entity type the **strictest mode** wins (`off` < `detect_only` < `anonymise_restore` < `anonymise` < `redact` < `block`, the fold of ADR 0038 with `detect_only` added at the bottom) |
-| The reader, the engine | an **administrator** pipeline's choice holds; a user's applies only if no administrator pipeline chose one; otherwise the default |
+| The reader | an **administrator** pipeline's choice holds; a user's applies only if no administrator pipeline chose one; otherwise the default |
 | Who is named | the rule that set the winning level; on a tie, the administrator's |
 | The trace | every pipeline in scope and the rule that fired in each |
 
@@ -187,20 +187,24 @@ and name, scan) have held.
 | Level | Effect |
 |---|---|
 | default reader | the model the caller named reads the file, possibly a remote one |
-| **read with** a reader | any configured `/v1/ocr` model: the **built-in extractor** (`builtin`; the first extractor model the caller may use), or another OCR provider such as a facility reader. It **overrides the model the caller named**. |
+| **read with** a reader | any configured `/v1/ocr` model: one of the **built-in extractor's models** (`markitdown`, `markitdown-ocr`, `docling`, below), or another OCR provider such as a facility reader. It **overrides the model the caller named**. |
 | refuse | 403 with `routing_refused`, naming the rule and its pipeline. Never the content or the file's name |
 
-- The reader picker lists the **Built-in extractor** once (the seeded extractor model, "markitdown",
-  is that same reader) and every other OCR model by name. A rule that names the extractor's
-  model is saved as the Built-in extractor; migration 0083 renames existing ones.
-- The built-in extractor may name an **engine** (`markitdown`, `ocr`, `docling`;
-  passed as `X-Extractor-Engine`). The engine is quality, not privacy, so it is
-  not on the ladder. An administrator pipeline's engine holds, then a user's, then
-  the deployment default.
+- **The built-in extractor's engines are models.** Each engine the deployment's
+  extractor can run is an OCR model of its own under the built-in provider:
+  `markitdown` (the extractor's default engine, `EXTRACTOR_ENGINE`; markitdown unless
+  the operator set docling), `markitdown-ocr` (markitdown plus RapidOCR, for scans and
+  pictures) and `docling`. The reader picker lists them by name beside any other OCR
+  model, and a rule that names none reads with `markitdown`. There is no separate
+  engine choice: the engine is the model, so one rule picks the reader and the engine
+  together, and the "administrator's reader wins over a user's" rule covers both.
+  Reading with `markitdown-ocr` or `docling` is quality, not privacy: the file stays
+  in the deployment either way. See [extractor engines](extractor-engines.md).
 - **It fails closed when it cannot be done**: the document is a link and the
-  reader is the built-in extractor (which reads only documents sent with the
-  request, never a URL: that would be a server-side request forgery), or the
-  reader is not available to the caller (not granted, switched off).
+  reader is one of the built-in extractor's models (which read only documents sent
+  with the request, never a URL: that would be a server-side request forgery), or the
+  reader is not available to the caller (not granted, switched off, or an extractor
+  model whose engine the running extractor does not offer).
 - **After a reroute, the pipelines whose target scope covers the new reader also
   run**, so a reroute can never escape a pipeline that guards that reader. The
   loop is bounded (three hops). A pipeline that guards the reader the request was
@@ -245,7 +249,7 @@ who-scope is fixed to the user (the server sets it whatever is sent, and the
 request-time scope check holds it again).
 
 - **Their actions only tighten**: read with a reader, refuse, redact with a
-  policy, choose an engine. There is no "default reader" or "pass" action for a
+  policy. There is no "default reader" or "pass" action for a
   rule (that is what happens anyway), though "everything else" may add nothing.
 - **Policies**: an administrator's that is **marked shared with users**, or their
   own, both to apply and in "finds at least N items". A user pipeline's policies are
@@ -401,6 +405,19 @@ exist only on unreleased builds so far, but nothing is dropped silently:
   users, so nothing stops working.
 - Every conversion is in the migration log (`privacy migration 0083: ...`), naming
   the pipeline and the rule.
+
+### Migration 0084: the extractor's engines are models
+
+Rules no longer say "the built-in extractor" plus an engine; they name a model.
+`builtin` with engine `markitdown` becomes `markitdown`, `ocr` becomes `markitdown-ocr`,
+`docling` becomes `docling`, and `builtin` with no engine becomes `markitdown` (the
+deployment's default reader). Every changed rule is in the migration log (`extractor
+engine models 0084: ...`). One edge: the `markitdown` model means "the extractor's
+default engine", so on a deployment that set `EXTRACTOR_ENGINE=docling` a rule that
+named the engine `markitdown` explicitly now reads with that default. The downgrade
+turns the names back into `builtin` and an engine. The API's `engine` field on a rule's
+action and the options' `engines` list are gone (a request that sends `engine` is
+refused with 422).
 
 ## What it does not do yet
 

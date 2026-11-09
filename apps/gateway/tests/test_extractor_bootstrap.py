@@ -247,7 +247,8 @@ class TestSeed:
         catalogue = plugin.builtin_catalogue()
         assert catalogue is not None
         entries = catalogue["data"]
-        assert len(entries) == 1
+        # One model per engine (docs/extractor-engines.md); the first is the seeded one.
+        assert [e["id"] for e in entries] == [MODEL_NAME, "markitdown-ocr", "docling"]
         entry = entries[0]
         assert entry["id"] == MODEL_NAME
         # The tag is what the importer reads the kind from; the modalities
