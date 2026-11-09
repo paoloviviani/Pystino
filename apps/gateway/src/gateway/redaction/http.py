@@ -940,7 +940,10 @@ class HttpDetectionRedactor:
                     exc_info=True,
                 )
                 return None, False
-            timed_out = isinstance(exc, (TimeoutError, httpx.TimeoutException))
+            # A connect timeout means the service was never reached, not that it was slow
+            timed_out = isinstance(exc, (TimeoutError, httpx.TimeoutException)) and not isinstance(
+                exc, (httpx.ConnectTimeout, httpx.PoolTimeout)
+            )
             # An httpx timeout has an empty str(): name the type instead. The size and
             # engine are logged, never the text.
             reason = str(exc) or type(exc).__name__

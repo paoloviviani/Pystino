@@ -529,6 +529,13 @@ class TestFailureHandling:
         assert raised.value.code == "redaction_unreachable"
         assert "could not be reached" in raised.value.message
 
+    async def test_a_connect_timeout_is_unreachable_not_slow(self) -> None:
+        detector = FakeDetector()
+        detector.fail_with = httpx.ConnectTimeout("")
+        with pytest.raises(RedactionUnavailableError) as raised:
+            await detector.redactor().redact_request([{"role": "user", "content": "hello"}])
+        assert raised.value.code == "redaction_unreachable"
+
     def test_the_default_timeout_is_thirty_seconds(self) -> None:
         assert RedactionSettings().timeout_seconds == 30.0
 
