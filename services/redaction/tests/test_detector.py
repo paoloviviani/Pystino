@@ -634,6 +634,7 @@ class TestPatternFamilyIsOnlyPatternRecognisers:
             assert label in capabilities.pattern_entities
 
     def test_every_pattern_entity_comes_from_a_regex_or_checksum_recogniser(self) -> None:
+        pytest.importorskip("presidio_analyzer", reason="presidio not installed")
         from presidio_analyzer import LocalRecognizer
 
         analyzer = self._real_analyzer(with_spacy=True)
