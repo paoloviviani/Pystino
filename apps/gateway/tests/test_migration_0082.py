@@ -273,6 +273,22 @@ def _sorted_old(path: Path) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]
     return rules, users
 
 
+def _old_shape(policy: dict[str, Any]) -> dict[str, Any]:
+    """What the older release stored: one ``entities`` table (``formats`` merged back in),
+    no engine, custom entities or keywords, and ``detect_only`` written as ``off``."""
+
+    def mode(entry: dict[str, Any]) -> dict[str, Any]:
+        return {**entry, "mode": "off"} if entry.get("mode") == "detect_only" else entry
+
+    merged = {**policy.get("formats", {}), **policy.get("entities", {})}
+    return {
+        "default_mode": policy["default_mode"],
+        "patterns": policy["patterns"],
+        "allow_list": policy["allow_list"],
+        "entities": {k: mode(v) for k, v in merged.items()},
+    }
+
+
 def test_the_downgrade_round_trips_every_contract_configuration(tmp_path: Path) -> None:
     from test_privacy_migration_contract import CONFIGS, _build_old_database
 
@@ -287,8 +303,10 @@ def test_the_downgrade_round_trips_every_contract_configuration(tmp_path: Path) 
             (
                 scope,
                 None if subject is None else subjects[subject].hex,
-                RedactionPolicy(**{k: v for k, v in kwargs.items() if k != "_inactive"}).model_dump(
-                    mode="json"
+                _old_shape(
+                    RedactionPolicy(
+                        **{k: v for k, v in kwargs.items() if k != "_inactive"}
+                    ).model_dump(mode="json")
                 ),
                 0 if kwargs.get("_inactive") else 1,
             )
