@@ -7278,6 +7278,28 @@
             "title": "Models",
             "type": "array"
           },
+          "ner_available": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ner Available"
+          },
+          "ner_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ner Note"
+          },
           "own_policies": {
             "items": {
               "$ref": "#/components/schemas/NamedId"
@@ -7325,6 +7347,8 @@
           "own_policies",
           "classifiers",
           "entity_types",
+          "ner_available",
+          "ner_note",
           "engines"
         ],
         "title": "OptionsResponse",

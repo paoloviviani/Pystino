@@ -446,13 +446,17 @@ def normalise_readers(
 
 
 def clean_entries(
-    entries: Sequence[Any], *, allowed_types: Sequence[str] | None
+    entries: Sequence[Any],
+    *,
+    allowed_types: Sequence[str] | None,
+    no_ner_types: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """A user's policy entries, clean, under the administrators' own validation.
 
     Raises ``ValueError`` with a message for the user. A mode for an entity
     type must be one an administrator made available; a pattern's label is a
-    pattern, not a type, so it is not limited.
+    pattern, not a type, so it is not limited. ``no_ner_types`` is set when the
+    redaction service has no NER model: a type only a model finds is refused.
     """
     from gateway.redaction import user_rules
 
@@ -473,6 +477,10 @@ def clean_entries(
             user_rules.validate_pattern(name, entry.regex, mode)
             regex: str | None = entry.regex
         else:
+            if no_ner_types is not None and name in no_ner_types:
+                from gateway.privacy.engines import NO_NER_MESSAGE
+
+                raise ValueError(f"'{name}' is found by an NER engine. {NO_NER_MESSAGE}")
             if allowed is not None and name not in allowed:
                 raise ValueError(
                     f"'{name}' is not an entity type your administrator makes available."

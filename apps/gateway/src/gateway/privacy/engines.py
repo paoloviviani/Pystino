@@ -87,6 +87,31 @@ async def fetch_engines(http: httpx.AsyncClient, settings: Settings) -> EnginesR
     return EnginesResponse(reachable=True, detail="ok", pattern_entities=patterns, engines=engines)
 
 
+#: What the console and the API say when the redaction service has no NER model at all.
+NO_NER_MESSAGE = (
+    "No NER engine is installed in the redaction service; entities need one. "
+    "Run the NER image with REDACTION_NLP_ENGINE=spacy (with the Cerea kit: "
+    './configure --redaction), see the Redaction guide, section "Deploying less of it".'
+)
+
+
+def has_ner(report: EnginesResponse) -> bool | None:
+    """Whether any engine of the service can find entities; None when that is not known."""
+    if not report.reachable:
+        return None
+    return any(engine.available and engine.entities for engine in report.engines)
+
+
+def ner_type_names(report: EnginesResponse) -> set[str]:
+    """Every model-backed type any engine reports, plus the first service's four."""
+    from gateway.config import LEGACY_NER_TYPES
+
+    names = set(LEGACY_NER_TYPES)
+    for engine in report.engines:
+        names.update(entity.upper() for entity in engine.entities)
+    return names
+
+
 def engine_problem(report: EnginesResponse, policy_engine: str | None, labels: bool) -> str | None:
     """Why a policy's engine cannot be chosen against this report, or None when it can."""
     if policy_engine is None:

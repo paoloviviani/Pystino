@@ -636,3 +636,133 @@ class TestOnTheRequestPath:
         )
         assert ok.status_code == 200, ok.text
         assert fake_upstream.bodies[-1]["input"] == ["Only Falcon here."]
+
+
+def pattern_only_service() -> FakeService:
+    """A service whose image has no NER model: engines are listed but expose no entities."""
+    service = FakeService()
+    service.health["pattern_entities"] = ["EMAIL_ADDRESS", "IBAN_CODE", "CREDIT_CARD"]
+    for engine in service.health["ner_engines"]:
+        engine["entities"] = []
+        engine["available"] = engine["name"] == "spacy"
+        engine["custom_labels"] = False
+    return service
+
+
+class TestPatternOnlyService:
+    async def install(self, app: Any, service: FakeService) -> None:
+        app.state.settings.redaction.engine = "http"
+        app.state.settings.redaction.endpoint = "http://detector:8080"
+        app.state.control_http = service.client()
+        app.state.redactor = service.redactor()
+        app.state.redaction = None
+
+    async def test_an_entity_item_is_refused_with_the_no_ner_message(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        await self.install(app, pattern_only_service())
+        refused = await client.post(
+            "/api/admin/privacy/policies",
+            json={"name": "N", "policy": {"entities": {"PERSON": {"mode": "redact"}}}},
+        )
+        assert refused.status_code == 422
+        assert "No NER engine is installed in the redaction service" in refused.text
+        assert "entities need one" in refused.text
+        # Patterns alone are fine.
+        ok = await client.post(
+            "/api/admin/privacy/policies",
+            json={"name": "P", "policy": {"formats": {"IBAN_CODE": {"mode": "redact"}}}},
+        )
+        assert ok.status_code == 201
+
+    async def test_a_retired_format_may_stay_only_while_it_is_off(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        """AGE was advertised as a pattern format by mistake: a policy that saved it is kept."""
+        as_user(app, await make_admin(session_factory, seeded))
+        await self.install(app, pattern_only_service())
+        acting = await client.post(
+            "/api/admin/privacy/policies",
+            json={"name": "A", "policy": {"formats": {"AGE": {"mode": "redact"}}}},
+        )
+        assert acting.status_code == 422 and "no built-in format: AGE" in acting.text
+        kept = await client.post(
+            "/api/admin/privacy/policies",
+            json={"name": "B", "policy": {"formats": {"AGE": {"mode": "off"}}}},
+        )
+        assert kept.status_code == 201
+        assert kept.json()["policy"]["formats"]["AGE"]["mode"] == "off"
+
+    async def test_the_placeholder_style_round_trips_on_every_kind_of_item(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        await self.install(app, FakeService())
+        policy = {
+            "formats": {"IBAN_CODE": {"mode": "anonymise", "placeholder": "same_length"}},
+            "entities": {"PERSON": {"mode": "anonymise_restore", "placeholder": "same_length"}},
+            "patterns": [
+                {
+                    "name": "BADGE",
+                    "regex": "B-[0-9]+",
+                    "mode": "anonymise",
+                    "placeholder": "same_length",
+                }
+            ],
+            "keywords": [
+                {
+                    "name": "CODES",
+                    "words": ["falcon"],
+                    "mode": "anonymise",
+                    "placeholder": "same_length",
+                }
+            ],
+            "engine": "gliner",
+            "custom_entities": [
+                {
+                    "name": "CODENAME",
+                    "label": "project code name",
+                    "mode": "anonymise",
+                    "placeholder": "same_length",
+                }
+            ],
+        }
+        created = await client.post(
+            "/api/admin/privacy/policies", json={"name": "Round", "policy": policy}
+        )
+        assert created.status_code == 201, created.text
+        got = (await client.get("/api/admin/privacy/policies")).json()["items"][0]["policy"]
+        assert got["formats"]["IBAN_CODE"]["placeholder"] == "same_length"
+        assert got["entities"]["PERSON"]["placeholder"] == "same_length"
+        assert got["patterns"][0]["placeholder"] == "same_length"
+        assert got["keywords"][0]["placeholder"] == "same_length"
+        assert got["custom_entities"][0]["placeholder"] == "same_length"
+
+    async def test_my_privacy_offers_no_model_types_and_refuses_them(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        from gateway.models import PrivacySettings
+
+        as_user(app, seeded.user)
+        async with session_factory() as db:
+            db.add(PrivacySettings(id=1, user_entity_types=["PERSON", "IBAN_CODE"]))
+            await db.commit()
+        await self.install(app, pattern_only_service())
+        options = (await client.get("/api/me/privacy/options")).json()
+        assert options["ner_available"] is False
+        assert options["entity_types"] == ["IBAN_CODE"]
+        assert "No NER engine is installed" in options["ner_note"]
+        refused = await client.post(
+            "/api/me/privacy/policies",
+            json={"name": "N", "entries": [{"kind": "mode", "name": "PERSON", "mode": "redact"}]},
+        )
+        assert refused.status_code == 422 and "No NER engine is installed" in refused.text
+        ok = await client.post(
+            "/api/me/privacy/policies",
+            json={
+                "name": "I",
+                "entries": [{"kind": "mode", "name": "IBAN_CODE", "mode": "redact"}],
+            },
+        )
+        assert ok.status_code == 201

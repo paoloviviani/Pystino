@@ -28,6 +28,7 @@ from fastapi import APIRouter, Request, status
 from sqlalchemy import func, select
 
 from gateway.admin_audit import record_audit
+from gateway.config import EntityMode
 from gateway.deps import (
     AdminUserDep,
     ControlHttpDep,
@@ -49,7 +50,7 @@ from gateway.models import (
 from gateway.pagination import MAX_LIMIT, Page
 from gateway.privacy import rules as rulelib
 from gateway.privacy import service
-from gateway.privacy.engines import engine_problem, fetch_engines
+from gateway.privacy.engines import NO_NER_MESSAGE, engine_problem, fetch_engines, has_ner
 from gateway.privacy.pipelines import Pipeline, pipeline_from_row, validate_pipeline
 from gateway.privacy.schemas import (
     ActionBody,
@@ -580,9 +581,12 @@ def _check_engine(policy: Any, engines: EnginesResponse) -> None:
         # An engine that reports no entity types has no NER model (a pattern-only image, or
         # a model that failed to load): every entity item would be unserved, and a
         # condition that counts them could never answer.
+        if not has_ner(engines):
+            raise UnprocessableError(NO_NER_MESSAGE)
         raise UnprocessableError(
-            f"The engine '{chosen.name}' reports no entity types (it has no NER model), so "
-            f"it cannot find: {', '.join(sorted(policy.entities))}."
+            f"The engine '{chosen.name}' reports no entity types "
+            f"(it has no NER model), so it cannot find: {', '.join(sorted(policy.entities))}. "
+            "Choose an engine that has one."
         )
     if chosen is not None and chosen.entities:
         unknown = sorted(set(policy.entities) - {e.upper() for e in chosen.entities})
@@ -600,10 +604,19 @@ def _check_engine(policy: Any, engines: EnginesResponse) -> None:
                 "already uses for its own types: choose another description."
             )
     if engines.pattern_entities:
-        unknown = sorted(set(policy.formats) - {e.upper() for e in engines.pattern_entities})
+        # A format the service no longer lists (AGE, ID, EMAIL were advertised by the
+        # spaCy recogniser's label map, never by a pattern) may stay in a policy as
+        # long as it is off: kept and visible, never silently dropped, and not asked.
+        known = {e.upper() for e in engines.pattern_entities}
+        unknown = sorted(
+            name
+            for name, entry in policy.formats.items()
+            if name not in known and entry.mode is not EntityMode.OFF
+        )
         if unknown:
             raise UnprocessableError(
-                f"The redaction service has no built-in format: {', '.join(unknown)}."
+                f"The redaction service has no built-in format: {', '.join(unknown)}. "
+                "Set it to Off to keep it in the policy, or remove it."
             )
 
 

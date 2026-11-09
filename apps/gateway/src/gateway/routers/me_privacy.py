@@ -44,10 +44,12 @@ from gateway.models import (
 from gateway.pagination import MAX_LIMIT, Page
 from gateway.privacy import rules as rulelib
 from gateway.privacy import service
+from gateway.privacy.engines import NO_NER_MESSAGE, fetch_engines, has_ner, ner_type_names
 from gateway.privacy.pipelines import Pipeline, pipeline_from_row, validate_pipeline
 from gateway.privacy.schemas import (
     DryRunRequest,
     DryRunResponse,
+    EnginesResponse,
     IssueView,
     ModelOption,
     NamedId,
@@ -167,7 +169,12 @@ async def _name_free(
 
 
 @router.get("/options", response_model=OptionsResponse)
-async def options(user: ManagementUserDep, session: SessionDep) -> OptionsResponse:
+async def options(
+    user: ManagementUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    control_http: ControlHttpDep,
+) -> OptionsResponse:
     """What this user may pick: their readers, policies, targets and types."""
     group = service.request_group_id(user)
     models = list(
@@ -192,6 +199,13 @@ async def options(user: ManagementUserDep, session: SessionDep) -> OptionsRespon
     mine = await service.user_policy_rows(session, user.id)
     settings_row = await service.settings_row(session)
     builtin = any(readers.values())
+    report = await fetch_engines(control_http, settings)
+    ner = has_ner(report)
+    entity_types = settings_row.user_entity_types
+    if ner is False and entity_types is not None:
+        # No model, so a type only a model finds could never be served: not offered.
+        blocked = ner_type_names(report)
+        entity_types = [t for t in entity_types if t.upper() not in blocked]
     return OptionsResponse(
         users=[],
         groups=[],
@@ -217,7 +231,9 @@ async def options(user: ManagementUserDep, session: SessionDep) -> OptionsRespon
         policies=[NamedId(id=p.id, name=p.name) for p in admin_policies],
         own_policies=[NamedId(id=p.id, name=p.name) for p in mine],
         classifiers=[],
-        entity_types=settings_row.user_entity_types,
+        entity_types=entity_types,
+        ner_available=ner,
+        ner_note=NO_NER_MESSAGE if ner is False else None,
         engines=list(rulelib.ENGINES),
     )
 
@@ -397,7 +413,11 @@ async def _own_policy(session: SessionDep, user: User, policy_id: uuid.UUID) -> 
 
 
 async def _policy_fields(
-    session: SessionDep, user: User, payload: UserPolicyRequest, ignore: uuid.UUID | None
+    session: SessionDep,
+    user: User,
+    payload: UserPolicyRequest,
+    ignore: uuid.UUID | None,
+    report: EnginesResponse,
 ) -> tuple[str, list[dict[str, Any]]]:
     name = payload.name.strip()
     if not name:
@@ -408,7 +428,9 @@ async def _policy_fields(
     settings_row = await service.settings_row(session)
     try:
         entries = service.clean_entries(
-            payload.entries, allowed_types=settings_row.user_entity_types
+            payload.entries,
+            allowed_types=settings_row.user_entity_types,
+            no_ner_types=ner_type_names(report) if has_ner(report) is False else None,
         )
     except ValueError as exc:
         raise UnprocessableError(_message_of(exc)) from exc
@@ -436,7 +458,12 @@ async def list_my_policies(
 
 @router.post("/policies", response_model=UserPolicyResponse, status_code=status.HTTP_201_CREATED)
 async def create_my_policy(
-    payload: UserPolicyRequest, user: ManagementUserDep, session: SessionDep, request: Request
+    payload: UserPolicyRequest,
+    user: ManagementUserDep,
+    session: SessionDep,
+    request: Request,
+    settings: SettingsDep,
+    control_http: ControlHttpDep,
 ) -> UserPolicyResponse:
     count = (
         await session.execute(
@@ -445,7 +472,9 @@ async def create_my_policy(
     ).scalar_one()
     if count >= MAX_POLICIES_PER_USER:
         raise ConflictError(f"You can keep at most {MAX_POLICIES_PER_USER} policies.")
-    name, entries = await _policy_fields(session, user, payload, None)
+    name, entries = await _policy_fields(
+        session, user, payload, None, await fetch_engines(control_http, settings)
+    )
     row = UserPolicy(id=uuid.uuid4(), user_id=user.id, name=name, rules=entries)
     session.add(row)
     await session.commit()
@@ -460,9 +489,13 @@ async def update_my_policy(
     user: ManagementUserDep,
     session: SessionDep,
     request: Request,
+    settings: SettingsDep,
+    control_http: ControlHttpDep,
 ) -> UserPolicyResponse:
     row = await _own_policy(session, user, policy_id)
-    name, entries = await _policy_fields(session, user, payload, row.id)
+    name, entries = await _policy_fields(
+        session, user, payload, row.id, await fetch_engines(control_http, settings)
+    )
     row.name = name
     row.rules = entries
     await session.commit()

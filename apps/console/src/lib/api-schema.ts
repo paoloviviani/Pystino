@@ -6743,6 +6743,10 @@ export interface components {
             keys: components["schemas"]["NamedId"][];
             /** Models */
             models: components["schemas"]["ModelOption"][];
+            /** Ner Available */
+            ner_available: boolean | null;
+            /** Ner Note */
+            ner_note: string | null;
             /** Own Policies */
             own_policies: components["schemas"]["NamedId"][];
             /** Policies */

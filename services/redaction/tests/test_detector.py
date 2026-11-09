@@ -572,3 +572,86 @@ class TestBuildWithoutNer:
         phones = [span for span in spans if span.entity_type == "PHONE_NUMBER"]
         assert phones, f"no phone found above 0.5: {spans}"
         assert phones[0].score >= 0.5
+
+
+class _RegistryHolder:
+    def __init__(self, registry: Any) -> None:
+        self.registry = registry
+
+    def get_supported_entities(self, language: str | None = None) -> list[str]:
+        return []
+
+    def analyze(self, text: str, language: str, **kwargs: Any) -> list[Any]:
+        return []
+
+
+class TestPatternFamilyIsOnlyPatternRecognisers:
+    """The partition is read from the loaded recognisers, not from entity names.
+
+    Presidio's SpacyRecogniser advertises ID, AGE, EMAIL, PHONE_NUMBER and DATE_TIME
+    (its label mapping) although stock spaCy models never emit most of them. They
+    used to be classed as "pattern" only because their names were not on the NER
+    list, so the console offered AGE as a pattern format.
+    """
+
+    @staticmethod
+    def _real_analyzer(*, with_spacy: bool) -> Any:
+        pytest.importorskip("presidio_analyzer", reason="presidio not installed")
+        from llmp_redaction.app import _assemble_analyzer, _no_op_engine
+        from presidio_analyzer import RecognizerRegistry
+        from presidio_analyzer.predefined_recognizers import SpacyRecognizer
+
+        analyzer = _assemble_analyzer(["en"], _no_op_engine(["en"]), no_ner=True)
+        if with_spacy:
+            # Presidio refuses the SpacyRecogniser on its no-op engine, and the real
+            # one needs a model: a registry holder is all the partition reads.
+            registry = RecognizerRegistry(supported_languages=["en"])
+            registry.recognizers = [
+                *analyzer.registry.recognizers,
+                SpacyRecognizer(supported_language="en"),
+            ]
+            analyzer = _RegistryHolder(registry)
+        return analyzer
+
+    def test_no_ner_advertises_no_model_entities(self) -> None:
+        analyzer = self._real_analyzer(with_spacy=False)
+        detector = Detector(analyzer, languages=["en"], models={})
+        capabilities = detector.capabilities_of(detector.slots[0])
+        assert capabilities.model_entities == []
+        for model_label in ("AGE", "ID", "EMAIL", "PERSON", "LOCATION"):
+            assert model_label not in capabilities.entities
+
+    def test_spacy_recogniser_labels_stay_out_of_the_pattern_family(self) -> None:
+        analyzer = self._real_analyzer(with_spacy=True)
+        detector = Detector(analyzer, languages=["en"], models={"en": "en_core_web_md"})
+        capabilities = detector.capabilities()
+        assert capabilities.model_entities == ["LOCATION", "NRP", "ORGANIZATION", "PERSON"]
+        for label in ("AGE", "ID", "EMAIL", "PERSON", "NRP", "LOCATION", "ORGANIZATION"):
+            assert label not in capabilities.pattern_entities
+        assert "AGE" not in capabilities.entities
+        # Genuine regex and checksum recognisers stay.
+        for label in ("EMAIL_ADDRESS", "IBAN_CODE", "CREDIT_CARD", "IT_FISCAL_CODE"):
+            assert label in capabilities.pattern_entities
+
+    def test_every_pattern_entity_comes_from_a_regex_or_checksum_recogniser(self) -> None:
+        from presidio_analyzer import LocalRecognizer
+
+        analyzer = self._real_analyzer(with_spacy=True)
+        detector = Detector(analyzer, languages=["en"], models={"en": "en_core_web_md"})
+        pattern = set(detector.capabilities().pattern_entities)
+        deterministic = set()
+        for recognizer in analyzer.registry.recognizers:
+            if type(recognizer).__name__ == "SpacyRecognizer":
+                continue
+            assert isinstance(recognizer, LocalRecognizer)
+            deterministic.update(recognizer.supported_entities)
+        assert pattern == deterministic
+
+    def test_a_recogniser_that_is_not_loaded_advertises_nothing(self) -> None:
+        from llmp_redaction.detector import _partition_registry
+
+        class Unloaded:
+            is_loaded = False
+            supported_entities = ("GHOST",)
+
+        assert _partition_registry([Unloaded()]) == ([], [])

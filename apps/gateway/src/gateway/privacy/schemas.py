@@ -452,6 +452,10 @@ class OptionsResponse(ResponseModel):
     classifiers: list[NamedId]
     #: Entity types a user's own policy may name; null means any.
     entity_types: list[str] | None = None
+    #: Whether the redaction service has an NER engine (None: not known). False means
+    #: entity types only a model finds are not offered and a policy naming one is refused.
+    ner_available: bool | None = None
+    ner_note: str | None = None
     engines: list[str]
 
 
