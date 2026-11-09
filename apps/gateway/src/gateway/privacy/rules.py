@@ -475,7 +475,7 @@ def validate_rule(
         }
         if key == "finds":
             try:
-                count = int(item.get("count") or 1)
+                count = int(1 if item.get("count") is None else item["count"])
             except (TypeError, ValueError) as exc:
                 raise RuleError("'finds at least' needs a number.") from exc
             if not 1 <= count <= MAX_COUNT:

@@ -1,5 +1,5 @@
-"""Privacy pipelines, the parts with no I/O: the quick check, rule validation and
-the save-time checks, and the evaluator of one pipeline (ADR 0113)."""
+"""Privacy pipelines, the parts with no I/O: rule validation, the save-time checks,
+and the evaluator of one pipeline over a fake judge (ADR 0113, section 0c)."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ import uuid
 from typing import Any
 
 import pytest
-from gateway.privacy.classify import VerdictCache, classify, detect_language
-from gateway.privacy.evaluate import Evaluator, Facts, Profile, resolve_decider
+from gateway.privacy.evaluate import Evaluator, Facts, Undecidable
+from gateway.privacy.finds import FindResult, Item, Verdict
 from gateway.privacy.rules import (
     CheckContext,
     Condition,
-    ProfileInfo,
+    ContentInfo,
     Rule,
     RuleError,
     check,
@@ -45,83 +45,45 @@ def rule(
     )
 
 
-def cond(key: str, *values: str, negate: bool = False, decide: str | None = None) -> Condition:
-    return Condition(key=key, values=tuple(values), negate=negate, decide=decide)
+def cond(key: str, *values: str, negate: bool = False, count: int = 1) -> Condition:
+    return Condition(key=key, values=tuple(values), negate=negate, count=count)
 
 
-# -- the quick check ---------------------------------------------------------------
-
-
-class TestQuickCheck:
-    @pytest.mark.parametrize(
-        "text",
-        [
-            "Il paziente presenta una diagnosi di diabete di tipo 2.",
-            "Referto del 12 marzo: glicemia elevata, si consiglia terapia.",
-            "Cartella clinica: anamnesi familiare positiva per ipertensione.",
-            "The patient was diagnosed with hypertension and given a prescription.",
-            "Discharge summary: blood pressure stable, medication continued.",
-        ],
+def item(type_: str = "KEYWORDS", value: str = "x", *, group: str = "pattern") -> Item:
+    return Item(
+        group=group,  # type: ignore[arg-type]
+        type=type_,
+        engine="pattern" if group == "pattern" else "spacy",
+        score=None if group == "pattern" else 0.9,
+        value=value,
     )
-    def test_health_vocabulary_in_italian_and_english(self, text: str) -> None:
-        assert classify(text).health
-
-    @pytest.mark.parametrize(
-        "text",
-        [
-            "La riunione di lunedi parlera del budget trimestrale.",
-            "Our therapy for slow builds is a better CI cache.",
-            "Please send the invoice by Friday.",
-        ],
-    )
-    def test_ordinary_text_is_not_health_data(self, text: str) -> None:
-        assert not classify(text).health
-
-    def test_one_weak_word_is_not_enough_two_are(self) -> None:
-        assert not classify("La visita al museo e stata bella.").health
-        assert classify("Il medico ha prescritto una terapia per i sintomi.").health
-
-    def test_a_valid_codice_fiscale_is_an_id_and_an_invalid_one_is_not(self) -> None:
-        assert classify("Codice fiscale RSSMRA85T10A562S del cliente.").ids
-        assert not classify("Codice fiscale RSSMRA85T10A562X del cliente.").ids
-
-    def test_an_iban_with_a_good_checksum_is_an_id(self) -> None:
-        assert classify("Bonifico su IT60 X054 2811 1010 0000 0123 456").ids
-        assert not classify("Bonifico su IT61 X054 2811 1010 0000 0123 456").ids
-
-    def test_a_card_number_needs_the_luhn_checksum(self) -> None:
-        assert classify("Card 4111 1111 1111 1111 expires soon").ids
-        assert not classify("Order 4111 1111 1111 1112 shipped").ids
-
-    def test_a_vat_number_needs_its_context_and_checksum(self) -> None:
-        assert classify("P.IVA 12345678903").ids
-        assert not classify("Numero 12345678903 senza contesto").ids
-
-    def test_ssn(self) -> None:
-        assert classify("SSN 078-05-1120").ids
-        assert not classify("Call 666-12-3456").ids
-
-    def test_language(self) -> None:
-        assert detect_language("Il gatto e sul tavolo e la casa non e molto grande.") == "it"
-        assert detect_language("The cat is on the table and the house is not very big.") == "en"
-        assert detect_language("ok") == "und"
-
-    def test_the_cache_returns_the_same_verdict_and_stores_no_text(self) -> None:
-        cache = VerdictCache(capacity=2)
-        text = "Referto: diagnosi di diabete."
-        first = cache.classify(text)
-        assert cache.classify(text) == first
-        assert (cache.hits, cache.misses) == (1, 1)
-        assert all(isinstance(key, str) and text not in key for key in cache._entries)
-
-    def test_the_cache_is_bounded(self) -> None:
-        cache = VerdictCache(capacity=2)
-        for n in range(5):
-            cache.classify(f"text number {n}")
-        assert len(cache) == 2
 
 
-# -- validation --------------------------------------------------------------------
+class FakeJudge:
+    """Counts nothing itself: answers from a table, and remembers what it was asked."""
+
+    def __init__(
+        self,
+        finds: dict[str, FindResult] | None = None,
+        verdicts: dict[str, Verdict] | None = None,
+    ) -> None:
+        self.finds = finds or {}
+        self.verdicts = verdicts or {}
+        self.asked: list[str] = []
+
+    def policy_name(self, policy_id: str) -> str | None:
+        return f"policy-{policy_id}" if policy_id in self.finds else None
+
+    def classifier_name(self, classifier_id: str) -> str | None:
+        return f"classifier-{classifier_id}" if classifier_id in self.verdicts else None
+
+    async def find(self, policy_id: str, texts: Any) -> FindResult:
+        self.asked.append(policy_id)
+        return self.finds.get(policy_id, FindResult(unavailable="gone"))
+
+    async def classify(self, classifier_id: str, texts: Any) -> Verdict:
+        self.asked.append(classifier_id)
+        return self.verdicts.get(classifier_id, Verdict(unavailable="gone"))
 
 
 class TestValidation:
@@ -149,18 +111,47 @@ class TestValidation:
         ("kind", "raw", "fragment"),
         [
             ("read", {"conditions": [{"key": "lang", "values": ["it"]}]}, "not a condition"),
+            ("embed", {"conditions": [{"key": "health"}]}, "not a condition"),
+            ("embed", {"conditions": [{"key": "ids"}]}, "not a condition"),
             ("embed", {"conditions": [{"key": "filename", "values": ["x"]}]}, "not a condition"),
             ("read", {"conditions": [{"key": "who", "values": ["group:a"]}]}, "not a condition"),
             ("read", {"conditions": [{"key": "target", "values": ["cloud"]}]}, "not a condition"),
             ("read", {"conditions": [{"key": "filetype", "values": ["floppy"]}]}, "File type"),
             ("read", {"conditions": [{"key": "filetype", "values": ["scan"]}]}, "File type"),
             ("read", {"conditions": [{"key": "filename", "values": ["***"]}]}, "ordinary"),
-            ("embed", {"conditions": [{"key": "lang", "values": ["italian"]}]}, "language code"),
-            ("embed", {"conditions": [{"key": "health", "values": ["x"]}]}, "no values"),
-            ("embed", {"conditions": [{"key": "lang", "values": []}]}, "at least one value"),
+            ("read", {"conditions": [{"key": "scan", "values": ["x"]}]}, "no values"),
+            ("embed", {"conditions": [{"key": "finds", "values": []}]}, "names one policy"),
+            ("embed", {"conditions": [{"key": "finds", "values": ["a", "b"]}]}, "names one policy"),
             (
                 "embed",
-                {"conditions": [{"key": "health"}, {"key": "health", "negate": True}]},
+                {"conditions": [{"key": "finds", "values": ["p"], "count": 0}]},
+                "from 1 to",
+            ),
+            (
+                "embed",
+                {"conditions": [{"key": "finds", "values": ["p"], "count": 5000}]},
+                "from 1 to",
+            ),
+            (
+                "embed",
+                {"conditions": [{"key": "classified", "values": ["c"], "count": 3}]},
+                "takes no count",
+            ),
+            (
+                "embed",
+                {
+                    "conditions": [
+                        {"key": "finds", "values": ["p"]},
+                        {"key": "finds", "values": ["p"], "negate": True},
+                    ]
+                },
+                "same policy",
+            ),
+            ("embed", {"conditions": [{"key": "finds", "values": ["zzz"]}]}, "does not exist"),
+            ("embed", {"conditions": [{"key": "classified", "values": ["zzz"]}]}, "does not exist"),
+            (
+                "read",
+                {"conditions": [{"key": "scan"}, {"key": "scan", "negate": True}]},
                 "twice",
             ),
             ("read", {"action": {"level": "pass"}}, "Choose where"),
@@ -184,16 +175,6 @@ class TestValidation:
             ("embed", {"action": {"level": "pass", "reader": "builtin"}}, "goes with"),
             ("read", {"action": {"level": "default", "redact_with": "nope"}}, "does not exist"),
             ("read", {"name": "  "}, "name"),
-            (
-                "read",
-                {"conditions": [{"key": "filetype", "values": ["pdf"], "decide": "patterns"}]},
-                "no 'how to decide'",
-            ),
-            (
-                "embed",
-                {"conditions": [{"key": "health", "decide": str(uuid.uuid4())}]},
-                "does not exist",
-            ),
         ],
     )
     def test_errors_block_saving(self, kind: str, raw: dict[str, Any], fragment: str) -> None:
@@ -202,11 +183,95 @@ class TestValidation:
                 kind,
                 {"name": "A rule", "action": {"level": "refuse"}, **raw},
                 policy_ids=set(),
+                finds_policy_ids={"p"},
+                classifier_ids={"c"},
             )
 
-    def test_content_conditions_default_to_the_quick_check(self) -> None:
-        out = self.clean("embed", conditions=[{"key": "health"}])
-        assert out["conditions"][0]["decide"] == "patterns"
+    def test_finds_and_classified_name_one_object_each(self) -> None:
+        out = validate_rule(
+            "embed",
+            {
+                "name": "R",
+                "action": {"level": "refuse"},
+                "conditions": [
+                    {"key": "finds", "values": ["p"], "count": 3, "negate": True},
+                    {"key": "classified", "values": ["c"]},
+                ],
+            },
+            finds_policy_ids={"p"},
+            classifier_ids={"c"},
+        )
+        assert out["conditions"] == [
+            {"key": "finds", "values": ["p"], "negate": True, "count": 3},
+            {"key": "classified", "values": ["c"], "negate": False},
+        ]
+
+    def test_two_different_policies_may_both_be_counted(self) -> None:
+        out = validate_rule(
+            "chat",
+            {
+                "name": "R",
+                "action": {"level": "refuse"},
+                "conditions": [
+                    {"key": "finds", "values": ["p"]},
+                    {"key": "finds", "values": ["q"], "count": 2},
+                ],
+            },
+            finds_policy_ids={"p", "q"},
+        )
+        assert [c["values"] for c in out["conditions"]] == [["p"], ["q"]]
+
+    def test_read_may_count_items_after_a_local_read(self) -> None:
+        out = validate_rule(
+            "read",
+            {
+                "name": "R",
+                "action": {"level": "refuse"},
+                "conditions": [{"key": "finds", "values": ["p"]}],
+            },
+            finds_policy_ids={"p"},
+        )
+        assert out["conditions"][0]["key"] == "finds"
+
+    def test_a_user_may_count_a_policy_they_may_name_but_never_classify(self) -> None:
+        validate_rule(
+            "embed",
+            {
+                "name": "R",
+                "action": {"level": "refuse"},
+                "conditions": [{"key": "finds", "values": ["p"]}],
+            },
+            user=True,
+            finds_policy_ids={"p"},
+        )
+        with pytest.raises(RuleError, match="not one you can use"):
+            validate_rule(
+                "embed",
+                {
+                    "name": "R",
+                    "action": {"level": "refuse"},
+                    "conditions": [{"key": "finds", "values": ["admins-secret"]}],
+                },
+                user=True,
+                finds_policy_ids={"p"},
+            )
+        with pytest.raises(RuleError, match="only administrators"):
+            validate_rule(
+                "embed",
+                {
+                    "name": "R",
+                    "action": {"level": "refuse"},
+                    "conditions": [{"key": "classified", "values": ["c"]}],
+                },
+                user=True,
+                classifier_ids={"c"},
+            )
+
+    def test_a_note_is_kept_only_while_the_rule_is_off(self) -> None:
+        off = self.clean("read", enabled=False, note="check me")
+        assert off["note"] == "check me"
+        on = self.clean("read", enabled=True, note="check me")
+        assert "note" not in on
 
     def test_a_policy_may_be_named_when_it_exists(self) -> None:
         pid = str(uuid.uuid4())
@@ -357,10 +422,27 @@ class TestShadowing:
         later = rule("Later", position=2, conditions=(cond("filetype", "pdf"),))
         assert shadowing([watcher, off, later]) == {}
 
-    def test_different_ways_of_deciding_are_not_assumed_equal(self) -> None:
-        a = rule("A", "embed", position=0, conditions=(cond("health", decide="patterns"),))
-        b = rule("B", "embed", position=1, conditions=(cond("health", decide="x"),))
+    def test_different_policies_are_not_assumed_equal(self) -> None:
+        a = rule("A", "embed", position=0, conditions=(cond("finds", "p"),))
+        b = rule("B", "embed", position=1, conditions=(cond("finds", "q"),))
         assert shadowing([a, b]) == {}
+
+    def test_more_items_of_the_same_policy_is_a_narrower_condition(self) -> None:
+        wide = rule("Wide", "embed", position=0, conditions=(cond("finds", "p", count=1),))
+        narrow = rule("Narrow", "embed", position=1, conditions=(cond("finds", "p", count=5),))
+        assert shadowing([wide, narrow])[narrow.id][0] == "never"
+        assert shadowing([narrow, wide]) == {}
+
+    def test_not_finding_at_least_n_is_the_opposite_way_round(self) -> None:
+        wide = rule(
+            "Wide", "embed", position=0, conditions=(cond("finds", "p", count=5, negate=True),)
+        )
+        narrow = rule(
+            "Narrow", "embed", position=1, conditions=(cond("finds", "p", count=1, negate=True),)
+        )
+        # "not at least 5" (fewer than 5) already holds wherever "not at least 1" (none) does.
+        assert shadowing([wide, narrow])[narrow.id][0] == "never"
+        assert shadowing([narrow, wide]) == {}
 
 
 class TestChecks:
@@ -368,6 +450,10 @@ class TestChecks:
         r = rule("By name", conditions=(cond("filename", "referto*"),))
         codes = [i.code for i in check([r])[r.id]]
         assert "convenience_only" in codes
+        assert (
+            "health"
+            not in next(i for i in check([r])[r.id] if i.code == "convenience_only").message
+        )
 
     def test_an_observe_only_rule_gets_no_such_warning(self) -> None:
         r = rule("By name", conditions=(cond("filename", "referto*"),), observe_only=True)
@@ -383,22 +469,33 @@ class TestChecks:
         found = check([r], last)
         assert "catches_all" not in [i.code for i in found[last.id]]
 
-    def test_an_unavailable_profile_warns_and_a_fallback_is_a_weakening(self) -> None:
-        pid = uuid.uuid4()
-        r = rule("M", "embed", conditions=(cond("health", decide=str(pid)),))
+    def test_a_policy_that_cannot_run_now_is_a_warning(self) -> None:
+        r = rule("M", "embed", conditions=(cond("finds", "p"),))
         ctx = CheckContext(
-            profiles={
-                str(pid): ProfileInfo(
-                    id=pid,
-                    name="Medical",
-                    available=False,
-                    fallback="fallback_to",
-                    can_decide=False,
-                )
-            }
+            content={"p": ContentInfo("Names", False, "the NER engine gliner is not available")}
         )
-        codes = [i.code for i in check([r], None, ctx)[r.id]]
-        assert "unavailable_now" in codes and "weakens" in codes
+        found = check([r], None, ctx)[r.id]
+        assert [i.code for i in found] == ["unavailable_now"]
+        assert "gliner" in found[0].message and "Names" in found[0].message
+
+    def test_a_policy_or_classifier_that_is_gone_is_a_warning(self) -> None:
+        r = rule("M", "embed", conditions=(cond("classified", "gone"),))
+        assert "unavailable_now" in [i.code for i in check([r], None, CheckContext())[r.id]]
+
+    def test_the_migration_note_is_a_warning_on_the_rule(self) -> None:
+        r = Rule(
+            id=uuid.uuid4(),
+            kind="embed",
+            name="Old",
+            enabled=False,
+            observe_only=False,
+            position=0,
+            conditions=(),
+            action={"level": "refuse"},
+            note="Migrated: had a removed condition.",
+        )
+        found = check([r])[r.id]
+        assert any(i.code == "migrated" and "removed condition" in i.message for i in found)
 
     def test_the_soft_cap_is_a_warning_not_an_error(self) -> None:
         rules = [
@@ -471,36 +568,70 @@ class TestEvaluation:
         not_scan = await Evaluator().evaluate([scans, later], read_facts(is_scan=False))
         assert not_scan.fired is later
 
-    async def test_content_conditions_use_the_quick_check(self) -> None:
-        r = rule("Health", "embed", conditions=(cond("health", decide="patterns"),))
-        yes = Facts(kind="embed", text="Il paziente ha una diagnosi di diabete.")
-        no = Facts(kind="embed", text="La riunione e spostata a lunedi.")
-        assert (await Evaluator().evaluate([r], yes)).fired is r
-        ev = await Evaluator().evaluate([r], no)
-        assert ev.fired is None and ev.verdicts["health"] is False
+    async def test_finds_at_least_n_counts_distinct_items(self) -> None:
+        r = rule("Names", "embed", conditions=(cond("finds", "p", count=2),))
+        two = FakeJudge({"p": FindResult(items=(item(value="a"), item(value="b")))})
+        one = FakeJudge({"p": FindResult(items=(item(value="a"),))})
+        facts_two = Facts(kind="embed", text="x", judge=two)
+        facts_one = Facts(kind="embed", text="x", judge=one)
+        assert (await Evaluator().evaluate([r], facts_two)).fired is r
+        ev = await Evaluator().evaluate([r], facts_one)
+        assert ev.fired is None and ev.found == {"policy-p": 1}
 
-    async def test_the_language_condition(self) -> None:
-        r = rule("Italian", "embed", conditions=(cond("lang", "it", decide="patterns"),))
-        facts = Facts(kind="embed", text="Il gatto e sul tavolo e la casa non e molto grande.")
-        assert (await Evaluator().evaluate([r], facts)).fired is r
+    async def test_the_trace_lists_each_item_that_made_the_condition_true(self) -> None:
+        r = rule("Names", "embed", conditions=(cond("finds", "p"),))
+        judge = FakeJudge({"p": FindResult(items=(item("PERSON", "Mario", group="entity"),))})
+        ev = await Evaluator().evaluate([r], Facts(kind="embed", text="x", judge=judge))
+        step = ev.steps[0]
+        assert step.result == "fired"
+        assert [(i.group, i.type, i.engine, i.score) for i in step.items["policy-p"]] == [
+            ("entity", "PERSON", "spacy", 0.9)
+        ]
 
-    async def test_the_classifier_is_not_called_unless_a_rule_needs_its_text(self) -> None:
-        cache = VerdictCache()
-        r = rule("Anything", "embed", conditions=())
-        await Evaluator(cache=cache).evaluate([r], Facts(kind="embed", text="anything"))
-        assert cache.hits + cache.misses == 0
-
-    async def test_the_classifier_is_not_called_when_a_cheaper_condition_already_failed(
-        self,
-    ) -> None:
-        cache = VerdictCache()
+    async def test_is_not_negates_the_count(self) -> None:
         r = rule(
-            "R",
-            "read",
-            conditions=(cond("filetype", "word"), cond("scan")),
+            "Clean",
+            "embed",
+            conditions=(cond("finds", "p", negate=True),),
+            action={"level": "pass", "redact_with": "x"},
         )
-        await Evaluator(cache=cache).evaluate([r], read_facts())
-        assert cache.hits + cache.misses == 0
+        none = FakeJudge({"p": FindResult()})
+        some = FakeJudge({"p": FindResult(items=(item(),))})
+        assert (
+            await Evaluator().evaluate([r], Facts(kind="embed", text="x", judge=none))
+        ).fired is r
+        assert (
+            await Evaluator().evaluate([r], Facts(kind="embed", text="x", judge=some))
+        ).fired is None
+
+    async def test_classified_as_follows_the_classifier(self) -> None:
+        r = rule("Topic", "chat", conditions=(cond("classified", "c"),))
+        yes = FakeJudge(verdicts={"c": Verdict(positive=True)})
+        no = FakeJudge(verdicts={"c": Verdict(positive=False)})
+        assert (await Evaluator().evaluate([r], Facts(kind="chat", text="x", judge=yes))).fired is r
+        ev = await Evaluator().evaluate([r], Facts(kind="chat", text="x", judge=no))
+        assert ev.fired is None and ev.verdicts == {"classifier-c": False}
+
+    async def test_a_read_rule_waits_for_the_file_to_be_read_before_judging_its_text(self) -> None:
+        r = rule("Names", "read", conditions=(cond("finds", "p"),))
+        judge = FakeJudge({"p": FindResult(items=(item(),))})
+        ev = await Evaluator().evaluate([r], read_facts(judge=judge))
+        assert ev.pending == "scan" and judge.asked == []
+        done = await Evaluator().evaluate([r], read_facts(judge=judge, is_scan=False, texts=("x",)))
+        assert done.fired is r and judge.asked == ["p"]
+
+    async def test_content_is_not_judged_when_a_cheaper_condition_already_failed(self) -> None:
+        judge = FakeJudge({"p": FindResult(items=(item(),))})
+        r = rule("R", "read", conditions=(cond("filetype", "word"), cond("finds", "p")))
+        await Evaluator().evaluate([r], read_facts(judge=judge, is_scan=False))
+        assert judge.asked == []
+
+    async def test_no_judge_is_asked_unless_a_rule_needs_the_text(self) -> None:
+        judge = FakeJudge()
+        await Evaluator().evaluate(
+            [rule("Any", "embed")], Facts(kind="embed", text="x", judge=judge)
+        )
+        assert judge.asked == []
 
     async def test_a_protective_rule_matches_a_file_whose_type_is_unknown(self) -> None:
         r = rule("Pdf only", conditions=(cond("filetype", "pdf"),))
@@ -514,55 +645,72 @@ class TestEvaluation:
 
 
 class TestFailClosed:
-    def profiles(self, **kw: Any) -> dict[str, Profile]:
-        medical = Profile(id="m", name="Medical", engine="gliner", available=False, **kw)
-        fast = Profile(id="f", name="Fast", engine="presidio")
-        return {"m": medical, "f": fast}
+    """An undecidable NER part is never read as "found nothing" (section 0, 3b)."""
 
-    async def test_an_unavailable_profile_with_refuse_makes_the_rule_act(self) -> None:
-        r = rule("M", "embed", conditions=(cond("health", decide="m"),))
-        facts = Facts(kind="embed", text="La riunione e spostata a lunedi.")
-        ev = await Evaluator(self.profiles()).evaluate([r], facts)
-        # No health data in the text, but the detector is down: the rule acts.
+    def down(self) -> FakeJudge:
+        return FakeJudge(
+            {"p": FindResult(unavailable="the NER engine gliner is not available")},
+            {"c": Verdict(unavailable="no model is chosen")},
+        )
+
+    async def test_a_protective_rule_acts_when_the_ner_part_cannot_run(self) -> None:
+        r = rule("M", "embed", conditions=(cond("finds", "p"),))
+        ev = await Evaluator().evaluate([r], Facts(kind="embed", text="x", judge=self.down()))
         assert ev.fired is r
-        assert ev.degraded and "not installed" in ev.degraded[0]
+        assert ev.degraded and "gliner" in ev.degraded[0]
+
+    async def test_items_already_found_by_patterns_are_certain(self) -> None:
+        # Two keyword hits are enough for "at least 2", whatever the NER part would add.
+        r = rule("M", "embed", conditions=(cond("finds", "p", count=2),))
+        judge = FakeJudge(
+            {"p": FindResult(items=(item(value="a"), item(value="b")), unavailable="down")}
+        )
+        ev = await Evaluator().evaluate([r], Facts(kind="embed", text="x", judge=judge))
+        assert ev.fired is r and not ev.degraded
+
+    async def test_a_negated_condition_is_refused_rather_than_let_through(self) -> None:
+        r = rule(
+            "Clean",
+            "embed",
+            conditions=(cond("finds", "p", negate=True),),
+            action={"level": "pass", "redact_with": "x"},
+        )
+        r_protective = rule("Clean", "embed", conditions=(cond("finds", "p", negate=True),))
+        for candidate in (r, r_protective):
+            with pytest.raises(Undecidable):
+                await Evaluator().evaluate(
+                    [candidate], Facts(kind="embed", text="x", judge=self.down())
+                )
 
     async def test_it_does_not_act_when_another_condition_already_ruled_the_rule_out(self) -> None:
-        r = rule(
-            "M",
-            "embed",
-            conditions=(cond("lang", "de", decide="patterns"), cond("health", decide="m")),
-        )
-        facts = Facts(kind="embed", text="Il gatto e sul tavolo e la casa non e molto grande.")
-        assert (await Evaluator(self.profiles()).evaluate([r], facts)).fired is None
+        r = rule("M", "read", conditions=(cond("filetype", "word"), cond("finds", "p")))
+        facts = read_facts(judge=self.down(), is_scan=False)
+        assert (await Evaluator().evaluate([r], facts)).fired is None
 
-    async def test_fall_back_uses_the_weaker_method_and_records_it(self) -> None:
-        profiles = self.profiles(fallback="fallback_to", fallback_profile_id="f")
-        r = rule("M", "embed", conditions=(cond("health", decide="m"),))
-        quiet = Facts(kind="embed", text="La riunione e spostata a lunedi.")
-        ev = await Evaluator(profiles).evaluate([r], quiet)
-        assert ev.fired is None
-        assert ev.fallbacks == ["Medical -> Fast"]
-        loud = Facts(kind="embed", text="Il paziente ha una diagnosi di diabete.")
-        assert (await Evaluator(profiles).evaluate([r], loud)).fired is r
+    async def test_an_observe_only_rule_does_not_match_instead(self) -> None:
+        r = rule("Watch", "embed", conditions=(cond("finds", "p"),), observe_only=True)
+        ev = await Evaluator().evaluate([r], Facts(kind="embed", text="x", judge=self.down()))
+        assert ev.fired is None and ev.observed == []
 
-    async def test_a_deleted_profile_fails_closed(self) -> None:
-        r = rule("M", "embed", conditions=(cond("health", decide=str(uuid.uuid4())),))
-        ev = await Evaluator({}).evaluate([r], Facts(kind="embed", text="x"))
+    async def test_a_classifier_that_cannot_answer_fails_closed(self) -> None:
+        r = rule("Topic", "chat", conditions=(cond("classified", "c"),))
+        ev = await Evaluator().evaluate([r], Facts(kind="chat", text="x", judge=self.down()))
+        assert ev.fired is r and "no model is chosen" in ev.degraded[0]
+
+    async def test_a_policy_that_no_longer_exists_fails_closed(self) -> None:
+        r = rule("Gone", "embed", conditions=(cond("finds", "gone"),))
+        ev = await Evaluator().evaluate([r], Facts(kind="embed", text="x", judge=FakeJudge()))
         assert ev.fired is r
 
-    def test_a_fallback_loop_cannot_hang(self) -> None:
-        a = Profile(
-            id="a", name="A", engine="gliner", fallback="fallback_to", fallback_profile_id="b"
-        )
-        b = Profile(
-            id="b", name="B", engine="gliner", fallback="fallback_to", fallback_profile_id="a"
-        )
-        assert resolve_decider("a", {"a": a, "b": b}).method == "unavailable"
+    async def test_no_judge_at_all_fails_closed(self) -> None:
+        r = rule("Any", "embed", conditions=(cond("finds", "p"),))
+        assert (await Evaluator().evaluate([r], Facts(kind="embed", text="x"))).fired is r
 
-    def test_the_quick_check_is_always_available(self) -> None:
-        assert resolve_decider("patterns", {}).method == "patterns"
-        assert resolve_decider(None, {}).method == "patterns"
+    async def test_a_text_too_large_to_check_fails_closed(self) -> None:
+        r = rule("Big", "embed", conditions=(cond("finds", "p"),))
+        judge = FakeJudge({"p": FindResult(incomplete=True)})
+        ev = await Evaluator().evaluate([r], Facts(kind="embed", text="x", judge=judge))
+        assert ev.fired is r and "too large" in ev.degraded[0]
 
 
 class TestGlobsAreLinear:
@@ -581,23 +729,3 @@ class TestGlobsAreLinear:
         assert glob_matches("a*b*c", "a--b--c")
         assert not glob_matches("a*b*c", "a--c--b")
         assert glob_matches("[abc", "[abc")
-
-
-class TestClassifierWindows:
-    def test_text_past_one_window_is_scanned(self) -> None:
-        text = "La riunione e rinviata. " * 5000 + "Il paziente ha una diagnosi di diabete."
-        assert len(text) > 100_000
-        assert classify(text).health
-
-    def test_a_term_cut_by_a_window_boundary_is_still_seen(self) -> None:
-        from gateway.privacy.classify import WINDOW
-
-        text = "x " * ((WINDOW - 6) // 2) + "diagnosi di diabete"
-        assert classify(text).health
-
-    def test_over_the_cap_is_incomplete_not_clean(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import gateway.privacy.classify as c
-
-        monkeypatch.setattr(c, "MAX_TEXT_CHARS", 500)
-        result = c.classify("La riunione e rinviata. " * 100)
-        assert result.incomplete and not result.health

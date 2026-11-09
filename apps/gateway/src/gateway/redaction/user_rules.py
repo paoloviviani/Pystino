@@ -30,9 +30,11 @@ from typing import Literal
 
 from gateway.config import (
     Contributor,
+    CustomEntity,
     CustomPattern,
     EntityMode,
     EntityPolicy,
+    KeywordList,
     PlaceholderStyle,
     RedactionPolicy,
 )
@@ -92,10 +94,55 @@ def _named_mode(policy: RedactionPolicy, name: str) -> tuple[EntityMode, Placeho
     return (found[0], found[1]) if found is not None else None
 
 
-def fold(base: RedactionPolicy, rules: Sequence[UserRule]) -> RedactionPolicy:
-    """*base* with the user's rules applied. Never weaker than *base*."""
+def fold(
+    base: RedactionPolicy,
+    rules: Sequence[UserRule],
+    *,
+    keywords: Sequence[KeywordList] = (),
+    custom_entities: Sequence[CustomEntity] = (),
+) -> RedactionPolicy:
+    """*base* with the user's rules applied. Never weaker than *base*.
+
+    ``keywords`` and ``custom_entities`` are what an administrator policy a user's
+    pipeline applies adds beyond modes and regexes (a user's own entries have neither):
+    more words to find and more types to ask for can only tighten, and a name that is
+    already there keeps the stricter mode.
+    """
     entities = dict(base.entities)
     patterns = list(base.patterns)
+    held_keywords = list(base.keywords)
+    for item in keywords:
+        if item.mode is EntityMode.OFF:
+            continue
+        same = next(
+            (
+                i
+                for i, k in enumerate(held_keywords)
+                if (k.name, k.words, k.case_sensitive)
+                == (item.name, item.words, item.case_sensitive)
+            ),
+            None,
+        )
+        if same is None:
+            held_keywords.append(item)
+        elif rank(item.mode) > rank(held_keywords[same].mode):
+            held_keywords[same] = item
+    held_custom = list(base.custom_entities)
+    for custom in custom_entities:
+        if custom.mode is EntityMode.OFF:
+            continue
+        same = next(
+            (
+                i
+                for i, c in enumerate(held_custom)
+                if (c.name, c.label) == (custom.name, custom.label)
+            ),
+            None,
+        )
+        if same is None:
+            held_custom.append(custom)
+        elif rank(custom.mode) > rank(held_custom[same].mode):
+            held_custom[same] = custom
     seen = {(pattern.name, pattern.regex) for pattern in patterns}
 
     def current() -> RedactionPolicy:
@@ -106,9 +153,9 @@ def fold(base: RedactionPolicy, rules: Sequence[UserRule]) -> RedactionPolicy:
             default_mode=base.default_mode,
             formats=base.formats,
             entities=entities,
-            custom_entities=base.custom_entities,
+            custom_entities=held_custom,
             patterns=patterns,
-            keywords=base.keywords,
+            keywords=held_keywords,
             allow_list=base.allow_list,
         )
 

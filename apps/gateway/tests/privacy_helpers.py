@@ -45,10 +45,13 @@ async def add_policy(
     name: str = "Policy",
     *,
     active: bool = True,
+    shared: bool = False,
     **policy: Any,
 ) -> uuid.UUID:
     async with session_factory() as db:
-        row = RedactionPolicyRecord(name=name, policy=policy_json(**policy), is_active=active)
+        row = RedactionPolicyRecord(
+            name=name, policy=policy_json(**policy), is_active=active, shared_with_users=shared
+        )
         db.add(row)
         await db.commit()
         policy_id = row.id

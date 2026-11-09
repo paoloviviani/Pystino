@@ -279,9 +279,20 @@ async def _run(
 
 
 def _old_policy(kwargs: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """The policy as a pre-migration database holds it: one ``entities`` table, no engine.
+
+    (The model now keeps built-in formats and NER types apart; the stored shape of the time
+    did not, and that is the shape migration 0083 has to read.)
+    """
     kwargs = dict(kwargs)
     inactive = bool(kwargs.pop("_inactive", False))
-    return RedactionPolicy(**kwargs).model_dump(mode="json"), inactive
+    new = RedactionPolicy(**kwargs).model_dump(mode="json")
+    return {
+        "default_mode": new["default_mode"],
+        "entities": {**new["formats"], **new["entities"]},
+        "patterns": new["patterns"],
+        "allow_list": new["allow_list"],
+    }, inactive
 
 
 def _build_old_database(path: Path, name: str, subjects: dict[str, uuid.UUID]) -> None:
@@ -381,8 +392,7 @@ async def _load(
         await db.commit()
 
 
-@pytest.mark.parametrize("name", list(CONFIGS))
-async def test_the_same_requests_come_out_byte_for_byte(
+async def _check(
     name: str,
     tmp_path: Path,
     app: Any,
@@ -391,7 +401,9 @@ async def test_the_same_requests_come_out_byte_for_byte(
     session: AsyncSession,
     session_factory: async_sessionmaker[AsyncSession],
     fake_upstream: FakeUpstream,
-) -> None:
+    *,
+    rewrite: Any = None,
+) -> tuple[dict[str, Any], dict[str, Any], FakeDetector]:
     await add_embedding_model(session, seeded)
     await add_rerank_model(session, seeded)
     await add_ocr_model(session, seeded)
@@ -406,13 +418,103 @@ async def test_the_same_requests_come_out_byte_for_byte(
     }
     path = tmp_path / "old.db"
     _build_old_database(path, name, subjects)
-    await _load(session_factory, _migrated_rows(path))
+    rows = _migrated_rows(path)
+    if rewrite is not None:
+        rewrite(rows)
+    await _load(session_factory, rows)
     await app.state.privacy.refresh()
     assert app.state.privacy.bad_rows == []
     if len(CONFIGS[name]) > 2:
         app.state.redaction._policy = RedactionPolicy(**CONFIGS[name][2])
-    app.state.redactor = FakeDetector(SPANS).redactor()
+    detector = FakeDetector(SPANS)
+    app.state.redactor = detector.redactor()
 
     got = await _run(app, client, seeded, session, fake_upstream)
     expected = json.loads(GOLDEN.read_text())[name]
-    assert json.loads(json.dumps(got, default=str)) == expected
+    return json.loads(json.dumps(got, default=str)), expected, detector
+
+
+@pytest.mark.parametrize("name", list(CONFIGS))
+async def test_the_same_requests_come_out_byte_for_byte(
+    name: str,
+    tmp_path: Path,
+    app: Any,
+    client: httpx.AsyncClient,
+    seeded: Seeded,
+    session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    fake_upstream: FakeUpstream,
+) -> None:
+    got, expected, detector = await _check(
+        name, tmp_path, app, client, seeded, session, session_factory, fake_upstream
+    )
+    assert got == expected
+    # The engine choice defaults to today's behaviour: no engine and no labels are asked
+    # for, so the redaction service answers with its own default exactly as before.
+    assert detector.requests
+    assert all(
+        r.get("ner_engine") is None and r.get("custom_labels") is None for r in detector.requests
+    )
+
+
+@pytest.mark.parametrize("name", list(CONFIGS))
+async def test_a_migrated_policy_chooses_no_engine_and_has_no_new_items(
+    name: str, tmp_path: Path
+) -> None:
+    subjects = {k: uuid.uuid4() for k in ("provider", "model", "group", "user", "key", "other")}
+    path = tmp_path / "old.db"
+    _build_old_database(path, name, subjects)
+    for row in _migrated_rows(path)["redaction_policies"]:
+        stored = json.loads(row["policy"])
+        assert stored["engine"] is None
+        assert stored["keywords"] == [] and stored["custom_entities"] == []
+        assert row["shared_with_users"] == 0
+        # Nothing is lost in the split: read back, every named type keeps its mode.
+        policy = RedactionPolicy.model_validate(stored)
+        assert set(policy.service_types()) == set(stored["formats"]) | set(stored["entities"])
+
+
+def _patterns_as_keywords(rows: dict[str, list[dict[str, Any]]]) -> None:
+    """The same patterns as keyword lists: PRJ-123 and TKT-9 are what the regexes find in TEXT."""
+    words = {r"PRJ-\d+": "PRJ-123", r"TKT-\d+": "TKT-9"}
+    for row in rows["redaction_policies"]:
+        policy = json.loads(row["policy"])
+        keywords = []
+        for pattern in policy["patterns"]:
+            keywords.append(
+                {
+                    "name": pattern["name"],
+                    "words": [words[pattern["regex"]]],
+                    # A regular expression is case sensitive; a keyword list says so.
+                    "case_sensitive": True,
+                    "mode": pattern["mode"],
+                    "placeholder": pattern["placeholder"],
+                }
+            )
+        policy["patterns"], policy["keywords"] = [], keywords
+        row["policy"] = json.dumps(policy)
+
+
+async def test_a_keyword_list_redacts_exactly_like_the_pattern_it_replaces(
+    tmp_path: Path,
+    app: Any,
+    client: httpx.AsyncClient,
+    seeded: Seeded,
+    session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    fake_upstream: FakeUpstream,
+) -> None:
+    got, expected, _ = await _check(
+        "all_provider_model_group_user_key",
+        tmp_path,
+        app,
+        client,
+        seeded,
+        session,
+        session_factory,
+        fake_upstream,
+        rewrite=_patterns_as_keywords,
+    )
+    assert got == expected
+    policies = [p.policy for p in app.state.privacy.policies.values()]
+    assert any(p.keywords for p in policies) and not any(p.patterns for p in policies)

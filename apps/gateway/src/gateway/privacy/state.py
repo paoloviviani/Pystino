@@ -110,13 +110,14 @@ def user_rule_of(raw: dict[str, Any], rule_id: uuid.UUID) -> UserRule:
 def policy_as_user_rules(ref: PolicyRef) -> list[UserRule]:
     """An administrator's policy as tighten-only additions (a user picked it).
 
-    Only what can add protection survives: a mode for a type, a pattern. The
+    Only what can add protection survives: a mode for a type, a pattern (keyword lists
+    and custom entity types travel beside them, into ``user_rules.fold``). The
     thresholds, placeholder styles and the allow-list of the policy are not
     carried (they are administrator-only fields, and ``user_rules.fold`` has no
     place for them); its default mode is applied as a floor by the caller.
     """
     out: list[UserRule] = []
-    for name, entry in ref.policy.entities.items():
+    for name, entry in ref.policy.service_types().items():
         if entry.mode is not EntityMode.OFF:
             out.append(UserRule(uuid.uuid5(ref.id, f"mode:{name}"), "mode", name, None, entry.mode))
     for pattern in ref.policy.patterns:
@@ -321,7 +322,12 @@ class PrivacyState:
         )
         cached = self._user_folded.get(ukey)
         if cached is None:
-            folded_user = user_rules.fold(admin.policy, rules)
+            folded_user = user_rules.fold(
+                admin.policy,
+                rules,
+                keywords=[k for ref in user_picked for k in ref.policy.keywords],
+                custom_entities=[c for ref in user_picked for c in ref.policy.custom_entities],
+            )
             floor = max(
                 [admin.policy.default_mode, *(ref.policy.default_mode for ref in user_picked)],
                 key=list(EntityMode).index,

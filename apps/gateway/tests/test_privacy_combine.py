@@ -12,19 +12,21 @@ No I/O. The properties this file exists for:
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from gateway.config import (
     CustomPattern,
     EntityMode,
     EntityPolicy,
+    KeywordList,
     RedactionPolicy,
 )
 from gateway.errors import ServiceUnavailableError
 from gateway.models import PrivacyPipeline
 from gateway.privacy.combine import Retarget, plan
-from gateway.privacy.evaluate import Evaluator, Facts, Profile, Undecidable
+from gateway.privacy.evaluate import Evaluator, Facts, Undecidable
+from gateway.privacy.finds import ContentJudge
 from gateway.privacy.pipelines import (
     Pipeline,
     not_in_scope,
@@ -92,12 +94,31 @@ def facts(kind: str = "embed", **kw: Any) -> Facts:
         "filename": "referto.pdf",
         "mime": "application/pdf",
         "filetype": "pdf",
+        "judge": judge(),
     }
     base.update(kw)
     return Facts(**base)
 
 
-HEALTH = "Il paziente ha una diagnosi di diabete."
+#: A text a keyword list finds, and the policy that finds it. Nothing topic-specific ships
+#: with the product; a test writes its own list.
+SECRET = "The project codename is Falcon."
+POLICY_ID = str(uuid.uuid4())
+FINDS = [{"key": "finds", "values": [POLICY_ID]}]
+NEEDS_SERVICE_ID = str(uuid.uuid4())
+
+
+def judge(*, down: bool = False) -> ContentJudge:
+    """Counts the keyword list's items; ``down`` is a policy that needs the (absent) service."""
+    keywords = RedactionPolicy(keywords=[KeywordList(name="CODENAME", words=["Falcon"])])
+    names = RedactionPolicy(entities={"PERSON": EntityPolicy(mode=EntityMode.DETECT_ONLY)})
+    return ContentJudge(
+        policies={POLICY_ID: ("Codenames", keywords), NEEDS_SERVICE_ID: ("Names", names)},
+        classifiers={},
+        redactor=None,
+        default_threshold=0.5,
+        backend=None,
+    )
 
 
 class TestScope:
@@ -199,26 +220,26 @@ async def run(kind: str, pipelines: list[Pipeline], f: Facts, **kw: Any) -> Any:
 class TestTheLadder:
     async def test_the_highest_level_across_pipelines_wins(self) -> None:
         quiet = pipe("embed", "Quiet")
-        strict = pipe("embed", "Strict", rules=[rule("Health", [{"key": "health"}])])
-        combined = await run("embed", [quiet, strict], facts(text=HEALTH))
+        strict = pipe("embed", "Strict", rules=[rule("Health", FINDS)])
+        combined = await run("embed", [quiet, strict], facts(text=SECRET))
         assert combined.level == "refuse" and combined.refused
         assert combined.winner is not None and combined.winner.pipeline is strict
         assert combined.winner.rule.name == "Health"
 
     async def test_nothing_asking_for_more_is_the_base_level(self) -> None:
-        strict = pipe("embed", "Strict", rules=[rule("Health", [{"key": "health"}])])
+        strict = pipe("embed", "Strict", rules=[rule("Health", FINDS)])
         combined = await run("embed", [strict], facts(text="La riunione e lunedi."))
         assert combined.level == "pass" and combined.winner is None
 
     async def test_on_a_tie_the_administrators_rule_is_named(self) -> None:
-        mine = pipe("embed", "Mine", owner=USER, rules=[rule("Mine", [{"key": "health"}])])
-        theirs = pipe("embed", "Theirs", rules=[rule("Theirs", [{"key": "health"}])], position=5)
-        combined = await run("embed", [mine, theirs], facts(text=HEALTH))
+        mine = pipe("embed", "Mine", owner=USER, rules=[rule("Mine", FINDS)])
+        theirs = pipe("embed", "Theirs", rules=[rule("Theirs", FINDS)], position=5)
+        combined = await run("embed", [mine, theirs], facts(text=SECRET))
         assert combined.winner is not None and combined.winner.pipeline is theirs
 
     async def test_a_user_pipeline_alone_still_raises_the_level(self) -> None:
-        mine = pipe("embed", "Mine", owner=USER, rules=[rule("Mine", [{"key": "health"}])])
-        combined = await run("embed", [mine], facts(text=HEALTH))
+        mine = pipe("embed", "Mine", owner=USER, rules=[rule("Mine", FINDS)])
+        combined = await run("embed", [mine], facts(text=SECRET))
         assert combined.refused and combined.winner is not None and combined.winner.pipeline.is_user
 
     async def test_a_user_pipeline_can_never_lower_what_an_administrators_did(self) -> None:
@@ -229,18 +250,16 @@ class TestTheLadder:
         assert (await run("embed", [admin, mine], facts())).refused
 
     async def test_the_last_rule_applies_when_nothing_matched(self) -> None:
-        p = pipe(
-            "embed", "P", rules=[rule("Never", [{"key": "health"}])], otherwise={"level": "refuse"}
-        )
+        p = pipe("embed", "P", rules=[rule("Never", FINDS)], otherwise={"level": "refuse"})
         combined = await run("embed", [p], facts(text="La riunione e lunedi."))
         assert combined.refused and combined.winner is not None
         assert combined.runs[0].is_otherwise
 
     async def test_observe_only_is_logged_and_the_search_continues(self) -> None:
-        watch = rule("Watch", [{"key": "health"}])
+        watch = rule("Watch", FINDS)
         watch["observe_only"] = True
-        p = pipe("embed", "P", rules=[watch, rule("Real", [{"key": "health"}])])
-        combined = await run("embed", [p], facts(text=HEALTH))
+        p = pipe("embed", "P", rules=[watch, rule("Real", FINDS)])
+        combined = await run("embed", [p], facts(text=SECRET))
         assert combined.winner is not None and combined.winner.rule.name == "Real"
         assert [r.name for r in combined.runs[0].evaluation.observed] == ["Watch"]
 
@@ -260,8 +279,8 @@ class TestTheLadder:
         assert (await run("embed", [other], facts())).level == "pass"
 
     async def test_every_input_is_judged_in_full(self) -> None:
-        p = pipe("embed", "P", rules=[rule("Health", [{"key": "health"}])])
-        f = facts(texts=("La riunione e lunedi.", HEALTH))
+        p = pipe("embed", "P", rules=[rule("Health", FINDS)])
+        f = facts(texts=("La riunione e lunedi.", SECRET))
         assert (await run("embed", [p], f)).refused
 
 
@@ -477,21 +496,28 @@ class TestRerouteRunsTheNewReadersPipelines:
 class TestWords:
     def test_what_a_pipeline_does_in_short_words(self) -> None:
         pid = str(uuid.uuid4())
+        cid = str(uuid.uuid4())
         p = pipe(
             "embed",
             "P",
             rules=[
-                rule("Health", [{"key": "health"}]),
-                rule("Redact IDs", [{"key": "ids"}], level="pass", redact_with=pid),
+                rule("Codenames", [{"key": "finds", "values": [POLICY_ID], "count": 3}]),
+                rule(
+                    "Topic",
+                    [{"key": "classified", "values": [cid], "negate": True}],
+                    level="pass",
+                    redact_with=pid,
+                ),
             ],
             otherwise={"level": "pass", "redact_with": pid},
         )
-        said = summarize(p, {pid: "Default"})
-        assert "refuses health data" in said
+        said = summarize(p, {pid: "Default", POLICY_ID: "Codenames", cid: "Refunds"})
+        assert "refuses text where Codenames finds 3 or more items" in said
+        assert "redacts with Default for text not classified as Refunds" in said
         assert "redacts with Default" in said
 
     def test_observe_only_rules_and_no_ops_are_left_out(self) -> None:
-        watch = rule("Watch", [{"key": "health"}])
+        watch = rule("Watch", FINDS)
         watch["observe_only"] = True
         assert summarize(pipe("embed", "P", rules=[watch]), {}) == []
 
@@ -507,22 +533,21 @@ class TestWords:
 class TestUndecidableConditionsNeverFailOpen:
     """An undecidable condition matches only where that can only add protection."""
 
-    def down(self) -> Evaluator:
-        return Evaluator({"m": Profile(id="m", name="Medical", engine="gliner", available=False)})
+    NAMES: ClassVar[list[dict[str, Any]]] = [{"key": "finds", "values": [NEEDS_SERVICE_ID]}]
 
     @pytest.mark.parametrize("kind", ["embed", "chat"])
-    async def test_a_negated_condition_with_the_detector_down_is_refused_not_passed(
+    async def test_a_negated_condition_with_the_service_down_is_refused_not_passed(
         self, kind: str
     ) -> None:
-        # "no health data -> pass", then "everything else -> refuse": assuming the
-        # negated condition holds would let the health text straight through.
+        # "finds no names -> pass", then "everything else -> refuse": assuming the
+        # negated condition holds would let the text straight through.
         p = pipe(
             kind,
             "P",
             rules=[
                 rule(
-                    "No health, pass",
-                    [{"key": "health", "negate": True, "decide": "m"}],
+                    "No names, pass",
+                    [{"key": "finds", "values": [NEEDS_SERVICE_ID], "negate": True}],
                     level="pass",
                     redact_with=str(uuid.uuid4()),
                 )
@@ -530,44 +555,53 @@ class TestUndecidableConditionsNeverFailOpen:
             otherwise={"level": "refuse"},
         )
         with pytest.raises(ServiceUnavailableError) as raised:
-            await plan(self.down(), [p], facts(kind, text=HEALTH))
-        assert "No health, pass" in raised.value.message and "'P'" in raised.value.message
+            await plan(Evaluator(), [p], facts(kind, text=SECRET))
+        assert "No names, pass" in raised.value.message and "'P'" in raised.value.message
         assert raised.value.code == "privacy_undecidable"
 
     @pytest.mark.parametrize("kind", ["embed", "chat"])
     async def test_incomplete_input_on_a_negated_condition_is_refused(
         self, kind: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("gateway.privacy.evaluate.MAX_REQUEST_CHARS", 10)
+        monkeypatch.setattr("gateway.privacy.finds.MAX_REQUEST_CHARS", 10)
         p = pipe(
             kind,
             "P",
-            rules=[rule("No health, pass", [{"key": "health", "negate": True}], level="pass")],
+            rules=[
+                rule(
+                    "No codename, pass",
+                    [{"key": "finds", "values": [POLICY_ID], "negate": True}],
+                    level="pass",
+                )
+            ],
             otherwise={"level": "refuse"},
         )
         with pytest.raises(ServiceUnavailableError):
-            await plan(Evaluator(), [p], facts(kind, text=HEALTH * 3))
+            await plan(Evaluator(), [p], facts(kind, text="nothing to see here " * 3))
 
     async def test_a_rule_that_adds_nothing_is_refused_too(self) -> None:
-        p = pipe(
-            "embed",
-            "P",
-            rules=[rule("Health, pass", [{"key": "health", "decide": "m"}], level="pass")],
-        )
+        p = pipe("embed", "P", rules=[rule("Names, pass", self.NAMES, level="pass")])
         with pytest.raises(ServiceUnavailableError):
-            await plan(self.down(), [p], facts("embed", text=HEALTH))
+            await plan(Evaluator(), [p], facts("embed", text=SECRET))
 
     @pytest.mark.parametrize("kind", ["embed", "chat"])
     async def test_a_protective_rule_on_a_plain_condition_still_acts(self, kind: str) -> None:
-        p = pipe(kind, "P", rules=[rule("Health", [{"key": "health", "decide": "m"}])])
-        combined = await plan(self.down(), [p], facts(kind, text="La riunione e lunedi."))
+        p = pipe(kind, "P", rules=[rule("Names", self.NAMES)])
+        combined = await plan(Evaluator(), [p], facts(kind, text="The meeting is on Monday."))
         assert combined.refused
 
+    async def test_the_patterns_part_never_fails(self) -> None:
+        # The keyword list is the gateway's own: it answers with no service at all.
+        p = pipe("embed", "P", rules=[rule("Codenames", FINDS)])
+        assert (await plan(Evaluator(), [p], facts("embed", text=SECRET))).refused
+        clean = await plan(Evaluator(), [p], facts("embed", text="The meeting is on Monday."))
+        assert not clean.refused
+
     async def test_an_observe_only_rule_does_not_match_and_does_not_refuse(self) -> None:
-        watch = rule("Watch", [{"key": "health", "negate": True, "decide": "m"}])
+        watch = rule("Watch", [{"key": "finds", "values": [NEEDS_SERVICE_ID], "negate": True}])
         watch["observe_only"] = True
         p = pipe("embed", "P", rules=[watch])
-        combined = await plan(self.down(), [p], facts("embed", text=HEALTH))
+        combined = await plan(Evaluator(), [p], facts("embed", text=SECRET))
         assert combined.level == "pass" and combined.runs[0].evaluation.observed == []
 
     def test_the_evaluator_raises_undecidable_with_the_rule(self) -> None:

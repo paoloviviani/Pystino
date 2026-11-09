@@ -2,9 +2,9 @@
 
 Two objects, one job each. A **policy** is what to find and what to do about it
 (patterns, entity types, a mode for each; see section 0c) and has no scope.
-A **pipeline** is when and how: a kind (read, embed, chat), a scope (who, which target), an ordered list of rules where the
-first match wins, and a fixed last rule. Every pipeline in scope runs and the
-results combine (``gateway.privacy.combine``).
+A **pipeline** is when and how: a kind (read, embed, chat), a scope (who, which
+target), an ordered list of rules where the first match wins, and a fixed last rule.
+Every pipeline in scope runs and the results combine (``gateway.privacy.combine``).
 
 Everything an administrator changes is audited like any other admin change, in
 the same transaction as the change. After a write the worker that served it

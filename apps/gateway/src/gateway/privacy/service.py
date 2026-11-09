@@ -991,6 +991,7 @@ async def summary_for(
 
     names = {pid: ref.name for pid, ref in state.policies.items()}
     names.update({pid: ref.name for pid, ref in state.user_policies.items()})
+    names.update({cid: ref.name for cid, ref in state.classifiers.items()})
     out: dict[str, list[tuple[ModelDef, list[str], list[str]]]] = {"embed": [], "chat": []}
     for model in models:
         kind = "embed" if model.kind is ModelKind.EMBEDDING else "chat"

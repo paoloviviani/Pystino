@@ -18,6 +18,9 @@ written as if it saw real ones: nothing is dropped silently.
   policies and user policies are dropped; the engine choice replaces them.
 * **Classifiers.** ``privacy_classifiers`` (a model and a topic in plain words) is
   created, empty. Nothing is seeded.
+* **Sharing.** Users could apply any administrator policy; now only one marked
+  ``shared_with_users``. The policies users' pipelines already apply are marked, so
+  nothing stops working.
 * **Conditions.** The quick check is removed with its conditions:
 
   * ``ids`` becomes "finds at least 1 item" of a policy named "Identifiers
@@ -31,7 +34,8 @@ written as if it saw real ones: nothing is dropped silently.
     is also made observe-only so enabling it cannot loosen anything. Every such
     rule is named in the migration log.
 
-Plain DDL plus Python-side row conversion, so it runs on SQLite as on PostgreSQL.
+Plain DDL plus Python-side row conversion, so it runs on SQLite as on PostgreSQL. The
+downgrade restores the schema only (see its docstring).
 """
 
 from __future__ import annotations
@@ -200,6 +204,7 @@ def _convert(bind: sa.Connection) -> None:
         sa.column("owner_id", sa.Uuid()),
         sa.column("name", sa.String()),
         sa.column("rules", sa.JSON()),
+        sa.column("otherwise", sa.JSON()),
     )
     for row in bind.execute(sa.select(policies.c.id, policies.c.policy)).all():
         converted = split_policy(dict(row.policy or {}))
@@ -207,6 +212,21 @@ def _convert(bind: sa.Connection) -> None:
             bind.execute(
                 policies.update().where(policies.c.id == row.id).values(policy=converted)
             )
+
+    # Users could apply any administrator policy before; now only a shared one. So the
+    # policies users' pipelines already apply are shared, and behaviour is unchanged.
+    shared: set[uuid.UUID] = set()
+    for row in bind.execute(
+        sa.select(pipelines.c.rules, pipelines.c.otherwise).where(pipelines.c.owner_id.is_not(None))
+    ).all():
+        actions = [dict(r.get("action") or {}) for r in row.rules or []] + [dict(row.otherwise or {})]
+        for action in actions:
+            if action.get("redact_with"):
+                shared.add(uuid.UUID(str(action["redact_with"])))
+    for policy_id in shared:
+        bind.execute(
+            policies.update().where(policies.c.id == policy_id).values(shared_with_users=True)
+        )
 
     ids_policy = uuid.uuid4()
     used_by_admin = used_by_user = False
@@ -262,3 +282,42 @@ def _convert(bind: sa.Connection) -> None:
         )
     for line in log:
         logger.warning("privacy migration 0083: %s", line)
+
+
+def downgrade() -> None:
+    """Back to the profiles schema, so the chain stays walkable. The rows are not
+    converted back: migrations only go forward, and the earlier downgrades only need
+    the tables and columns to exist."""
+    op.create_table(
+        "detector_profiles",
+        sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column("name", sa.String(length=64), nullable=False),
+        sa.Column("description", sa.String(length=500), server_default="", nullable=False),
+        sa.Column("engine", sa.String(length=32), nullable=False),
+        sa.Column("labels", sa.JSON(), nullable=False),
+        sa.Column("fallback", sa.String(length=16), server_default="refuse", nullable=False),
+        sa.Column("fallback_profile_id", sa.Uuid(), nullable=True),
+        sa.Column("is_default", sa.Boolean(), server_default=sa.false(), nullable=False),
+        sa.Column("user_available", sa.Boolean(), server_default=sa.false(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+        sa.ForeignKeyConstraint(
+            ["fallback_profile_id"], ["detector_profiles.id"], ondelete="SET NULL"
+        ),
+        sa.UniqueConstraint("name"),
+    )
+    with op.batch_alter_table("redaction_policies", schema=None) as batch_op:
+        batch_op.add_column(sa.Column("profile_id", sa.Uuid(), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_redaction_policies_profile", "detector_profiles", ["profile_id"], ["id"], ondelete="SET NULL"
+        )
+    with op.batch_alter_table("user_policies", schema=None) as batch_op:
+        batch_op.add_column(sa.Column("profile_id", sa.Uuid(), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_user_policies_profile", "detector_profiles", ["profile_id"], ["id"], ondelete="SET NULL"
+        )
+
+    op.drop_table("privacy_classifiers")
+    with op.batch_alter_table("redaction_policies", schema=None) as batch_op:
+        batch_op.drop_column("shared_with_users")
