@@ -1306,11 +1306,18 @@ class EffectivePolicy:
         keep = hides if acting else (lambda mode: mode is not EntityMode.OFF)
         per_engine: dict[str | None, tuple[set[str] | None, dict[str, str]]] = {}
         formats: set[str] = set()
+        # Patterns and keyword lists are evaluated in the gateway: a name any contributor
+        # gives one is never an entity type to ask the service for.
+        local = {p.name for c in self.contributors for p in c.policy.patterns} | {
+            k.name for c in self.contributors for k in c.policy.keywords
+        }
         for contributor in self.contributors:
             policy = contributor.policy
-            formats.update(n for n, e in policy.formats.items() if keep(e.mode))
+            formats.update(n for n, e in policy.formats.items() if keep(e.mode) and n not in local)
             labels = {c.name: c.label for c in policy.custom_entities if keep(c.mode)}
-            types: set[str] = {n for n, e in policy.entities.items() if keep(e.mode)} | set(labels)
+            types: set[str] = {
+                n for n, e in policy.entities.items() if keep(e.mode) and n not in local
+            } | set(labels)
             held_types, held_labels = per_engine.get(policy.engine, (set(), {}))
             if policy.default_mode is not EntityMode.OFF:
                 per_engine[policy.engine] = (None, {**held_labels, **labels})

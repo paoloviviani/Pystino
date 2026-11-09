@@ -72,13 +72,14 @@ class UserRule:
 
     def as_policy(self) -> RedactionPolicy:
         """This rule on its own, for attribution (``EffectivePolicy.decider_for``)."""
-        entities = {self.name: EntityPolicy(mode=self.mode)}
         if self.kind == "pattern" and self.regex is not None:
+            # A pattern is evaluated here, never asked of the redaction service: its name
+            # is not an entity type, and listing it under `entities` made the service
+            # answer "cannot serve" (a warning per request, a 503 in strict detection).
             return RedactionPolicy(
-                entities=entities,
                 patterns=[CustomPattern(name=self.name, regex=self.regex, mode=self.mode)],
             )
-        return RedactionPolicy(entities=entities)
+        return RedactionPolicy(entities={self.name: EntityPolicy(mode=self.mode)})
 
     def contributor(self) -> Contributor:
         return Contributor(id=self.id, name=self.label(), owner="user", policy=self.as_policy())
