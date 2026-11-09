@@ -13,6 +13,8 @@ import { PolicyFields, seededPolicy } from "./PolicyFields";
 const ENGINES: PrivacyEngines = {
   reachable: true,
   detail: "",
+  patterns_enabled: true,
+  patterns_used_by: [],
   pattern_entities: ["EMAIL_ADDRESS", "URL"],
   engines: [
     {
@@ -22,6 +24,8 @@ const ENGINES: PrivacyEngines = {
       entities: ["PERSON", "LOCATION"],
       custom_labels: false,
       labels: [],
+      enabled: true,
+      used_by: [],
       ms_per_token: 0.1,
       languages: ["en", "it"],
     },
@@ -32,6 +36,8 @@ const ENGINES: PrivacyEngines = {
       entities: ["PERSON", "ORGANIZATION"],
       custom_labels: true,
       labels: [],
+      enabled: true,
+      used_by: [],
       ms_per_token: 5,
       languages: ["en"],
     },
@@ -459,6 +465,8 @@ describe("PolicyFields", () => {
 const PATTERN_ONLY: PrivacyEngines = {
   reachable: true,
   detail: "",
+  patterns_enabled: true,
+  patterns_used_by: [],
   pattern_entities: ["EMAIL_ADDRESS", "IBAN_CODE"],
   engines: [
     {
@@ -468,6 +476,8 @@ const PATTERN_ONLY: PrivacyEngines = {
       entities: [],
       custom_labels: false,
       labels: [],
+      enabled: true,
+      used_by: [],
       ms_per_token: null,
       languages: [],
     },
@@ -478,6 +488,8 @@ const PATTERN_ONLY: PrivacyEngines = {
       entities: [],
       custom_labels: true,
       labels: [],
+      enabled: true,
+      used_by: [],
       ms_per_token: null,
       languages: [],
     },
@@ -559,5 +571,27 @@ describe("a format the service does not list (AGE)", () => {
     expect(policy.formats.AGE).toBeUndefined();
     expect(policy.entities.AGE.mode).toBe("redact");
     expect(screen.getByText(/Moved from formats to entities.*AGE/)).toBeInTheDocument();
+  });
+});
+
+describe("PolicyFields follows the detectors switched on", () => {
+  it("offers no formats when the patterns are switched off", () => {
+    render(<Harness engines={{ ...ENGINES, patterns_enabled: false }} />);
+    expect(screen.getByLabelText("Add a format")).toBeDisabled();
+  });
+
+  it("offers only the engines that are switched on, and the entities of the one in force", () => {
+    const gliner = { ...ENGINES.engines[1]!, enabled: false };
+    render(<Harness engines={{ ...ENGINES, engines: [ENGINES.engines[0]!, gliner] }} />);
+    const picker = screen.getByLabelText("Engine");
+    expect(within(picker).queryByRole("option", { name: /gliner/ })).not.toBeInTheDocument();
+    expect(within(picker).getByRole("option", { name: "spacy (default)" })).toBeEnabled();
+  });
+
+  it("hides the entities, with the reason, when every NER engine is switched off", () => {
+    const off = ENGINES.engines.map((e) => ({ ...e, enabled: false }));
+    render(<Harness engines={{ ...ENGINES, engines: off }} />);
+    expect(screen.getByTestId("no-ner")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Engine")).not.toBeInTheDocument();
   });
 });

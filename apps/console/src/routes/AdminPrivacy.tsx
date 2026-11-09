@@ -4,6 +4,7 @@ import { useNavigate } from "react-router";
 
 import { PipelineCard } from "../components/PipelineCard";
 import { PrivacyHeader } from "../components/PrivacyHeader";
+import { PrivacyMasterSwitch } from "../components/PrivacyMasterSwitch";
 import { MUTED, PAGE } from "../lib/layout";
 import {
   KINDS,
@@ -54,6 +55,7 @@ export function AdminPrivacy() {
           </Button>
         }
       />
+      <PrivacyMasterSwitch />
       {pipelines.isPending && <Spinner label={m["privacy.loading"]()} />}
       {Boolean(pipelines.error) && (
         <Notice tone="danger" title={m["privacy.load_error"]()}>

@@ -73,8 +73,8 @@ describe("Privacy routes", () => {
     ["/admin/privacy/hidden", "/admin/privacy/policies"],
     ["/admin/privacy/hidden/rules/abc", "/admin/privacy/policies/abc"],
     ["/admin/privacy/rules/abc", "/admin/privacy"],
-    ["/admin/privacy/profiles", "/admin/privacy/service"],
-    ["/admin/privacy/detectors", "/admin/privacy/service"],
+    ["/admin/privacy/profiles", "/admin/privacy/detectors"],
+    ["/admin/privacy/service", "/admin/privacy/detectors"],
     ["/admin/privacy/anything-else", "/admin/privacy"],
   ])("redirects %s to %s", async (from, to) => {
     go(from);

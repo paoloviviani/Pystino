@@ -15,7 +15,7 @@ import { AdminQuotaUsage } from "./routes/AdminQuotaUsage";
 import { AdminQuotas } from "./routes/AdminQuotas";
 import { AdminPrivacy } from "./routes/AdminPrivacy";
 import { AdminPrivacyClassifiers } from "./routes/AdminPrivacyClassifiers";
-import { AdminPrivacyService } from "./routes/AdminPrivacyService";
+import { AdminPrivacyDetectors } from "./routes/AdminPrivacyDetectors";
 import { AdminPrivacyTest } from "./routes/AdminPrivacyTest";
 import { AdminPolicies } from "./routes/AdminPolicies";
 import { AdminPolicy } from "./routes/AdminPolicy";
@@ -192,18 +192,18 @@ export function App() {
           }
         />
         <Route
-          path="/admin/privacy/service"
+          path="/admin/privacy/detectors"
           element={
             <RequireAdmin me={me_}>
-              <AdminPrivacyService />
+              <AdminPrivacyDetectors />
             </RequireAdmin>
           }
         />
         {/* Old links keep working (ADR 0113): redaction rules became policies under the
             same ids, "What gets hidden" became Redaction policies, and the routing rules
             became pipelines. */}
-        <Route path="/admin/privacy/profiles" element={<Navigate to="/admin/privacy/service" replace />} />
-        <Route path="/admin/privacy/detectors" element={<Navigate to="/admin/privacy/service" replace />} />
+        <Route path="/admin/privacy/profiles" element={<Navigate to="/admin/privacy/detectors" replace />} />
+        <Route path="/admin/privacy/service" element={<Navigate to="/admin/privacy/detectors" replace />} />
         <Route path="/admin/privacy/hidden" element={<Navigate to="/admin/privacy/policies" replace />} />
         <Route path="/admin/privacy/hidden/rules/:ruleId" element={<RedirectRedactionRule />} />
         <Route path="/admin/privacy/rules/:ruleId" element={<Navigate to="/admin/privacy" replace />} />

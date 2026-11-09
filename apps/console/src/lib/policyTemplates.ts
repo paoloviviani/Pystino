@@ -165,8 +165,16 @@ const patternTemplate = (name: string) =>
  */
 export function buildPolicyFromTemplate(
   template: PolicyTemplate,
-  engines: PrivacyEngines | null | undefined,
+  reported: PrivacyEngines | null | undefined,
 ): BuiltPolicy {
+  // A detector switched off offers nothing, whatever the service reports.
+  const engines = reported
+    ? {
+        ...reported,
+        pattern_entities: reported.patterns_enabled === false ? [] : reported.pattern_entities,
+        engines: reported.engines.map((e) => (e.enabled === false ? { ...e, available: false } : e)),
+      }
+    : reported;
   const reachable = engines?.reachable === true;
   const formats = new Set((engines?.pattern_entities ?? []).map((n) => n.toUpperCase()));
   const live = (engines?.engines ?? []).filter((engine) => engine.available);

@@ -273,6 +273,16 @@ says so, the API refuses an entity item ("No NER engine is installed in the
 redaction service; entities need one."), and My privacy offers no model-backed
 type. Enable one as described below.
 
+### Detector switches
+
+The console's **Detectors** tab switches each detector on or off: the patterns
+(`presidio_pattern_matching`), spaCy and GLiNER (`spacy_enabled`, `gliner_enabled`
+on the append-only `redaction_config` rows, migration `0084`; `presidio_ner` is on
+while either engine is). A detector an active policy uses cannot be switched off
+(409 naming the policies), and a policy can only choose detectors that are on. The
+whole of privacy is the **Privacy: On / Off** switch on the Pipelines tab, which
+is the old `noop` engine under a plain name.
+
 ### Policy templates
 
 The Redaction policies tab has **New policy from template** next to **New

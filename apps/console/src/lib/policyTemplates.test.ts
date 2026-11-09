@@ -23,12 +23,16 @@ const engine = (name: "spacy" | "gliner", over: Partial<PrivacyEngine>): Privacy
   labels: [],
   ms_per_token: null,
   languages: [],
+  enabled: true,
+  used_by: [],
   ...over,
 });
 
 const patternOnly: PrivacyEngines = {
   reachable: true,
   detail: "",
+  patterns_enabled: true,
+  patterns_used_by: [],
   pattern_entities: PATTERNS,
   engines: [engine("spacy", { available: false }), engine("gliner", { available: false })],
 };

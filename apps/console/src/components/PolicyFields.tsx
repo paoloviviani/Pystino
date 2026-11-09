@@ -63,13 +63,31 @@ export function chosenEngine(
 }
 
 /**
+ * The capabilities as a policy may use them: a detector switched off on the
+ * Detectors tab offers nothing (no formats, no engine, no entities), whatever the
+ * service reports.
+ */
+export function usableEngines(engines: PrivacyEngines | null | undefined): PrivacyEngines | null {
+  if (!engines) return null;
+  return {
+    ...engines,
+    pattern_entities: engines.patterns_enabled === false ? [] : engines.pattern_entities,
+    engines: engines.engines.map((engine) =>
+      engine.enabled === false ? { ...engine, available: false } : engine,
+    ),
+  };
+}
+
+/**
  * Whether the redaction service has any NER engine that can find entities.
  * Undefined while the service has not answered (or cannot be reached): nothing is
  * hidden on a guess.
  */
 export function hasNer(engines: PrivacyEngines | null | undefined): boolean | undefined {
   if (!engines || !engines.reachable) return undefined;
-  return engines.engines.some((engine) => engine.available && engine.entities.length > 0);
+  return engines.engines.some(
+    (engine) => engine.available && engine.enabled !== false && engine.entities.length > 0,
+  );
 }
 
 /**
@@ -131,12 +149,13 @@ export const NER_DOCS_URL = "https://paoloviviani.github.io/Pystino/redaction/#d
 export function PolicyFields({
   policy,
   onChange,
-  engines = null,
+  engines: reported = null,
   scoreThreshold = null,
   allowList = true,
   floor = null,
   allowListIgnored = false,
 }: PolicyFieldsProps) {
+  const engines = usableEngines(reported);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const engine = chosenEngine(policy, engines);
   // Formats the service stopped offering are moved or turned off once, in the
