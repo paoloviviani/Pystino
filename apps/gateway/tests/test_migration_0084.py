@@ -191,14 +191,24 @@ def test_a_rule_is_never_pointed_at_a_same_named_model_off_the_extractor(tmp_pat
     assert actions["Remote"] == {"level": "read_with", "reader": "docling"}
 
 
-def test_nothing_is_created_when_markitdown_is_gone(tmp_path: Path) -> None:
+def test_the_built_in_readers_are_recreated_when_markitdown_is_gone(tmp_path: Path) -> None:
+    """Built-in is always there: a deleted markitdown row comes back with 0041's defaults."""
     path, url = _old(tmp_path)
     with closing(sqlite3.connect(path)) as conn:
         conn.execute("DELETE FROM models WHERE name = 'markitdown'")
         conn.commit()
     up = _upgrade(url)
-    assert _rows(path, "SELECT name FROM models WHERE name IN ('markitdown-ocr', 'docling')") == []
-    assert "no engine models were created" in up.stdout + up.stderr
+    rows = {
+        r["name"]: r
+        for r in _rows(
+            path,
+            "SELECT * FROM models WHERE name IN ('markitdown', 'markitdown-ocr', 'docling')",
+        )
+    }
+    assert set(rows) == {"markitdown", "markitdown-ocr", "docling"}
+    for row in rows.values():
+        assert (row["kind"], row["is_active"], row["is_public"]) == ("ocr", 1, 1)
+    assert "'markitdown' model was missing; recreated it" in up.stdout + up.stderr
 
 
 def test_rules_name_the_model_not_the_engine(tmp_path: Path) -> None:

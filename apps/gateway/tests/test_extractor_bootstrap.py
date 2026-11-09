@@ -467,7 +467,7 @@ class TestDeletionProtection:
 
         response = await client.delete(f"/api/admin/providers/{model.provider_id}")
         assert response.status_code == 409
-        assert "deactivated" in response.json()["error"]["message"]
+        assert "can't be removed" in response.json()["error"]["message"]
 
         # Refused, not half-done: the row is still there afterwards.
         assert (await client.get("/api/admin/providers")).status_code == 200
@@ -488,7 +488,45 @@ class TestDeletionProtection:
 
         response = await client.delete(f"/api/admin/models/{model.id}")
         assert response.status_code == 409
-        assert "deactivated" in response.json()["error"]["message"]
+        assert "can't be removed" in response.json()["error"]["message"]
+
+    async def test_every_built_in_reader_is_kept_even_on_a_retyped_provider(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: Any,
+    ) -> None:
+        """markitdown-ocr and docling are as permanent as markitdown, and the rule is the
+        plugin's, not only the provider's kind."""
+        admin = await make_admin(session_factory, seeded)
+        model = await add_extractor_pair(session)
+        provider = await session.get(Provider, model.provider_id)
+        assert provider is not None
+        provider.kind = ProviderKind.PROVIDER
+        extra = []
+        for name in ("markitdown-ocr", "docling"):
+            row = ModelDef(
+                name=name,
+                upstream_model=name,
+                provider_id=provider.id,
+                kind=ModelKind.OCR,
+            )
+            session.add(row)
+            extra.append(row)
+        await session.commit()
+        as_user(app, admin)
+
+        for row in extra:
+            response = await client.delete(f"/api/admin/models/{row.id}")
+            assert response.status_code == 409, response.text
+            assert "can't be removed" in response.json()["error"]["message"]
+        response = await client.delete(f"/api/admin/providers/{provider.id}")
+        assert response.status_code == 409, response.text
+        # Deactivating and editing access still work like any model.
+        patched = await client.patch(f"/api/admin/models/{extra[0].id}", json={"is_active": False})
+        assert patched.status_code == 200, patched.text
 
     async def test_deactivating_the_provider_still_works(
         self,

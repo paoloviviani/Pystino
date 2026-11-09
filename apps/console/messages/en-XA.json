@@ -793,6 +793,7 @@
   "admin_providers.action.deactivate": "[Ďéáćťíǚáťé]",
   "admin_providers.action.activate": "[Áćťíǚáťé]",
   "admin_providers.action.delete": "[Ďéľéťé]",
+  "admin_providers.delete.builtin_hint": "[Ťȟé ƀúíľť-íń ŕéáďéŕ ćáń'ť ƀé ŕéḿóǚéď; ďéáćťíǚáťé íť óŕ ľíḿíť ŵȟó ḿáý úśé íť íńśťéáď.]",
   "admin_providers.internal.tooltip": "[Ťȟíś ďéþľóýḿéńť'ś óŵń íńƒŕáśťŕúćťúŕé — ďéáćťíǚáťé íť íńśťéáď óƒ ďéľéťíńǧ íť.]",
   "admin_providers.title": "[Þŕóǚíďéŕś]",
   "admin_providers.subtitle": "[Ťȟé éńďþóíńťś ḿóďéľś áŕé śéŕǚéď ƒŕóḿ. ÁÞÍ ķéýś áŕé éńćŕýþťéď áńď ńéǚéŕ śȟóŵń áǧáíń.]",

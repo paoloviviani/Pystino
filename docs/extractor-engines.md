@@ -71,7 +71,9 @@ The rows are made by migration `0084` (like `markitdown` by `0041`, so a model a
 admin deactivated is never put back): they copy `markitdown`'s active and public
 flags and its group and user grants, and are unpriced (set a per-page rate on each
 if the deployment charges for reading). Admins can deactivate them or set grants
-like any model. The deployment default stays markitdown.
+like any model, but cannot delete them (nor the provider): the API answers 409 and the
+console disables Delete. If a deployment had deleted `markitdown` before this rule, `0084`
+recreates the built-in models with the seed defaults and logs it. The deployment default stays markitdown.
 
 ## Choosing the engine
 

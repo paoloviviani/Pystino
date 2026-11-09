@@ -793,6 +793,7 @@
   "admin_providers.action.deactivate": "Deactivate",
   "admin_providers.action.activate": "Activate",
   "admin_providers.action.delete": "Delete",
+  "admin_providers.delete.builtin_hint": "The built-in reader can't be removed; deactivate it or limit who may use it instead.",
   "admin_providers.internal.tooltip": "This deployment's own infrastructure — deactivate it instead of deleting it.",
   "admin_providers.title": "Providers",
   "admin_providers.subtitle": "The endpoints models are served from. API keys are encrypted and never shown again.",

@@ -10,10 +10,10 @@ sent as ``X-Extractor-Engine``, so a client that lists OCR models (Cerea) never 
 the others. Now each engine is a model under the extractor provider.
 
 * **Models.** ``markitdown-ocr`` and ``docling`` are created beside ``markitdown``
-  when an extractor provider and its ``markitdown`` row exist and the name is free
-  among the deployment's models. With no ``markitdown`` row nothing is created: there
-  is no decision of the operator's to copy, and a reader must never reach users as a
-  new public one. They copy what the operator
+  when an extractor provider exists and the name is free
+  among the deployment's models. The built-in readers are always there: with no
+  ``markitdown`` row (deleted before this rule) it is recreated with 0041's seed defaults
+  (active, public) and logged. They copy what the operator
   decided about ``markitdown``: active or not, public or not, and its group and user
   grants, so nobody gains or loses access to the reader they had. Prices are *not*
   copied (the rows are unpriced like the original; set a per-page rate if the
@@ -118,13 +118,44 @@ def _seed_models(bind: sa.Connection, t: dict[str, sa.Table]) -> list[str]:
         .where(models.c.provider_id == provider.id, models.c.name == DEFAULT_READER)
         .limit(1)
     ).first()
-    if base is None:
-        log.append(
-            f"the extractor has no '{DEFAULT_READER}' model, so no engine models were created "
-            "(there is no access decision to copy)."
-        )
-        return log
     now = datetime.now(UTC)
+    if base is None:
+        # The built-in readers are always there. 0041 never re-seeds, so a deployment whose
+        # markitdown row was deleted before this rule gets it back with 0041's defaults
+        # (active, public, unpriced), unless its name is taken by another model.
+        if bind.execute(
+            sa.select(models.c.id).where(
+                models.c.name == DEFAULT_READER, models.c.owner_id.is_(None)
+            )
+        ).first():
+            log.append(
+                f"a model named '{DEFAULT_READER}' exists but is not the extractor's, so the "
+                "built-in readers were not recreated; create them by hand."
+            )
+            return log
+        base_id = uuid.uuid4()
+        bind.execute(
+            models.insert().values(
+                id=base_id,
+                name=DEFAULT_READER,
+                upstream_model=DEFAULT_READER,
+                provider_id=provider.id,
+                kind="ocr",
+                is_active=True,
+                is_public=True,
+                input_modalities=["file"],
+                output_modalities=["text"],
+                supported_features=[],
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        log.append(
+            f"the extractor's '{DEFAULT_READER}' model was missing; recreated it (active, public, "
+            "as seeded by 0041): the built-in readers can't be removed."
+        )
+        base = bind.execute(sa.select(models).where(models.c.id == base_id)).first()
+        assert base is not None
     for name in NEW_MODELS:
         if bind.execute(
             sa.select(models.c.id).where(models.c.name == name, models.c.owner_id.is_(None))

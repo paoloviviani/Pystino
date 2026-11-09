@@ -10,6 +10,8 @@ export interface RowAction {
   /** Drawn in the danger ink and set apart from the other items by a rule. */
   destructive?: boolean;
   disabled?: boolean;
+  /** Why the item is disabled, shown as a tooltip. */
+  hint?: string;
 }
 
 export interface RowActionsProps {
@@ -43,6 +45,7 @@ export function RowActions({ label, actions }: RowActionsProps) {
     <MenuItem
       key={action.key}
       disabled={action.disabled}
+      title={action.hint}
       onClick={action.onSelect}
       className={cx(
         action.destructive && "text-danger!",
