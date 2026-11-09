@@ -978,10 +978,29 @@ class RedactionPolicy(BaseModel):
         return found[1] if found is not None else PlaceholderStyle.TAGGED
 
     def threshold_for(self, entity_type: str, default: float) -> float:
-        found = self._named(entity_type)
-        if found is None or found[2] is None:
-            return default
-        return found[2]
+        """The lowest threshold any acting entry for this type sets, else ``default``.
+
+        Across every table that names the type, as ``combine`` does. Reading it from the
+        strictest-mode entry alone let a pattern or keyword list (which has no threshold)
+        in a stricter mode hide the entity entry's 0.3 and put the type back on the
+        deployment default.
+        """
+        name = entity_type.upper()
+        found: list[float] = []
+        for table in (self.entities, self.formats):
+            entry = table.get(name)
+            if (
+                entry is not None
+                and entry.mode is not EntityMode.OFF
+                and entry.threshold is not None
+            ):
+                found.append(entry.threshold)
+        found.extend(
+            c.threshold
+            for c in self.custom_entities
+            if c.name == name and c.mode is not EntityMode.OFF and c.threshold is not None
+        )
+        return min(found) if found else default
 
     def allows(self, text: str) -> bool:
         return text.strip().casefold() in self._allowed

@@ -806,3 +806,41 @@ class TestSwitchedOffDetectors:
             json={"name": "F", "policy": {"formats": {"IBAN_CODE": {"mode": "redact"}}}},
         )
         assert no_format.status_code == 422 and "no built-in format" in no_format.text
+
+
+class TestUserPatternNames:
+    async def test_a_user_pattern_cannot_take_the_name_of_an_administrator_item(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, seeded.user)
+        await add_policy(
+            app,
+            session_factory,
+            "Admin",
+            patterns=[{"name": "BADGE", "regex": "B-[0-9]+", "mode": "redact"}],
+            keywords=[{"name": "CODES", "words": ["falcon"], "mode": "redact"}],
+            custom_entities=[{"name": "PROJECT", "label": "project code name", "mode": "redact"}],
+            engine="gliner",
+        )
+        for name in ("BADGE", "CODES", "PROJECT"):
+            refused = await client.post(
+                "/api/me/privacy/policies",
+                json={
+                    "name": f"U{name}",
+                    "entries": [
+                        {"kind": "pattern", "name": name, "mode": "redact", "regex": "x[0-9]+"}
+                    ],
+                },
+            )
+            assert refused.status_code == 422, name
+            assert "is the name of an entity type" in refused.text
+        fresh = await client.post(
+            "/api/me/privacy/policies",
+            json={
+                "name": "ok",
+                "entries": [
+                    {"kind": "pattern", "name": "MINE", "mode": "redact", "regex": "x[0-9]+"}
+                ],
+            },
+        )
+        assert fresh.status_code == 201

@@ -88,6 +88,29 @@ class TestTheFold:
 
         assert RedactionPolicy.combine([strict, lax]).threshold_for("PERSON", 0.0) == 0.5
 
+    def test_a_stricter_pattern_of_the_same_name_cannot_hide_a_lower_threshold(self) -> None:
+        """Policy A finds PERSON and PHONE_NUMBER at 0.3 and redacts them; policy B has
+        patterns of the same names in block. The strictest-mode entry is the pattern, which
+        has no threshold, so the type used to fall back to the deployment's 0.5 and hide
+        less than A asked."""
+        a = policy(
+            entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT, threshold=0.3)},
+            formats={"PHONE_NUMBER": EntityPolicy(mode=EntityMode.REDACT, threshold=0.3)},
+        )
+        b = policy(
+            patterns=[
+                CustomPattern(name="PERSON", regex="aaa", mode=EntityMode.BLOCK),
+                CustomPattern(name="PHONE_NUMBER", regex="bbb", mode=EntityMode.BLOCK),
+            ]
+        )
+        combined = RedactionPolicy.combine([a, b])
+        assert combined.mode_for("PERSON") is EntityMode.BLOCK
+        assert combined.threshold_for("PERSON", 0.5) == 0.3
+        assert combined.threshold_for("PHONE_NUMBER", 0.5) == 0.3
+        # An entry that is off does not set one, and with none the default stands.
+        off = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.OFF, threshold=0.1)})
+        assert off.threshold_for("PERSON", 0.5) == 0.5
+
     def test_patterns_are_unioned(self) -> None:
         a = policy(patterns=[CustomPattern(name="PRJ", regex=r"PRJ-\d+")])
         b = policy(patterns=[CustomPattern(name="TICKET", regex=r"T-\d+")])

@@ -418,6 +418,31 @@ async def _own_policy(session: SessionDep, user: User, policy_id: uuid.UUID) -> 
     return row
 
 
+async def _administrator_names(session: SessionDep) -> set[str]:
+    """Every name an administrator policy gives an item: formats, entities, patterns,
+    keyword lists and custom entities.
+
+    A user's pattern may not take one of them. ``fold`` writes a user's pattern into the
+    entity table under its name, so a pattern called like an administrator's keyword list
+    would replace that list's mode for the type. Refusing the name is the smaller change:
+    the fold stays as it is, and the user is told which name to avoid. (Chosen over making
+    the fold raise the mode on the pattern, which would let one user's pattern change
+    how an administrator's item is counted.)
+    """
+    names: set[str] = set()
+    for row in await service.policy_rows(session):
+        raw = row.policy or {}
+        for table in ("formats", "entities"):
+            names.update(str(name) for name in (raw.get(table) or {}))
+        for table in ("patterns", "keywords", "custom_entities"):
+            names.update(
+                str(item.get("name"))
+                for item in raw.get(table) or []
+                if isinstance(item, dict) and item.get("name")
+            )
+    return names
+
+
 async def _policy_fields(
     session: SessionDep,
     user: User,
@@ -437,6 +462,10 @@ async def _policy_fields(
             payload.entries,
             allowed_types=settings_row.user_entity_types,
             no_ner_types=ner_type_names(report) if has_ner(report) is False else None,
+            reserved={
+                *(settings_row.user_entity_types or ()),
+                *await _administrator_names(session),
+            },
         )
     except ValueError as exc:
         raise UnprocessableError(_message_of(exc)) from exc

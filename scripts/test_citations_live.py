@@ -28,15 +28,17 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from live_session import admin_credentials, check, login, user_credentials
+from live_session import admin_credentials, check, grant_model, login, user_credentials
 from test_providers_live import api
+from test_redaction_live import install_admin_redaction, remove_admin_redaction
 from test_surfaces_live import call, key_for
 
 FAILURES: list[str] = []
 
-#: The name the detector has to find. Italian, because the deployment's engine
-#: is the English model and this is the shape that caught a real bug before.
-NAME = "Luca Bianchi"
+#: What the detector has to find: an email address, which the pattern recognisers of
+#: the published (pattern-only) redaction image find with no NER model. Its
+#: placeholder is a different length from the address, which is what moves the offsets.
+NAME = "luca.bianchi@example.org"
 #: What the fake upstream appends and cites. Must stay in step with `CITED` in
 #: scripts/_fake_upstream.py.
 CITED = "source"
@@ -60,17 +62,19 @@ def main() -> int:
         print("login failed")
         return 1
 
-    # Refuse to report success against a deployment that redacts nothing.
-    status, rules = api(session, "/api/admin/redaction/rules?limit=50")
-    active = [r for r in rules.get("items", []) if r.get("is_active")]
-    if status != 200 or not active:
-        print(
-            "No active redaction rule, so nothing would be substituted and this "
-            "check cannot mean anything. Enable one and run it again."
-        )
+    # Nothing is redacted until an administrator writes a policy and a pipeline that
+    # applies it (ADR 0113), and a check that passes without a placeholder proves
+    # nothing: so this one installs its own, and takes it away again.
+    grant_model(session, user)
+    if not install_admin_redaction(session, ("EMAIL_ADDRESS",)):
         return 1
-    print(f"active rules: {[r['name'] for r in active]}")
+    try:
+        return run(session, user)
+    finally:
+        remove_admin_redaction(session)
 
+
+def run(session: Any, user: Any) -> int:
     secret = key_for(user, "citations-live")
     if secret is None:
         return 1
@@ -109,8 +113,8 @@ def main() -> int:
     annotations = message.get("annotations") or []
 
     expect(
-        "the answer came back with the real name, not a placeholder",
-        NAME in content and "<PERSON_" not in content,
+        "the answer came back with the real address, not a placeholder",
+        NAME in content and "<EMAIL_ADDRESS_" not in content,
         f"content={content!r}",
     )
     expect("the provider's citation survived the proxy", bool(annotations), f"{message}")
