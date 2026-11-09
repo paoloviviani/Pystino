@@ -134,7 +134,6 @@ RUN set -eux; \
         VIRTUAL_ENV=/opt/venv uv pip install --no-cache --index-url https://download.pytorch.org/whl/cpu torch; \
         VIRTUAL_ENV=/opt/venv uv pip install --no-cache "gliner>=0.2.30,<0.3"; \
         /opt/venv/bin/python /tmp/fetch_gliner.py "${GLINER_MODEL}" "${GLINER_REVISION}" "${GLINER_TOKENIZER_BASE}" "${GLINER_TOKENIZER_REVISION}"; \
-        echo "REDACTION_GLINER_MODEL=${GLINER_MODEL}" >> /opt/venv/models.env; \
     fi
 
 # Recorded in the image so the running service reports exactly what it loaded,
@@ -148,6 +147,8 @@ RUN set -eux; \
         esac; \
     done; \
     echo "REDACTION_SPACY_MODELS=${languages}" > /opt/venv/models.env
+# Tells the service the image has GLiNER, so it loads it at startup.
+RUN if [ -n "${GLINER_MODEL}" ]; then echo "REDACTION_GLINER_MODEL=${GLINER_MODEL}" >> /opt/venv/models.env; fi
 
 
 FROM python:3.13-slim AS runtime

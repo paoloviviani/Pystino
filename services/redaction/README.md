@@ -138,6 +138,27 @@ The build prints the licence notice when it installs an Italian model. Do not do
 this for a deployment that supports commissioned or contract work without checking
 with whoever owns that question.
 
+## NER engines: spaCy and GLiNER
+
+The service hosts spaCy and, when the image was built with it, GLiNER, and a request
+chooses one with `ner_engine` (`"spacy"`, `"gliner"` or null for the deployment
+default, `REDACTION_NER_DEFAULT`, spaCy unless set otherwise). Pattern recognisers
+run whatever the engine. See [docs/redaction.md](../../docs/redaction.md#ner-engines-spacy-and-gliner)
+for the contract, custom labels, memory and latency.
+
+* **Build**: `--build-arg GLINER_MODEL=urchade/gliner_multi_pii-v1 --build-arg GLINER_REVISION=<sha> --build-arg GLINER_TOKENIZER_REVISION=<sha>`.
+  Apache-2.0 weights (the encoder, `microsoft/mdeberta-v3-base`, is MIT), baked in,
+  offline at runtime. Without the argument the image is spaCy only and
+  `/healthz` reports `gliner` as `available: false`.
+* **Contract**: `/healthz` has `ner_engines`; `/detect` takes `ner_engine` and
+  `custom_labels` and answers `409 engine_unavailable` for an engine the image lacks;
+  spans carry `engine`.
+* **Environment**: `REDACTION_NER_DEFAULT`, `REDACTION_GLINER_LABELS`
+  (`label` or `label=ENTITY`, comma separated), `REDACTION_GLINER_THRESHOLD`
+  (default 0.5), `REDACTION_GLINER_CHUNK_CHARS` (default 1200).
+* **Cost** (5 cores, measured): image 1.27 GB without, 4.81 GB with; about 2.6 GB resident
+  with both engines loaded; GLiNER 5 to 10 ms per token against 0.2 for spaCy.
+
 ## Why this is a separate process, and must stay one
 
 spaCy is CPU-bound and synchronous. In-process it would block the gateway's event
