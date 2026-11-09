@@ -825,6 +825,13 @@ def _extract(
         else:
             _fallback.append("ocr unavailable")
 
+    # An explicit `markitdown` is the plain reader: no OCR even on the `-ocr` and
+    # `-docling` images, where EXTRACTOR_OCR defaults on. A model name means one
+    # engine, so `markitdown` and `markitdown-ocr` must read differently whatever
+    # the image; EXTRACTOR_ENGINE and EXTRACTOR_OCR decide only a call with no header.
+    elif isinstance(engine, str) and engine.strip().lower() == "markitdown":
+        config = dataclasses.replace(config, ocr=False)
+
     if resolved in _IMAGES:
         return _read_image_file(data, config)
 

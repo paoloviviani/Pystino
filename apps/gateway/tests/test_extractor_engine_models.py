@@ -35,7 +35,12 @@ async def read(client: httpx.AsyncClient, seeded: Seeded, model: str) -> httpx.R
 class TestEngineOfModel:
     @pytest.mark.parametrize(
         ("name", "engine"),
-        [("markitdown", None), ("markitdown-ocr", "ocr"), ("docling", "docling"), ("mine", None)],
+        [
+            ("markitdown", "markitdown"),
+            ("markitdown-ocr", "ocr"),
+            ("docling", "docling"),
+            ("mine", None),
+        ],
     )
     def test_each_model_means_one_engine(self, name: str, engine: str | None) -> None:
         assert extraction.engine_of_model(name) == engine
@@ -45,8 +50,11 @@ class TestEngineOfModel:
         assert extraction.model_availability("markitdown", None) is True
         assert extraction.model_availability("markitdown-ocr", both) is True
         assert extraction.model_availability("docling", both) is False
-        # Cannot be asked: unknown, so listings leave the non-default models out.
-        assert extraction.model_availability("docling", None) is None
+        # Cannot be asked: not available (fail closed); the plain reader always is.
+        assert extraction.model_availability("docling", None) is False
+        assert extraction.model_availability("markitdown", None) is True
+        # An operator's own extractor row (no known engine) is theirs to run.
+        assert extraction.model_availability("mine", frozenset()) is True
 
 
 class TestReadingWithAnEngineModel:
@@ -61,7 +69,11 @@ class TestReadingWithAnEngineModel:
 
         for name in ("markitdown", "markitdown-ocr", "docling"):
             assert (await read(client, seeded, name)).status_code == 200
-        assert [h.get("x-extractor-engine") for h in extractor.headers] == [None, "ocr", "docling"]
+        assert [h.get("x-extractor-engine") for h in extractor.headers] == [
+            "markitdown",
+            "ocr",
+            "docling",
+        ]
 
     async def test_a_model_the_extractor_cannot_run_is_refused_not_read_by_another_engine(
         self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session: AsyncSession
@@ -74,10 +86,11 @@ class TestReadingWithAnEngineModel:
         assert response.json()["error"]["code"] == "extractor_engine_unavailable"
         assert extractor.bodies == [], "nothing was read"
 
-    async def test_an_extractor_that_cannot_be_asked_does_not_block_a_call(
+    async def test_an_extractor_that_cannot_be_asked_does_not_run_a_non_default_engine(
         self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session: AsyncSession
     ) -> None:
-        """The call itself then fails the way an unreachable extractor always does."""
+        """Fail closed: no guess about an engine nobody confirmed. The plain reader still goes
+        through (and then fails as an unreachable extractor does)."""
 
         def down(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("no route", request=request)
@@ -85,7 +98,10 @@ class TestReadingWithAnEngineModel:
         app.state.control_http = httpx.AsyncClient(transport=httpx.MockTransport(down))
         await add_engine_model(session, seeded, "docling")
         response = await read(client, seeded, "docling")
-        assert response.status_code == 502, response.text
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "extractor_engine_unavailable"
+        await add_local_model(session, seeded, name="markitdown")
+        assert (await read(client, seeded, "markitdown")).status_code == 502
 
 
 class TestTheModelListing:

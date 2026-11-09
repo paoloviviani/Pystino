@@ -165,16 +165,14 @@ async def list_models(
             not model.is_alias
             and model.provider is not None
             and model.provider.plugin == "extractor"
-            and extraction.engine_of_model(model.upstream_model or model.name) is not None
+            and extraction.engine_of_model(model.upstream_model or model.name)
+            not in (None, "markitdown")
         ):
             endpoint = (model.provider.base_url or "").strip() or settings.extractor.endpoint
             if endpoint not in reported:
                 reported[endpoint] = await extraction.reported_engines(control_http, endpoint)
-            if (
-                extraction.model_availability(
-                    model.upstream_model or model.name, reported[endpoint]
-                )
-                is not True
+            if not extraction.model_availability(
+                model.upstream_model or model.name, reported[endpoint]
             ):
                 continue
         # A routed alias comes back once per target (the join fans out, ordered

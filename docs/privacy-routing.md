@@ -192,8 +192,7 @@ and name, scan) have held.
 
 - **The built-in extractor's engines are models.** Each engine the deployment's
   extractor can run is an OCR model of its own under the built-in provider:
-  `markitdown` (the extractor's default engine, `EXTRACTOR_ENGINE`; markitdown unless
-  the operator set docling), `markitdown-ocr` (markitdown plus RapidOCR, for scans and
+  `markitdown` (the plain reader), `markitdown-ocr` (markitdown plus RapidOCR, for scans and
   pictures) and `docling`. The reader picker lists them by name beside any other OCR
   model, and a rule that names none reads with `markitdown`. There is no separate
   engine choice: the engine is the model, so one rule picks the reader and the engine
@@ -410,14 +409,14 @@ exist only on unreleased builds so far, but nothing is dropped silently:
 
 Rules no longer say "the built-in extractor" plus an engine; they name a model.
 `builtin` with engine `markitdown` becomes `markitdown`, `ocr` becomes `markitdown-ocr`,
-`docling` becomes `docling`, and `builtin` with no engine becomes `markitdown` (the
-deployment's default reader). Every changed rule is in the migration log (`extractor
-engine models 0084: ...`). One edge: the `markitdown` model means "the extractor's
-default engine", so on a deployment that set `EXTRACTOR_ENGINE=docling` a rule that
-named the engine `markitdown` explicitly now reads with that default. The downgrade
-turns the names back into `builtin` and an engine. The API's `engine` field on a rule's
+`docling` becomes `docling`, and `builtin` with no engine becomes `markitdown`. A rule is
+only pointed at a model on the extractor provider: if a model of that name exists
+elsewhere (a remote service, an alias) the rule reads with `markitdown` instead and the
+log says so loudly, so a local-only rule never leaves the stack. Every changed rule is
+in the migration log (`extractor engine models 0084: ...`). The downgrade turns the
+extractor's model names back into `builtin` and an engine. The API's `engine` field on a rule's
 action and the options' `engines` list are gone (a request that sends `engine` is
-refused with 422).
+refused with 400).
 
 ## What it does not do yet
 

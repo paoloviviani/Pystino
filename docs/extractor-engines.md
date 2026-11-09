@@ -48,7 +48,7 @@ screen, a RAG pipeline) sees what the deployment offers and picks one by name:
 
 | Model | Engine | Sent to the extractor |
 |---|---|---|
-| `markitdown` | the extractor's default engine (`EXTRACTOR_ENGINE`: markitdown unless the operator set docling) | no `X-Extractor-Engine`, as before |
+| `markitdown` | the plain reader: Word, Excel, PowerPoint, text-layer PDFs, no OCR even on an image that has it | `X-Extractor-Engine: markitdown` |
 | `markitdown-ocr` | markitdown with OCR on (scans and pictures) | `X-Extractor-Engine: ocr` |
 | `docling` | Docling | `X-Extractor-Engine: docling` |
 
@@ -61,7 +61,11 @@ and the privacy reader pickers leave the others out, a call to one is refused (4
 name, and a privacy rule that names one is refused as a read that cannot be done
 (fail closed) with a warning in the editor. The answer is asked of the extractor
 and kept for a minute; when the extractor cannot be asked, only `markitdown` is
-listed. Availability is not stored, so an image change needs no admin step.
+offered and the others are refused (fail closed). Availability is not stored, so an image change needs no admin step.
+
+Each name means exactly one engine, whatever the image defaults to. `EXTRACTOR_ENGINE`
+and `EXTRACTOR_OCR` decide only a call that sends no header (a client calling the
+extractor directly). The default for a deployment's callers is the model they name.
 
 The rows are made by migration `0084` (like `markitdown` by `0041`, so a model an
 admin deactivated is never put back): they copy `markitdown`'s active and public
@@ -74,7 +78,7 @@ like any model. The deployment default stays markitdown.
 | Setting | Meaning |
 |---|---|
 | `EXTRACTOR_ENGINE` | `markitdown` (default) or `docling`. |
-| `X-Extractor-Engine` request header | `markitdown`, `ocr` (markitdown with OCR switched on for this one request; `fallback_reason` says `ocr unavailable` on a build without the weights) or `docling`; anything else is ignored. The gateway sends it for the `markitdown-ocr` and `docling` models (see above), and never otherwise. |
+| `X-Extractor-Engine` request header | `markitdown` (the plain reader: OCR off, whatever `EXTRACTOR_OCR` says), `ocr` (markitdown with OCR switched on for this one request; `fallback_reason` says `ocr unavailable` on a build without the weights) or `docling`; anything else is ignored. The gateway sends it for the `markitdown-ocr` and `docling` models (see above), and never otherwise. |
 | `EXTRACTOR_OCR` | `rapidocr` or `none`. Default: on in the `-ocr` and `-docling` images, off elsewhere. Docling always uses RapidOCR for scans. |
 | `EXTRACTOR_THREADS` | Intra-op threads for ONNX and torch. Default: the cores this container may use (the CPU-affinity mask, which follows `--cpuset` and not a CPU quota: set it explicitly with `cpus:` limits). |
 | `EXTRACTOR_MAX_PAGES` | Pages read by OCR or Docling per document (default 200). Further pages are not read and the response says `truncated`. Pages are counted by pdfium (pdfminer as a fallback); when neither can count, the cap is still passed to Docling. A page is drawn for OCR at 200 DPI but never larger than 2600 pixels on its long side, so a 200-inch page cannot become a multi-gigabyte bitmap. |

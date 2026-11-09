@@ -303,18 +303,16 @@ async def _reader_model(
 
 
 async def _engine_runs(model: ModelDef, http: Any, settings: Settings) -> bool:
-    """False only when the built-in extractor answered and does not run this model's engine.
-
-    A model that is not the extractor's, the default reader, and an extractor that
-    cannot be asked all pass: the call itself then fails as an unreachable
-    extractor does, which is the existing answer and not a new one.
-    """
+    """Whether the built-in extractor runs this model's engine (fail closed: an extractor
+    that cannot be asked does not run a non-default engine). Models that are not the
+    extractor's, and the plain markitdown reader, always pass."""
     if model.provider is None or model.provider.plugin != LOCAL_EXTRACTOR:
         return True
-    if extraction.engine_of_model(model.upstream_model or model.name) is None:
-        return True  # the default reader runs on every build: nothing to ask
+    upstream = model.upstream_model or model.name
+    if extraction.engine_of_model(upstream) in (None, "markitdown"):
+        return True  # runs on every build: nothing to ask
     engines = await extraction.reported_engines(http, _extractor_endpoint(model, settings))
-    return extraction.model_availability(model.upstream_model or model.name, engines) is not False
+    return extraction.model_availability(upstream, engines)
 
 
 def _routing(

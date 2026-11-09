@@ -422,12 +422,12 @@ async def unavailable_readers(
     reported: dict[str, frozenset[str] | None] = {}
     gone: set[str] = set()
     for name, upstream, base_url in rows:
-        if extraction.engine_of_model(upstream or name) is None:
-            continue  # the default reader runs on every build: nothing to ask
+        if extraction.engine_of_model(upstream or name) in (None, "markitdown"):
+            continue  # runs on every build: nothing to ask
         endpoint = (base_url or "").strip() or settings.extractor.endpoint
         if endpoint not in reported:
             reported[endpoint] = await extraction.reported_engines(http, endpoint)
-        if extraction.model_availability(upstream or name, reported[endpoint]) is not True:
+        if not extraction.model_availability(upstream or name, reported[endpoint]):
             gone.add(str(name))
     return gone
 

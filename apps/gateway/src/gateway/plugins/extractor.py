@@ -129,7 +129,7 @@ class LocalExtractorPlugin(GenericOpenAIPlugin):
                     "id": "markitdown",
                     "description": (
                         "Word, Excel, PowerPoint and text-layer PDFs, read inside this "
-                        "deployment with the extractor's default reader. Scanned pages "
+                        "deployment with the plain markitdown reader. Scanned pages "
                         "are refused rather than guessed at."
                     ),
                     "tags": ["OCR"],

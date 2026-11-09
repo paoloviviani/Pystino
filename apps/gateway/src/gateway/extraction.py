@@ -48,23 +48,23 @@ _CONNECT_TIMEOUT_SECONDS = 10.0
 
 
 #: The built-in extractor's models and the reader each one means (docs/extractor-engines.md).
-#: The key is the model's upstream name, what the gateway sends nowhere but
-#: reads here; the value is the ``X-Extractor-Engine`` it sends. ``markitdown``
-#: sends none: it is "the deployment's default reader" (``EXTRACTOR_ENGINE``,
-#: markitdown unless the operator set docling), which is what it has always
-#: meant, so a deployment's existing calls and rules read exactly as before.
-ENGINE_OF_MODEL: dict[str, str | None] = {
-    "markitdown": None,
+#: The key is the model's upstream name; the value is the ``X-Extractor-Engine`` the
+#: gateway sends. Each name means exactly one engine, whatever the extractor image
+#: defaults to: ``markitdown`` is the plain reader (no OCR), ``markitdown-ocr`` adds
+#: OCR, ``docling`` is Docling. ``EXTRACTOR_ENGINE`` decides only a call with no header,
+#: which the gateway makes for an extractor model it does not know (an operator's own row).
+ENGINE_OF_MODEL: dict[str, str] = {
+    "markitdown": "markitdown",
     "markitdown-ocr": "ocr",
     "docling": "docling",
 }
-#: The default reader's model: always offered, since every build has markitdown.
+#: The plain reader's model: always offered, since every build has markitdown.
 DEFAULT_MODEL = "markitdown"
 
 
 def engine_of_model(upstream_model: str | None) -> str | None:
-    """The engine header a built-in extractor model sends; None for the default reader
-    and for a model this build does not know (an operator's own extractor row)."""
+    """The engine header a built-in extractor model sends; None for a model this build
+    does not know (no header: the extractor's configured engine reads)."""
     return ENGINE_OF_MODEL.get(upstream_model or "")
 
 
@@ -112,20 +112,18 @@ def forget_reported_engines() -> None:
     _engines_cache.clear()
 
 
-def model_availability(upstream_model: str | None, engines: frozenset[str] | None) -> bool | None:
-    """Whether a built-in extractor model can run: True, False, or None when unknown.
+def model_availability(upstream_model: str | None, engines: frozenset[str] | None) -> bool:
+    """Whether a built-in extractor model can run.
 
-    The default reader is always True. A model for another engine is True when the
-    extractor reports the engine, False when it answered and does not, None when
-    it could not be asked (listings then leave the model out; a call is let through
-    and fails as an unreachable extractor would anyway).
+    ``markitdown`` and a model this build does not know are always True (every build
+    has markitdown; the unknown ones are the operator's). Another engine is True only
+    when the extractor reports it: an extractor that cannot be asked is False, so a
+    model is never offered or used on a guess (fail closed).
     """
     engine = engine_of_model(upstream_model)
-    if engine is None:
+    if engine is None or engine == "markitdown":
         return True
-    if engines is None:
-        return None
-    return engine in engines
+    return engines is not None and engine in engines
 
 
 class ExtractionTimeout(UpstreamError):

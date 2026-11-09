@@ -505,3 +505,21 @@ def test_healthz_reports_the_engines_this_build_can_run(monkeypatch: pytest.Monk
             "ocr",
             "docling",
         ]
+
+
+def test_an_explicit_markitdown_reads_without_ocr_even_where_ocr_is_on_by_default(
+    fake_ocr: list[int],
+) -> None:
+    """`markitdown` and `markitdown-ocr` are two models: on an image where EXTRACTOR_OCR is on,
+    the header is what tells them apart. No header keeps the configured behaviour."""
+    scan = synth_pdf.report_pdf(scan_pages=1)
+    plain = extract(scan, media_type=PDF, engine="markitdown")
+    assert fake_ocr == [] and "Testo letto dal OCR" not in plain.text
+    picture = extract(b"\x89PNG\r\n\x1a\n", media_type="image/png", engine="markitdown")
+    assert picture.kind is not ExtractionKind.TEXT
+    assert fake_ocr == []
+
+    read = extract(scan, media_type=PDF, engine="ocr")
+    assert "Testo letto dal OCR" in read.text
+    default = extract(scan, media_type=PDF)
+    assert "Testo letto dal OCR" in default.text

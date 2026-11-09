@@ -10,7 +10,10 @@ sent as ``X-Extractor-Engine``, so a client that lists OCR models (Cerea) never 
 the others. Now each engine is a model under the extractor provider.
 
 * **Models.** ``markitdown-ocr`` and ``docling`` are created beside ``markitdown``
-  when an extractor provider exists and the name is free. They copy what the operator
+  when an extractor provider and its ``markitdown`` row exist and the name is free
+  among the deployment's models. With no ``markitdown`` row nothing is created: there
+  is no decision of the operator's to copy, and a reader must never reach users as a
+  new public one. They copy what the operator
   decided about ``markitdown``: active or not, public or not, and its group and user
   grants, so nobody gains or loses access to the reader they had. Prices are *not*
   copied (the rows are unpriced like the original; set a per-page rate if the
@@ -21,13 +24,14 @@ the others. Now each engine is a model under the extractor provider.
 * **Rules.** The "builtin" reader and the separate engine are gone from the read
   rules of every pipeline. ``builtin`` with engine ``markitdown`` reads with
   ``markitdown``, ``ocr`` with ``markitdown-ocr``, ``docling`` with ``docling``;
-  ``builtin`` with no engine reads with ``markitdown``, the deployment's default
-  reader. (The ``markitdown`` model means "the extractor's default engine", which is
-  markitdown unless the operator set ``EXTRACTOR_ENGINE=docling``; a rule that named
-  the engine ``markitdown`` explicitly on such a deployment now reads with that
-  default.) Every changed rule is named in the log.
+  ``builtin`` with no engine reads with ``markitdown``. **A rule is only ever pointed at
+  a model on the extractor provider**: if the name is taken by another model (a remote
+  service, an alias) it is not the extractor's reader, so the rule reads with
+  ``markitdown`` instead and the log says so loudly; a local-only rule is never
+  redirected off the stack. Every changed rule is named in the log.
 
-The downgrade turns the model names back into ``builtin`` and an engine; the models
+The downgrade turns the extractor provider's model names back into ``builtin`` and an
+engine (a same-named model elsewhere is left alone); the models
 stay (they are harmless to an older gateway, which lists them as it does markitdown).
 """
 
@@ -114,10 +118,21 @@ def _seed_models(bind: sa.Connection, t: dict[str, sa.Table]) -> list[str]:
         .where(models.c.provider_id == provider.id, models.c.name == DEFAULT_READER)
         .limit(1)
     ).first()
+    if base is None:
+        log.append(
+            f"the extractor has no '{DEFAULT_READER}' model, so no engine models were created "
+            "(there is no access decision to copy)."
+        )
+        return log
     now = datetime.now(UTC)
     for name in NEW_MODELS:
-        if bind.execute(sa.select(models.c.id).where(models.c.name == name)).first():
-            log.append(f"a model named '{name}' exists already, so it was not created.")
+        if bind.execute(
+            sa.select(models.c.id).where(models.c.name == name, models.c.owner_id.is_(None))
+        ).first():
+            log.append(
+                f"a model named '{name}' exists already, so it was not created; rules never "
+                "point at it unless it is on the extractor provider."
+            )
             continue
         new_id = uuid.uuid4()
         bind.execute(
@@ -127,8 +142,8 @@ def _seed_models(bind: sa.Connection, t: dict[str, sa.Table]) -> list[str]:
                 upstream_model=name,
                 provider_id=provider.id,
                 kind="ocr",
-                is_active=bool(base.is_active) if base is not None else True,
-                is_public=bool(base.is_public) if base is not None else True,
+                is_active=bool(base.is_active),
+                is_public=bool(base.is_public),
                 input_modalities=["file"],
                 output_modalities=["text"],
                 supported_features=[],
@@ -137,30 +152,46 @@ def _seed_models(bind: sa.Connection, t: dict[str, sa.Table]) -> list[str]:
             )
         )
         copied = 0
-        if base is not None:
-            for table, column in (
-                (t["group_model_access"], "group_id"),
-                (t["user_model_access"], "user_id"),
-            ):
-                for row in bind.execute(
-                    sa.select(table.c[column]).where(table.c.model_id == base.id)
-                ).all():
-                    bind.execute(
-                        table.insert().values(
-                            **{column: row[0], "model_id": new_id, "created_at": now}
-                        )
-                    )
-                    copied += 1
+        for table, column in (
+            (t["group_model_access"], "group_id"),
+            (t["user_model_access"], "user_id"),
+        ):
+            for row in bind.execute(
+                sa.select(table.c[column]).where(table.c.model_id == base.id)
+            ).all():
+                bind.execute(
+                    table.insert().values(**{column: row[0], "model_id": new_id, "created_at": now})
+                )
+                copied += 1
         log.append(
             f"created the OCR model '{name}' (access copied from '{DEFAULT_READER}': "
-            f"{'public' if (base is None or base.is_public) else 'not public'}, "
+            f"{'public' if base.is_public else 'not public'}, "
             f"{copied} grant(s))."
         )
     return log
 
 
-def _convert_action(action: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
-    """The action with the model for its reader, and a log phrase when it changed."""
+def _extractor_names(bind: sa.Connection, t: dict[str, sa.Table]) -> set[str]:
+    """Names of the deployment models on the extractor provider: the only ones that are the
+    built-in reader. A same-named model elsewhere (a remote service, an alias) is not."""
+    models, providers = t["models"], t["providers"]
+    return {
+        str(r.name)
+        for r in bind.execute(
+            sa.select(models.c.name)
+            .join(providers, providers.c.id == models.c.provider_id)
+            .where(providers.c.plugin == "extractor", models.c.owner_id.is_(None))
+        )
+    }
+
+
+def _convert_action(
+    action: dict[str, Any], local: set[str]
+) -> tuple[dict[str, Any], str | None]:
+    """The action with the model for its reader, and a log phrase when it changed.
+
+    The model is the engine's only if it is on the extractor provider (*local*); otherwise
+    the rule reads with ``markitdown``, so a local-only rule is never sent off the stack."""
     if action.get("level") != "read_with":
         # Not a reading rule: an engine cannot be here (it was refused when saved).
         action = {k: v for k, v in action.items() if k != "engine"}
@@ -171,16 +202,26 @@ def _convert_action(action: dict[str, Any]) -> tuple[dict[str, Any], str | None]
         if "engine" in action:
             return {k: v for k, v in action.items() if k != "engine"}, f"engine dropped on '{reader}'"
         return action, None
-    model = MODEL_OF_ENGINE.get(str(engine), DEFAULT_READER) if engine else DEFAULT_READER
+    wanted = MODEL_OF_ENGINE.get(str(engine), DEFAULT_READER) if engine else DEFAULT_READER
+    model = wanted if wanted in local else DEFAULT_READER
     fixed = {k: v for k, v in action.items() if k != "engine"}
     fixed["reader"] = model
-    return fixed, (
-        f"read with the built-in extractor, engine {engine}" if engine else "read with the built-in extractor"
+    said = (
+        f"read with the built-in extractor, engine {engine}"
+        if engine
+        else "read with the built-in extractor"
     ) + f" -> read with '{model}'"
+    if model != wanted:
+        said += (
+            f" (LOUD: a model named '{wanted}' exists but is not on the extractor provider, "
+            "so the rule was not pointed at it; check this rule)"
+        )
+    return fixed, said
 
 
 def _convert_pipelines(bind: sa.Connection, t: dict[str, sa.Table]) -> list[str]:
     pipelines = t["privacy_pipelines"]
+    local = _extractor_names(bind, t)
     log: list[str] = []
     for row in bind.execute(
         sa.select(pipelines.c.id, pipelines.c.name, pipelines.c.rules, pipelines.c.otherwise)
@@ -188,14 +229,14 @@ def _convert_pipelines(bind: sa.Connection, t: dict[str, sa.Table]) -> list[str]
         changed = False
         rules = []
         for rule in row.rules or []:
-            action, said = _convert_action(dict(rule.get("action") or {}))
+            action, said = _convert_action(dict(rule.get("action") or {}), local)
             if said:
                 changed = True
                 log.append(f"pipeline '{row.name}', rule '{rule.get('name')}': {said}.")
             rules.append({**rule, "action": action} if "action" in rule else rule)
         otherwise = row.otherwise
         if otherwise:
-            fixed, said = _convert_action(dict(otherwise))
+            fixed, said = _convert_action(dict(otherwise), local)
             if said:
                 changed = True
                 log.append(f"pipeline '{row.name}', last rule: {said}.")
@@ -219,13 +260,18 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     bind = op.get_bind()
-    pipelines = _tables()["privacy_pipelines"]
+    t = _tables()
+    pipelines = t["privacy_pipelines"]
+    local = _extractor_names(bind, t)
     back = {"markitdown-ocr": ("builtin", "ocr"), "docling": ("builtin", "docling")}
 
     def undo(action: dict[str, Any]) -> dict[str, Any]:
-        if action.get("level") == "read_with" and action.get("reader") in (*back, DEFAULT_READER):
-            reader, engine = back.get(str(action["reader"]), ("builtin", None))
-            fixed = {**action, "reader": reader}
+        reader = action.get("reader")
+        # Only the extractor provider's models: a same-named model elsewhere is a
+        # different reader and keeps its name.
+        if action.get("level") == "read_with" and reader in local and reader in (*back, DEFAULT_READER):
+            new_reader, engine = back.get(str(reader), ("builtin", None))
+            fixed = {**action, "reader": new_reader}
             if engine:
                 fixed["engine"] = engine
             return fixed
@@ -240,5 +286,7 @@ def downgrade() -> None:
         ]
         otherwise = undo(dict(row.otherwise)) if row.otherwise else row.otherwise
         bind.execute(
-            pipelines.update().where(pipelines.c.id == row.id).values(rules=rules, otherwise=otherwise)
+            pipelines.update()
+            .where(pipelines.c.id == row.id)
+            .values(rules=rules, otherwise=otherwise)
         )
