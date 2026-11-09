@@ -358,7 +358,8 @@ def test_a_rule_reading_with_the_extractors_model_reads_with_the_built_in_extrac
     from sqlalchemy.orm import Session
 
     path, url = _old(tmp_path)
-    with Session(create_engine(f"sqlite:///{path}")) as db:
+    engine = create_engine(f"sqlite:///{path}")
+    with Session(engine) as db:
         # The migrations seed the extractor's own model ("markitdown"); add another reader.
         other = Provider(name="cloud", base_url="http://ocr.test", plugin=None)
         db.add(other)
@@ -367,6 +368,7 @@ def test_a_rule_reading_with_the_extractors_model_reads_with_the_built_in_extrac
             ModelDef(name="mistral", upstream_model="m", provider_id=other.id, kind=ModelKind.OCR)
         )
         db.commit()
+    engine.dispose()
     with closing(sqlite3.connect(path)) as conn:
         _pipeline(
             conn,
