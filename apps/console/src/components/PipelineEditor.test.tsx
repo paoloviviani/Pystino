@@ -131,7 +131,7 @@ describe("Pipeline editor", () => {
     await user.click(screen.getByRole("radio", { name: /Read with/ }));
 
     const readers = screen.getByRole("group", { name: "Reader" });
-    expect(within(readers).getByRole("button", { name: "the built-in extractor" })).toBeInTheDocument();
+    expect(within(readers).getByRole("button", { name: "Built-in extractor" })).toBeInTheDocument();
     expect(within(readers).getByRole("button", { name: "mistral" })).toBeInTheDocument();
     expect(screen.getByLabelText("Engine")).toBeInTheDocument();
     expect(screen.getByLabelText("Redact with (on the returned text)")).toBeInTheDocument();

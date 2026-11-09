@@ -132,6 +132,7 @@ async def _clean(
     otherwise: dict[str, Any] | None,
 ) -> dict[str, Any]:
     context = await service.validation_context(session, owner=user)
+    rules, otherwise = service.normalise_readers(rules, otherwise, context.builtin_aliases)
     try:
         clean = validate_pipeline(
             kind,
@@ -212,7 +213,7 @@ async def options(user: ManagementUserDep, session: SessionDep) -> OptionsRespon
             if builtin
             else []
         )
-        + [ReaderOption(id=n, name=n, builtin=b) for n, b in sorted(readers.items())],
+        + [ReaderOption(id=n, name=n, builtin=False) for n, b in sorted(readers.items()) if not b],
         policies=[NamedId(id=p.id, name=p.name) for p in admin_policies],
         own_policies=[NamedId(id=p.id, name=p.name) for p in mine],
         classifiers=[],

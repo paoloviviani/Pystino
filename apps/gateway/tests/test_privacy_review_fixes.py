@@ -586,3 +586,96 @@ class TestReadingDecidesFromTheFile:
 
         assert CONDITION_KEYS["read"] == ("filetype", "scan", "filename")
         assert "finds" in CONDITION_KEYS["embed"] and "classified" in CONDITION_KEYS["chat"]
+
+
+class TestOneNameForTheBuiltinExtractor:
+    async def readers(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session: Any, who: str
+    ) -> list[dict[str, Any]]:
+        from test_ocr_surface import add_local_model, add_ocr_model
+
+        await add_local_model(session, seeded, name="markitdown")
+        await add_ocr_model(session, seeded, name="mistral", upstream="m")
+        path = "/api/admin/privacy/options" if who == "admin" else "/api/me/privacy/options"
+        return list((await client.get(path)).json()["readers"])
+
+    async def test_the_admin_options_list_the_extractor_once_and_other_readers_by_name(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: Any,
+        session_factory: Any,
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        readers = await self.readers(app, client, seeded, session, "admin")
+        assert [(r["id"], r["name"], r["builtin"]) for r in readers] == [
+            ("builtin", "Built-in extractor", True),
+            ("mistral", "mistral", False),
+        ]
+
+    async def test_a_users_options_do_the_same(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session: Any
+    ) -> None:
+        as_user(app, seeded.user)
+        readers = await self.readers(app, client, seeded, session, "user")
+        # Both are granted to the user's group by the helpers; the extractor is one entry.
+        assert [r["id"] for r in readers].count("builtin") <= 1
+        assert "markitdown" not in [r["id"] for r in readers]
+        assert "markitdown" not in [r["name"] for r in readers]
+
+    async def test_a_rule_naming_the_extractors_model_is_saved_as_the_built_in_extractor(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: Any,
+        session_factory: Any,
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        await self.readers(app, client, seeded, session, "admin")
+        saved = await client.post(
+            "/api/admin/privacy/pipelines",
+            json={
+                "kind": "read",
+                "name": "Old rule",
+                "rules": [
+                    {
+                        "name": "Scans",
+                        "conditions": [{"key": "scan"}],
+                        "action": {"level": "read_with", "reader": "markitdown"},
+                    }
+                ],
+                "otherwise": {"level": "read_with", "reader": "mistral"},
+            },
+        )
+        assert saved.status_code == 201, saved.text
+        body = saved.json()
+        assert body["rules"][0]["action"]["reader"] == "builtin"
+        assert body["otherwise"]["action"]["reader"] == "mistral"
+        # An engine goes with the Built-in extractor, however it was named.
+        engine = await client.post(
+            "/api/admin/privacy/pipelines",
+            json={
+                "kind": "read",
+                "name": "Engine",
+                "rules": [
+                    {
+                        "name": "Scans",
+                        "conditions": [{"key": "scan"}],
+                        "action": {
+                            "level": "read_with",
+                            "reader": "markitdown",
+                            "engine": "docling",
+                        },
+                    }
+                ],
+            },
+        )
+        assert engine.status_code == 201, engine.text
+        action = engine.json()["rules"][0]["action"]
+        assert (action["level"], action["reader"], action["engine"]) == (
+            "read_with",
+            "builtin",
+            "docling",
+        )

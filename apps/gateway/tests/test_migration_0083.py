@@ -348,3 +348,49 @@ def test_a_reading_rule_with_a_content_condition_is_kept_switched_off_with_a_not
     assert rules["Scans"]["enabled"] is True and "note" not in rules["Scans"]
     log = up.stdout + up.stderr
     assert "rule 'Names'" in log and "rule 'Topic'" in log
+
+
+def test_a_rule_reading_with_the_extractors_model_reads_with_the_built_in_extractor(
+    tmp_path: Path,
+) -> None:
+    from gateway.models import ModelDef, ModelKind, Provider
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    path, url = _old(tmp_path)
+    engine = create_engine(f"sqlite:///{path}")
+    with Session(engine) as db:
+        # The migrations seed the extractor's own model ("markitdown"); add another reader.
+        other = Provider(name="cloud", base_url="http://ocr.test", plugin=None)
+        db.add(other)
+        db.flush()
+        db.add(
+            ModelDef(name="mistral", upstream_model="m", provider_id=other.id, kind=ModelKind.OCR)
+        )
+        db.commit()
+    engine.dispose()
+    with closing(sqlite3.connect(path)) as conn:
+        _pipeline(
+            conn,
+            "read",
+            "Files",
+            [
+                {
+                    **_rule("Scans", [{"key": "scan", "values": [], "negate": False}]),
+                    "action": {"level": "read_with", "reader": "markitdown", "engine": "ocr"},
+                },
+                {
+                    **_rule("Cloud", [{"key": "filetype", "values": ["pdf"], "negate": False}]),
+                    "action": {"level": "read_with", "reader": "mistral"},
+                },
+            ],
+            otherwise={"level": "read_with", "reader": "markitdown"},
+        )
+        conn.commit()
+    up = _upgrade(url)
+    row = _rows(path, "privacy_pipelines")[0]
+    rules = {r["name"]: r["action"] for r in json.loads(row["rules"])}
+    assert rules["Scans"] == {"level": "read_with", "reader": "builtin", "engine": "ocr"}
+    assert rules["Cloud"]["reader"] == "mistral"  # another OCR model keeps its name
+    assert json.loads(row["otherwise"])["reader"] == "builtin"
+    assert "reader 'markitdown' is the built-in extractor" in up.stdout + up.stderr

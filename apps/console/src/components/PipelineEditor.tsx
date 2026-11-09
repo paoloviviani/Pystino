@@ -432,7 +432,7 @@ function ActionEditor({
                   })
                 }
               >
-                {r.id === BUILTIN ? m["privacy.reader.builtin"]() : r.name}
+                {r.id === BUILTIN ? m["privacy.reader.builtin_option"]() : r.name}
               </button>
             ))}
             {options.readers.length === 0 && (

@@ -166,10 +166,13 @@ async def options(admin: AdminUserDep, session: SessionDep, request: Request) ->
             )
             for i, n, pid, pn, k in models
         ],
+        # The extractor's own model is the "Built-in extractor" (its engine picks how it
+        # reads); only other OCR models are listed by name.
         readers=[ReaderOption(id=rulelib.BUILTIN_READER, name="Built-in extractor", builtin=True)]
         + [
-            ReaderOption(id=name, name=name, builtin=builtin)
+            ReaderOption(id=name, name=name, builtin=False)
             for name, (_, builtin) in readers.items()
+            if not builtin
         ],
         policies=[NamedId(id=p.id, name=p.name) for p in policies],
         own_policies=[],
@@ -229,6 +232,7 @@ async def _clean(
     otherwise: dict[str, Any] | None,
 ) -> dict[str, Any]:
     context = await service.validation_context(session, owner=None)
+    rules, otherwise = service.normalise_readers(rules, otherwise, context.builtin_aliases)
     try:
         clean = validate_pipeline(
             kind,

@@ -3152,6 +3152,7 @@
   "privacy.target.only": "Only",
   "privacy.target.except": "All except",
   "privacy.reader.builtin": "the built-in extractor",
+  "privacy.reader.builtin_option": "Built-in extractor",
   "privacy.level.default": "Default reader",
   "privacy.level.default_hint": "The model the caller named reads the file, possibly a remote one.",
   "privacy.level.read_with": "Read with...",
