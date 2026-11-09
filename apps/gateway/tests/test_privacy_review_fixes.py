@@ -679,3 +679,190 @@ class TestOneNameForTheBuiltinExtractor:
             "builtin",
             "docling",
         )
+
+
+class TestSecondReviewFixes:
+    """The re-review: the last rule counts, patterns fold by strictness, 0083 downgrade of
+    patterns, label budgets on a toggle and across policies, an unreadable policy refuses."""
+
+    def down(self) -> Any:
+        from gateway.privacy.finds import FindResult, Verdict
+        from test_privacy_rules import FakeJudge
+
+        return FakeJudge(
+            {"p": FindResult(unavailable="the NER engine is not available")},
+            {"c": Verdict(unavailable="the classifier is down")},
+        )
+
+    async def test_an_undecided_rule_does_not_shadow_a_stricter_everything_else(self) -> None:
+        from gateway.privacy.evaluate import Evaluator, Facts, Undecidable
+        from test_privacy_rules import cond, rule
+
+        passing = rule(
+            "Pass",
+            "chat",
+            conditions=(cond("classified", "c"),),
+            action={"level": "pass", "redact_with": "P"},
+        )
+        otherwise = rule("Everything else", "chat", position=10_000, action={"level": "refuse"})
+        facts = Facts(kind="chat", text="x", judge=self.down())
+        with pytest.raises(Undecidable):
+            await Evaluator().evaluate([passing], facts, otherwise)
+
+        finds = rule(
+            "Finds",
+            "chat",
+            conditions=(cond("finds", "p"),),
+            action={"level": "pass", "redact_with": "P"},
+        )
+        with pytest.raises(Undecidable):
+            await Evaluator().evaluate([finds], facts, otherwise)
+
+    async def test_it_may_still_stand_in_when_the_last_rule_is_no_stricter(self) -> None:
+        from gateway.privacy.evaluate import Evaluator, Facts
+        from test_privacy_rules import cond, rule
+
+        refuse = rule("Refuse", "chat", conditions=(cond("classified", "c"),))
+        otherwise = rule("Everything else", "chat", position=10_000, action={"level": "pass"})
+        ev = await Evaluator().evaluate(
+            [refuse], Facts(kind="chat", text="x", judge=self.down()), otherwise
+        )
+        assert ev.fired is refuse
+
+    async def test_equal_levels_with_different_policies_do_not_shadow_each_other(self) -> None:
+        from gateway.privacy.evaluate import Evaluator, Facts, Undecidable
+        from test_privacy_rules import cond, rule
+
+        first = rule(
+            "Narrow",
+            "chat",
+            position=0,
+            conditions=(cond("classified", "c"),),
+            action={"level": "pass", "redact_with": "A"},
+        )
+        later = rule("Wide", "chat", position=1, action={"level": "pass", "redact_with": "B"})
+        with pytest.raises(Undecidable):
+            await Evaluator().evaluate(
+                [first, later], Facts(kind="chat", text="x", judge=self.down())
+            )
+        same = rule("Same", "chat", position=1, action={"level": "pass", "redact_with": "A"})
+        ev = await Evaluator().evaluate(
+            [first, same], Facts(kind="chat", text="x", judge=self.down())
+        )
+        assert ev.fired is first
+
+    def test_the_same_pattern_in_two_policies_keeps_the_stricter_mode(self) -> None:
+        from gateway.config import CustomPattern
+
+        def policy(mode: EntityMode) -> RedactionPolicy:
+            return RedactionPolicy(
+                patterns=[CustomPattern(name="PROJ", regex="X-[0-9]+", mode=mode)]
+            )
+
+        for first, second in ((M.DETECT_ONLY, M.BLOCK), (M.BLOCK, M.DETECT_ONLY)):
+            folded = RedactionPolicy.combine([policy(first), policy(second)])
+            assert [p.mode for p in folded.patterns] == [M.BLOCK], (first, second)
+
+    def test_the_downgrade_writes_a_detect_only_pattern_as_off(self, tmp_path: Path) -> None:
+        from test_migration_0083 import _old, _upgrade
+
+        path, url = _old(tmp_path)
+        _upgrade(url)
+        policy = {
+            "default_mode": "off",
+            "patterns": [{"name": "PROJ", "regex": "X-[0-9]+", "mode": "detect_only"}],
+            "formats": {},
+            "entities": {},
+            "custom_entities": [],
+            "keywords": [],
+            "allow_list": [],
+        }
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute(
+                "INSERT INTO redaction_policies (id, name, policy, is_active, reason, created_at, "
+                "updated_at) VALUES (?, 'P', ?, 1, '', '2026-01-01 00:00:00', "
+                "'2026-01-01 00:00:00')",
+                (uuid.uuid4().hex, json.dumps(policy)),
+            )
+            conn.commit()
+        down = _alembic(url, "downgrade", "0082")
+        assert down.returncode == 0, down.stderr[-1500:]
+        with closing(sqlite3.connect(path)) as conn:
+            rows = conn.execute("SELECT policy FROM redaction_policies").fetchall()
+        assert len(rows) == 1, "the policy must not be dropped"
+        # The older code parses it: the mode is one it knows.
+        assert json.loads(rows[0][0])["patterns"][0]["mode"] == "off"
+
+    async def test_turning_a_policy_on_checks_the_label_budget(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        await TestSaveRefusesEntitiesTheEngineCannotFind().install(app, FakeService())
+
+        def body(prefix: str, count: int, active: bool) -> dict[str, Any]:
+            return {
+                "name": f"Budget {prefix}",
+                "is_active": active,
+                "policy": {
+                    "engine": "gliner",
+                    "custom_entities": [
+                        {"name": f"{prefix}{n}", "label": f"{prefix} thing {n}"}
+                        for n in range(count)
+                    ],
+                },
+            }
+
+        assert (
+            await client.post("/api/admin/privacy/policies", json=body("A", 20, True))
+        ).status_code == 201
+        off = await client.post("/api/admin/privacy/policies", json=body("B", 20, False))
+        assert off.status_code == 201, off.text
+        refused = await client.patch(
+            f"/api/admin/privacy/policies/{off.json()['id']}", json={"is_active": True}
+        )
+        assert refused.status_code == 422 and "40" in refused.text
+
+    async def test_one_label_for_two_names_and_one_name_for_two_labels_are_refused(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        await TestSaveRefusesEntitiesTheEngineCannotFind().install(app, FakeService())
+
+        def body(name: str, entity: str, label: str) -> dict[str, Any]:
+            return {
+                "name": name,
+                "policy": {
+                    "engine": "gliner",
+                    "custom_entities": [{"name": entity, "label": label}],
+                },
+            }
+
+        post = client.post
+        assert (
+            await post("/api/admin/privacy/policies", json=body("One", "CLIENT", "a client"))
+        ).status_code == 201
+        same_label = await post(
+            "/api/admin/privacy/policies", json=body("Two", "BUYER", "A Client")
+        )
+        assert same_label.status_code == 422 and "different custom entity names" in same_label.text
+        same_name = await post(
+            "/api/admin/privacy/policies", json=body("Three", "CLIENT", "a buyer")
+        )
+        assert same_name.status_code == 422 and "different descriptions" in same_name.text
+        agreeing = await post(
+            "/api/admin/privacy/policies", json=body("Four", "CLIENT", "a client")
+        )
+        assert agreeing.status_code == 201, agreeing.text
+
+    def test_a_pipeline_naming_a_policy_that_is_not_loaded_is_a_named_503(self) -> None:
+        from types import SimpleNamespace
+
+        from gateway.errors import ServiceUnavailableError
+        from gateway.privacy.combine import PolicyUse
+        from gateway.privacy.state import PrivacyState
+
+        pipeline = SimpleNamespace(is_user=False, name="Chat guard", owner_id=None)
+        use = PolicyUse(uuid.uuid4().hex, SimpleNamespace(pipeline=pipeline))  # type: ignore[arg-type]
+        with pytest.raises(ServiceUnavailableError) as raised:
+            PrivacyState().effective_policy([use], RedactionPolicy())
+        assert raised.value.status_code == 503 and "Chat guard" in raised.value.message

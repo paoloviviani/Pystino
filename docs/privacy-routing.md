@@ -386,6 +386,12 @@ exist only on unreleased builds so far, but nothing is dropped silently:
 - The `ids` conversion now depends on the redaction service (the quick check ran inside
   the gateway and always answered); US_SSN and UK_NHS are English-only and low-scoring.
   The migration log says so.
+- A pipeline whose policy **cannot be loaded** (stored rows over the current limits: a
+  label over 80 characters, more than 30 custom entities, or a policy switched off by
+  hand) **refuses the request** with a named 503 (`privacy_policy_unavailable`); it never
+  runs without the policy. Fix or replace the policy. Custom entity types are also
+  unique across the active policies of one engine (one name per description and one
+  description per name, at most 30 in all), checked when a policy is saved or turned on.
 - A condition on **health data** or **language** has no equivalent. The rule is
   **kept, switched off, with the condition removed and a note** the console shows as
   a warning. A protective rule can then only apply to more requests when turned on;

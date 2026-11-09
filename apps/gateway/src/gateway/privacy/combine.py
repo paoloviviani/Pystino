@@ -185,7 +185,7 @@ async def run_in_scope(
             continue
         seen.add(pipeline.id)
         try:
-            evaluation = await evaluator.evaluate(list(pipeline.rules), facts)
+            evaluation = await evaluator.evaluate(list(pipeline.rules), facts, pipeline.otherwise)
         except Undecidable as exc:
             raise ServiceUnavailableError(
                 f"The privacy rule '{exc.rule.name}' (pipeline '{pipeline.name}') cannot be "

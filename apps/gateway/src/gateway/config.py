@@ -1138,10 +1138,20 @@ class RedactionPolicy(BaseModel):
                 if key not in seen:
                     seen[key] = len(patterns)
                     patterns.append(pattern)
-                elif pattern.placeholder is PlaceholderStyle.TAGGED:
-                    # The same pattern written twice: the tagged one vetoes.
-                    patterns[seen[key]] = patterns[seen[key]].model_copy(
-                        update={"placeholder": PlaceholderStyle.TAGGED}
+                else:
+                    # The same pattern written twice: the stricter mode holds, and the
+                    # tagged placeholder vetoes.
+                    held_pattern = patterns[seen[key]]
+                    patterns[seen[key]] = held_pattern.model_copy(
+                        update={
+                            "mode": max(held_pattern.mode, pattern.mode, key=order.index),
+                            "placeholder": (
+                                PlaceholderStyle.TAGGED
+                                if PlaceholderStyle.TAGGED
+                                in (held_pattern.placeholder, pattern.placeholder)
+                                else PlaceholderStyle.SAME_LENGTH
+                            ),
+                        }
                     )
 
         keywords: dict[tuple[str, tuple[str, ...], bool], KeywordList] = {}

@@ -608,14 +608,21 @@ def _check_engine(policy: Any, engines: EnginesResponse) -> None:
 
 
 async def _check_label_budget(
-    session: SessionDep, policy: Any, engines: EnginesResponse, ignore: uuid.UUID | None = None
+    session: SessionDep,
+    policy: Any,
+    engines: EnginesResponse,
+    ignore: uuid.UUID | None = None,
 ) -> None:
-    """Refuse a policy that could push one engine's custom labels over what the service takes.
+    """Refuse custom entity types that could not be asked of an engine together.
 
-    The policies in force together are asked of each engine in one call, and the service
-    accepts at most ``MAX_CUSTOM_LABELS`` labels in it. Counted over every active policy
-    of the same engine (the default engine counts as the one the service reports), so the
-    request path does not meet the limit as an error.
+    The active policies of one engine are asked of it in one call, so across them:
+
+    * at most ``MAX_CUSTOM_LABELS`` distinct types (the service takes no more);
+    * a name stands for one label and a label for one name (the service keys the answer
+      by label, the gateway by name, so a clash would give one policy the other's matches).
+
+    Run on a save of an active policy and whenever a policy is turned on, so the request
+    path does not meet these as errors. ``policy`` is a model or the stored dict.
     """
     from llmp_shared import MAX_CUSTOM_LABELS
 
@@ -624,9 +631,17 @@ async def _check_label_budget(
     def key(engine: str | None) -> str | None:
         return engine or default
 
-    mine = {(c.name, c.label) for c in policy.custom_entities}
+    def customs(raw: Any) -> set[tuple[str, str]]:
+        items = raw.get("custom_entities") if isinstance(raw, dict) else raw.custom_entities
+        return {
+            (str(c.get("name")), str(c.get("label"))) if isinstance(c, dict) else (c.name, c.label)
+            for c in items or []
+        }
+
+    mine = customs(policy)
     if not mine:
         return
+    mine_engine = policy.get("engine") if isinstance(policy, dict) else policy.engine
     rows = (
         await session.execute(
             select(RedactionPolicyRecord).where(RedactionPolicyRecord.is_active.is_(True))
@@ -637,14 +652,30 @@ async def _check_label_budget(
         if row.id == ignore:
             continue
         other = dict(row.policy or {})
-        if key(other.get("engine")) != key(policy.engine):
+        if key(other.get("engine")) != key(mine_engine):
             continue
-        together |= {
-            (str(c.get("name")), str(c.get("label")))
-            for c in other.get("custom_entities") or []
-            if isinstance(c, dict)
-        }
-    if len(together) > MAX_CUSTOM_LABELS:
+        together |= customs(other)
+    labels: dict[str, set[str]] = {}
+    names: dict[str, set[str]] = {}
+    for name, label in together:
+        labels.setdefault(label.casefold(), set()).add(name)
+        names.setdefault(name.casefold(), set()).add(label)
+    my_labels = {label.casefold() for _, label in mine}
+    my_names = {name.casefold() for name, _ in mine}
+    clash = sorted(label for label, n in labels.items() if len(n) > 1 and label in my_labels)
+    if clash:
+        raise UnprocessableError(
+            f"The description {', '.join(repr(c) for c in clash)} is used for different "
+            "custom entity names in active policies of this engine: give each name its own "
+            "description."
+        )
+    split = sorted(name for name, ls in names.items() if len(ls) > 1 and name in my_names)
+    if split:
+        raise UnprocessableError(
+            f"The custom entity name {', '.join(repr(n) for n in split)} has different "
+            "descriptions in active policies of this engine: use the same description."
+        )
+    if len({label.casefold() for _, label in together}) > MAX_CUSTOM_LABELS:
         raise UnprocessableError(
             f"With the other active policies of this engine, {len(together)} custom entity "
             f"types could be asked of the engine at once; the service takes {MAX_CUSTOM_LABELS}. "
@@ -756,9 +787,9 @@ async def update_policy(
         row.name = name
     if payload.policy is not None:
         _check_engine(payload.policy, report)
-        if payload.is_active is not False and row.is_active:
-            await _check_label_budget(session, payload.policy, report, ignore=row.id)
         row.policy = payload.policy.model_dump(mode="json")
+    if payload.is_active is None and payload.policy is not None and row.is_active:
+        await _check_label_budget(session, dict(row.policy or {}), report, ignore=row.id)
     if payload.shared_with_users is not None:
         if payload.shared_with_users is False and row.shared_with_users:
             used_by = (await _used_by(session)).get(str(row.id), [])
@@ -777,6 +808,11 @@ async def update_policy(
                     f"'{row.name}' is applied by: {', '.join(users)}. Change those pipelines "
                     "first, or it would silently stop hiding what they were written to hide."
                 )
+        if payload.is_active and not row.is_active:
+            # Turning a policy on brings its custom types in with the others'.
+            await _check_label_budget(session, dict(row.policy or {}), report, ignore=row.id)
+        elif payload.is_active and payload.policy is not None:
+            await _check_label_budget(session, dict(row.policy or {}), report, ignore=row.id)
         row.is_active = payload.is_active
     if payload.reason is not None:
         row.reason = payload.reason.strip()
