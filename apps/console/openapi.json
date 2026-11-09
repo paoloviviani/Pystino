@@ -2256,6 +2256,11 @@
             "title": "Id",
             "type": "string"
           },
+          "local": {
+            "default": false,
+            "title": "Local",
+            "type": "boolean"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -2275,7 +2280,8 @@
         "required": [
           "id",
           "name",
-          "provider"
+          "provider",
+          "local"
         ],
         "title": "ChatModelOption",
         "type": "object"
@@ -2345,6 +2351,11 @@
       },
       "ClassifierListResponse": {
         "properties": {
+          "allow_remote": {
+            "default": false,
+            "title": "Allow Remote",
+            "type": "boolean"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/ClassifierResponse"
@@ -2362,7 +2373,8 @@
         },
         "required": [
           "items",
-          "models"
+          "models",
+          "allow_remote"
         ],
         "title": "ClassifierListResponse",
         "type": "object"
@@ -12419,6 +12431,17 @@
       "SettingsRequest": {
         "additionalProperties": false,
         "properties": {
+          "allow_remote_classifiers": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow Remote Classifiers"
+          },
           "user_entity_types": {
             "anyOf": [
               {
@@ -12439,6 +12462,11 @@
       },
       "SettingsResponse": {
         "properties": {
+          "allow_remote_classifiers": {
+            "default": false,
+            "title": "Allow Remote Classifiers",
+            "type": "boolean"
+          },
           "user_entity_types": {
             "anyOf": [
               {
@@ -12455,7 +12483,8 @@
           }
         },
         "required": [
-          "user_entity_types"
+          "user_entity_types",
+          "allow_remote_classifiers"
         ],
         "title": "SettingsResponse",
         "type": "object"
@@ -17876,7 +17905,7 @@
         ]
       },
       "put": {
-        "description": "The entity types users' own policies may name (null: any the detector offers).",
+        "description": "Entity types users may name (omit: unchanged, null: any), and remote classifiers.",
         "operationId": "put_settings_api_admin_privacy_settings_put",
         "requestBody": {
           "content": {

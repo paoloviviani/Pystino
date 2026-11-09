@@ -123,11 +123,19 @@ found is shown too (it is the text they typed); a user's box leaves it out.
 
 ### Classified as a classifier
 
-A **classifier** is a decision model: a chat model of a configured provider and a
+A **classifier** is a decision model: a chat model and a
 topic written in plain words. It decides on meaning, not on words, reading the text
 in windows of 8,000 characters (any window positive makes the text positive).
-**Classifying sends the text to that model's provider**: the console says so where
-the model is chosen. It ships as scaffolding for large deployments: nothing is
+**By default a classifier may use only a model that runs inside the deployment**
+(the built-in provider, the same notion of "local" the readers use), so the text
+never leaves it. The deployment setting **Allow remote classifiers** (Privacy,
+Classifiers tab; off by default) lets an administrator choose a model of an outside
+provider too; classifying then sends the text to that provider, and the console
+says so where the model is chosen. Turning the setting off keeps a classifier that
+already uses a remote model but it cannot answer: the condition is undecidable
+(never forwarded silently) and the pipeline check and the listing flag it as
+`unavailable_now`. Creating or changing a classifier to a remote model while the
+setting is off is refused with 400 `remote_classifier_not_allowed`. It ships as scaffolding for large deployments: nothing is
 bundled, no topic is seeded, and a classifier with no model, an inactive model or an
 unreadable answer is unavailable. A text can try to talk the model into "no"; do not
 rest a rule that must not fail on a classifier alone. Only administrators use
@@ -305,8 +313,8 @@ Under `/api/admin/privacy` (administrators only, audited as `privacy_pipeline.*`
 | `GET/POST /policies`, `PATCH/DELETE /policies/{id}` | redaction policies, with `shared_with_users`; one a pipeline applies or counts items of cannot be deleted. An engine is accepted only if the service reports it available |
 | `GET /engines` | what the redaction service offers: pattern formats and the NER engines (available, default, entity types, custom labels, speed) |
 | `POST /policies/try` | a policy as edited and a text: every item found with its group, engine and score, and what redaction would do. No side effects; rate limited with the test box |
-| `GET/POST /classifiers`, `PATCH/DELETE /classifiers/{id}` | decision models (a chat model and a topic); the listing also names the chat models that can be chosen |
-| `GET/PUT /settings` | the entity types users may name in their own policies |
+| `GET/POST /classifiers`, `PATCH/DELETE /classifiers/{id}` | decision models (a chat model and a topic); the listing also names the chat models that can be chosen (local ones, plus remote ones when allowed) and `allow_remote`; a remote model while that is off is 400 `remote_classifier_not_allowed` |
+| `GET/PUT /settings` | the entity types users may name in their own policies, and `allow_remote_classifiers` (omit a field to leave it as it is) |
 | `GET /options` | what the editors may pick: users, groups, keys, providers, models, readers, policies, classifiers |
 | `GET /status` | whether this worker loaded the pipelines, and unreadable rows |
 | `POST /test` | the real combination over given facts, with no side effects; the text and file are never stored or logged; 30 runs a minute |

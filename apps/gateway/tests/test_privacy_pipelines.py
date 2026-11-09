@@ -372,6 +372,7 @@ class TestAdminApi:
     async def test_classifiers_are_a_model_and_a_topic_and_say_when_they_cannot_answer(
         self, app: Any, admin: None, client: httpx.AsyncClient, seeded: Seeded
     ) -> None:
+        await allow_remote(client)
         listed = (await client.get("/api/admin/privacy/classifiers")).json()
         assert listed["items"] == []
         # The seeded chat model is a candidate; no model is bundled and none is chosen for you.
@@ -421,12 +422,17 @@ class TestAdminApi:
         self, admin: None, client: httpx.AsyncClient
     ) -> None:
         assert (await client.get("/api/admin/privacy/settings")).json() == {
-            "user_entity_types": None
+            "user_entity_types": None,
+            "allow_remote_classifiers": False,
         }
         put = await client.put(
             "/api/admin/privacy/settings", json={"user_entity_types": ["person", "IBAN_CODE"]}
         )
         assert put.json()["user_entity_types"] == ["IBAN_CODE", "PERSON"]
+        # The other setting leaves the types alone.
+        await allow_remote(client)
+        kept = (await client.get("/api/admin/privacy/settings")).json()
+        assert kept["user_entity_types"] == ["IBAN_CODE", "PERSON"]
 
 
 # -- embedding and rerank ----------------------------------------------------------
@@ -723,6 +729,127 @@ async def add_engine_models(session: AsyncSession, seeded: Seeded) -> None:
         model = await add_local_model(session, seeded, name=name)
         model.upstream_model = name
     await session.commit()
+
+
+async def allow_remote(client: httpx.AsyncClient, on: bool = True) -> None:
+    put = await client.put("/api/admin/privacy/settings", json={"allow_remote_classifiers": on})
+    assert put.status_code == 200, put.text
+    assert put.json()["allow_remote_classifiers"] is on
+
+
+async def add_chat_model(
+    session: AsyncSession, name: str, *, local: bool, active: bool = True
+) -> ModelDef:
+    """A chat model on a provider that is the deployment's own service, or a remote one."""
+    provider = Provider(
+        name=f"{name}-provider",
+        base_url="http://llm:8000" if local else "https://api.example.com",
+        plugin="extractor" if local else None,
+    )
+    session.add(provider)
+    await session.flush()
+    model = ModelDef(name=name, upstream_model=name, provider_id=provider.id, kind=ModelKind.CHAT)
+    session.add(model)
+    await session.commit()
+    return model
+
+
+class TestLocalClassifiers:
+    async def test_only_local_models_are_offered_until_remote_is_allowed(
+        self,
+        admin: None,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        local = await add_chat_model(session, "inside", local=True)
+        listed = (await client.get("/api/admin/privacy/classifiers")).json()
+        assert listed["allow_remote"] is False
+        assert [m["name"] for m in listed["models"]] == ["inside"]
+        assert listed["models"][0]["local"] is True
+        await allow_remote(client)
+        listed = (await client.get("/api/admin/privacy/classifiers")).json()
+        assert listed["allow_remote"] is True
+        assert {m["name"]: m["local"] for m in listed["models"]} == {
+            "inside": True,
+            seeded.model.name: False,
+        }
+        await allow_remote(client, False)
+        again = (await client.get("/api/admin/privacy/classifiers")).json()
+        assert [m["name"] for m in again["models"]] == ["inside"]
+        assert local.id is not None
+
+    async def test_a_remote_model_is_refused_while_off_and_accepted_when_on(
+        self, admin: None, client: httpx.AsyncClient, seeded: Seeded, session: AsyncSession
+    ) -> None:
+        local = await add_chat_model(session, "inside", local=True)
+        refused = await client.post(
+            "/api/admin/privacy/classifiers",
+            json={"name": "Remote", "topic": "t", "model_id": str(seeded.model.id)},
+        )
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["error"]["code"] == "remote_classifier_not_allowed"
+        ok = await client.post(
+            "/api/admin/privacy/classifiers",
+            json={"name": "Local", "topic": "t", "model_id": str(local.id)},
+        )
+        assert ok.status_code == 201 and ok.json()["available"] is True
+        url = f"/api/admin/privacy/classifiers/{ok.json()['id']}"
+        patched = await client.patch(url, json={"model_id": str(seeded.model.id)})
+        assert patched.status_code == 400
+        assert patched.json()["error"]["code"] == "remote_classifier_not_allowed"
+        await allow_remote(client)
+        made = await client.patch(url, json={"model_id": str(seeded.model.id)})
+        assert made.status_code == 200 and made.json()["available"] is True
+
+    async def test_a_stored_remote_classifier_fails_closed_and_is_flagged(
+        self, app: Any, admin: None, client: httpx.AsyncClient, seeded: Seeded
+    ) -> None:
+        await allow_remote(client)
+        made = (
+            await client.post(
+                "/api/admin/privacy/classifiers",
+                json={"name": "Stale", "topic": "t", "model_id": str(seeded.model.id)},
+            )
+        ).json()
+        rules = [
+            {
+                "name": "Topic",
+                "conditions": [{"key": "classified", "values": [made["id"]]}],
+                "action": {"level": "refuse"},
+            }
+        ]
+        body = {"kind": "embed", "name": "P", "rules": rules}
+        assert (await client.post("/api/admin/privacy/pipelines", json=body)).status_code == 201
+        # Switch the setting off: the stored classifier stays, but cannot answer.
+        await allow_remote(client, False)
+        listed = (await client.get("/api/admin/privacy/classifiers")).json()
+        item = listed["items"][0]
+        assert item["available"] is False and "outside this deployment" in item["why_not"]
+        checked = (await client.post("/api/admin/privacy/pipelines/check", json=body)).json()
+        assert "unavailable_now" in {i["code"] for i in checked["issues"]}, checked
+        stored = (await client.get("/api/admin/privacy/pipelines")).json()
+        issues = [i["code"] for p in stored["items"] for r in p["rules"] for i in r["issues"]]
+        assert "unavailable_now" in issues
+        # Evaluation: undecidable, and the model is never asked.
+        asked: list[str] = []
+
+        class Backend:
+            async def positive(self, classifier: Any, chunk: str) -> bool:
+                asked.append(chunk)
+                return False
+
+        state = app.state.privacy
+        state.classifier_backend = Backend()
+        judge = state.judge(user_id=None, redactor=None, default_threshold=0.5)
+        verdict = await judge.classify(made["id"], ["some text"])
+        assert verdict.unavailable and "outside this deployment" in verdict.unavailable
+        assert verdict.positive is False and asked == []
+        # Switched back on, it answers again.
+        await allow_remote(client)
+        judge = app.state.privacy.judge(user_id=None, redactor=None, default_threshold=0.5)
+        verdict = await judge.classify(made["id"], ["some text"])
+        assert verdict.unavailable is None and asked == ["some text"]
 
 
 class TestReading:

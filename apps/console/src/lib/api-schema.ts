@@ -1480,7 +1480,7 @@ export interface paths {
         get: operations["get_settings_api_admin_privacy_settings_get"];
         /**
          * Put Settings
-         * @description The entity types users' own policies may name (null: any the detector offers).
+         * @description Entity types users may name (omit: unchanged, null: any), and remote classifiers.
          */
         put: operations["put_settings_api_admin_privacy_settings_put"];
         post?: never;
@@ -4815,6 +4815,11 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Local
+             * @default false
+             */
+            local: boolean;
             /** Name */
             name: string;
             /** Provider */
@@ -4851,6 +4856,11 @@ export interface components {
         };
         /** ClassifierListResponse */
         ClassifierListResponse: {
+            /**
+             * Allow Remote
+             * @default false
+             */
+            allow_remote: boolean;
             /** Items */
             items: components["schemas"]["ClassifierResponse"][];
             /** Models */
@@ -8688,11 +8698,18 @@ export interface components {
         };
         /** SettingsRequest */
         SettingsRequest: {
+            /** Allow Remote Classifiers */
+            allow_remote_classifiers?: boolean | null;
             /** User Entity Types */
             user_entity_types?: string[] | null;
         };
         /** SettingsResponse */
         SettingsResponse: {
+            /**
+             * Allow Remote Classifiers
+             * @default false
+             */
+            allow_remote_classifiers: boolean;
             /** User Entity Types */
             user_entity_types: string[] | null;
         };

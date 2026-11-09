@@ -328,12 +328,17 @@ class ChatModelOption(ResponseModel):
     id: uuid.UUID
     name: str
     provider: str | None = None
+    #: Whether it runs inside the deployment (a remote one is offered only when allowed).
+    local: bool = False
 
 
 class ClassifierListResponse(ResponseModel):
     items: list[ClassifierResponse]
-    #: Chat models a classifier may use; empty means no model provider is configured yet.
+    #: Chat models a classifier may use now: the deployment's own, plus remote ones when
+    #: ``allow_remote`` is on. Empty means there is none to choose.
     models: list[ChatModelOption]
+    #: The "Allow remote classifiers" setting.
+    allow_remote: bool = False
 
 
 # -- what the redaction service offers --------------------------------------------
@@ -410,12 +415,16 @@ class PolicyTryResponse(ResponseModel):
 class SettingsResponse(ResponseModel):
     #: Entity types users' own policies may name; null means any the detector offers.
     user_entity_types: list[str] | None = None
+    #: Whether a classifier may use a model that runs outside the deployment.
+    allow_remote_classifiers: bool = False
 
 
 class SettingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     user_entity_types: list[str] | None = None
+    #: Null leaves it as it is.
+    allow_remote_classifiers: bool | None = None
 
 
 # -- options (what the editors may pick) ------------------------------------------

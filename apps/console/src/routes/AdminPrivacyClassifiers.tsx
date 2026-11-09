@@ -1,11 +1,28 @@
-import { Badge, Button, Card, Dialog, EmptyState, Input, Notice, Select, Spinner } from "@llmp/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  Dialog,
+  EmptyState,
+  Input,
+  Notice,
+  Select,
+  Spinner,
+  Switch,
+} from "@llmp/ui";
 import { useState } from "react";
 import { Link } from "react-router";
 
 import { PrivacyHeader } from "../components/PrivacyHeader";
 import { Tip } from "../components/Tip";
 import { FIELD_LABEL, FORM, MUTED, PAGE, TEXTAREA } from "../lib/layout";
-import { useClassifiers, useDeleteClassifier, useSaveClassifier } from "../lib/privacy";
+import {
+  useClassifiers,
+  useDeleteClassifier,
+  usePrivacySettings,
+  useSavePrivacySettings,
+  useSaveClassifier,
+} from "../lib/privacy";
 import type { PrivacyClassifier } from "../lib/types";
 import { m } from "../paraglide/messages.js";
 
@@ -25,7 +42,7 @@ function ClassifierDialog({
 }: {
   /** null: a new classifier. */
   classifier: PrivacyClassifier | null;
-  models: { id: string; name: string; provider: string | null }[];
+  models: { id: string; name: string; provider: string | null; local?: boolean }[];
   onClose: () => void;
 }) {
   const save = useSaveClassifier();
@@ -102,11 +119,15 @@ function ClassifierDialog({
         </Select>
         {/* Where the model is chosen, because this is where the text's
             destination is decided. */}
-        <Notice tone="warn">
-          {chosen?.provider
-            ? m["classifiers.sends_to"]({ provider: chosen.provider })
-            : m["classifiers.sends"]()}
-        </Notice>
+        {chosen?.local ? (
+          <Notice tone="info">{m["classifiers.stays_inside"]()}</Notice>
+        ) : (
+          <Notice tone="warn">
+            {chosen?.provider
+              ? m["classifiers.sends_to"]({ provider: chosen.provider })
+              : m["classifiers.sends"]()}
+          </Notice>
+        )}
       </div>
     </Dialog>
   );
@@ -120,6 +141,9 @@ export function AdminPrivacyClassifiers() {
   const items = list.data?.items ?? [];
   const models = list.data?.models ?? [];
   const noModels = list.data !== undefined && models.length === 0;
+  const allowRemote = list.data?.allow_remote ?? false;
+  const settings = usePrivacySettings();
+  const saveSettings = useSavePrivacySettings();
   return (
     <div className={PAGE}>
       <PrivacyHeader
@@ -141,11 +165,42 @@ export function AdminPrivacyClassifiers() {
           {list.error instanceof Error ? list.error.message : m["privacy.unknown_error"]()}
         </Notice>
       )}
-      {noModels && (
+      {noModels && !allowRemote && (
+        <Notice tone="info" title={m["classifiers.needs_local"]()}>
+          {m["classifiers.needs_local_text"]()}
+        </Notice>
+      )}
+      {noModels && allowRemote && (
         <Notice tone="info" title={m["classifiers.needs_provider"]()}>
           {m["classifiers.needs_provider_text"]()}{" "}
           <Link to="/admin/providers">{m["classifiers.providers_link"]()}</Link>
         </Notice>
+      )}
+      {list.data && (
+        <Card title={m["classifiers.remote_title"]()} description={m["classifiers.remote_hint"]()}>
+          <div className="flex flex-col gap-3">
+            {saveSettings.error && (
+              <Notice tone="danger">
+                {/* i18n: server text, the API's own message. */}
+                {saveSettings.error.message}
+              </Notice>
+            )}
+            <div className="flex items-center gap-3">
+              <Switch
+                label={m["classifiers.remote_switch"]()}
+                checked={allowRemote}
+                disabled={saveSettings.isPending || settings.data === undefined}
+                onChange={(next) =>
+                  saveSettings.mutate({
+                    user_entity_types: settings.data?.user_entity_types ?? null,
+                    allow_remote_classifiers: next,
+                  })
+                }
+              />
+              <span className="text-body">{m["classifiers.remote_switch"]()}</span>
+            </div>
+          </div>
+        </Card>
       )}
       {list.data && items.length === 0 && (
         <EmptyState title={m["classifiers.empty"]()} detail={m["classifiers.empty_hint"]()} />
