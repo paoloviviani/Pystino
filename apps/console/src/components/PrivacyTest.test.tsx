@@ -10,12 +10,12 @@ import { TestResult } from "./PrivacyTest";
 const BASE: PrivacyTestResult = {
   kind: "read",
   outcome: "read_with",
-  outcome_headline: "Read here by the built-in extractor (docling)",
+  outcome_headline: "Read by docling",
   outcome_text: "The file is read by the reader chosen.",
   level: "read_with",
   ladder: [
     { level: "default", label: "Default reader", asked_by: [], winning: false },
-    { level: "read_with", label: "Read with the built-in extractor", asked_by: ["Admin"], winning: true },
+    { level: "read_with", label: "Read with docling", asked_by: ["Admin"], winning: true },
     { level: "refuse", label: "Refuse", asked_by: ["Strict"], winning: false },
   ],
   pipelines: [
@@ -33,7 +33,7 @@ const BASE: PrivacyTestResult = {
       fired_rule: "Scans",
       fired_otherwise: false,
       level: "read_with",
-      action_text: "Read with the built-in extractor, engine docling",
+      action_text: "Read with docling",
       summary: [],
     },
     {
@@ -49,20 +49,18 @@ const BASE: PrivacyTestResult = {
       fired_rule: null,
       fired_otherwise: true,
       level: "read_with",
-      action_text: "Read with the built-in extractor, engine ocr",
+      action_text: "Read with markitdown-ocr",
       summary: [],
     },
   ],
   skipped: [{ id: "p3", name: "Elsewhere", owner: "admin", why: "the target is not covered" }],
-  hops: [{ reader: "builtin", reader_name: "the built-in extractor", added: ["Guard"] }],
+  hops: [{ reader: "docling", reader_name: "docling", added: ["Guard"] }],
   winner_rule: "Scans",
   winner_pipeline: "Admin",
   winner_owner: "admin",
-  reader: "the built-in extractor",
+  reader: "docling",
   reader_by: "administrator pipeline Admin",
   reader_overridden: [],
-  engine: "docling",
-  engine_by: "administrator pipeline Admin",
   impossible: null,
   policies: ["Default", "Mine"],
   policy_types: [
@@ -101,7 +99,7 @@ describe("Test result", () => {
 
   it("names the reroute and the pipelines that ran for the new reader", () => {
     show(BASE);
-    expect(screen.getByText("Rerouted to the built-in extractor")).toBeInTheDocument();
+    expect(screen.getByText("Rerouted to docling")).toBeInTheDocument();
     expect(screen.getByText("Pipelines for that reader also checked: Guard.")).toBeInTheDocument();
   });
 
@@ -113,12 +111,11 @@ describe("Test result", () => {
     expect(within(ladder).getByText("asked by Strict")).toBeInTheDocument();
   });
 
-  it("says who chose the reader and the engine", () => {
+  it("says who chose the reader", () => {
     show(BASE);
-    const reader = screen.getByRole("region", { name: "Reader and engine" });
-    expect(within(reader).getByText(/Reader: the built-in extractor/)).toBeInTheDocument();
-    expect(within(reader).getAllByText(/chosen by administrator pipeline Admin/).length).toBe(2);
-    expect(within(reader).getByText(/Engine: docling/)).toBeInTheDocument();
+    const reader = screen.getByRole("region", { name: "Reader" });
+    expect(within(reader).getByText(/Reader: docling/)).toBeInTheDocument();
+    expect(within(reader).getAllByText(/chosen by administrator pipeline Admin/).length).toBe(1);
   });
 
   it("combines the policies: the strictest mode and where it came from", () => {

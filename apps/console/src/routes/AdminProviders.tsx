@@ -312,8 +312,13 @@ export function AdminProviders() {
                       }),
                   }),
                 destructive: true,
+                hint:
+                  provider.kind === "internal" || provider.plugin === "extractor"
+                    ? m["admin_providers.delete.builtin_hint"]()
+                    : undefined,
                 disabled:
                   provider.kind === "internal" ||
+                  provider.plugin === "extractor" ||
                   (remove.isPending && remove.variables === provider.id),
               },
             ]}

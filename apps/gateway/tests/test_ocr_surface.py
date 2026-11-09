@@ -630,9 +630,11 @@ INLINE_DOCX = (
 class FakeExtractor:
     """The extraction service, answering on the control-plane client."""
 
-    def __init__(self) -> None:
+    def __init__(self, engines: tuple[str, ...] = ("markitdown", "ocr", "docling")) -> None:
         self.bodies: list[bytes] = []
         self.headers: list[httpx.Headers] = []
+        #: What `/healthz` reports the extractor can run (`extractor_engines`).
+        self.engines = engines
         self._payload: dict[str, Any] = {
             "kind": "text",
             "text": "Invoice for Luca Bianchi",
@@ -645,6 +647,8 @@ class FakeExtractor:
 
     def client(self) -> httpx.AsyncClient:
         def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path == "/healthz":
+                return httpx.Response(200, json={"extractor_engines": list(self.engines)})
             self.bodies.append(request.content)
             self.headers.append(request.headers)
             return httpx.Response(200, json=self._payload)
@@ -1317,7 +1321,7 @@ class TestDiscoverAgainstTheBuiltInExtractor:
         assert response.status_code == 200
         body = response.json()
         offered = {row["upstream_model"] for row in body["available"]}
-        assert offered == {"markitdown"}
+        assert offered == {"markitdown", "markitdown-ocr", "docling"}
 
     async def test_its_model_is_offered_as_ocr_and_unpriced(
         self,

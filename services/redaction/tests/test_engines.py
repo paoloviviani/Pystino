@@ -483,3 +483,43 @@ def test_the_notice_names_every_model_and_carries_the_cdla_text(tmp_path: Path) 
     fetch_models.write_notice(lock, ocr_only, docling=False)
     assert "CDLA" not in (ocr_only / "NOTICE.md").read_text()
     assert not (ocr_only / "CDLA-Permissive-2.0.txt").exists()
+
+
+def test_healthz_reports_the_engines_this_build_can_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gateway offers one OCR model per name here, so the list must be true."""
+    monkeypatch.setenv("REDACTION_NLP_ENGINE", "disabled")
+    with TestClient(create_app()) as client:
+        # No weights, no libraries: markitdown only.
+        monkeypatch.setattr(ocr, "available", lambda config=None: False)
+        monkeypatch.setattr(docling_engine, "available", lambda config: False)
+        assert client.get("/healthz").json()["extractor_engines"] == ["markitdown"]
+
+        # The ocr variant: RapidOCR and its weights, no Docling.
+        monkeypatch.setattr(ocr, "available", lambda config=None: True)
+        assert client.get("/healthz").json()["extractor_engines"] == ["markitdown", "ocr"]
+
+        # The docling variant.
+        monkeypatch.setattr(docling_engine, "available", lambda config: True)
+        assert client.get("/healthz").json()["extractor_engines"] == [
+            "markitdown",
+            "ocr",
+            "docling",
+        ]
+
+
+def test_an_explicit_markitdown_reads_without_ocr_even_where_ocr_is_on_by_default(
+    fake_ocr: list[int],
+) -> None:
+    """`markitdown` and `markitdown-ocr` are two models: on an image where EXTRACTOR_OCR is on,
+    the header is what tells them apart. No header keeps the configured behaviour."""
+    scan = synth_pdf.report_pdf(scan_pages=1)
+    plain = extract(scan, media_type=PDF, engine="markitdown")
+    assert fake_ocr == [] and "Testo letto dal OCR" not in plain.text
+    picture = extract(b"\x89PNG\r\n\x1a\n", media_type="image/png", engine="markitdown")
+    assert picture.kind is not ExtractionKind.TEXT
+    assert fake_ocr == []
+
+    read = extract(scan, media_type=PDF, engine="ocr")
+    assert "Testo letto dal OCR" in read.text
+    default = extract(scan, media_type=PDF)
+    assert "Testo letto dal OCR" in default.text

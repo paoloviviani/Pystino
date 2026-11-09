@@ -4,8 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { FIELD_LABEL, FORM, MUTED, PAGE } from "../lib/layout";
 import {
-  BUILTIN,
-  ENGINES,
+  DEFAULT_READER,
   FILETYPES,
   KINDS,
   LADDER,
@@ -14,7 +13,6 @@ import {
   conditionHint,
   conditionKeys,
   conditionLabel,
-  engineLabel,
   filetypeLabel,
   kindHint,
   kindLabel,
@@ -397,7 +395,7 @@ function ActionEditor({
                     onChange({
                       level,
                       ...(level === "refuse" ? {} : action.redact_with ? { redact_with: action.redact_with } : {}),
-                      ...(level === "read_with" ? { reader: action.reader ?? BUILTIN } : {}),
+                      ...(level === "read_with" ? { reader: action.reader ?? DEFAULT_READER } : {}),
                     })
                   }
                 />
@@ -421,54 +419,23 @@ function ActionEditor({
               <button
                 key={r.id}
                 type="button"
-                aria-pressed={(action.reader ?? BUILTIN) === r.id}
-                className={`${chip((action.reader ?? BUILTIN) === r.id)} cursor-pointer`}
+                aria-pressed={(action.reader ?? DEFAULT_READER) === r.id}
+                className={`${chip((action.reader ?? DEFAULT_READER) === r.id)} cursor-pointer`}
                 onClick={() =>
                   onChange({
                     level: "read_with",
                     reader: r.id,
                     ...(action.redact_with ? { redact_with: action.redact_with } : {}),
-                    ...(r.id === BUILTIN && action.engine ? { engine: action.engine } : {}),
                   })
                 }
               >
-                {r.id === BUILTIN ? m["privacy.reader.builtin_option"]() : r.name}
+                {r.name}
               </button>
             ))}
             {options.readers.length === 0 && (
               <span className={`text-small ${MUTED}`}>{m["privacy.edit.no_readers"]()}</span>
             )}
           </div>
-          {(action.reader ?? BUILTIN) === BUILTIN && (
-            <div className="flex items-center gap-2">
-              <label className="text-dense" htmlFor={`${prefix}-engine`}>
-                {m["privacy.edit.engine"]()}
-              </label>
-              <select
-                id={`${prefix}-engine`}
-                className="rounded-md border border-line bg-surface px-2 py-1 text-body"
-                value={action.engine ?? ""}
-                onChange={(event) =>
-                  onChange(
-                    actionBody({
-                      level: "read_with",
-                      reader: BUILTIN,
-                      redact_with: action.redact_with,
-                      engine: event.target.value || undefined,
-                    }),
-                  )
-                }
-              >
-                <option value="">{m["privacy.engine.default"]()}</option>
-                {ENGINES.map((e) => (
-                  <option key={e} value={e}>
-                    {engineLabel(e)}
-                  </option>
-                ))}
-              </select>
-              <Tip text={m["privacy.edit.engine_tip"]()} />
-            </div>
-          )}
         </div>
       )}
       {action.level === "refuse" ? (

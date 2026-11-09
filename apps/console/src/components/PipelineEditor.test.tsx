@@ -15,14 +15,14 @@ const OPTIONS = {
   providers: [{ id: "pv1", name: "OpenAI" }],
   models: [{ id: "m1", name: "text-embedding-3-small", provider_id: "pv1", provider: "OpenAI", kind: "embedding" }],
   readers: [
-    { id: "builtin", name: "Built-in extractor", builtin: true },
-    { id: "mistral", name: "mistral", builtin: false },
+    { id: "markitdown", name: "markitdown", local: true },
+    { id: "docling", name: "docling", local: true },
+    { id: "mistral", name: "mistral", local: false },
   ],
   policies: [{ id: "pol1", name: "Default" }],
   own_policies: [{ id: "own1", name: "Mine" }],
   classifiers: [{ id: "cl1", name: "Unannounced project" }],
   entity_types: null,
-  engines: ["markitdown", "ocr", "docling"],
 };
 
 interface Seen {
@@ -123,7 +123,7 @@ describe("Pipeline editor", () => {
     });
   });
 
-  it("shows readers and the engine for 'read with', and a redact-with policy for read", async () => {
+  it("shows the readers (the extractor's engines are models) for 'read with', and a redact-with policy for read", async () => {
     vi.stubGlobal("fetch", api([]));
     const user = userEvent.setup();
     renderEditor(<AdminPipeline />, "/admin/privacy/pipelines/new?kind=read");
@@ -131,9 +131,10 @@ describe("Pipeline editor", () => {
     await user.click(screen.getByRole("radio", { name: /Read with/ }));
 
     const readers = screen.getByRole("group", { name: "Reader" });
-    expect(within(readers).getByRole("button", { name: "Built-in extractor" })).toBeInTheDocument();
+    expect(within(readers).getByRole("button", { name: "markitdown" })).toBeInTheDocument();
+    expect(within(readers).getByRole("button", { name: "docling" })).toBeInTheDocument();
     expect(within(readers).getByRole("button", { name: "mistral" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Engine")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Engine")).toBeNull();
     expect(screen.getByLabelText("Redact with (on the returned text)")).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: /Refuse/ }));
     expect(screen.queryByLabelText("Redact with (on the returned text)")).toBeNull();

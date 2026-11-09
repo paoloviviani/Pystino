@@ -703,6 +703,15 @@ def test_plugins(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(plugin_registry._BUILTIN, IndicativeCostPlugin.name, IndicativeCostPlugin)
 
 
+@pytest.fixture(autouse=True)
+def forget_extractor_engines() -> None:
+    """The extractor's reported engines are cached per endpoint for a minute; a test
+    must not inherit another's answer (or its failure to get one)."""
+    from gateway import extraction
+
+    extraction.forget_reported_engines()
+
+
 # --------------------------------------------------------------------------
 # OIDC access tokens on /v1 (ADR 0040)
 #

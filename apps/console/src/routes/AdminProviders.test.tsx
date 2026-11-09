@@ -685,9 +685,12 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
     await userEvent
       .setup()
       .click(table.getByRole("button", { name: /^Actions for / }));
-    expect(
-      await screen.findByRole("menuitem", { name: "Delete" }),
-    ).toHaveAttribute("aria-disabled", "true");
+    const del = await screen.findByRole("menuitem", { name: "Delete" });
+    expect(del).toHaveAttribute("aria-disabled", "true");
+    expect(del).toHaveAttribute(
+      "title",
+      "The built-in reader can't be removed; deactivate it or limit who may use it instead.",
+    );
   });
 
   it("leaves Delete enabled for an ordinary provider", async () => {
