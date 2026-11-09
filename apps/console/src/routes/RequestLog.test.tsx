@@ -83,6 +83,17 @@ describe("request log", () => {
     expect(screen.getByText("1,200 / 30 / 7")).toBeInTheDocument();
   });
 
+  it("says why a request was refused, from its reason code", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routes([], [row({ status: "blocked", error_code: "redaction_timeout" })]),
+    );
+    renderScreen(<AdminRequests />);
+
+    await waitFor(() => expect(screen.getByText(/Screening timed out/)).toBeInTheDocument());
+    expect(within(screen.getByRole("table")).getByText("Blocked")).toBeInTheDocument();
+  });
+
   it("numbers the attempts of a request that fell back to another target", async () => {
     vi.stubGlobal(
       "fetch",

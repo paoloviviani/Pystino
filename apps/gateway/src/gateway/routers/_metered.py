@@ -85,7 +85,7 @@ from gateway.quota import (
     Reservation,
 )
 from gateway.redaction import RedactionOutcome, Redactor
-from gateway.redaction.http import screened_texts
+from gateway.redaction.http import RedactionUnavailableError, screened_texts
 from gateway.redaction.report import build_detail, build_summary
 from gateway.redaction.resolver import RedactionResolver
 from gateway.routing import (
@@ -1220,6 +1220,23 @@ async def redact_or_block(
             code=exc.code,
             message=str(exc),
             detail=detail,
+            redaction_engine=getattr(redactor, "name", None),
+            policy=policy,
+        )
+        raise
+    except RedactionUnavailableError as exc:
+        # Refused because screening could not run: leave a row whose code says why
+        # (timeout vs unreachable), so the request list is not a bare status.
+        await record_blocked(
+            session,
+            principal=principal,
+            model=model,
+            surface=surface,
+            settings=settings,
+            request_id=request_id,
+            code=exc.code,
+            message=exc.message,
+            detail=attribution.with_routing(None, {**routing, "outcome": "refused"}),
             redaction_engine=getattr(redactor, "name", None),
             policy=policy,
         )

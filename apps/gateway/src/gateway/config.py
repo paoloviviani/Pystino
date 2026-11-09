@@ -1506,7 +1506,10 @@ class RedactionSettings(BaseModel):
     # installed — rather than falling back to noop.
     engine: str = "noop"
     endpoint: str = ""
-    timeout_seconds: float = 5.0
+    #: How long the gateway waits for the detection service. NER over a large tool
+    #: result (a LaTeX file, say) takes well over the old 5 s, and a timeout refuses
+    #: the request, so the default is generous.
+    timeout_seconds: float = 30.0
     #: The Detectors tab's per-engine switches. None: not decided, ``presidio_ner`` applies.
     #: False makes an ask that needs that engine fail closed (503 naming the policy).
     spacy_enabled: bool | None = None

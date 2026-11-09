@@ -11093,6 +11093,17 @@
             "title": "Currency",
             "type": "string"
           },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
           "group_id": {
             "anyOf": [
               {
@@ -11230,6 +11241,7 @@
           "cost",
           "currency",
           "status",
+          "error_code",
           "latency_ms",
           "source"
         ],
