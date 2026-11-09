@@ -25,6 +25,8 @@ export interface RequestLogRow {
   cost: string;
   currency: string;
   status: string;
+  /** Why it was refused or failed, as a stable code such as `redaction_timeout`; null otherwise. */
+  error_code?: string | null;
   latency_ms: number | null;
   source: "api_key" | "token";
 }

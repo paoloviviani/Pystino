@@ -107,6 +107,19 @@ class TestAdminListing:
         assert item["group_name"] == seeded.group.name
         assert item["user_label"]
 
+    async def test_a_refusal_shows_its_code_and_never_its_message(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        row = await record(
+            session, user_id=seeded.user.id, group_id=seeded.group.id, at=inside_this_month()
+        )
+        row.error_code = "redaction_timeout"
+        row.error_message = "The redaction service timed out"
+        await session.commit()
+        item = (await admin_client.get("/api/admin/requests")).json()["items"][0]
+        assert item["error_code"] == "redaction_timeout"
+        assert "timed out" not in str(item)
+
     async def test_a_token_request_has_source_token(
         self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
     ) -> None:

@@ -117,6 +117,7 @@ def _listing_query(f: RequestLogFilter) -> Select[Any]:
             UsageRecord.cost,
             UsageRecord.currency,
             UsageRecord.status,
+            UsageRecord.error_code,
             UsageRecord.latency_ms,
             UsageRecord.api_key_id,
         )
@@ -147,6 +148,7 @@ def _row(r: Any) -> RequestLogRow:
         cost=r.cost,
         currency=r.currency,
         status=str(r.status),
+        error_code=r.error_code,
         latency_ms=r.latency_ms,
         source="api_key" if r.api_key_id is not None else "token",
     )

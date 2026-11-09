@@ -2508,6 +2508,10 @@ class RequestLogRow(ResponseModel):
     cost: Money
     currency: str
     status: str
+    #: A stable code saying why a request was refused or failed (for example
+    #: ``redaction_timeout``); null when there is none. The code only: the message
+    #: column stays out of this response.
+    error_code: str | None = None
     latency_ms: int | None
     #: ``api_key`` when a gateway API key authenticated the request, ``token``
     #: when a sign-in token or session did.

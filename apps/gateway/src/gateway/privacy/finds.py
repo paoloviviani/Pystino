@@ -175,8 +175,12 @@ async def find_in(
                     f"the NER engine {exc.engine or '(default)'} cannot answer: "
                     f"{exc.reason or 'it is not available'}"
                 )
-            except RedactionUnavailableError:
-                result.unavailable = "the redaction service could not be reached"
+            except RedactionUnavailableError as exc:
+                result.unavailable = (
+                    "the redaction service timed out"
+                    if exc.code == "redaction_timeout"
+                    else "the redaction service could not be reached"
+                )
 
     seen: dict[tuple[str, str], Item] = {}
     for text, spans in zip(usable, detected, strict=True):
