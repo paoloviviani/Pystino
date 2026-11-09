@@ -1,8 +1,8 @@
-"""``/api/admin/privacy``: pipelines, redaction policies, profiles and the test box (ADR 0113).
+"""``/api/admin/privacy``: pipelines, policies, classifiers and the test box (ADR 0113).
 
-Two objects, one job each. A **policy** is what to hide (patterns, entity types,
-a mode for each) and has no scope. A **pipeline** is when and how: a kind (read,
-embed, chat), a scope (who, which target), an ordered list of rules where the
+Two objects, one job each. A **policy** is what to find and what to do about it
+(patterns, entity types, a mode for each; see section 0c) and has no scope.
+A **pipeline** is when and how: a kind (read, embed, chat), a scope (who, which target), an ordered list of rules where the
 first match wins, and a fixed last rule. Every pipeline in scope runs and the
 results combine (``gateway.privacy.combine``).
 
@@ -10,8 +10,8 @@ Everything an administrator changes is audited like any other admin change, in
 the same transaction as the change. After a write the worker that served it
 reloads its state at once; the others catch up on their next poll (ten seconds).
 
-Saving never blocks on a *warning* (a rule that cannot fire, a profile that is
-down): warnings come back with the pipeline and from ``/pipelines/check`` so the
+Saving never blocks on a *warning* (a rule that cannot fire, a policy whose
+engine is down): warnings come back with the pipeline and from ``/pipelines/check`` so the
 console can say them while the pipeline is being written. Only an *error* (a
 value of the wrong shape, an action the kind does not have, an id that does not
 exist) is a 422.
@@ -36,23 +36,31 @@ from gateway.deps import (
 from gateway.errors import BadRequestError, GatewayError, NotFoundError
 from gateway.models import (
     ApiKey,
-    DetectorProfile,
     Group,
     ModelDef,
+    ModelKind,
+    PrivacyClassifier,
     PrivacyPipeline,
     Provider,
     RedactionPolicyRecord,
     User,
-    UserPolicy,
 )
 from gateway.pagination import MAX_LIMIT, Page
 from gateway.privacy import rules as rulelib
 from gateway.privacy import service
+from gateway.privacy.engines import engine_problem, fetch_engines
 from gateway.privacy.pipelines import Pipeline, pipeline_from_row, validate_pipeline
 from gateway.privacy.schemas import (
     ActionBody,
+    ChatModelOption,
+    ClassifierCreateRequest,
+    ClassifierListResponse,
+    ClassifierResponse,
+    ClassifierUpdateRequest,
     DryRunRequest,
     DryRunResponse,
+    EnginesResponse,
+    FoundItem,
     IssueView,
     ModelOption,
     NamedId,
@@ -64,16 +72,15 @@ from gateway.privacy.schemas import (
     PipelineUpdateRequest,
     PolicyCreateRequest,
     PolicyResponse,
+    PolicyTryRequest,
+    PolicyTryResponse,
     PolicyUpdateRequest,
-    ProfileCreateRequest,
-    ProfileResponse,
-    ProfileUpdateRequest,
     ReaderOption,
     ReorderRequest,
     SettingsRequest,
     SettingsResponse,
 )
-from gateway.privacy.state import engine_available, state_of
+from gateway.privacy.state import state_of
 from gateway.rate_limit import SlidingWindowLimiter
 
 logger = logging.getLogger(__name__)
@@ -116,7 +123,7 @@ async def privacy_status(admin: AdminUserDep, request: Request) -> dict[str, Any
 
 @router.get("/options", response_model=OptionsResponse)
 async def options(admin: AdminUserDep, session: SessionDep, request: Request) -> OptionsResponse:
-    """What the editors may pick: scope subjects, targets, readers, policies, profiles."""
+    """What the editors may pick: scope subjects, targets, readers, policies, classifiers."""
     users = (
         await session.execute(select(User.id, User.email).order_by(User.email).limit(500))
     ).all()
@@ -141,7 +148,7 @@ async def options(admin: AdminUserDep, session: SessionDep, request: Request) ->
     ).all()
     readers = await service.deployment_readers(session)
     policies = [p for p in await service.policy_rows(session) if p.is_active]
-    profiles = await service.profile_rows(session)
+    classifiers = await service.classifier_rows(session)
     settings_row = await service.settings_row(session)
     return OptionsResponse(
         users=[NamedId(id=i, name=n or "") for i, n in users],
@@ -165,7 +172,7 @@ async def options(admin: AdminUserDep, session: SessionDep, request: Request) ->
         ],
         policies=[NamedId(id=p.id, name=p.name) for p in policies],
         own_policies=[],
-        profiles=[NamedId(id=p.id, name=p.name) for p in profiles],
+        classifiers=[NamedId(id=c.id, name=c.name) for c in classifiers],
         entity_types=settings_row.user_entity_types,
         engines=list(rulelib.ENGINES),
     )
@@ -220,7 +227,7 @@ async def _clean(
     rules: list[dict[str, Any]],
     otherwise: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    profiles, policies, readers = await service.validation_context(session, owner=None)
+    context = await service.validation_context(session, owner=None)
     try:
         clean = validate_pipeline(
             kind,
@@ -229,9 +236,10 @@ async def _clean(
             target,
             rules,
             otherwise,
-            profile_ids=profiles,
-            policy_ids=policies,
-            readers=readers,
+            finds_policy_ids=context.finds_policy_ids,
+            classifier_ids=context.classifier_ids,
+            policy_ids=context.policy_ids,
+            readers=context.readers,
         )
     except rulelib.RuleError as exc:
         raise UnprocessableError(str(exc)) from exc
@@ -246,24 +254,26 @@ async def _renumber(session: SessionDep, ordered: list[PrivacyPipeline]) -> None
     await session.flush()
 
 
-async def _response(session: SessionDep, row: PrivacyPipeline) -> PipelineResponse:
-    return (await service.views_for(session, [row]))[0]
+async def _response(
+    session: SessionDep, row: PrivacyPipeline, request: Request
+) -> PipelineResponse:
+    return (await service.views_for(session, [row], state_of(request)))[0]
 
 
 @router.get("/pipelines", response_model=Page[PipelineResponse])
 async def list_pipelines(
-    admin: AdminUserDep, session: SessionDep, kind: str | None = None
+    admin: AdminUserDep, session: SessionDep, request: Request, kind: str | None = None
 ) -> Page[PipelineResponse]:
     """Every administrator pipeline, by kind and in order, each with its warnings."""
-    items = await service.views_for(session, await _admin_rows(session, kind))
+    items = await service.views_for(session, await _admin_rows(session, kind), state_of(request))
     return Page(items=items, total=len(items), limit=max(1, min(MAX_LIMIT, len(items))), offset=0)
 
 
 @router.get("/pipelines/{pipeline_id}", response_model=PipelineResponse)
 async def get_pipeline(
-    pipeline_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
+    pipeline_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, request: Request
 ) -> PipelineResponse:
-    return await _response(session, await _load(session, pipeline_id))
+    return await _response(session, await _load(session, pipeline_id), request)
 
 
 def _other_action(payload: ActionBody | None) -> dict[str, Any] | None:
@@ -315,7 +325,7 @@ async def create_pipeline(
     )
     await session.commit()
     await _reload(request)
-    return await _response(session, row)
+    return await _response(session, row, request)
 
 
 @router.patch("/pipelines/{pipeline_id}", response_model=PipelineResponse)
@@ -369,7 +379,7 @@ async def update_pipeline(
     )
     await session.commit()
     await _reload(request)
-    return await _response(session, row)
+    return await _response(session, row, request)
 
 
 @router.delete("/pipelines/{pipeline_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -419,12 +429,17 @@ async def reorder_pipelines(
     )
     await session.commit()
     await _reload(request)
-    return await list_pipelines(admin, session)
+    return await list_pipelines(admin, session, request)
 
 
 @router.post("/pipelines/check", response_model=PipelineCheckResponse)
 async def check_pipeline(
-    payload: PipelineCheckRequest, admin: AdminUserDep, session: SessionDep
+    payload: PipelineCheckRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+    settings: SettingsDep,
+    control_http: ControlHttpDep,
 ) -> PipelineCheckResponse:
     """The warnings a draft would get if saved now, for the editor to show as it is written."""
     try:
@@ -440,7 +455,7 @@ async def check_pipeline(
     except UnprocessableError as exc:
         return PipelineCheckResponse(error=exc.message, issues=[], soft_cap=rulelib.SOFT_CAP)
     draft = _draft(payload.kind, clean, payload.enabled)
-    found = service.issues_of(draft, await service.profile_rows(session))
+    found = service.issues_of(draft, state_of(request), await fetch_engines(control_http, settings))
     issues: list[IssueView] = []
     for rule_issues in found.values():
         issues.extend(service.issue_views(rule_issues))
@@ -467,37 +482,47 @@ def _draft(kind: str, clean: dict[str, Any], enabled: bool) -> Pipeline:
 
 
 async def _used_by(session: SessionDep) -> dict[str, list[str]]:
-    """policy id -> names of the pipelines (administrators' and users') that apply it."""
+    """policy or classifier id -> names of the pipelines that apply it or count its items."""
     used: dict[str, list[str]] = {}
     for row in (await session.execute(select(PrivacyPipeline))).scalars().all():
-        actions = [dict(r.get("action") or {}) for r in row.rules or []] + [
-            dict(row.otherwise or {})
-        ]
-        for pid in {str(a["redact_with"]) for a in actions if a.get("redact_with")}:
-            used.setdefault(pid, []).append(
-                row.name if row.owner_id is None else f"{row.name} (user)"
-            )
+        name = row.name if row.owner_id is None else f"{row.name} (user)"
+        rules = list(row.rules or [])
+        ids = {
+            str(a["redact_with"])
+            for a in [dict(r.get("action") or {}) for r in rules] + [dict(row.otherwise or {})]
+            if a.get("redact_with")
+        }
+        for rule in rules:
+            for condition in rule.get("conditions") or []:
+                if condition.get("key") in rulelib.CONTENT_KEYS and condition.get("values"):
+                    ids.add(str(condition["values"][0]))
+        for ident in ids:
+            used.setdefault(ident, []).append(name)
     return used
 
 
 def _policy_response(
     row: RedactionPolicyRecord,
     used: dict[str, list[str]],
-    profiles: dict[uuid.UUID, str],
     email: str | None,
+    engines: EnginesResponse | None = None,
 ) -> PolicyResponse:
     from gateway.config import RedactionPolicy
 
+    # A stored policy that no longer parses is not replaced with an empty one
+    # here: the listing is where an operator would find out the state is
+    # ignoring it, so it must raise rather than lie.
+    policy = RedactionPolicy.model_validate(row.policy or {})
+    available: bool | None = None
+    if engines is not None and engines.reachable and policy.engine is not None:
+        available = engine_problem(engines, policy.engine, False) is None
     return PolicyResponse(
         id=row.id,
         name=row.name,
-        # A stored policy that no longer parses is not replaced with an empty one
-        # here: the listing is where an operator would find out the state is
-        # ignoring it, so it must raise rather than lie.
-        policy=RedactionPolicy.model_validate(row.policy or {}),
-        profile_id=row.profile_id,
-        profile_name=profiles.get(row.profile_id) if row.profile_id else None,
+        policy=policy,
         is_active=row.is_active,
+        shared_with_users=row.shared_with_users,
+        engine_available=available,
         reason=row.reason,
         used_by=used.get(str(row.id), []),
         created_by=row.created_by,
@@ -507,9 +532,10 @@ def _policy_response(
     )
 
 
-async def _policy_page(session: SessionDep) -> list[PolicyResponse]:
+async def _policy_page(
+    session: SessionDep, engines: EnginesResponse | None = None
+) -> list[PolicyResponse]:
     used = await _used_by(session)
-    profiles = {p.id: p.name for p in await service.profile_rows(session)}
     rows = (
         await session.execute(
             select(RedactionPolicyRecord, User.email)
@@ -517,7 +543,7 @@ async def _policy_page(session: SessionDep) -> list[PolicyResponse]:
             .order_by(RedactionPolicyRecord.name)
         )
     ).all()
-    return [_policy_response(row, used, profiles, email) for row, email in rows]
+    return [_policy_response(row, used, email, engines) for row, email in rows]
 
 
 async def _load_policy(session: SessionDep, policy_id: uuid.UUID) -> RedactionPolicyRecord:
@@ -527,22 +553,34 @@ async def _load_policy(session: SessionDep, policy_id: uuid.UUID) -> RedactionPo
     return row
 
 
-PROFILE_LATER = "Detector profiles on policies take effect in a later release."
+def _check_engine(policy: Any, engines: EnginesResponse) -> None:
+    """The engine a policy names must be one the service reports available, and fit its items.
 
-
-async def _check_profile(session: SessionDep, profile_id: uuid.UUID | None) -> None:
-    """A policy may name only the default profile for now.
-
-    Detection still runs on the deployment's one detector, so a policy that named
-    another profile would look like it was detected differently and not be.
+    A policy that names no engine (the deployment default) is never refused for
+    that, even with the service down: it is what every policy did before. Entity
+    and format names are checked against the service's own lists when it answers.
     """
-    if profile_id is None:
+    problem = engine_problem(engines, policy.engine, bool(policy.custom_entities))
+    if problem is not None:
+        raise UnprocessableError(problem)
+    if not engines.reachable:
         return
-    row = await session.get(DetectorProfile, profile_id)
-    if row is None:
-        raise UnprocessableError("The detector profile does not exist.")
-    if not row.is_default:
-        raise UnprocessableError(PROFILE_LATER)
+    chosen = next(
+        (e for e in engines.engines if e.name == policy.engine),
+        next((e for e in engines.engines if e.default), None),
+    )
+    if chosen is not None and chosen.entities:
+        unknown = sorted(set(policy.entities) - {e.upper() for e in chosen.entities})
+        if unknown:
+            raise UnprocessableError(
+                f"The engine '{chosen.name}' does not find: {', '.join(unknown)}."
+            )
+    if engines.pattern_entities:
+        unknown = sorted(set(policy.formats) - {e.upper() for e in engines.pattern_entities})
+        if unknown:
+            raise UnprocessableError(
+                f"The redaction service has no built-in format: {', '.join(unknown)}."
+            )
 
 
 async def _name_free(session: SessionDep, name: str, ignore: uuid.UUID | None = None) -> None:
@@ -565,32 +603,48 @@ def _policy_audit(row: RedactionPolicyRecord) -> dict[str, Any]:
     return {
         "name": row.name,
         "is_active": row.is_active,
-        "profile_id": str(row.profile_id) if row.profile_id else None,
+        "shared_with_users": row.shared_with_users,
         "policy": dict(row.policy or {}),
     }
 
 
+@router.get("/engines", response_model=EnginesResponse)
+async def engines(
+    admin: AdminUserDep, settings: SettingsDep, control_http: ControlHttpDep
+) -> EnginesResponse:
+    """What the redaction service offers: pattern formats and the NER engines (spaCy, GLiNER)."""
+    return await fetch_engines(control_http, settings)
+
+
 @router.get("/policies", response_model=Page[PolicyResponse])
-async def list_policies(admin: AdminUserDep, session: SessionDep) -> Page[PolicyResponse]:
-    items = await _policy_page(session)
+async def list_policies(
+    admin: AdminUserDep, session: SessionDep, settings: SettingsDep, control_http: ControlHttpDep
+) -> Page[PolicyResponse]:
+    items = await _policy_page(session, await fetch_engines(control_http, settings))
     return Page(items=items, total=len(items), limit=max(1, min(MAX_LIMIT, len(items))), offset=0)
 
 
 @router.post("/policies", response_model=PolicyResponse, status_code=status.HTTP_201_CREATED)
 async def create_policy(
-    payload: PolicyCreateRequest, admin: AdminUserDep, session: SessionDep, request: Request
+    payload: PolicyCreateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+    settings: SettingsDep,
+    control_http: ControlHttpDep,
 ) -> PolicyResponse:
     name = payload.name.strip()
     if not name:
         raise UnprocessableError("Give the policy a name.")
     await _name_free(session, name)
-    await _check_profile(session, payload.profile_id)
+    report = await fetch_engines(control_http, settings)
+    _check_engine(payload.policy, report)
     row = RedactionPolicyRecord(
         id=uuid.uuid4(),
         name=name,
         policy=payload.policy.model_dump(mode="json"),
-        profile_id=payload.profile_id,
         is_active=payload.is_active,
+        shared_with_users=payload.shared_with_users,
         reason=payload.reason.strip(),
         created_by=admin.id,
     )
@@ -607,9 +661,7 @@ async def create_policy(
     await session.commit()
     await _reload(request)
     await session.refresh(row)
-    return _policy_response(
-        row, {}, {p.id: p.name for p in await service.profile_rows(session)}, admin.email
-    )
+    return _policy_response(row, {}, admin.email, report)
 
 
 @router.patch("/policies/{policy_id}", response_model=PolicyResponse)
@@ -619,10 +671,12 @@ async def update_policy(
     admin: AdminUserDep,
     session: SessionDep,
     request: Request,
+    settings: SettingsDep,
+    control_http: ControlHttpDep,
 ) -> PolicyResponse:
     row = await _load_policy(session, policy_id)
     before = _policy_audit(row)
-    fields = payload.model_fields_set
+    report = await fetch_engines(control_http, settings)
     if payload.name is not None:
         name = payload.name.strip()
         if not name:
@@ -630,10 +684,18 @@ async def update_policy(
         await _name_free(session, name, ignore=row.id)
         row.name = name
     if payload.policy is not None:
+        _check_engine(payload.policy, report)
         row.policy = payload.policy.model_dump(mode="json")
-    if "profile_id" in fields:
-        await _check_profile(session, payload.profile_id)
-        row.profile_id = payload.profile_id
+    if payload.shared_with_users is not None:
+        if payload.shared_with_users is False and row.shared_with_users:
+            used_by = (await _used_by(session)).get(str(row.id), [])
+            users = [n for n in used_by if n.endswith(" (user)")]
+            if users:
+                raise ConflictError(
+                    f"'{row.name}' is used by users' pipelines: {', '.join(users)}. They would "
+                    "silently stop being protected."
+                )
+        row.shared_with_users = payload.shared_with_users
     if payload.is_active is not None:
         if payload.is_active is False and row.is_active:
             users = (await _used_by(session)).get(str(row.id), [])
@@ -662,16 +724,14 @@ async def update_policy(
     email = (
         await session.execute(select(User.email).where(User.id == row.created_by))
     ).scalar_one_or_none()
-    return _policy_response(
-        row, used, {p.id: p.name for p in await service.profile_rows(session)}, email
-    )
+    return _policy_response(row, used, email, report)
 
 
 @router.delete("/policies/{policy_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_policy(
     policy_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, request: Request
 ) -> None:
-    """Remove a policy that no pipeline applies.
+    """Remove a policy that no pipeline applies or counts items of.
 
     Refused while one does: a pipeline that names nothing would silently stop
     hiding what it was written to hide. Nothing in the ledger points at a policy
@@ -682,7 +742,7 @@ async def delete_policy(
     users = (await _used_by(session)).get(str(row.id), [])
     if users:
         raise ConflictError(
-            f"'{row.name}' is applied by: {', '.join(users)}. Change those pipelines first."
+            f"'{row.name}' is used by: {', '.join(users)}. Change those pipelines first."
         )
     before = _policy_audit(row)
     await session.delete(row)
@@ -699,238 +759,236 @@ async def delete_policy(
     await _reload(request)
 
 
-# -- profiles ----------------------------------------------------------------------
+@router.post("/policies/try", response_model=PolicyTryResponse)
+async def try_policy(
+    payload: PolicyTryRequest,
+    admin: AdminUserDep,
+    request: Request,
+    settings: SettingsDep,
+) -> PolicyTryResponse:
+    """Run a policy as it is being edited over a text: the real detection, no side effects.
 
+    The same code a "finds at least" condition and the Test tab run
+    (``gateway.privacy.finds.find_in``), with every item mode but ``off`` counted,
+    and what the redaction would do to the text. Nothing is stored or logged; the
+    text came from the box and is shown back only to the administrator who typed
+    it. Rate limited with the test box.
+    """
+    from llmp_shared import PlaceholderMap
 
-def _profile_view(row: DetectorProfile) -> dict[str, Any]:
-    return {
-        "name": row.name,
-        "description": row.description,
-        "engine": row.engine,
-        "labels": list(row.labels or []),
-        "fallback": row.fallback,
-        "fallback_profile_id": str(row.fallback_profile_id) if row.fallback_profile_id else None,
-        "user_available": row.user_available,
-    }
+    from gateway.errors import ContentBlockedError
+    from gateway.privacy.finds import find_in
+    from gateway.redaction.http import apply_spans
 
-
-def _presidio_status(request: Request) -> tuple[str, str]:
+    limiter = getattr(request.app.state, "privacy_test_limiter", None)
+    if limiter is not None and not limiter.allow(("privacy-test", str(admin.id))):
+        raise BadRequestError("Slow down: the test box is limited to 30 runs a minute.")
     redactor = getattr(request.app.state, "redactor", None)
-    name = getattr(redactor, "name", "noop")
-    if name == "noop":
-        return "available", "Redaction is off; verdicts still use the quick check."
-    return "available", "The detection service is the one in use for redaction."
+    policy = payload.policy
+    result = await find_in(
+        policy,
+        [payload.text],
+        redactor=redactor,
+        default_threshold=settings.redaction.score_threshold,
+    )
+    items = [
+        FoundItem(
+            group=i.group,
+            type=i.type,
+            engine=i.engine,
+            score=i.score,
+            mode=policy.mode_for(i.type).value,
+            text=i.value,
+        )
+        for i in result.items
+    ]
+    redacted: str | None = None
+    blocked = False
+    if policy.is_active() and result.unavailable is None:
+        # The same spans the redaction would act on: detect_only items are left alone.
+        from gateway.redaction.http import eligible_for  # noqa: F401
 
-
-async def _profile_use(session: SessionDep) -> dict[str, int]:
-    """How many rules decide with each profile, and how many policies use it."""
-    count: dict[str, int] = {}
-    for row in (await session.execute(select(PrivacyPipeline))).scalars().all():
-        for rule in row.rules or []:
-            for c in rule.get("conditions") or []:
-                if c.get("decide") and c["decide"] != rulelib.PATTERNS:
-                    count[str(c["decide"])] = count.get(str(c["decide"]), 0) + 1
-    for pid in (
-        await session.execute(
-            select(RedactionPolicyRecord.profile_id).where(
-                RedactionPolicyRecord.profile_id.is_not(None)
+        detect = getattr(redactor, "detect", None)
+        spans = []
+        if detect is not None and getattr(redactor, "name", "noop") != "noop":
+            spans = (
+                await detect([payload.text], policy=policy, asks=policy.ner_asks(), strict=True)
+            )[0]
+        try:
+            redacted, _ = apply_spans(
+                payload.text,
+                spans,
+                key=settings.redaction.placeholder_key.get_secret_value().encode() or b"try-it",
+                placeholders=PlaceholderMap(),
+                policy=policy,
+                default_threshold=settings.redaction.score_threshold,
             )
-        )
-    ).scalars():
-        count[str(pid)] = count.get(str(pid), 0) + 1
-    for pid in (
-        await session.execute(
-            select(UserPolicy.profile_id).where(UserPolicy.profile_id.is_not(None))
-        )
-    ).scalars():
-        count[str(pid)] = count.get(str(pid), 0) + 1
-    return count
+        except ContentBlockedError:
+            blocked = True
+    return PolicyTryResponse(
+        items=items, unavailable=result.unavailable, redacted_text=redacted, blocked=blocked
+    )
 
 
-async def _profile_response(
-    request: Request, row: DetectorProfile, names: dict[uuid.UUID, str], using: dict[str, int]
-) -> ProfileResponse:
-    available = engine_available(row.engine)
-    if row.engine == "presidio":
-        status_word, detail = _presidio_status(request)
-    elif available:
-        status_word, detail = "available", "Built in; nothing to install."
-    else:
-        status_word, detail = "not_installed", "This engine is not installed here."
-    return ProfileResponse(
+# -- classifiers -------------------------------------------------------------------
+
+
+def _classifier_view(
+    row: PrivacyClassifier, state: Any, used: dict[str, list[str]]
+) -> ClassifierResponse:
+    ref = state.classifiers.get(str(row.id))
+    return ClassifierResponse(
         id=row.id,
         name=row.name,
-        description=row.description,
-        engine=row.engine,
-        labels=list(row.labels or []),
-        fallback=row.fallback,
-        fallback_profile_id=row.fallback_profile_id,
-        fallback_profile_name=names.get(row.fallback_profile_id)
-        if row.fallback_profile_id
-        else None,
-        is_default=row.is_default,
-        user_available=row.user_available,
-        status=status_word,
-        status_detail=detail,
-        decides=available,
-        cost_hint="instant" if available else "slow; arrives with model profiles",
-        rules_using=using.get(str(row.id), 0),
+        topic=row.topic,
+        model_id=row.model_id,
+        model_name=ref.model_name if ref is not None else None,
+        provider_name=(ref.provider.name if ref is not None and ref.provider is not None else None),
+        available=bool(ref and ref.available),
+        why_not="" if ref is not None and ref.available else (ref.why if ref else "not loaded yet"),
+        rules_using=len(used.get(str(row.id), [])),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
 
 
-@router.get("/profiles", response_model=Page[ProfileResponse])
-async def list_profiles(
-    admin: AdminUserDep, session: SessionDep, request: Request
-) -> Page[ProfileResponse]:
-    profiles = await service.profile_rows(session)
-    names = {p.id: p.name for p in profiles}
-    using = await _profile_use(session)
-    items = [await _profile_response(request, p, names, using) for p in profiles]
-    return Page(items=items, total=len(items), limit=max(1, len(items)), offset=0)
-
-
-async def _check_fallback(
-    session: SessionDep, row_id: uuid.UUID | None, fallback: str, target: uuid.UUID | None
-) -> None:
-    if fallback == "fallback_to":
-        if target is None:
-            raise UnprocessableError("Choose the profile to fall back to.")
-        if target == row_id:
-            raise UnprocessableError("A profile cannot fall back to itself.")
-        if await session.get(DetectorProfile, target) is None:
-            raise UnprocessableError("The fallback profile does not exist.")
-        # No cycles: walk the chain from the target; reaching this row would loop.
-        seen: set[uuid.UUID] = set()
-        current: uuid.UUID | None = target
-        while current is not None and current not in seen:
-            if current == row_id:
-                raise UnprocessableError("That fallback would loop back to this profile.")
-            seen.add(current)
-            node = await session.get(DetectorProfile, current)
-            current = node.fallback_profile_id if node and node.fallback == "fallback_to" else None
-    elif target is not None:
-        raise UnprocessableError(
-            "A fallback profile only applies when the fallback is 'fall back'."
+async def _chat_models(session: SessionDep) -> list[ChatModelOption]:
+    rows = (
+        await session.execute(
+            select(ModelDef.id, ModelDef.name, Provider.name)
+            .join(Provider, Provider.id == ModelDef.provider_id)
+            .where(
+                ModelDef.kind == ModelKind.CHAT,
+                ModelDef.is_active.is_(True),
+                ModelDef.owner_id.is_(None),
+                ModelDef.is_alias.is_(False),
+                Provider.is_active.is_(True),
+                Provider.owner_id.is_(None),
+            )
+            .order_by(ModelDef.name)
         )
+    ).all()
+    return [ChatModelOption(id=i, name=n, provider=p) for i, n, p in rows]
 
 
-@router.post("/profiles", response_model=ProfileResponse, status_code=status.HTTP_201_CREATED)
-async def create_profile(
-    payload: ProfileCreateRequest, admin: AdminUserDep, session: SessionDep, request: Request
-) -> ProfileResponse:
+async def _check_classifier_model(session: SessionDep, model_id: uuid.UUID | None) -> None:
+    if model_id is None:
+        return
+    if model_id not in {m.id for m in await _chat_models(session)}:
+        raise UnprocessableError("The model must be an active chat model of a configured provider.")
+
+
+async def _classifier_name_free(
+    session: SessionDep, name: str, ignore: uuid.UUID | None = None
+) -> None:
+    if any(
+        c.name.lower() == name.lower() and c.id != ignore
+        for c in await service.classifier_rows(session)
+    ):
+        raise ConflictError(f"A classifier named '{name}' already exists.")
+
+
+@router.get("/classifiers", response_model=ClassifierListResponse)
+async def list_classifiers(
+    admin: AdminUserDep, session: SessionDep, request: Request
+) -> ClassifierListResponse:
+    """The decision models: a model and a topic in plain words. Scaffolding, no model bundled."""
+    used = await _used_by(session)
+    state = state_of(request)
+    return ClassifierListResponse(
+        items=[_classifier_view(c, state, used) for c in await service.classifier_rows(session)],
+        models=await _chat_models(session),
+    )
+
+
+@router.post("/classifiers", response_model=ClassifierResponse, status_code=status.HTTP_201_CREATED)
+async def create_classifier(
+    payload: ClassifierCreateRequest, admin: AdminUserDep, session: SessionDep, request: Request
+) -> ClassifierResponse:
     name = payload.name.strip()
     if not name:
-        raise UnprocessableError("Give the profile a name.")
-    existing = await service.profile_rows(session)
-    if any(p.name.lower() == name.lower() for p in existing):
-        raise ConflictError(f"A profile named '{name}' already exists.")
-    await _check_fallback(session, None, payload.fallback, payload.fallback_profile_id)
-    row = DetectorProfile(
-        id=uuid.uuid4(),
-        name=name,
-        description=payload.description.strip(),
-        engine=payload.engine,
-        labels=[label.strip().upper() for label in payload.labels if label.strip()],
-        fallback=payload.fallback,
-        fallback_profile_id=payload.fallback_profile_id,
-        user_available=payload.user_available,
+        raise UnprocessableError("Give the classifier a name.")
+    await _classifier_name_free(session, name)
+    await _check_classifier_model(session, payload.model_id)
+    row = PrivacyClassifier(
+        id=uuid.uuid4(), name=name, topic=payload.topic.strip(), model_id=payload.model_id
     )
     session.add(row)
     record_audit(
         session,
         admin,
-        "privacy_profile.create",
-        "privacy_profile",
+        "privacy_classifier.create",
+        "privacy_classifier",
         row.id,
         row.name,
-        after=_profile_view(row),
+        after={"name": row.name, "topic": row.topic, "model_id": str(row.model_id or "")},
     )
     await session.commit()
     await _reload(request)
-    names = {p.id: p.name for p in [*existing, row]}
-    return await _profile_response(request, row, names, await _profile_use(session))
+    return _classifier_view(row, state_of(request), {})
 
 
-@router.patch("/profiles/{profile_id}", response_model=ProfileResponse)
-async def update_profile(
-    profile_id: uuid.UUID,
-    payload: ProfileUpdateRequest,
+@router.patch("/classifiers/{classifier_id}", response_model=ClassifierResponse)
+async def update_classifier(
+    classifier_id: uuid.UUID,
+    payload: ClassifierUpdateRequest,
     admin: AdminUserDep,
     session: SessionDep,
     request: Request,
-) -> ProfileResponse:
-    row = await session.get(DetectorProfile, profile_id)
+) -> ClassifierResponse:
+    row = await session.get(PrivacyClassifier, classifier_id)
     if row is None:
-        raise NotFoundError("No such profile.")
-    before = _profile_view(row)
+        raise NotFoundError("No such classifier.")
+    before = {"name": row.name, "topic": row.topic, "model_id": str(row.model_id or "")}
     fields = payload.model_fields_set
-    fallback = payload.fallback if payload.fallback is not None else row.fallback
-    target = (
-        payload.fallback_profile_id if "fallback_profile_id" in fields else row.fallback_profile_id
-    )
-    if fallback == "refuse":
-        target = None
-    await _check_fallback(session, row.id, fallback, target)
     if payload.name is not None:
         name = payload.name.strip()
         if not name:
-            raise UnprocessableError("Give the profile a name.")
-        if any(
-            p.name.lower() == name.lower() and p.id != row.id
-            for p in await service.profile_rows(session)
-        ):
-            raise ConflictError(f"A profile named '{name}' already exists.")
+            raise UnprocessableError("Give the classifier a name.")
+        await _classifier_name_free(session, name, ignore=row.id)
         row.name = name
-    if payload.description is not None:
-        row.description = payload.description.strip()
-    if payload.labels is not None:
-        row.labels = [label.strip().upper() for label in payload.labels if label.strip()]
-    if payload.user_available is not None:
-        row.user_available = payload.user_available
-    row.fallback = fallback
-    row.fallback_profile_id = target
+    if payload.topic is not None:
+        row.topic = payload.topic.strip()
+    if "model_id" in fields:
+        await _check_classifier_model(session, payload.model_id)
+        row.model_id = payload.model_id
     record_audit(
         session,
         admin,
-        "privacy_profile.update",
-        "privacy_profile",
+        "privacy_classifier.update",
+        "privacy_classifier",
         row.id,
         row.name,
         before=before,
-        after=_profile_view(row),
+        after={"name": row.name, "topic": row.topic, "model_id": str(row.model_id or "")},
     )
     await session.commit()
     await _reload(request)
-    profiles = await service.profile_rows(session)
-    return await _profile_response(
-        request, row, {p.id: p.name for p in profiles}, await _profile_use(session)
-    )
+    return _classifier_view(row, state_of(request), await _used_by(session))
 
 
-@router.delete("/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_profile(
-    profile_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, request: Request
+@router.delete("/classifiers/{classifier_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_classifier(
+    classifier_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, request: Request
 ) -> None:
-    row = await session.get(DetectorProfile, profile_id)
+    row = await session.get(PrivacyClassifier, classifier_id)
     if row is None:
-        raise NotFoundError("No such profile.")
-    if row.is_default:
-        raise ConflictError("The default profile cannot be deleted.")
-    if (await _profile_use(session)).get(str(row.id)):
-        raise ConflictError("A rule or policy still uses this profile. Change those first.")
-    before = _profile_view(row)
-    await session.delete(row)
+        raise NotFoundError("No such classifier.")
+    using = (await _used_by(session)).get(str(row.id), [])
+    if using:
+        raise ConflictError(
+            f"'{row.name}' is named by: {', '.join(using)}. Change those pipelines first."
+        )
     record_audit(
         session,
         admin,
-        "privacy_profile.delete",
-        "privacy_profile",
-        profile_id,
+        "privacy_classifier.delete",
+        "privacy_classifier",
+        classifier_id,
         row.name,
-        before=before,
+        before={"name": row.name, "topic": row.topic},
     )
+    await session.delete(row)
     await session.commit()
     await _reload(request)
 
@@ -1018,6 +1076,6 @@ async def scratch_state(session: SessionDep, request: Request) -> Any:
     from gateway.privacy.state import PrivacyState, read_all
 
     scratch = PrivacyState()
-    scratch.cache = state_of(request).cache
+    scratch.classifier_backend = state_of(request).classifier_backend
     scratch.load(*await read_all(session))
     return scratch

@@ -416,7 +416,13 @@ async def extract_document(
     # the new reader also run.
     privacy = state_of(request)
     privacy.ensure_loaded()
-    facts = attribution.base_facts("read", principal, model, requested_name=resolved.requested_name)
+    facts = attribution.base_facts(
+        "read",
+        principal,
+        model,
+        requested_name=resolved.requested_name,
+        judge=_metered.judge_of(request, principal),
+    )
     mime = inline[1] if inline is not None else _declared_mime(body)
     name = attribution.clean_filename(_document_name(request, body))
     facts = replace(facts, filename=name, mime=mime, filetype=filetype_of(mime, name))
@@ -460,7 +466,12 @@ async def extract_document(
         return Retarget(
             replace(
                 attribution.base_facts(
-                    "read", principal, moved.model, requested_name=moved.requested_name
+                    "read",
+                    principal,
+                    moved.model,
+                    requested_name=moved.requested_name,
+                    judge=facts.judge,
+                    texts=facts.texts,
                 ),
                 filename=name,
                 mime=mime,
@@ -521,7 +532,12 @@ async def extract_document(
                 f"The document could not be read here to be judged: {exc}",
                 code="document_unreadable",
             ) from exc
-        facts = replace(facts, is_scan=_scan_of(probe))
+        facts = replace(
+            facts,
+            is_scan=_scan_of(probe),
+            # The text the content conditions judge: read here, never sent anywhere.
+            texts=(probe.text,) if probe.text else (),
+        )
         holder["resolved"] = named
         combined = await plan(privacy.evaluator, pipelines, facts, retarget=retarget)
     if combined.impossible is not None or combined.refused:

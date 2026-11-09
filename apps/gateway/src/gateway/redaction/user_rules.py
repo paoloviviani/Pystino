@@ -88,13 +88,8 @@ def _named_mode(policy: RedactionPolicy, name: str) -> tuple[EntityMode, Placeho
     An entity entry or a pattern of that name: a pattern with a fresh label
     collides with nothing and keeps the mode it was written with.
     """
-    entry = policy.entities.get(name)
-    if entry is not None:
-        return entry.mode, entry.placeholder
-    for pattern in policy.patterns:
-        if pattern.name == name:
-            return pattern.mode, pattern.placeholder
-    return None
+    found = policy._named(name)
+    return (found[0], found[1]) if found is not None else None
 
 
 def fold(base: RedactionPolicy, rules: Sequence[UserRule]) -> RedactionPolicy:
@@ -107,9 +102,13 @@ def fold(base: RedactionPolicy, rules: Sequence[UserRule]) -> RedactionPolicy:
         # `model_construct`: the pieces are already validated, and this runs a
         # few times per fold, which is memoised per user.
         return RedactionPolicy.model_construct(
+            engine=base.engine,
             default_mode=base.default_mode,
+            formats=base.formats,
             entities=entities,
+            custom_entities=base.custom_entities,
             patterns=patterns,
+            keywords=base.keywords,
             allow_list=base.allow_list,
         )
 
@@ -123,7 +122,7 @@ def fold(base: RedactionPolicy, rules: Sequence[UserRule]) -> RedactionPolicy:
                 # The label is already in use (an administrator's pattern, or a
                 # type they named): mode_for reads the entity entry first, so
                 # the user's stricter mode has to be written there to apply.
-                existing = entities.get(rule.name)
+                existing = entities.get(rule.name) or base.formats.get(rule.name)
                 entities[rule.name] = EntityPolicy(
                     mode=rule.mode,
                     placeholder=collides[1],
@@ -136,7 +135,7 @@ def fold(base: RedactionPolicy, rules: Sequence[UserRule]) -> RedactionPolicy:
         else:
             policy = current()
             if rank(rule.mode) > rank(policy.mode_for(rule.name)):
-                existing = entities.get(rule.name)
+                existing = entities.get(rule.name) or base.formats.get(rule.name)
                 entities[rule.name] = EntityPolicy(
                     mode=rule.mode,
                     placeholder=policy.placeholder_style_for(rule.name),

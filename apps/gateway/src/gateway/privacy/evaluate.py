@@ -7,31 +7,25 @@ matches is recorded and the search goes on. The trace says, for every rule, why
 it did or did not apply, in the words the console shows an administrator.
 Combining the pipelines of a request is ``gateway.privacy.combine``'s job.
 
-Two things are deliberately not here: any I/O (the caller supplies facts and the
-profile table) and any action (the caller carries out ``Evaluation.fired``).
+Two things are deliberately not here: any I/O of its own (the caller supplies facts and
+a ``Judge`` that counts items and asks classifiers) and any action (the caller carries
+out ``Evaluation.fired``).
 """
 
 from __future__ import annotations
 
 import enum
-import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from gateway.privacy.classify import MAX_REQUEST_CHARS, VerdictCache
+from gateway.privacy.finds import Item, Judge
 from gateway.privacy.rules import (
     CONTENT_KEYS,
-    PATTERNS,
     Condition,
     Rule,
     glob_matches,
 )
-
-#: Detector engines whose verdicts are the quick check in this release. "Fast"
-#: (presidio) answers verdicts from patterns; a model engine arrives in phase 2.
-VERDICT_ENGINES = frozenset({"presidio", "patterns"})
-MAX_FALLBACK_DEPTH = 3
 
 
 class Undecidable(Exception):
@@ -56,19 +50,6 @@ class State(enum.StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class Profile:
-    """A detector profile as the evaluator sees it."""
-
-    id: str
-    name: str
-    engine: str
-    fallback: str = "refuse"
-    fallback_profile_id: str | None = None
-    #: Health, from the caller; False when the engine is down or not installed.
-    available: bool = True
-
-
-@dataclass(frozen=True, slots=True)
 class Facts:
     """What Pystino observed in one request. Never logged as a whole."""
 
@@ -87,68 +68,16 @@ class Facts:
     target_provider: str | None = None
     provider_id: str | None = None
     model_id: str | None = None
-    #: The text verdicts are computed from. Held in memory for the call only.
+    #: The text the content conditions judge. Held in memory for the call only.
     text: str | None = field(default=None, repr=False)
     #: A batch (embedding): each input is judged separately and in full.
     texts: tuple[str, ...] = field(default=(), repr=False)
+    #: Counts items and asks classifiers (one per request). None: no content side.
+    judge: Judge | None = field(default=None, repr=False, compare=False)
 
     @property
     def inputs(self) -> tuple[str, ...]:
         return self.texts or ((self.text,) if self.text else ())
-
-
-@dataclass(frozen=True, slots=True)
-class BatchVerdict:
-    """What the quick check found over every input of a request.
-
-    ``health`` and ``ids`` hold if they hold for *any* input; ``langs`` is each
-    input's language. ``incomplete`` means some input (or the request's total)
-    exceeded the size caps and part of it was not checked.
-    """
-
-    health: bool
-    ids: bool
-    langs: tuple[str, ...]
-    incomplete: bool
-
-
-@dataclass(frozen=True, slots=True)
-class Decider:
-    """How a content condition was (or could not be) decided."""
-
-    method: str  # "patterns" | "unavailable"
-    profile: str | None = None
-    #: "Medical -> Fast", when a fallback decided in place of the profile chosen.
-    fallback_used: str | None = None
-    note: str | None = None
-
-
-def resolve_decider(decide: str | None, profiles: Mapping[str, Profile]) -> Decider:
-    """The method that will answer a condition, following profile fallbacks."""
-    if decide in (None, PATTERNS):
-        return Decider("patterns")
-    chain: list[str] = []
-    current = profiles.get(decide or "")
-    if current is None:
-        return Decider("unavailable", note="the chosen profile no longer exists")
-    first = current
-    for _ in range(MAX_FALLBACK_DEPTH + 1):
-        if current is None or current.id in chain:
-            break
-        chain.append(current.id)
-        if current.available and current.engine in VERDICT_ENGINES:
-            used = None if current is first else f"{first.name} -> {current.name}"
-            return Decider("patterns", profile=current.name, fallback_used=used)
-        if current.fallback == "fallback_to" and current.fallback_profile_id:
-            current = profiles.get(current.fallback_profile_id)
-            continue
-        break
-    why = (
-        f"{first.name} is not available"
-        if first.engine in VERDICT_ENGINES or first.available
-        else f"{first.name} is not installed here"
-    )
-    return Decider("unavailable", profile=first.name, note=why)
 
 
 @dataclass(slots=True)
@@ -162,6 +91,8 @@ class Step:
     reasons: list[str] = field(default_factory=list)
     #: A content condition could not be decided and the rule acted fail-closed.
     degraded: list[str] = field(default_factory=list)
+    #: Every item a "finds" condition of this rule counted, by policy name.
+    items: dict[str, list[Item]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -174,13 +105,14 @@ class Evaluation:
     pending: str | None = None
     #: The rule that is waiting for it.
     pending_rule: Rule | None = None
-    #: What the classifier found, when one ran: labels only.
+    #: What the classifiers said, by name: labels only.
     verdicts: dict[str, Any] = field(default_factory=dict)
+    #: Distinct items each "finds" condition counted, by policy name: counts only.
+    found: dict[str, int] = field(default_factory=dict)
     degraded: list[str] = field(default_factory=list)
-    fallbacks: list[str] = field(default_factory=list)
 
 
-_CHEAP_FIRST = ("filetype", "filename", "scan", "health", "ids", "lang")
+_CHEAP_FIRST = ("filetype", "filename", "scan", "finds", "classified")
 
 
 def _ordered(conditions: Sequence[Condition]) -> list[Condition]:
@@ -221,40 +153,12 @@ def _filename(condition: Condition, facts: Facts, closed: bool) -> tuple[State, 
     return State.FALSE, f"{label} {'matches' if condition.negate else 'does not match'} {shown}."
 
 
+def _plural(n: int, word: str = "item") -> str:
+    return f"{n} {word}" + ("" if n == 1 else "s")
+
+
 class Evaluator:
-    """Evaluates rules against facts, with the deployment's profiles and cache."""
-
-    def __init__(
-        self, profiles: Mapping[str, Profile] | None = None, cache: VerdictCache | None = None
-    ) -> None:
-        self.profiles = profiles or {}
-        self.cache = cache or VerdictCache()
-
-    # Content conditions are decided on the request's own text, each input
-    # separately and in full. The verdict is computed once per request however
-    # many rules ask.
-    def _classification(self, facts: Facts, ev: Evaluation) -> BatchVerdict:
-        found = ev.verdicts.get("_classification")
-        if isinstance(found, BatchVerdict):
-            return found
-        health = ids = incomplete = False
-        langs: list[str] = []
-        budget = MAX_REQUEST_CHARS
-        for text in facts.inputs:
-            if budget <= 0:
-                incomplete = True
-                break
-            budget -= len(text)
-            one = self.cache.classify(text)
-            health, ids = health or one.health, ids or one.ids
-            incomplete = incomplete or one.incomplete
-            langs.append(one.lang)
-        result = BatchVerdict(health, ids, tuple(langs), incomplete or budget < 0)
-        ev.verdicts["_classification"] = result
-        ev.verdicts["health"] = result.health
-        ev.verdicts["ids"] = result.ids
-        ev.verdicts["lang"] = ",".join(sorted(set(result.langs))) or None
-        return result
+    """Evaluates rules against facts. Stateless: the judge and the facts are the whole input."""
 
     def _undecided(
         self, condition: Condition, rule: Rule, degraded: list[str], why: str
@@ -274,36 +178,63 @@ class Evaluator:
             return State.TRUE, f"{why}; treated as a match."
         raise Undecidable(rule, why)
 
-    def _content(
+    async def _content(
         self,
         condition: Condition,
         facts: Facts,
         ev: Evaluation,
         degraded: list[str],
         rule: Rule,
+        step_items: dict[str, list[Item]],
     ) -> tuple[State, str]:
-        decider = resolve_decider(condition.decide, self.profiles)
-        if decider.fallback_used and decider.fallback_used not in ev.fallbacks:
-            ev.fallbacks.append(decider.fallback_used)
-        if decider.method == "unavailable":
+        """ "<policy> finds at least N items" and "classified as <classifier>"."""
+        if facts.kind == "read" and facts.is_scan is None:
+            # The text of a file is only there once it has been read here.
+            return State.UNKNOWN, "The file's text is only known after reading it."
+        judge = facts.judge
+        target = condition.values[0] if condition.values else ""
+        if judge is None:
             return self._undecided(
-                condition, rule, degraded, decider.note or "The detector is unavailable"
+                condition, rule, degraded, "Nothing is available to judge the text"
             )
-        result = self._classification(facts, ev)
-        if result.incomplete:
-            # Part of the text was not checked, so "clean" cannot be claimed.
-            return self._undecided(
-                condition, rule, degraded, "The text was too large to check in full"
+        texts = facts.inputs
+        if condition.key == "finds":
+            name = judge.policy_name(target) or "a policy that no longer exists"
+            result = await judge.find(target, texts)
+            n = len(result.items)
+            ev.found[name] = max(ev.found.get(name, 0), n)
+            if result.items:
+                step_items[name] = list(result.items)
+            if result.incomplete and n < condition.count:
+                return self._undecided(
+                    condition, rule, degraded, "The text was too large to check in full"
+                )
+            if result.unavailable and n < condition.count:
+                # The count may be short, so "fewer than N" cannot be claimed.
+                return self._undecided(
+                    condition, rule, degraded, f"'{name}' cannot be checked ({result.unavailable})"
+                )
+            hit = n >= condition.count
+            text = (
+                f"'{name}' finds {_plural(n)}"
+                f" ({'at least ' if hit else 'fewer than '}{condition.count} needed)."
             )
-        if condition.key in ("health", "ids"):
-            hit = bool(getattr(result, condition.key))
-            shown = {"health": "health data", "ids": "identifiers"}[condition.key]
-            text = f"The text {'contains' if hit else 'does not contain'} {shown}."
         else:
-            # A batch is in a language if any input is.
-            hit = any(lang in condition.values for lang in result.langs)
-            seen = ", ".join(sorted(set(result.langs))) or "none"
-            text = f"The text is in {seen}, rule says {', '.join(condition.values)}."
+            name = judge.classifier_name(target) or "a classifier that no longer exists"
+            verdict = await judge.classify(target, texts)
+            ev.verdicts[name] = verdict.positive
+            if verdict.positive:
+                hit = True
+            elif verdict.unavailable or verdict.incomplete:
+                why = (
+                    f"'{name}' cannot decide ({verdict.unavailable})"
+                    if verdict.unavailable
+                    else "The text was too large to classify in full"
+                )
+                return self._undecided(condition, rule, degraded, why)
+            else:
+                hit = False
+            text = f"The text {'is' if hit else 'is not'} classified as '{name}'."
         if hit != condition.negate:
             return State.TRUE, text
         return State.FALSE, text
@@ -319,10 +250,11 @@ class Evaluator:
                 continue
             reasons: list[str] = []
             degraded: list[str] = []
+            items: dict[str, list[Item]] = {}
             unknown = False
             matched = True
             for condition in _ordered(rule.conditions):
-                state, why = self._condition(condition, facts, ev, degraded, rule)
+                state, why = await self._condition(condition, facts, ev, degraded, rule, items)
                 reasons.append(why)
                 if state is State.FALSE:
                     matched = False
@@ -330,7 +262,7 @@ class Evaluator:
                 if state is State.UNKNOWN:
                     unknown = True
             if not matched:
-                ev.steps.append(Step(rule, "not_matched", reasons[-1:]))
+                ev.steps.append(Step(rule, "not_matched", reasons[-1:], items=items))
                 continue
             if unknown:
                 ev.steps.append(Step(rule, "pending", reasons))
@@ -343,27 +275,26 @@ class Evaluator:
                             ev.steps.append(
                                 Step(later, "not_reached", ["Waiting for the file to be read."])
                             )
-                    ev.verdicts.pop("_classification", None)
                     return ev
                 continue
             if rule.observe_only:
                 ev.observed.append(rule)
                 ev.degraded.extend(m for m in degraded if m not in ev.degraded)
-                ev.steps.append(Step(rule, "observed", reasons, degraded))
+                ev.steps.append(Step(rule, "observed", reasons, degraded, items))
                 continue
             ev.fired = rule
             ev.degraded.extend(m for m in degraded if m not in ev.degraded)
-            ev.steps.append(Step(rule, "fired", reasons, degraded))
-        ev.verdicts.pop("_classification", None)
+            ev.steps.append(Step(rule, "fired", reasons, degraded, items))
         return ev
 
-    def _condition(
+    async def _condition(
         self,
         condition: Condition,
         facts: Facts,
         ev: Evaluation,
         degraded: list[str],
         rule: Rule,
+        items: dict[str, list[Item]],
     ) -> tuple[State, str]:
         # A rule that protects (refuses, reads elsewhere, redacts) is protective
         # for a file whose name or type is unknown: it matches rather than miss.
@@ -381,26 +312,9 @@ class Evaluator:
                 degraded.append(why)
             return state, why
         if condition.key in CONTENT_KEYS:
-            return self._content(condition, facts, ev, degraded, rule)
+            return await self._content(condition, facts, ev, degraded, rule, items)
         return State.FALSE, f"Unknown condition {condition.key}."
 
 
 def rule_id_str(rule: Rule | None) -> str | None:
     return str(rule.id) if rule is not None else None
-
-
-def profile_snapshot(
-    rows: Sequence[Any], available: Mapping[uuid.UUID, bool] | None = None
-) -> dict[str, Profile]:
-    """Profiles keyed by id string, from ORM rows or anything with their fields."""
-    out: dict[str, Profile] = {}
-    for row in rows:
-        out[str(row.id)] = Profile(
-            id=str(row.id),
-            name=row.name,
-            engine=row.engine,
-            fallback=row.fallback,
-            fallback_profile_id=str(row.fallback_profile_id) if row.fallback_profile_id else None,
-            available=(available or {}).get(row.id, True),
-        )
-    return out

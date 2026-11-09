@@ -31,6 +31,7 @@ from gateway.logging_config import configure_logging
 from gateway.netguard import build_guarded_client
 from gateway.oidc import sweep_env_admin_email_rule
 from gateway.oidc_policy import OIDCPolicyResolver
+from gateway.privacy.classifiers import UpstreamClassifier
 from gateway.privacy.state import PrivacyState
 from gateway.providers import ProviderRegistry
 from gateway.quota import (
@@ -244,11 +245,11 @@ async def init_app_state(
     # logs, rather than refusing to boot over a database blip.
     await resolver.refresh()
     resolver.start()
-    # Privacy routing (ADR 0113): rules, detector profiles and the names of local
-    # models, polled like the redaction rules so the request path stays
-    # query-free. Non-fatal at startup for the same reason: under the test
-    # fixtures the schema does not exist yet.
+    # Privacy pipelines (ADR 0113): pipelines, policies and classifiers, polled like
+    # the redaction rules so the request path stays query-free. Non-fatal at startup
+    # for the same reason: under the test fixtures the schema does not exist yet.
     privacy_state = PrivacyState(session_factory)
+    privacy_state.classifier_backend = UpstreamClassifier(app.state.providers)
     app.state.privacy = privacy_state
     await privacy_state.refresh()
     privacy_state.start()

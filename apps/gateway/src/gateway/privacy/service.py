@@ -13,8 +13,11 @@ makes a user's safe is enforced here, server-side, and not in the console:
 * it may apply an administrator's policy or the user's **own**, never another
   user's;
 * it may name only readers the user is granted;
-* an own policy uses custom patterns and only the entity types and detector
-  profiles the administrator has made available.
+* an own policy uses custom patterns and only the entity types the administrator
+  has made available;
+* it may name an administrator's policy only if it is marked shared, in "apply" and in
+  "finds at least"; "classified as" is the administrators' alone (it sends text to
+  a provider).
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ import base64
 import binascii
 import uuid
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from typing import Any, cast
 
 from llmp_shared import EntitySpan
@@ -32,13 +36,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gateway import extraction
 from gateway.access import accessible_models
 from gateway.config import EntityMode, Settings
-from gateway.errors import BadRequestError
+from gateway.errors import BadRequestError, ServiceUnavailableError
 from gateway.models import (
     ApiKey,
-    DetectorProfile,
     Group,
     ModelDef,
     ModelKind,
+    PrivacyClassifier,
     PrivacyPipeline,
     PrivacySettings,
     Provider,
@@ -55,6 +59,7 @@ from gateway.privacy.schemas import (
     ActionView,
     ConditionView,
     DryRunHop,
+    DryRunItem,
     DryRunLevel,
     DryRunPipeline,
     DryRunPolicyType,
@@ -68,7 +73,8 @@ from gateway.privacy.schemas import (
     TargetView,
     WhoView,
 )
-from gateway.privacy.state import PrivacyState, engine_available
+from gateway.privacy.state import PrivacyState
+from gateway.redaction.http import EngineUnavailableError
 from gateway.redaction.user_rules import UserRule
 
 LEVEL_LABELS = {
@@ -92,9 +98,9 @@ async def pipeline_rows(
     return list((await session.execute(stmt)).scalars().all())
 
 
-async def profile_rows(session: AsyncSession) -> list[DetectorProfile]:
+async def classifier_rows(session: AsyncSession) -> list[PrivacyClassifier]:
     return list(
-        (await session.execute(select(DetectorProfile).order_by(DetectorProfile.name)))
+        (await session.execute(select(PrivacyClassifier).order_by(PrivacyClassifier.name)))
         .scalars()
         .all()
     )
@@ -147,25 +153,34 @@ def pipeline_view_json(row: PrivacyPipeline) -> dict[str, Any]:
 # -- checks and views --------------------------------------------------------------
 
 
-def check_context(profiles: Sequence[DetectorProfile]) -> rulelib.CheckContext:
-    return rulelib.CheckContext(
-        profiles={
-            str(p.id): rulelib.ProfileInfo(
-                id=p.id,
-                name=p.name,
-                available=engine_available(p.engine),
-                fallback=p.fallback,
-                can_decide=engine_available(p.engine),
-            )
-            for p in profiles
-        }
-    )
+def check_context(state: PrivacyState, engines: Any = None) -> rulelib.CheckContext:
+    """What the save-time checks may know: which policies and classifiers can answer now.
+
+    *engines* is an ``EnginesResponse`` when the caller has just asked the service;
+    without it only what no live call is needed for is judged (a classifier with no
+    model, a policy that is off).
+    """
+    from gateway.privacy.engines import engine_problem
+
+    content: dict[str, rulelib.ContentInfo] = {}
+    for pid, ref in state.policies.items():
+        why = ""
+        if engines is not None and ref.policy.engine is not None:
+            why = engine_problem(engines, ref.policy.engine, bool(ref.policy.custom_entities)) or ""
+        content[pid] = rulelib.ContentInfo(ref.name, not why, why)
+    for pid, (name, _) in (
+        (k, v) for views in state._user_views.values() for k, v in views.items()
+    ):
+        content[pid] = rulelib.ContentInfo(name)
+    for cid, classifier in state.classifiers.items():
+        content[cid] = rulelib.ContentInfo(classifier.name, classifier.available, classifier.why)
+    return rulelib.CheckContext(content=content)
 
 
 def issues_of(
-    pipeline: Pipeline, profiles: Sequence[DetectorProfile]
+    pipeline: Pipeline, state: PrivacyState, engines: Any = None
 ) -> dict[uuid.UUID, list[rulelib.Issue]]:
-    return rulelib.check(list(pipeline.rules), pipeline.otherwise, check_context(profiles))
+    return rulelib.check(list(pipeline.rules), pipeline.otherwise, check_context(state, engines))
 
 
 def issue_views(found: Iterable[rulelib.Issue]) -> list[IssueView]:
@@ -182,7 +197,7 @@ def _rule_view(rule: rulelib.Rule, issues: Sequence[rulelib.Issue]) -> RuleView:
         enabled=rule.enabled,
         observe_only=rule.observe_only,
         conditions=[
-            ConditionView(key=c.key, values=list(c.values), negate=c.negate, decide=c.decide)
+            ConditionView(key=c.key, values=list(c.values), negate=c.negate, count=c.count)
             for c in rule.conditions
         ],
         action=ActionView.model_validate(
@@ -192,7 +207,22 @@ def _rule_view(rule: rulelib.Rule, issues: Sequence[rulelib.Issue]) -> RuleView:
             }
         ),
         issues=issue_views(issues),
+        note=rule.note,
     )
+
+
+def content_ids(pipelines: Sequence[Pipeline]) -> tuple[set[str], set[str]]:
+    """The policy and the classifier ids the conditions of these pipelines name."""
+    finds: set[str] = set()
+    classified: set[str] = set()
+    for p in pipelines:
+        for rule in p.all_rules():
+            for c in rule.conditions:
+                if c.values and c.key == "finds":
+                    finds.add(c.values[0])
+                elif c.values and c.key == "classified":
+                    classified.add(c.values[0])
+    return finds, classified
 
 
 async def labels_for(session: AsyncSession, pipelines: Sequence[Pipeline]) -> dict[str, str]:
@@ -203,6 +233,8 @@ async def labels_for(session: AsyncSession, pipelines: Sequence[Pipeline]) -> di
     providers: set[str] = set()
     models: set[str] = set()
     policies: set[str] = set()
+    named_finds, named_classifiers = content_ids(pipelines)
+    policies |= named_finds
     for p in pipelines:
         {"users": users, "groups": groups, "keys": keys}.get(p.who_mode, set()).update(p.who_ids)
         providers.update(p.providers)
@@ -236,6 +268,12 @@ async def labels_for(session: AsyncSession, pipelines: Sequence[Pipeline]) -> di
             )
         )
         await fill(select(UserPolicy.id, UserPolicy.name).where(UserPolicy.id.in_(ids(policies))))
+    if named_classifiers:
+        await fill(
+            select(PrivacyClassifier.id, PrivacyClassifier.name).where(
+                PrivacyClassifier.id.in_(ids(named_classifiers))
+            )
+        )
     return out
 
 
@@ -252,6 +290,9 @@ def pipeline_response(
     for rule in pipeline.all_rules():
         if rule.action.get("redact_with"):
             used.add(str(rule.action["redact_with"]))
+        used.update(
+            c.values[0] for c in rule.conditions if c.key in rulelib.CONTENT_KEYS and c.values
+        )
     labels = {k: v for k, v in labels.items() if k in used}
     return PipelineResponse(
         id=row.id,
@@ -278,13 +319,12 @@ def pipeline_response(
 
 
 async def views_for(
-    session: AsyncSession, rows: Sequence[PrivacyPipeline]
+    session: AsyncSession, rows: Sequence[PrivacyPipeline], state: PrivacyState, engines: Any = None
 ) -> list[PipelineResponse]:
     pipelines = [pipeline_from_row(r, order=i) for i, r in enumerate(rows)]
     labels = await labels_for(session, pipelines)
-    profiles = await profile_rows(session)
     return [
-        pipeline_response(row, p, labels, issues_of(p, profiles))
+        pipeline_response(row, p, labels, issues_of(p, state, engines))
         for row, p in zip(rows, pipelines, strict=True)
     ]
 
@@ -346,18 +386,31 @@ async def granted_readers(
     }
 
 
-async def validation_context(
-    session: AsyncSession, *, owner: User | None
-) -> tuple[list[str], set[str], set[str]]:
-    """(profile ids, policy ids that may be named, reader names that may be named)."""
-    profiles = [str(p.id) for p in await profile_rows(session)]
-    policies = {str(p.id) for p in await policy_rows(session) if p.is_active}
+@dataclass(slots=True)
+class ValidationContext:
+    """What a rule may name: policies to apply, policies to count, classifiers, readers."""
+
+    #: Policies "redact with" may name.
+    policy_ids: set[str]
+    #: Policies "finds at least" may name (the same set).
+    finds_policy_ids: set[str]
+    classifier_ids: set[str]
+    readers: set[str]
+
+
+async def validation_context(session: AsyncSession, *, owner: User | None) -> ValidationContext:
+    """An administrator may name every active policy; a user the shared ones and their own."""
+    admin = [p for p in await policy_rows(session) if p.is_active]
     if owner is None:
+        policies = {str(p.id) for p in admin}
         readers = set(await deployment_readers(session))
+        classifiers = {str(c.id) for c in await classifier_rows(session)}
     else:
+        policies = {str(p.id) for p in admin if p.shared_with_users}
         policies |= {str(p.id) for p in await user_policy_rows(session, owner.id)}
         readers = set(await granted_readers(session, owner))
-    return profiles, policies, readers
+        classifiers = set()
+    return ValidationContext(policies, set(policies), classifiers, readers)
 
 
 # -- user policies --------------------------------------------------------------------
@@ -476,12 +529,16 @@ def _policy_modes(
         ref = state.policies.get(use.policy_id)
         if ref is not None:
             names.append(ref.name)
-            for entity, entry in ref.policy.entities.items():
+            types = ref.policy.service_types()
+            for entity, entry in types.items():
                 if entry.mode is not EntityMode.OFF:
                     table.setdefault(entity, []).append((ref.name, entry.mode.value))
             for pattern in ref.policy.patterns:
-                if pattern.mode is not EntityMode.OFF and pattern.name not in ref.policy.entities:
+                if pattern.mode is not EntityMode.OFF and pattern.name not in types:
                     table.setdefault(pattern.name, []).append((ref.name, pattern.mode.value))
+            for keywords in ref.policy.keywords:
+                if keywords.mode is not EntityMode.OFF and keywords.name not in types:
+                    table.setdefault(keywords.name, []).append((ref.name, keywords.mode.value))
             continue
         mine = state.user_policies.get(use.policy_id)
         if mine is not None:
@@ -524,6 +581,7 @@ async def dry_run(
     filename = attribution.clean_filename(payload.filename)
     mime = payload.mime
     is_scan = payload.is_scan
+    read_text: str | None = None
     extractor: str | None = None
     fallback_reason: str | None = None
     if payload.kind == "read" and payload.file_base64:
@@ -543,6 +601,7 @@ async def dry_run(
         except Exception as exc:  # the built-in extractor may simply not be there
             raise BadRequestError(f"The file could not be read here: {exc}") from exc
         extractor, fallback_reason = read.extractor or None, read.fallback_reason or None
+        read_text = read.text or None
         is_scan = attribution.is_scan_from(read.extractor, read.kind.value, bool(read.page_images))
     group = request_group_id(user) if user is not None else None
 
@@ -559,11 +618,15 @@ async def dry_run(
             target_provider=p.name if p is not None else None,
             provider_id=str(p.id) if p is not None else None,
             model_id=str(m.id) if m is not None else None,
-            text=payload.text
-            if payload.kind != "read" and state.uses_verdicts(payload.kind)
-            else None,
+            text=(read_text or payload.text) if state.uses_verdicts(payload.kind) else None,
+            judge=judge,
         )
 
+    judge = state.judge(
+        user_id=str(user.id) if user is not None else None,
+        redactor=redactor,
+        default_threshold=settings.redaction.score_threshold,
+    )
     facts = facts_for(model, provider, is_scan)
 
     # --- readers (reading only): what a reroute would reach for this caller ---
@@ -636,9 +699,16 @@ async def dry_run(
 
         effective = state.effective_policy(combined.policy_uses(), settings.redaction.policy)
         detector = cast("Any", redactor)
-        spans: list[EntitySpan] = (await detector.detect([payload.text], policy=effective.policy))[
-            0
-        ]
+        try:
+            spans: list[EntitySpan] = (
+                await detector.detect(
+                    [payload.text], policy=effective.policy, asks=effective.asks(), strict=True
+                )
+            )[0]
+        except EngineUnavailableError as exc:
+            raise ServiceUnavailableError(
+                f"The NER engine {exc.engine or 'chosen by default'} is not available."
+            ) from exc
         eligible = eligible_for(
             payload.text,
             spans,
@@ -678,6 +748,19 @@ async def dry_run(
                 result=s.result,
                 reasons=s.reasons,
                 degraded=s.degraded,
+                items=[
+                    DryRunItem(
+                        policy=name,
+                        group=item.group,
+                        type=item.type,
+                        engine=item.engine,
+                        score=item.score,
+                        text=None if viewer_only else item.value,
+                    )
+                    for name, found in s.items.items()
+                    for item in found
+                ],
+                note=s.rule.note,
             )
             for s in run.evaluation.steps
         ]
@@ -733,11 +816,18 @@ async def dry_run(
 
     verdicts: dict[str, Any] = {}
     for run in combined.runs:
-        for key in ("health", "ids", "lang"):
-            if run.evaluation.verdicts.get(key) is not None:
-                verdicts.setdefault(key, run.evaluation.verdicts[key])
-    fallbacks = [f for run in combined.runs for f in run.evaluation.fallbacks]
+        verdicts.update(run.evaluation.verdicts)
     degraded = [d for run in combined.runs for d in run.evaluation.degraded]
+    if (
+        payload.kind == "read"
+        and not combined.pending
+        and facts.text is None
+        and state.uses_verdicts("read")
+    ):
+        degraded.append(
+            "No text was given or read, so conditions that judge the text saw nothing. "
+            "Give a file to read, or a text."
+        )
 
     # --- outcome ---
     winner = combined.winner
@@ -858,7 +948,6 @@ async def dry_run(
             "text_checked": facts.text is not None,
         },
         verdicts=verdicts,
-        fallbacks=list(dict.fromkeys(fallbacks)),
         degraded=list(dict.fromkeys(degraded)),
         needs="scan" if combined.pending else None,
         extractor=extractor,

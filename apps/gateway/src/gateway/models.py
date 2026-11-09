@@ -2756,11 +2756,12 @@ class RedactionPolicyRecord(Base):
     name: Mapped[str] = mapped_column(String(255), default="")
     #: A whole ``RedactionPolicy``.
     policy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    #: The detector profile that finds the types; null is the deployment default.
-    profile_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("detector_profiles.id", ondelete="SET NULL"), default=None
-    )
     is_active: Mapped[bool] = mapped_column(default=True)
+    #: Whether a user's own pipeline may name this policy (in "apply" or in a
+    #: "finds at least N items" condition). Off: only administrators' pipelines may.
+    shared_with_users: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     reason: Mapped[str] = mapped_column(String(500), default="")
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), default=None
@@ -2792,10 +2793,6 @@ class UserPolicy(Base):
     name: Mapped[str] = mapped_column(String(120))
     #: ``[{"kind": "pattern"|"mode", "name": ..., "regex": ...|null, "mode": ...}]``.
     rules: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-    #: A detector profile an administrator made available to users, or null.
-    profile_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("detector_profiles.id", ondelete="SET NULL"), default=None
-    )
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
@@ -2895,8 +2892,8 @@ class PrivacySettings(Base):
     """What an administrator makes available to users' own pipelines (one row).
 
     ``user_entity_types`` null means every type the detector offers; a list
-    limits the types a user's policy may name. Profiles are flagged on the
-    profile itself (``DetectorProfile.user_available``).
+    limits the types a user's policy may name. A policy is offered to users'
+    pipelines by ``RedactionPolicyRecord.shared_with_users``.
     """
 
     __tablename__ = "privacy_settings"
@@ -2906,34 +2903,25 @@ class PrivacySettings(Base):
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
 
-class DetectorProfile(Base):
-    """A named way of detecting (ADR 0113): an engine, its labels, its fallback.
+class PrivacyClassifier(Base):
+    """A decision model for "classified as <classifier>" conditions (ADR 0113, section 0c).
 
-    Phase 1 uses profiles as the ``decide`` targets of content conditions and
-    for display; phase 2 attaches them to chat. ``fallback`` says what happens
-    when the engine is unavailable: ``refuse`` (fail closed, the default) or
-    ``fallback_to`` the profile ``fallback_profile_id``, which is recorded as a
-    weakening on every request that used it. Status is not stored: it is read
-    from health.
+    Scaffolding for large deployments: a configured chat model, plus a topic
+    in plain words. It decides on meaning rather than on words, reading the text in
+    chunks; any chunk positive makes the text positive. **Classifying sends the text
+    to that model's provider.** Nothing is bundled and no topic is seeded: an
+    administrator writes both. With no model chosen, or one that is inactive, the
+    classifier is unavailable and a rule that names it follows the fail-closed rule.
     """
 
-    __tablename__ = "detector_profiles"
+    __tablename__ = "privacy_classifiers"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(String(64), unique=True)
-    description: Mapped[str] = mapped_column(String(500), default="", server_default=text("''"))
-    #: ``presidio`` (the current detector), ``patterns`` or a later engine name.
-    engine: Mapped[str] = mapped_column(String(32))
-    labels: Mapped[list[str]] = mapped_column(JSON, default=list)
-    fallback: Mapped[str] = mapped_column(String(16), default="refuse", server_default="refuse")
-    fallback_profile_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("detector_profiles.id", ondelete="SET NULL"), default=None
+    #: The topic, in plain words ("a message that asks for a refund").
+    topic: Mapped[str] = mapped_column(String(1000), default="", server_default=text("''"))
+    model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("models.id", ondelete="SET NULL"), default=None
     )
-    #: Whether users may pick this profile for their own policies.
-    user_available: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default=text("false")
-    )
-    #: The seeded deployment default; cannot be deleted.
-    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)

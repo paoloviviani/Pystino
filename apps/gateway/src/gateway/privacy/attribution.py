@@ -33,7 +33,6 @@ MAX_FILENAME = 120
 MAX_PIPELINES = 50
 
 #: The detector profile every request is handled by until chat profiles exist.
-DEFAULT_PROFILE = "default"
 
 #: Extractor names that mean a page was read as a picture.
 _OCR_EXTRACTORS = ("rapidocr",)
@@ -68,6 +67,7 @@ def base_facts(
     *,
     requested_name: str | None = None,
     texts: tuple[str, ...] = (),
+    judge: Any = None,
 ) -> Facts:
     """The facts every kind shares: the caller and the target."""
     provider = model.provider
@@ -85,6 +85,7 @@ def base_facts(
         provider_id=str(model.provider_id) if model.provider_id is not None else None,
         model_id=str(model.id),
         texts=texts,
+        judge=judge,
     )
 
 
@@ -116,7 +117,6 @@ def build(
     fallback_reason: str = "",
     reader: str | None = None,
     engine: str | None = None,
-    profile: str = DEFAULT_PROFILE,
     policies: list[str] | None = None,
     reason: str | None = None,
 ) -> dict[str, Any]:
@@ -144,25 +144,23 @@ def build(
                 "filename_match": _filename_match(facts, seen_rules),
             }
         )
-    verdicts: dict[str, Any] = {}
+    # What the content conditions saw, as counts and labels: never an item's text.
+    finds: dict[str, int] = {}
+    classified: dict[str, bool] = {}
     for run in runs:
-        for key in ("health", "ids", "lang"):
-            if run.evaluation.verdicts.get(key) is not None:
-                verdicts.setdefault(key, run.evaluation.verdicts[key])
-    if verdicts:
-        observed["verdicts"] = {
-            "health": verdicts.get("health"),
-            "ids": verdicts.get("ids"),
-            "lang": verdicts.get("lang"),
-            "method": "patterns",
-        }
+        for name, count in run.evaluation.found.items():
+            finds[name] = max(finds.get(name, 0), count)
+        classified.update(run.evaluation.verdicts)
+    if finds:
+        observed["finds"] = finds
+    if classified:
+        observed["classified"] = classified
     winner = combined.winner if combined is not None else None
     handled: dict[str, Any] = {
         "extractor": extractor,
         "fallback_reason": fallback_reason or None,
         "reader": reader,
         "engine": engine,
-        "profile": profile,
         "routing_rule": (
             {
                 "id": str(winner.rule.id),
@@ -202,14 +200,10 @@ def build(
     if reason:
         routing["reason"] = reason
     degraded: list[str] = []
-    fallbacks: list[str] = []
     for run in runs:
         degraded.extend(m for m in run.evaluation.degraded if m not in degraded)
-        fallbacks.extend(m for m in run.evaluation.fallbacks if m not in fallbacks)
     if degraded:
         routing["degraded"] = degraded
-    if fallbacks:
-        routing["fallbacks"] = fallbacks
     return routing
 
 

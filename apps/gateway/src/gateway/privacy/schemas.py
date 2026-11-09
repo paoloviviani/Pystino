@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from gateway.config import RedactionPolicy
 from gateway.response_model import ResponseModel
@@ -26,11 +26,13 @@ class ConditionBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    #: ``filetype``, ``scan``, ``filename``, ``finds`` or ``classified``.
     key: str
+    #: ``finds``: the id of the policy. ``classified``: the id of the classifier.
     values: list[str] = []
     negate: bool = False
-    #: Content conditions only: ``patterns`` (the quick check) or a detector profile id.
-    decide: str | None = None
+    #: ``finds`` only: at least this many distinct items (1 to 1000).
+    count: int = Field(default=1, ge=1, le=1000)
 
 
 class ActionBody(BaseModel):
@@ -65,6 +67,8 @@ class RuleBody(BaseModel):
     observe_only: bool = False
     conditions: list[ConditionBody] = []
     action: ActionBody
+    #: A warning left by the migration; kept only while the rule is off.
+    note: str | None = Field(default=None, max_length=500)
 
     def clean(self) -> dict[str, Any]:
         return {
@@ -74,6 +78,7 @@ class RuleBody(BaseModel):
             "observe_only": self.observe_only,
             "conditions": [c.model_dump() for c in self.conditions],
             "action": self.action.clean(),
+            "note": self.note,
         }
 
 
@@ -139,7 +144,7 @@ class ConditionView(ResponseModel):
     key: str
     values: list[str]
     negate: bool = False
-    decide: str | None = None
+    count: int = 1
 
 
 class ActionView(ResponseModel):
@@ -157,6 +162,8 @@ class RuleView(ResponseModel):
     conditions: list[ConditionView]
     action: ActionView
     issues: list[IssueView]
+    #: Left by the migration on a rule it had to switch off: read before turning it on.
+    note: str | None = None
 
 
 class WhoView(ResponseModel):
@@ -214,9 +221,9 @@ class PolicyCreateRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=255)
     policy: RedactionPolicy
-    #: The detector profile that finds the types; null is the deployment default.
-    profile_id: uuid.UUID | None = None
     is_active: bool = True
+    #: Whether users' own pipelines may name it (to apply it, or in "finds at least").
+    shared_with_users: bool = False
     reason: str = Field(default="", max_length=500)
 
 
@@ -225,8 +232,8 @@ class PolicyUpdateRequest(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     policy: RedactionPolicy | None = None
-    profile_id: uuid.UUID | None = None
     is_active: bool | None = None
+    shared_with_users: bool | None = None
     reason: str | None = Field(default=None, max_length=500)
 
 
@@ -234,9 +241,11 @@ class PolicyResponse(ResponseModel):
     id: uuid.UUID
     name: str
     policy: RedactionPolicy
-    profile_id: uuid.UUID | None = None
-    profile_name: str | None = None
     is_active: bool
+    shared_with_users: bool
+    #: Whether the NER engine the policy chose can run now: ``None`` when the policy
+    #: uses none, or the redaction service cannot be asked.
+    engine_available: bool | None = None
     reason: str
     #: Names of the pipelines that apply it.
     used_by: list[str]
@@ -269,80 +278,125 @@ class UserPolicyRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=120)
     entries: list[UserEntryBody] = []
-    profile_id: uuid.UUID | None = None
 
 
 class UserPolicyResponse(ResponseModel):
     id: uuid.UUID
     name: str
     entries: list[UserEntryView]
-    profile_id: uuid.UUID | None = None
     used_by: list[str]
     created_at: datetime
     updated_at: datetime
 
 
-# -- profiles --------------------------------------------------------------------
+# -- classifiers -----------------------------------------------------------------
 
 
-class ProfileResponse(ResponseModel):
+class ClassifierResponse(ResponseModel):
     id: uuid.UUID
     name: str
-    description: str
-    engine: str
-    labels: list[str]
-    fallback: Literal["refuse", "fallback_to"]
-    fallback_profile_id: uuid.UUID | None = None
-    fallback_profile_name: str | None = None
-    is_default: bool
-    #: Whether users may pick it for their own policies.
-    user_available: bool
-    #: ``available``, ``down`` or ``not_installed``, read from health.
-    status: Literal["available", "down", "not_installed"]
-    status_detail: str
-    #: Whether it can answer a content condition in this release.
-    decides: bool
-    #: Estimated cost of a verdict, in words ("instant").
-    cost_hint: str
+    #: The topic in plain words.
+    topic: str
+    model_id: uuid.UUID | None = None
+    model_name: str | None = None
+    provider_name: str | None = None
+    #: Whether it can answer now; otherwise ``why_not`` says what is missing.
+    available: bool
+    why_not: str
+    #: Rules that name it ("classified as").
     rules_using: int
     created_at: datetime
     updated_at: datetime
 
 
-#: Engines a profile may name. A profile of an engine that is not installed is
-#: allowed (it shows "not installed" and follows its fallback); a name nobody
-#: could ever install is a typo.
-KNOWN_ENGINES = ("presidio", "patterns", "gliner")
-
-
-class ProfileCreateRequest(BaseModel):
+class ClassifierCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=64)
-    description: str = Field(default="", max_length=500)
-    engine: str = Field(min_length=1, max_length=32, pattern=r"^[a-z0-9_-]+$")
-    labels: list[str] = []
-    fallback: Literal["refuse", "fallback_to"] = "refuse"
-    fallback_profile_id: uuid.UUID | None = None
-    user_available: bool = False
-
-    @field_validator("engine")
-    @classmethod
-    def _known_engine(cls, value: str) -> str:
-        if value not in KNOWN_ENGINES:
-            raise ValueError(f"Unknown engine '{value}'. Use one of: {', '.join(KNOWN_ENGINES)}.")
-        return value
+    topic: str = Field(default="", max_length=1000)
+    #: A chat model of a configured provider. Classifying sends the text to its provider.
+    model_id: uuid.UUID | None = None
 
 
-class ProfileUpdateRequest(BaseModel):
+class ClassifierUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=64)
-    description: str | None = Field(default=None, max_length=500)
-    labels: list[str] | None = None
-    fallback: Literal["refuse", "fallback_to"] | None = None
-    fallback_profile_id: uuid.UUID | None = None
-    user_available: bool | None = None
+    topic: str | None = Field(default=None, max_length=1000)
+    model_id: uuid.UUID | None = None
+
+
+class ChatModelOption(ResponseModel):
+    id: uuid.UUID
+    name: str
+    provider: str | None = None
+
+
+class ClassifierListResponse(ResponseModel):
+    items: list[ClassifierResponse]
+    #: Chat models a classifier may use; empty means no model provider is configured yet.
+    models: list[ChatModelOption]
+
+
+# -- what the redaction service offers --------------------------------------------
+
+
+class NerEngineView(ResponseModel):
+    #: ``spacy`` or ``gliner``.
+    name: str
+    available: bool
+    #: The service's default engine, used by a policy that chooses none.
+    default: bool
+    #: The entity types the engine exposes.
+    entities: list[str]
+    #: Whether the engine takes custom entity types (a label per type) at inference.
+    custom_labels: bool
+    ms_per_token: float | None = None
+    languages: list[str]
+
+
+class EnginesResponse(ResponseModel):
+    #: The service answered. False: nothing below is known and an engine cannot be chosen.
+    reachable: bool
+    detail: str
+    #: The built-in pattern formats the service's recognisers find.
+    pattern_entities: list[str]
+    engines: list[NerEngineView]
+
+
+# -- the try-it box ---------------------------------------------------------------
+
+
+class PolicyTryRequest(BaseModel):
+    """A policy as it is being edited, and a text to run it over. Nothing is stored or logged."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    policy: RedactionPolicy
+    text: str = Field(min_length=1, max_length=50_000)
+
+
+class FoundItem(ResponseModel):
+    #: ``pattern`` or ``entity``.
+    group: str
+    type: str
+    #: ``pattern``, ``spacy`` or ``gliner``.
+    engine: str | None = None
+    #: Entities only.
+    score: float | None = None
+    #: The mode the policy gives it.
+    mode: str
+    #: The text found: it came from the box, so it is shown to the one who typed it.
+    text: str
+
+
+class PolicyTryResponse(ResponseModel):
+    items: list[FoundItem]
+    #: The part the redaction service answers could not run, and why.
+    unavailable: str | None = None
+    #: What the redaction would do to the text (``detect_only`` items are left as they are).
+    redacted_text: str | None = None
+    blocked: bool = False
 
 
 class SettingsResponse(ResponseModel):
@@ -387,11 +441,13 @@ class OptionsResponse(ResponseModel):
     providers: list[NamedId]
     models: list[ModelOption]
     readers: list[ReaderOption]
-    #: Administrator policies a pipeline may apply.
+    #: Policies a pipeline may apply: an administrator's all of them, a user's the
+    #: ones marked shared.
     policies: list[NamedId]
     #: The user's own policies (empty in the administrator's options).
     own_policies: list[NamedId]
-    profiles: list[NamedId]
+    #: Classifiers "classified as" may name (administrators only).
+    classifiers: list[NamedId]
     #: Entity types a user's own policy may name; null means any.
     entity_types: list[str] | None = None
     engines: list[str]
@@ -423,6 +479,21 @@ class DryRunRequest(BaseModel):
     text: str | None = Field(default=None, max_length=200_000)
 
 
+class DryRunItem(ResponseModel):
+    """One item a "finds" condition counted: which policy, which group, how sure."""
+
+    policy: str
+    #: ``pattern`` or ``entity``.
+    group: str
+    type: str
+    #: ``pattern``, ``spacy`` or ``gliner``.
+    engine: str | None = None
+    #: Entities only.
+    score: float | None = None
+    #: The text found. Only in an administrator's test; a user's box leaves it out.
+    text: str | None = None
+
+
 class DryRunStep(ResponseModel):
     rule_id: uuid.UUID
     name: str
@@ -431,6 +502,10 @@ class DryRunStep(ResponseModel):
     result: str
     reasons: list[str]
     degraded: list[str]
+    #: Every item the rule's "finds" conditions counted.
+    items: list[DryRunItem] = Field(default_factory=list)
+    #: Left by the migration on a rule it switched off.
+    note: str | None = None
     is_otherwise: bool = False
 
 
@@ -514,8 +589,8 @@ class DryRunResponse(ResponseModel):
     blocked_by: str | None = None
     #: What was judged: labels and names, never the text.
     facts: dict[str, Any]
+    #: What each classifier said, by name.
     verdicts: dict[str, Any]
-    fallbacks: list[str]
     degraded: list[str]
     #: ``scan`` when a rule is waiting for the file to be read.
     needs: str | None = None

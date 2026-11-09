@@ -4,11 +4,15 @@ A pipeline's rule is a *sentence*: conditions that must all hold, one action.
 This module owns what each kind may say, so the admin API, the user API, the
 test endpoint and the evaluator agree.
 
+Conditions are request facts (file type, file name, scan) and two verdicts: "a
+policy finds at least N items" and "classified as a classifier" (ADR 0113, section
+0c). There is no quick check and no built-in topic.
+
 Validation is split on purpose. **Errors** (:func:`validate_rule`) block saving:
 an unknown key, a value of the wrong shape, an action the kind does not have, a
 user's rule that would loosen something. **Warnings** (:func:`check`) never
-block: a rule that can never fire, one a renamed file defeats, a profile that is
-down. A warning is a statement about the pipeline as it is now, so it can go
+block: a rule that can never fire, one a renamed file defeats, a policy whose
+engine is down. A warning is a statement about the pipeline as it is now, so it can go
 stale when another rule changes; the console asks for them again each time.
 
 Scope (who, which target) is a pipeline's, not a rule's: see ``pipelines``.
@@ -16,7 +20,6 @@ Scope (who, which target) is a pipeline's, not a rule's: see ``pipelines``.
 
 from __future__ import annotations
 
-import re
 import uuid
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -32,18 +35,20 @@ SOFT_CAP = 20
 #: A hard bound, because rules are held in memory on every worker.
 MAX_RULES = 100
 
-PATTERNS = "patterns"
-
-#: Which condition keys each kind offers.
+#: Which condition keys each kind offers. For reading, the two content conditions
+#: judge the text after a local read (the scan-probe flow).
 CONDITION_KEYS: dict[str, tuple[str, ...]] = {
-    KIND_READ: ("filetype", "scan", "filename"),
-    KIND_EMBED: ("health", "ids", "lang"),
-    KIND_CHAT: ("health", "ids", "lang"),
+    KIND_READ: ("filetype", "scan", "filename", "finds", "classified"),
+    KIND_EMBED: ("finds", "classified"),
+    KIND_CHAT: ("finds", "classified"),
 }
 #: Keys that are a yes/no about the request: they carry no values, only ``negate``.
-BOOL_KEYS = ("scan", "health", "ids")
-#: Keys decided by reading the request's own text, which carry a ``decide``.
-CONTENT_KEYS = ("health", "ids", "lang")
+BOOL_KEYS = ("scan",)
+#: Keys decided by reading the request's own text. Their one value is the id of the
+#: policy (``finds``, with ``count``) or the classifier (``classified``).
+CONTENT_KEYS = ("finds", "classified")
+#: Most items a "finds at least N" may ask for.
+MAX_COUNT = 1000
 
 FILETYPES = ("pdf", "word", "excel", "powerpoint", "image", "text")
 #: The engines of the built-in extractor. Quality, not privacy: not on the ladder.
@@ -67,7 +72,6 @@ def base_level(kind: str) -> str:
     return LADDER[kind][0]
 
 
-_LANG = re.compile(r"^[a-z]{2,3}$")
 _MAX_VALUES = 50
 _MAX_VALUE_LENGTH = 200
 _MAX_NAME = 120
@@ -82,8 +86,8 @@ class Condition:
     key: str
     values: tuple[str, ...]
     negate: bool = False
-    #: ``patterns`` or a detector profile id; only on content conditions.
-    decide: str | None = None
+    #: ``finds`` only: the least number of distinct items that makes it true.
+    count: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +106,9 @@ class Rule:
     position: int
     conditions: tuple[Condition, ...]
     action: Mapping[str, Any]
+    #: A warning an administrator must read before turning the rule on (the
+    #: migration leaves one on a rule whose condition no longer exists).
+    note: str | None = None
 
     @property
     def level(self) -> str:
@@ -134,21 +141,22 @@ class Issue:
 
 
 @dataclass(slots=True)
-class ProfileInfo:
-    """What the checks need to know about a detector profile."""
+class ContentInfo:
+    """What the checks need to know about a policy or a classifier a condition names."""
 
-    id: uuid.UUID
     name: str
-    available: bool
-    fallback: str = "refuse"
-    can_decide: bool = True
+    #: Whether what it needs is there now (the NER engine; the model).
+    available: bool = True
+    #: Why not, in words an administrator can act on.
+    why: str = ""
 
 
 @dataclass(slots=True)
 class CheckContext:
     """Facts about the deployment the checks consult. All optional."""
 
-    profiles: Mapping[str, ProfileInfo] = field(default_factory=dict)
+    #: Policies and classifiers by id.
+    content: Mapping[str, ContentInfo] = field(default_factory=dict)
     #: Names of engines this deployment cannot run now (for example docling).
     unavailable_engines: Sequence[str] = ()
 
@@ -158,7 +166,7 @@ def condition_from_json(raw: Mapping[str, Any]) -> Condition:
         key=str(raw.get("key") or ""),
         values=tuple(str(v) for v in raw.get("values") or ()),
         negate=bool(raw.get("negate", False)),
-        decide=(str(raw["decide"]) if raw.get("decide") else None),
+        count=int(raw.get("count") or 1),
     )
 
 
@@ -168,13 +176,13 @@ def condition_to_json(condition: Condition) -> dict[str, Any]:
         "values": list(condition.values),
         "negate": condition.negate,
     }
-    if condition.decide is not None:
-        out["decide"] = condition.decide
+    if condition.key == "finds":
+        out["count"] = condition.count
     return out
 
 
 def rule_to_json(rule: Rule) -> dict[str, Any]:
-    return {
+    out = {
         "id": str(rule.id),
         "name": rule.name,
         "enabled": rule.enabled,
@@ -182,6 +190,9 @@ def rule_to_json(rule: Rule) -> dict[str, Any]:
         "conditions": [condition_to_json(c) for c in rule.conditions],
         "action": dict(rule.action),
     }
+    if rule.note:
+        out["note"] = rule.note
+    return out
 
 
 def rule_from_json(kind: str, position: int, raw: Mapping[str, Any]) -> Rule:
@@ -203,6 +214,7 @@ def rule_from_json(kind: str, position: int, raw: Mapping[str, Any]) -> Rule:
         position=position,
         conditions=tuple(condition_from_json(c) for c in raw.get("conditions") or []),
         action=action,
+        note=(str(raw["note"]) if raw.get("note") else None),
     )
 
 
@@ -233,10 +245,6 @@ def _validate_value(key: str, value: str) -> str:
     elif key == "filename":
         if not value.strip("*?[]"):
             raise RuleError("A file name pattern needs at least one ordinary character.")
-    elif key == "lang":
-        value = value.lower()
-        if not _LANG.match(value):
-            raise RuleError(f"'{value}' is not a language code such as 'it' or 'en'.")
     return value
 
 
@@ -377,16 +385,51 @@ def clean_action(
     return clean
 
 
+def _content_value(
+    key: str,
+    raw: Iterable[Any],
+    *,
+    finds_policy_ids: Collection[str] | None,
+    classifier_ids: Collection[str] | None,
+    user: bool,
+) -> list[str]:
+    """The one id a ``finds`` or ``classified`` condition names, if it may be named."""
+    items = [str(v) for v in raw]
+    if len(items) != 1:
+        raise RuleError(f"'{key}' names one {'policy' if key == 'finds' else 'classifier'}.")
+    value = items[0]
+    if key == "classified":
+        if user:
+            raise RuleError(
+                "'classified as' sends the text to a model provider, so only administrators use it."
+            )
+        if classifier_ids is not None and value not in classifier_ids:
+            raise RuleError("The classifier chosen for 'classified as' does not exist.")
+    elif finds_policy_ids is not None and value not in finds_policy_ids:
+        raise RuleError(
+            "The policy chosen for 'finds at least' is not one you can use."
+            if user
+            else "The policy chosen for 'finds at least' does not exist."
+        )
+    return [value]
+
+
 def validate_rule(
     kind: str,
     raw: Mapping[str, Any],
     *,
-    profile_ids: Iterable[str] = (),
+    finds_policy_ids: Collection[str] | None = None,
+    classifier_ids: Collection[str] | None = None,
     policy_ids: Collection[str] | None = None,
     readers: Collection[str] | None = None,
     user: bool = False,
 ) -> dict[str, Any]:
-    """A rule as clean JSON (with an id), or :class:`RuleError`."""
+    """A rule as clean JSON (with an id), or :class:`RuleError`.
+
+    ``finds_policy_ids`` are the policies a "finds" condition may name (for a user:
+    the administrators' shared ones and their own), ``classifier_ids`` the
+    classifiers. ``None`` means not checked.
+    """
     if kind not in KINDS:
         raise RuleError("Choose what the pipeline is for: reading, embedding or chat.")
     name = str(raw.get("name") or "").strip()
@@ -394,8 +437,7 @@ def validate_rule(
         raise RuleError("Give every rule a name.")
     if len(name) > _MAX_NAME:
         raise RuleError(f"A rule name is longer than {_MAX_NAME} characters.")
-    known_profiles = set(profile_ids)
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     conditions: list[dict[str, Any]] = []
     for item in raw.get("conditions") or []:
         key = str(item.get("key") or "")
@@ -404,47 +446,65 @@ def validate_rule(
             raise RuleError(
                 f"'{key or '(none)'}' is not a condition for this kind. Use: {allowed}."
             )
-        if key in seen:
-            raise RuleError(f"'{key}' is used twice; put the values in one condition.")
-        seen.add(key)
         if key in BOOL_KEYS:
             if item.get("values"):
                 raise RuleError(f"'{key}' is a yes or no: it takes no values.")
             values: list[str] = []
+        elif key in CONTENT_KEYS:
+            values = _content_value(
+                key,
+                item.get("values") or (),
+                finds_policy_ids=finds_policy_ids,
+                classifier_ids=classifier_ids,
+                user=user,
+            )
         else:
             values = [_validate_value(key, v) for v in _clean_values(key, item.get("values") or ())]
-        decide = item.get("decide")
-        if key in CONTENT_KEYS:
-            decide = str(decide) if decide else PATTERNS
-            if decide != PATTERNS and decide not in known_profiles:
-                raise RuleError("The detector profile chosen for this condition does not exist.")
-        elif decide:
-            raise RuleError(f"'{key}' is read from the request itself; it has no 'how to decide'.")
-        else:
-            decide = None
-        conditions.append(
-            {
-                "key": key,
-                "values": values,
-                "negate": bool(item.get("negate")),
-                **({"decide": decide} if decide is not None else {}),
-            }
-        )
+        seen_key = (key, values[0] if key in CONTENT_KEYS else "")
+        if seen_key in seen:
+            raise RuleError(
+                f"'{key}' is used twice; put the values in one condition."
+                if key not in CONTENT_KEYS
+                else f"The same {'policy' if key == 'finds' else 'classifier'} is used twice."
+            )
+        seen.add(seen_key)
+        condition: dict[str, Any] = {
+            "key": key,
+            "values": values,
+            "negate": bool(item.get("negate")),
+        }
+        if key == "finds":
+            try:
+                count = int(item.get("count") or 1)
+            except (TypeError, ValueError) as exc:
+                raise RuleError("'finds at least' needs a number.") from exc
+            if not 1 <= count <= MAX_COUNT:
+                raise RuleError(f"'finds at least' takes a number from 1 to {MAX_COUNT}.")
+            condition["count"] = count
+        elif item.get("count") not in (None, 1):
+            raise RuleError(f"'{key}' takes no count.")
+        conditions.append(condition)
     rule_id = raw.get("id")
     try:
         ident = str(uuid.UUID(str(rule_id))) if rule_id else str(uuid.uuid4())
     except ValueError:
         ident = str(uuid.uuid4())
-    return {
+    enabled = bool(raw.get("enabled", True))
+    out: dict[str, Any] = {
         "id": ident,
         "name": name,
-        "enabled": bool(raw.get("enabled", True)),
+        "enabled": enabled,
         "observe_only": bool(raw.get("observe_only", False)),
         "conditions": conditions,
         "action": clean_action(
             kind, raw.get("action") or {}, policy_ids=policy_ids, readers=readers, user=user
         ),
     }
+    # A warning is read, not kept: once the rule is turned on, the note is gone.
+    note = str(raw.get("note") or "").strip()[:500]
+    if note and not enabled:
+        out["note"] = note
+    return out
 
 
 # -- save-time checks --------------------------------------------------------------
@@ -459,10 +519,14 @@ def _implied_by(rule_c: Condition, earlier_c: Condition) -> bool:
     """
     if rule_c.key != earlier_c.key or rule_c.negate != earlier_c.negate:
         return False
-    if rule_c.key in CONTENT_KEYS and rule_c.decide != earlier_c.decide:
-        return False
     if rule_c.key in BOOL_KEYS:
         return True
+    if rule_c.key == "finds":
+        # At least N of the same policy: more required implies fewer; for "not at
+        # least N", fewer required implies more.
+        if rule_c.values != earlier_c.values:
+            return False
+        return rule_c.count <= earlier_c.count if rule_c.negate else rule_c.count >= earlier_c.count
     mine, theirs = set(rule_c.values), set(earlier_c.values)
     if rule_c.key == "filename":
         if "*" in theirs:
@@ -478,7 +542,7 @@ def _implied_by(rule_c: Condition, earlier_c: Condition) -> bool:
 def _overlaps(rule_c: Condition, earlier_c: Condition) -> bool:
     return (
         rule_c.key == earlier_c.key
-        and rule_c.decide == earlier_c.decide
+        and rule_c.key != "finds"
         and not rule_c.negate
         and not earlier_c.negate
         and bool(set(rule_c.values) & set(earlier_c.values))
@@ -570,7 +634,7 @@ def check(
                 Issue(
                     "convenience_only",
                     "A renamed file will not be caught. To protect content wherever it comes "
-                    "from, add embed and chat pipelines that use 'contains health data'.",
+                    "from, add embed and chat pipelines with a 'finds at least' condition.",
                 )
             )
         if rule.action.get("engine") in ctx.unavailable_engines:
@@ -590,30 +654,28 @@ def check(
                 )
             )
         for condition in rule.conditions:
-            if condition.key not in CONTENT_KEYS or condition.decide in (None, PATTERNS):
+            if condition.key not in CONTENT_KEYS:
                 continue
-            profile = ctx.profiles.get(condition.decide or "")
-            if profile is None or not profile.available or not profile.can_decide:
-                name = profile.name if profile else "The chosen profile"
+            info = ctx.content.get(condition.values[0]) if condition.values else None
+            if info is None:
                 out.append(
                     Issue(
                         "unavailable_now",
-                        f"{name} is not available now; "
-                        + (
-                            "the profile's fallback decides instead."
-                            if profile is not None and profile.fallback == "fallback_to"
-                            else "the rule takes its protective action."
-                        ),
+                        "The policy or classifier this condition names no longer exists; "
+                        "the request is refused when the rule cannot be decided.",
                     )
                 )
-            if profile is not None and profile.fallback == "fallback_to":
+            elif not info.available:
                 out.append(
                     Issue(
-                        "weakens",
-                        f"If {profile.name} is unavailable, a weaker method decides and the "
-                        "log says so.",
+                        "unavailable_now",
+                        f"{info.name} cannot be used now ({info.why or 'unavailable'}); "
+                        "a protective rule then acts as if it matched, and any other is refused "
+                        "(503).",
                     )
                 )
+        if rule.note:
+            out.append(Issue("migrated", rule.note))
     if len(ordered) > SOFT_CAP:
         for rule in ordered:
             issues[rule.id].append(

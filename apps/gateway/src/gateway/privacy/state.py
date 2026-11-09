@@ -33,9 +33,9 @@ from gateway.config import (
     RedactionPolicy,
 )
 from gateway.models import (
-    DetectorProfile,
     ModelDef,
     ModelKind,
+    PrivacyClassifier,
     PrivacyPipeline,
     PrivacySettings,
     Provider,
@@ -43,9 +43,10 @@ from gateway.models import (
     UserPolicy,
 )
 from gateway.privacy import rules as rulelib
-from gateway.privacy.classify import VerdictCache
+from gateway.privacy.classifiers import ClassifierRef
 from gateway.privacy.combine import PolicyUse
-from gateway.privacy.evaluate import Evaluator, Profile, profile_snapshot
+from gateway.privacy.evaluate import Evaluator
+from gateway.privacy.finds import ClassifierBackend, ContentJudge
 from gateway.privacy.pipelines import Pipeline, pipeline_from_row
 from gateway.redaction import user_rules
 from gateway.redaction.user_rules import UserRule
@@ -57,10 +58,6 @@ DEFAULT_REFRESH_SECONDS = 10.0
 #: Held in memory on every worker, so bounded (logged, never silently truncated).
 MAX_PIPELINES = 5000
 
-#: Engines this release can actually run for a verdict. A model engine (phase 2)
-#: is "not installed" until it advertises itself.
-RUNNABLE_ENGINES = frozenset({"presidio", "patterns"})
-
 #: The deployment's own extractor: a provider row whose plugin is this.
 LOCAL_EXTRACTOR = "extractor"
 
@@ -70,10 +67,6 @@ def _schema_missing(exc: Exception) -> bool:
     return "privacy_pipelines" in text and ("no such table" in text or "does not exist" in text)
 
 
-def engine_available(engine: str) -> bool:
-    return engine in RUNNABLE_ENGINES
-
-
 @dataclass(frozen=True, slots=True)
 class PolicyRef:
     """An administrator's policy, parsed once at load."""
@@ -81,7 +74,8 @@ class PolicyRef:
     id: uuid.UUID
     name: str
     policy: RedactionPolicy
-    profile_id: uuid.UUID | None = None
+    #: Whether a user's own pipeline may name it.
+    shared: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +86,6 @@ class UserPolicyRef:
     user_id: uuid.UUID
     name: str
     rules: tuple[UserRule, ...]
-    profile_id: uuid.UUID | None = None
 
 
 def user_rule_of(raw: dict[str, Any], rule_id: uuid.UUID) -> UserRule:
@@ -145,7 +138,7 @@ def user_policy_of(row: UserPolicy) -> UserPolicyRef:
         user_rule_of(raw, uuid.uuid5(row.id, f"{index}:{raw.get('name')}"))
         for index, raw in enumerate(row.rules or [])
     )
-    return UserPolicyRef(row.id, row.user_id, row.name, rules, row.profile_id)
+    return UserPolicyRef(row.id, row.user_id, row.name, rules)
 
 
 class PrivacyState:
@@ -163,15 +156,20 @@ class PrivacyState:
         self.pipelines: tuple[Pipeline, ...] = ()
         self.policies: dict[str, PolicyRef] = {}
         self.user_policies: dict[str, UserPolicyRef] = {}
-        self.profiles: dict[str, Profile] = {}
+        self.classifiers: dict[str, ClassifierRef] = {}
+        #: Asks a classifier's model. The default calls the provider; a test sets a fake.
+        self.classifier_backend: ClassifierBackend | None = None
+        #: id -> (name, policy) for every active administrator policy.
+        self._admin_views: dict[str, tuple[str, RedactionPolicy]] = {}
+        #: user id -> id -> (name, policy) for each user's own policies.
+        self._user_views: dict[str, dict[str, tuple[str, RedactionPolicy]]] = {}
         #: Names of active deployment models served by the built-in extractor.
         self.builtin_readers: tuple[str, ...] = ()
         #: Names of every active deployment OCR model: what "read with" may name.
         self.reader_models: tuple[str, ...] = ()
         #: Entity types users' own policies may name; None means any.
         self.user_entity_types: tuple[str, ...] | None = None
-        self.cache = VerdictCache()
-        self.evaluator = Evaluator(self.profiles, self.cache)
+        self.evaluator = Evaluator()
         #: The folded policies, keyed by the ids that produced them; cleared on load.
         self._folded: dict[tuple[str, ...], RedactionPolicy] = {}
         self._user_folded: dict[
@@ -216,6 +214,29 @@ class PrivacyState:
         A classifier no rule uses is never called (ADR 0113, section 4).
         """
         return any(p.uses_verdicts() for p in self.pipelines if p.kind == kind)
+
+    def judge(
+        self, *, user_id: str | None, redactor: object | None, default_threshold: float
+    ) -> ContentJudge:
+        """What counts items and asks classifiers for one request (no queries)."""
+        policies = dict(self._admin_views)
+        if user_id is not None:
+            policies.update(self._user_views.get(user_id, {}))
+        return ContentJudge(
+            policies=policies,
+            classifiers=self.classifiers,
+            redactor=redactor,
+            default_threshold=default_threshold,
+            backend=self.classifier_backend,
+        )
+
+    def name_of(self, ident: str) -> str | None:
+        """The name of a policy or a classifier by id."""
+        found = self.policy_name(ident)
+        if found is not None:
+            return found
+        ref = self.classifiers.get(ident)
+        return ref.name if ref is not None else None
 
     def policy_name(self, policy_id: str) -> str | None:
         found = self.policies.get(policy_id)
@@ -333,7 +354,7 @@ class PrivacyState:
         pipelines: Sequence[PrivacyPipeline],
         policies: Sequence[RedactionPolicyRecord],
         user_policy_rows: Sequence[UserPolicy],
-        profiles: Sequence[DetectorProfile],
+        classifiers: Sequence[ClassifierRef],
         reader_models: Sequence[str],
         builtin_readers: Sequence[str],
         settings: PrivacySettings | None = None,
@@ -365,7 +386,7 @@ class PrivacyState:
                     record.id,
                     record.name or "Policy",
                     RedactionPolicy.model_validate(record.policy or {}),
-                    record.profile_id,
+                    bool(record.shared_with_users),
                 )
             except ValidationError:
                 bad.append(f"{record.id}: unreadable policy")
@@ -385,14 +406,19 @@ class PrivacyState:
         self.load_error = None
         self._folded.clear()
         self._user_folded.clear()
-        self.profiles = profile_snapshot(
-            profiles, {p.id: engine_available(p.engine) for p in profiles}
-        )
+        self.classifiers = {c.id: c for c in classifiers}
+        self._admin_views = {pid: (ref.name, ref.policy) for pid, ref in parsed.items()}
+        self._user_views = {}
+        for pid, owned in mine.items():
+            self._user_views.setdefault(str(owned.user_id), {})[pid] = (
+                owned.name,
+                user_rules.fold(RedactionPolicy(), owned.rules),
+            )
         self.reader_models = tuple(reader_models)
         self.builtin_readers = tuple(builtin_readers)
         types = settings.user_entity_types if settings is not None else None
         self.user_entity_types = tuple(types) if types is not None else None
-        self.evaluator = Evaluator(self.profiles, self.cache)
+        self.evaluator = Evaluator()
 
     async def refresh(self) -> bool:
         """Re-read from the database. Never raises; True when it read."""
@@ -452,7 +478,7 @@ async def read_all(
     list[PrivacyPipeline],
     list[RedactionPolicyRecord],
     list[UserPolicy],
-    list[DetectorProfile],
+    list[ClassifierRef],
     list[str],
     list[str],
     PrivacySettings | None,
@@ -468,11 +494,7 @@ async def read_all(
         .all()
     )
     mine = list((await session.execute(select(UserPolicy).order_by(UserPolicy.id))).scalars().all())
-    profiles = list(
-        (await session.execute(select(DetectorProfile).order_by(DetectorProfile.name)))
-        .scalars()
-        .all()
-    )
+    classifiers = await classifier_refs(session)
     settings = await session.get(PrivacySettings, 1)
     readers = (
         await session.execute(
@@ -492,11 +514,47 @@ async def read_all(
         pipelines,
         policies,
         mine,
-        profiles,
+        classifiers,
         [str(r[0]) for r in readers],
         [str(r[0]) for r in readers if r[1] == LOCAL_EXTRACTOR],
         settings,
     )
+
+
+async def classifier_refs(session: AsyncSession) -> list[ClassifierRef]:
+    """Every classifier with what it needs to answer, read once per poll."""
+    out: list[ClassifierRef] = []
+    rows = (
+        await session.execute(
+            select(PrivacyClassifier, ModelDef, Provider)
+            .outerjoin(ModelDef, ModelDef.id == PrivacyClassifier.model_id)
+            .outerjoin(Provider, Provider.id == ModelDef.provider_id)
+            .order_by(PrivacyClassifier.name)
+        )
+    ).all()
+    for row, model, provider in rows:
+        why = ""
+        if model is None or provider is None:
+            why = "no model is chosen"
+        elif not model.is_active or not provider.is_active:
+            why = "its model or provider is switched off"
+        elif model.kind is not ModelKind.CHAT:
+            why = "its model is not a chat model"
+        elif not (row.topic or "").strip():
+            why = "no topic is written"
+        out.append(
+            ClassifierRef(
+                id=str(row.id),
+                name=row.name,
+                topic=row.topic or "",
+                model_name=model.name if model is not None else None,
+                upstream_model=model.upstream_model if model is not None else None,
+                provider=provider,
+                available=not why,
+                why=why,
+            )
+        )
+    return out
 
 
 _EMPTY = PrivacyState()

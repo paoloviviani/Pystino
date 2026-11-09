@@ -242,7 +242,8 @@ def validate_pipeline(
     otherwise: Mapping[str, Any] | None,
     *,
     owner_id: uuid.UUID | None = None,
-    profile_ids: Collection[str] = (),
+    finds_policy_ids: Collection[str] | None = None,
+    classifier_ids: Collection[str] | None = None,
     policy_ids: Collection[str] | None = None,
     readers: Collection[str] | None = None,
 ) -> dict[str, Any]:
@@ -262,7 +263,8 @@ def validate_pipeline(
         rulelib.validate_rule(
             kind,
             raw,
-            profile_ids=profile_ids,
+            finds_policy_ids=finds_policy_ids,
+            classifier_ids=classifier_ids,
             policy_ids=policy_ids,
             readers=readers,
             user=user,
@@ -294,19 +296,23 @@ def validate_pipeline(
 
 # -- words -------------------------------------------------------------------------
 
-_LANG_NAMES = {"it": "Italian", "en": "English", "de": "German", "fr": "French", "es": "Spanish"}
 
-
-def _condition_words(rule: Rule) -> str:
+def _condition_words(rule: Rule, names: Mapping[str, str]) -> str:
     parts: list[str] = []
     for c in rule.conditions:
-        if c.key == "health":
-            parts.append("health data" if not c.negate else "text with no health data")
-        elif c.key == "ids":
-            parts.append("IDs" if not c.negate else "text with no IDs")
-        elif c.key == "lang":
-            langs = " or ".join(_LANG_NAMES.get(v, v) for v in c.values)
-            parts.append(f"{langs} text" if not c.negate else f"text not in {langs}")
+        if c.key == "finds":
+            name = names.get(c.values[0], "a policy") if c.values else "a policy"
+            many = "an item" if c.count == 1 else f"{c.count} or more items"
+            parts.append(
+                f"text where {name} finds {many}"
+                if not c.negate
+                else f"text where {name} does not find {many}"
+            )
+        elif c.key == "classified":
+            name = names.get(c.values[0], "a classifier") if c.values else "a classifier"
+            parts.append(
+                f"text classified as {name}" if not c.negate else f"text not classified as {name}"
+            )
         elif c.key == "scan":
             parts.append("scans" if not c.negate else "files that are not scans")
         elif c.key == "filetype":
@@ -333,7 +339,7 @@ def summarize(
     for rule in pipeline.all_rules():
         if not rule.enabled or rule.observe_only or rule.is_noop:
             continue
-        when = _condition_words(rule)
+        when = _condition_words(rule, policy_names)
         if rule.level == rulelib.LEVEL_REFUSE:
             words.append(f"refuses {when}" if when else "refuses everything")
             continue

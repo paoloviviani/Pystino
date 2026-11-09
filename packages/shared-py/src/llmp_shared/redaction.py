@@ -200,6 +200,9 @@ class EntitySpan(BaseModel):
     end: int = Field(ge=0)
     entity_type: str
     score: float = Field(ge=0.0, le=1.0, default=1.0)
+    #: What found it: ``pattern`` (a recogniser or a gateway pattern), or the NER
+    #: engine (``spacy``, ``gliner``). Null from a detector that predates engines.
+    engine: str | None = None
 
     def slice_of(self, text: str) -> str:
         return text[self.start : self.end]
@@ -210,6 +213,13 @@ class TextFindings(BaseModel):
 
     index: int = Field(ge=0)
     spans: list[EntitySpan] = Field(default_factory=list)
+
+
+class CustomLabel(BaseModel):
+    """An entity type given to a label-taking NER engine at inference (GLiNER)."""
+
+    entity: str
+    label: str
 
 
 class DetectionRequest(BaseModel):
@@ -228,6 +238,12 @@ class DetectionRequest(BaseModel):
     # clients and direct detector users on the historical all-recognizers path.
     presidio_pattern_matching: bool | None = None
     presidio_ner: bool | None = None
+    #: The NER engine for this call (``spacy`` or ``gliner``); null is the
+    #: service's default. An engine that is not available answers 409
+    #: ``{"detail": {"code": "engine_unavailable"}}``.
+    ner_engine: str | None = None
+    #: Entity types to find from a description, for an engine that takes labels.
+    custom_labels: list[CustomLabel] | None = None
 
 
 class DetectionResponse(BaseModel):

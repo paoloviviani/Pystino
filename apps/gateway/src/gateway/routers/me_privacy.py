@@ -13,9 +13,10 @@ is structural, and every part of it is enforced here, on the server:
   ignored when read (``pipeline_from_row``).
 * **Readers are the user's grants.** "Read with" names only a reader the user may
   use; the request path resolves it again and fails closed when it cannot.
-* **Policies are the administrators', or the user's own.** Never another user's.
-  An own policy uses custom patterns and only the entity types and detector
-  profiles an administrator made available.
+* **Policies are the administrators' (the ones marked shared) or the user's own.**
+  Never another user's, and "classified as" is the administrators' alone. An own
+  policy uses custom patterns and only the entity types an administrator made
+  available.
 
 The test box is locked to the caller. Its text and file are never logged.
 """
@@ -130,7 +131,7 @@ async def _clean(
     rules: list[dict[str, Any]],
     otherwise: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    profiles, policies, readers = await service.validation_context(session, owner=user)
+    context = await service.validation_context(session, owner=user)
     try:
         clean = validate_pipeline(
             kind,
@@ -140,9 +141,10 @@ async def _clean(
             rules,
             otherwise,
             owner_id=user.id,
-            profile_ids=profiles,
-            policy_ids=policies,
-            readers=readers,
+            finds_policy_ids=context.finds_policy_ids,
+            classifier_ids=context.classifier_ids,
+            policy_ids=context.policy_ids,
+            readers=context.readers,
         )
     except rulelib.RuleError as exc:
         raise UnprocessableError(str(exc)) from exc
@@ -163,7 +165,7 @@ async def _name_free(
 
 @router.get("/options", response_model=OptionsResponse)
 async def options(user: ManagementUserDep, session: SessionDep) -> OptionsResponse:
-    """What this user may pick: their readers, policies, targets, types and profiles."""
+    """What this user may pick: their readers, policies, targets and types."""
     group = service.request_group_id(user)
     models = list(
         (
@@ -181,9 +183,10 @@ async def options(user: ManagementUserDep, session: SessionDep) -> OptionsRespon
         m.provider_id: m.provider.name for m in models if m.provider_id and m.provider is not None
     }
     readers = await service.granted_readers(session, user)
-    admin_policies = [p for p in await service.policy_rows(session) if p.is_active]
+    admin_policies = [
+        p for p in await service.policy_rows(session) if p.is_active and p.shared_with_users
+    ]
     mine = await service.user_policy_rows(session, user.id)
-    profiles = [p for p in await service.profile_rows(session) if p.user_available]
     settings_row = await service.settings_row(session)
     builtin = any(readers.values())
     return OptionsResponse(
@@ -210,7 +213,7 @@ async def options(user: ManagementUserDep, session: SessionDep) -> OptionsRespon
         + [ReaderOption(id=n, name=n, builtin=b) for n, b in sorted(readers.items())],
         policies=[NamedId(id=p.id, name=p.name) for p in admin_policies],
         own_policies=[NamedId(id=p.id, name=p.name) for p in mine],
-        profiles=[NamedId(id=p.id, name=p.name) for p in profiles],
+        classifiers=[],
         entity_types=settings_row.user_entity_types,
         engines=list(rulelib.ENGINES),
     )
@@ -220,16 +223,21 @@ async def options(user: ManagementUserDep, session: SessionDep) -> OptionsRespon
 
 
 @router.get("/pipelines", response_model=Page[PipelineResponse])
-async def list_my_pipelines(user: ManagementUserDep, session: SessionDep) -> Page[PipelineResponse]:
-    items = await service.views_for(session, await service.pipeline_rows(session, owner=user.id))
+async def list_my_pipelines(
+    user: ManagementUserDep, session: SessionDep, request: Request
+) -> Page[PipelineResponse]:
+    items = await service.views_for(
+        session, await service.pipeline_rows(session, owner=user.id), state_of(request)
+    )
     return Page(items=items, total=len(items), limit=max(1, min(MAX_LIMIT, len(items))), offset=0)
 
 
 @router.get("/pipelines/{pipeline_id}", response_model=PipelineResponse)
 async def get_my_pipeline(
-    pipeline_id: uuid.UUID, user: ManagementUserDep, session: SessionDep
+    pipeline_id: uuid.UUID, user: ManagementUserDep, session: SessionDep, request: Request
 ) -> PipelineResponse:
-    return (await service.views_for(session, [await _mine(session, user, pipeline_id)]))[0]
+    mine = await _mine(session, user, pipeline_id)
+    return (await service.views_for(session, [mine], state_of(request)))[0]
 
 
 @router.post("/pipelines", response_model=PipelineResponse, status_code=status.HTTP_201_CREATED)
@@ -265,7 +273,7 @@ async def create_my_pipeline(
     session.add(row)
     await session.commit()
     await _reload(request)
-    return (await service.views_for(session, [row]))[0]
+    return (await service.views_for(session, [row], state_of(request)))[0]
 
 
 @router.patch("/pipelines/{pipeline_id}", response_model=PipelineResponse)
@@ -304,7 +312,7 @@ async def update_my_pipeline(
         row.enabled = payload.enabled
     await session.commit()
     await _reload(request)
-    return (await service.views_for(session, [row]))[0]
+    return (await service.views_for(session, [row], state_of(request)))[0]
 
 
 @router.delete("/pipelines/{pipeline_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -319,7 +327,7 @@ async def delete_my_pipeline(
 
 @router.post("/pipelines/check", response_model=PipelineCheckResponse)
 async def check_my_pipeline(
-    payload: PipelineCheckRequest, user: ManagementUserDep, session: SessionDep
+    payload: PipelineCheckRequest, user: ManagementUserDep, session: SessionDep, request: Request
 ) -> PipelineCheckResponse:
     try:
         clean = await _clean(
@@ -346,7 +354,7 @@ async def check_my_pipeline(
         otherwise=clean["otherwise"],
     )
     draft: Pipeline = pipeline_from_row(row)
-    found = service.issues_of(draft, await service.profile_rows(session))
+    found = service.issues_of(draft, state_of(request))
     issues: list[IssueView] = []
     for rule_issues in found.values():
         issues.extend(service.issue_views(rule_issues))
@@ -372,7 +380,6 @@ def _policy_response(row: UserPolicy, used: dict[str, list[str]]) -> UserPolicyR
         id=row.id,
         name=row.name,
         entries=[UserEntryView.model_validate(e) for e in row.rules or []],
-        profile_id=row.profile_id,
         used_by=used.get(str(row.id), []),
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -402,16 +409,6 @@ async def _policy_fields(
         )
     except ValueError as exc:
         raise UnprocessableError(_message_of(exc)) from exc
-    if payload.profile_id is not None:
-        profile = next(
-            (p for p in await service.profile_rows(session) if p.id == payload.profile_id), None
-        )
-        if profile is None or not profile.user_available:
-            raise UnprocessableError("That detector profile is not available to you.")
-        if not profile.is_default:
-            raise UnprocessableError(
-                "Detector profiles on policies take effect in a later release."
-            )
     return name, entries
 
 
@@ -446,9 +443,7 @@ async def create_my_policy(
     if count >= MAX_POLICIES_PER_USER:
         raise ConflictError(f"You can keep at most {MAX_POLICIES_PER_USER} policies.")
     name, entries = await _policy_fields(session, user, payload, None)
-    row = UserPolicy(
-        id=uuid.uuid4(), user_id=user.id, name=name, rules=entries, profile_id=payload.profile_id
-    )
+    row = UserPolicy(id=uuid.uuid4(), user_id=user.id, name=name, rules=entries)
     session.add(row)
     await session.commit()
     await _reload(request)
@@ -467,7 +462,6 @@ async def update_my_policy(
     name, entries = await _policy_fields(session, user, payload, row.id)
     row.name = name
     row.rules = entries
-    row.profile_id = payload.profile_id
     await session.commit()
     await _reload(request)
     return _policy_response(row, await _policy_used_by(session, user))
@@ -490,7 +484,9 @@ async def delete_my_policy(
 
 
 @router.get("/in-force", response_model=Page[PipelineResponse])
-async def in_force(user: ManagementUserDep, session: SessionDep) -> Page[PipelineResponse]:
+async def in_force(
+    user: ManagementUserDep, session: SessionDep, request: Request
+) -> Page[PipelineResponse]:
     """The administrators' pipelines that cover this user, read-only.
 
     Every pipeline whose who names everyone, this user, their billing group or
@@ -516,7 +512,7 @@ async def in_force(user: ManagementUserDep, session: SessionDep) -> Page[Pipelin
             or (mode == "keys" and ids & keys)
         ) and row.enabled:
             rows.append(row)
-    items = await service.views_for(session, rows)
+    items = await service.views_for(session, rows, state_of(request))
     # Only the caller's own matches are shown: who else a scope names (other users,
     # other groups, other people's keys) is not theirs to read, neither the
     # ids nor the names behind them.

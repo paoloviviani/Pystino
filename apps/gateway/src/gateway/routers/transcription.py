@@ -42,7 +42,7 @@ from starlette.datastructures import UploadFile
 
 from gateway import audio
 from gateway.accounting import TokenCounts, select_price
-from gateway.config import EffectivePolicy, EntityMode, RedactionPolicy, Settings
+from gateway.config import EffectivePolicy, RedactionPolicy, Settings
 from gateway.deps import (
     EstimatorDep,
     PrincipalDep,
@@ -108,11 +108,7 @@ def redaction_in_force(effective: EffectivePolicy | None, settings: Settings) ->
     if settings.redaction.engine == "noop":
         return False
     policy: RedactionPolicy = effective.policy if effective else settings.redaction.policy
-    if policy.default_mode is not EntityMode.OFF:
-        return True
-    if any(entry.mode is not EntityMode.OFF for entry in policy.entities.values()):
-        return True
-    return any(pattern.mode is not EntityMode.OFF for pattern in policy.patterns)
+    return policy.is_active()
 
 
 async def _audio_is_screened(

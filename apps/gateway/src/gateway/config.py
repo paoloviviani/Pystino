@@ -592,6 +592,12 @@ class EntityMode(StrEnum):
     #: — a news site's domain, today's date — where redacting destroys the
     #: request and protects nobody.
     OFF = "off"
+    #: Found and counted, **never hidden** (ADR 0113, section 0c). For a policy that only
+    #: decides ("this text has at least 3 of these"): the item counts toward a
+    #: condition and the text goes on unchanged. Lowest in the order above ``off``, so
+    #: the strictest-mode fold and the tighten-only user rules both still hold: it can
+    #: never lower another policy's mode.
+    DETECT_ONLY = "detect_only"
     #: Stable placeholder upstream, real value restored in the answer. The
     #: default, and the only mode where the reader never sees the machinery.
     ANONYMISE_RESTORE = "anonymise_restore"
@@ -703,33 +709,176 @@ class CustomPattern(BaseModel):
         return cleaned
 
 
-class RedactionPolicy(BaseModel):
-    """Per-entity redaction policy: the admin's answer to "redact *what*".
+#: The NER engines a policy may choose (ADR 0113, section 0c). The redaction service
+#: says which of them it has installed; the console offers only those.
+NER_ENGINES = ("spacy", "gliner")
+NerEngine = Literal["spacy", "gliner"]
 
-    Before this existed, ``entity_types`` was ``None`` — "everything the engine
-    knows" — and nobody had chosen it; it was the default of a field never
-    filled in. On a real request that meant *"Riassumi le notizie del giorno da
-    ilpost.it"* reaching the provider as ``<PERSON_…> le notizie del giorno da
-    <URL_…>``: the verb read as a name, and the source the user asked for read as
-    identity. See ADR 0037.
+#: The model-backed types of the first service, which is how a stored policy that
+#: predates the two groups (one ``entities`` table) is split: these are NER, every
+#: other name is a built-in pattern format. The service's own partition says the
+#: same (``MODEL_BACKED_ENTITIES``), and a name it does not list counts as a pattern.
+LEGACY_NER_TYPES = frozenset({"PERSON", "LOCATION", "NRP", "ORGANIZATION"})
 
-    ``default_mode`` is the answer for a type nobody has listed, and it defaults
-    to *on* rather than off. That direction matters: a detector that gains a new
-    national-identifier recogniser next release should start protecting it
-    without an admin noticing, and an entity type nobody has ruled on is exactly
-    the case to be conservative about.
+#: Bounds on a keyword list. A list is held in memory on every worker and is
+#: searched on every request, so it is bounded rather than trusted.
+MAX_KEYWORDS = 1000
+MAX_KEYWORD_LENGTH = 100
+MAX_KEYWORD_TOKENS = 6
+
+
+def _label(value: str, what: str) -> str:
+    # Same alphabet the placeholder scheme coerces to, checked here so the
+    # console refuses it rather than the substitution silently renaming it.
+    cleaned = re.sub(r"[^A-Za-z0-9_]+", "_", value).strip("_").upper()
+    if not cleaned:
+        raise ValueError(f"{what} needs at least one letter or digit")
+    return cleaned
+
+
+class KeywordList(BaseModel):
+    """A comma-separated list of words and phrases, found as whole words (ADR 0113, section 0c).
+
+    One more pattern type, beside the built-in formats and the regular expressions
+    an operator writes: fast, deterministic, evaluated in the gateway. ``name``
+    becomes the entity label exactly as a :class:`CustomPattern`'s does, so a hit is
+    substituted, counted and logged by the machinery every other type uses.
+
+    Matching is by whole words, on letters and digits; spacing and punctuation
+    between the words of a phrase do not matter. Unless ``case_sensitive``, case is
+    ignored **and accents are folded** ("Perche" finds "perché"). It is linear in
+    the text (``gateway.redaction.keywords``): no regular expression is ever built
+    from what an administrator typed.
     """
 
-    #: What happens to a type this policy does not name. **Off**, so a policy
-    #: is a statement about the types it lists and silent about the rest. Any
-    #: other default would mean a rule about `IBAN_CODE` quietly deciding for
-    #: `PERSON` too, and — folded across scopes by `max` — a narrow rule could
-    #: raise the floor for everything.
+    name: str = Field(min_length=1, max_length=64)
+    words: list[str] = Field(min_length=1)
+    case_sensitive: bool = False
+    #: Defaults like a custom pattern: the strongest substitution.
+    mode: EntityMode = EntityMode.REDACT
+    placeholder: PlaceholderStyle = PlaceholderStyle.TAGGED
+
+    @field_validator("words", mode="before")
+    @classmethod
+    def _split(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.split(",")
+        return value
+
+    @field_validator("words")
+    @classmethod
+    def _clean(cls, value: list[str]) -> list[str]:
+        out: list[str] = []
+        for raw in value:
+            word = " ".join(raw.split())
+            if not word:
+                continue
+            if len(word) > MAX_KEYWORD_LENGTH:
+                raise ValueError(f"a keyword is longer than {MAX_KEYWORD_LENGTH} characters")
+            tokens = re.findall(r"\w+", word)
+            if not tokens:
+                raise ValueError(f"'{word}' has no letter or digit to look for")
+            if len(tokens) > MAX_KEYWORD_TOKENS:
+                raise ValueError(f"'{word}' is more than {MAX_KEYWORD_TOKENS} words long")
+            if word not in out:
+                out.append(word)
+        if not out:
+            raise ValueError("a keyword list needs at least one word")
+        if len(out) > MAX_KEYWORDS:
+            raise ValueError(f"a keyword list has at most {MAX_KEYWORDS} words")
+        return out
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        return _label(value, "a keyword list name")
+
+
+class CustomEntity(BaseModel):
+    """An entity type the NER engine finds from a description (GLiNER) (ADR 0113, section 0c).
+
+    ``name`` is the entity label (UPPER_SNAKE) and ``label`` the natural-language
+    description the model is given at inference ("project code name"). Only an
+    engine that accepts labels (``custom_labels`` in the service's health) can use
+    one; a policy that names one with another engine is refused when saved.
+    """
+
+    name: str = Field(min_length=1, max_length=64)
+    label: str = Field(min_length=1, max_length=100)
+    mode: EntityMode = EntityMode.ANONYMISE_RESTORE
+    placeholder: PlaceholderStyle = PlaceholderStyle.TAGGED
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        return _label(value, "an entity name")
+
+    @field_validator("label")
+    @classmethod
+    def _label_text(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("an entity needs a short description for the model")
+        return cleaned
+
+
+@dataclass(frozen=True, slots=True)
+class NerAsk:
+    """One call to the redaction service: an engine, what to look for, the labels to give it.
+
+    ``engine`` None is the deployment's default engine. ``types`` None asks for
+    everything the engine knows. Policies that choose different engines make one
+    ask each, and their spans are merged (``EffectivePolicy.asks``).
+    """
+
+    engine: str | None
+    types: tuple[str, ...] | None
+    labels: tuple[tuple[str, str], ...] = ()
+
+
+def hides(mode: EntityMode) -> bool:
+    """Whether a mode changes the text (``off`` and ``detect_only`` do not)."""
+    return mode not in (EntityMode.OFF, EntityMode.DETECT_ONLY)
+
+
+class RedactionPolicy(BaseModel):
+    """What to find in a text, and what to do about it (ADR 0037, 0113 section 0c).
+
+    The items come in two groups that are never mixed, here, in the API or in the
+    editor:
+
+    * **Patterns** (fast, deterministic): ``formats`` (the service's built-in
+      formats, checksummed where one exists), ``patterns`` (regular expressions an
+      operator wrote, evaluated here with RE2) and ``keywords`` (word lists,
+      evaluated here in linear time).
+    * **Entities** (NER, probabilistic): ``entities``, the types of the policy's
+      ``engine``, each with a mode and a confidence threshold, and
+      ``custom_entities``, types a label-taking engine (GLiNER) finds from a
+      description.
+
+    Every item has a mode, ``detect_only`` among them: found and counted for a
+    condition, never hidden.
+
+    ``default_mode`` is the answer for a type nobody has listed, and it is **off**:
+    a policy is a statement about the types it lists and silent about the rest.
+    Any other default would mean a rule about `IBAN_CODE` quietly deciding for
+    `PERSON` too, and — folded across scopes by `max` — a narrow rule could raise
+    the floor for everything (ADR 0037, which this reverses on purpose).
+    """
+
+    #: The NER engine that finds the entity types. None: the deployment's default.
+    engine: NerEngine | None = None
     default_mode: EntityMode = EntityMode.OFF
+    #: Built-in pattern formats of the service (``pattern_entities``).
+    formats: dict[str, EntityPolicy] = Field(default_factory=dict)
+    #: NER entity types of ``engine`` (``ner_engines[].entities``).
     entities: dict[str, EntityPolicy] = Field(default_factory=dict)
+    custom_entities: list[CustomEntity] = Field(default_factory=list)
     #: Operator-written regexes, unioned across scopes when policies combine:
     #: adding a pattern can only find more, so union is the tightening direction.
     patterns: list[CustomPattern] = Field(default_factory=list)
+    keywords: list[KeywordList] = Field(default_factory=list)
     #: Values never redacted, whatever a detector says about them. Compared
     #: case-insensitively against the matched text, exactly — a substring rule
     #: would let "it" allow every Italian domain. This is the answer to a
@@ -737,43 +886,99 @@ class RedactionPolicy(BaseModel):
     #: corporate domain *is* a URL, and it identifies nobody.
     allow_list: list[str] = Field(default_factory=list)
 
-    @field_validator("entities")
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_shape(cls, data: object) -> object:
+        """A policy written before the two groups: one ``entities`` table, split by name."""
+        if (
+            isinstance(data, dict)
+            and "formats" not in data
+            and isinstance(data.get("entities"), dict)
+        ):
+            ner: dict[str, object] = {}
+            formats: dict[str, object] = {}
+            for key, value in data["entities"].items():
+                (ner if str(key).upper() in LEGACY_NER_TYPES else formats)[key] = value
+            return {**data, "entities": ner, "formats": formats}
+        return data
+
+    @field_validator("default_mode")
+    @classmethod
+    def _default_acts(cls, value: EntityMode) -> EntityMode:
+        if value is EntityMode.DETECT_ONLY:
+            raise ValueError("the default mode cannot be detect_only: name the types to look for")
+        return value
+
+    @field_validator("formats", "entities")
     @classmethod
     def _upper(cls, value: dict[str, EntityPolicy]) -> dict[str, EntityPolicy]:
         # Entity labels are free-form strings from whatever engine is installed
         # (ADR 0026), and case is the one difference that is never meaningful.
         return {key.upper(): policy for key, policy in value.items()}
 
-    def mode_for(self, entity_type: str) -> EntityMode:
-        name = entity_type.upper()
-        entry = self.entities.get(name)
+    @model_validator(mode="after")
+    def _distinct_names(self) -> RedactionPolicy:
+        seen: set[str] = set()
+        for group, names in (
+            ("a format", self.formats),
+            ("an entity type", self.entities),
+            ("a custom entity", [c.name for c in self.custom_entities]),
+            ("a pattern", [p.name for p in self.patterns]),
+            ("a keyword list", [k.name for k in self.keywords]),
+        ):
+            for name in names:
+                if name in seen and group in ("a custom entity", "a keyword list"):
+                    raise ValueError(f"the name {name} is used twice in this policy ({group})")
+                seen.add(name)
+        return self
+
+    # -- what a name means ----------------------------------------------------
+
+    def service_types(self) -> dict[str, EntityPolicy]:
+        """Every type the redaction service is asked for: formats, entities, custom entities."""
+        out: dict[str, EntityPolicy] = {**self.formats, **self.entities}
+        for custom in self.custom_entities:
+            out[custom.name] = EntityPolicy(
+                mode=custom.mode, placeholder=custom.placeholder, threshold=custom.threshold
+            )
+        return out
+
+    def _named(self, name: str) -> tuple[EntityMode, PlaceholderStyle, float | None] | None:
+        name = name.upper()
+        entry = self.entities.get(name) or self.formats.get(name)
         if entry is not None:
-            return entry.mode
+            return entry.mode, entry.placeholder, entry.threshold
+        for custom in self.custom_entities:
+            if custom.name == name:
+                return custom.mode, custom.placeholder, custom.threshold
         # A custom pattern is one more entity type, and its own mode is where it
-        # is written. Checked after `entities` so an admin can still override a
-        # pattern's mode by naming it there — the narrower statement wins, which
-        # is the same rule the rest of this file follows.
+        # is written. Checked after the entity tables so an admin can still
+        # override a pattern's mode by naming it there — the narrower statement
+        # wins, which is the same rule the rest of this file follows.
         for pattern in self.patterns:
             if pattern.name == name:
-                return pattern.mode
-        return self.default_mode
+                return pattern.mode, pattern.placeholder, None
+        order = list(EntityMode)
+        lists = [k for k in self.keywords if k.name == name]
+        if lists:
+            best = max(lists, key=lambda k: order.index(k.mode))
+            return best.mode, best.placeholder, None
+        return None
+
+    def mode_for(self, entity_type: str) -> EntityMode:
+        found = self._named(entity_type)
+        return found[0] if found is not None else self.default_mode
 
     def placeholder_style_for(self, entity_type: str) -> PlaceholderStyle:
         """How a placeholder for this type is written; resolved like the mode."""
-        name = entity_type.upper()
-        entry = self.entities.get(name)
-        if entry is not None:
-            return entry.placeholder
-        for pattern in self.patterns:
-            if pattern.name == name:
-                return pattern.placeholder
-        return PlaceholderStyle.TAGGED
+        found = self._named(entity_type)
+        return found[1] if found is not None else PlaceholderStyle.TAGGED
 
     def threshold_for(self, entity_type: str, default: float) -> float:
-        entry = self.entities.get(entity_type.upper())
-        if entry is None or entry.threshold is None:
+        found = self._named(entity_type)
+        if found is None or found[2] is None:
             return default
-        return entry.threshold
+        return found[2]
 
     def allows(self, text: str) -> bool:
         return text.strip().casefold() in self._allowed
@@ -782,32 +987,51 @@ class RedactionPolicy(BaseModel):
     def _allowed(self) -> set[str]:
         return {item.strip().casefold() for item in self.allow_list if item.strip()}
 
-    def detected_types(self) -> list[str] | None:
+    # -- what to ask the service ----------------------------------------------
+
+    def detected_types(self, *, acting: bool = True) -> list[str] | None:
         """What to ask the detector for, or None for "everything it knows".
 
         Only a narrowing: when the default is on, the set cannot be enumerated —
         an engine's entity list is its own and may grow — so everything is
         requested and the disabled types are dropped here. When the default is
         off, the enabled set *is* enumerable, and sending it saves the detector
-        the work.
+        the work. ``acting`` leaves out the ``detect_only`` items, which redaction
+        does not need and a condition does.
         """
         if self.default_mode is not EntityMode.OFF:
             return None
-        return sorted(
-            name for name, entry in self.entities.items() if entry.mode is not EntityMode.OFF
-        )
+        keep = hides if acting else (lambda mode: mode is not EntityMode.OFF)
+        return sorted(name for name, entry in self.service_types().items() if keep(entry.mode))
+
+    def ner_asks(self, *, acting: bool = True) -> list[NerAsk]:
+        """The one call this policy needs: its engine, its types, its custom labels."""
+        keep = hides if acting else (lambda mode: mode is not EntityMode.OFF)
+        labels = tuple((c.name, c.label) for c in self.custom_entities if keep(c.mode))
+        types = self.detected_types(acting=acting)
+        return [NerAsk(self.engine, tuple(types) if types is not None else None, labels)]
 
     def is_active(self) -> bool:
         """Whether this policy would do anything to a prompt at all."""
         return (
             self.default_mode is not EntityMode.OFF
-            or any(entry.mode is not EntityMode.OFF for entry in self.entities.values())
-            or any(pattern.mode is not EntityMode.OFF for pattern in self.patterns)
+            or any(hides(entry.mode) for entry in self.service_types().values())
+            or any(hides(pattern.mode) for pattern in self.patterns)
+            or any(hides(item.mode) for item in self.keywords)
+        )
+
+    def finds_anything(self) -> bool:
+        """Whether it looks for anything at all (a ``detect_only`` item counts)."""
+        return (
+            self.default_mode is not EntityMode.OFF
+            or any(e.mode is not EntityMode.OFF for e in self.service_types().values())
+            or any(p.mode is not EntityMode.OFF for p in self.patterns)
+            or any(k.mode is not EntityMode.OFF for k in self.keywords)
         )
 
     def protects(self) -> set[str]:
         """Entity types this policy does something about. Used to compare two."""
-        return {name for name, entry in self.entities.items() if entry.mode is not EntityMode.OFF}
+        return {name for name, entry in self.service_types().items() if hides(entry.mode)}
 
     @classmethod
     def combine(cls, policies: Sequence[RedactionPolicy]) -> RedactionPolicy:
@@ -831,13 +1055,17 @@ class RedactionPolicy(BaseModel):
           direction — and it stops a group rule setting ``PERSON`` to 0.95,
           hiding names the deployment wanted caught at 0.5 while looking like
           it was tightening.
-        * **patterns** are the union. One more regex can only find more.
+        * **patterns** and **keyword lists** are the union. One more regex or word
+          can only find more.
         * **allow_list** is taken from the *first* policy alone, which is always
           the deployment's. It is the one field that weakens, and neither
           combiner is safe: union lets a user exempt what an admin redacts, and
           intersection silently voids the deployment's own exemptions the moment
           any scoped rule carries an empty list. So it is not a per-scope field
           (ADR 0038).
+        * **engine** is not folded: policies that choose different engines are
+          asked of the service one engine at a time (``EffectivePolicy.asks``) and
+          their spans merge, so the folded policy only says what each type's mode is.
         """
         if not policies:
             return cls()
@@ -846,33 +1074,58 @@ class RedactionPolicy(BaseModel):
             return first
 
         order = list(EntityMode)
-        named = {name for policy in policies for name in policy.entities}
-        entities: dict[str, EntityPolicy] = {}
-        for name in named:
-            # Only the policies that name it. A policy that is silent about a
-            # type is silent, not voting for its own default.
-            speaking = [p for p in policies if name in p.entities]
-            mode = max((p.entities[name].mode for p in speaking), key=order.index)
-            thresholds = [
-                entry.threshold
-                for policy in policies
-                if (entry := policy.entities.get(name)) is not None
-                and entry.threshold is not None
-                and entry.mode is not EntityMode.OFF
-            ]
-            # Same-length only if every policy that speaks asks for it: it tells
-            # the provider how long the value is, so any scope can veto it and
-            # none can impose it.
-            style = (
-                PlaceholderStyle.SAME_LENGTH
-                if all(
-                    p.entities[name].placeholder is PlaceholderStyle.SAME_LENGTH for p in speaking
+
+        def fold(tables: Sequence[dict[str, EntityPolicy]]) -> dict[str, EntityPolicy]:
+            named = {name for table in tables for name in table}
+            out: dict[str, EntityPolicy] = {}
+            for name in named:
+                # Only the policies that name it. A policy that is silent about a
+                # type is silent, not voting for its own default.
+                speaking = [table[name] for table in tables if name in table]
+                mode = max((entry.mode for entry in speaking), key=order.index)
+                thresholds = [
+                    entry.threshold
+                    for entry in speaking
+                    if entry.threshold is not None and entry.mode is not EntityMode.OFF
+                ]
+                # Same-length only if every policy that speaks asks for it: it tells
+                # the provider how long the value is, so any scope can veto it and
+                # none can impose it.
+                style = (
+                    PlaceholderStyle.SAME_LENGTH
+                    if all(entry.placeholder is PlaceholderStyle.SAME_LENGTH for entry in speaking)
+                    else PlaceholderStyle.TAGGED
                 )
-                else PlaceholderStyle.TAGGED
-            )
-            entities[name] = EntityPolicy(
-                mode=mode, threshold=min(thresholds) if thresholds else None, placeholder=style
-            )
+                out[name] = EntityPolicy(
+                    mode=mode, threshold=min(thresholds) if thresholds else None, placeholder=style
+                )
+            return out
+
+        entities = fold([p.entities for p in policies])
+        formats = fold([p.formats for p in policies])
+
+        customs: dict[tuple[str, str], CustomEntity] = {}
+        for policy in policies:
+            for custom in policy.custom_entities:
+                key = (custom.name, custom.label)
+                held = customs.get(key)
+                if held is None:
+                    customs[key] = custom
+                    continue
+                thresholds = [t for t in (held.threshold, custom.threshold) if t is not None]
+                customs[key] = held.model_copy(
+                    update={
+                        "mode": max(held.mode, custom.mode, key=order.index),
+                        "threshold": min(thresholds) if thresholds else None,
+                        "placeholder": (
+                            PlaceholderStyle.SAME_LENGTH
+                            if held.placeholder
+                            is custom.placeholder
+                            is PlaceholderStyle.SAME_LENGTH
+                            else PlaceholderStyle.TAGGED
+                        ),
+                    }
+                )
 
         patterns: list[CustomPattern] = []
         seen: dict[tuple[str, str], int] = {}
@@ -888,10 +1141,35 @@ class RedactionPolicy(BaseModel):
                         update={"placeholder": PlaceholderStyle.TAGGED}
                     )
 
-        return cls(
+        keywords: dict[tuple[str, tuple[str, ...], bool], KeywordList] = {}
+        for policy in policies:
+            for item in policy.keywords:
+                ident = (item.name, tuple(item.words), item.case_sensitive)
+                held_kw = keywords.get(ident)
+                if held_kw is None:
+                    keywords[ident] = item
+                else:
+                    keywords[ident] = held_kw.model_copy(
+                        update={
+                            "mode": max(held_kw.mode, item.mode, key=order.index),
+                            "placeholder": (
+                                PlaceholderStyle.SAME_LENGTH
+                                if held_kw.placeholder
+                                is item.placeholder
+                                is PlaceholderStyle.SAME_LENGTH
+                                else PlaceholderStyle.TAGGED
+                            ),
+                        }
+                    )
+
+        return cls.model_construct(
+            engine=first.engine,
             default_mode=max((p.default_mode for p in policies), key=order.index),
+            formats=formats,
             entities=entities,
+            custom_entities=list(customs.values()),
             patterns=patterns,
+            keywords=list(keywords.values()),
             allow_list=list(first.allow_list),
         )
 
@@ -910,7 +1188,13 @@ class RedactionPolicy(BaseModel):
         # exactly where nobody has written a rule, so a caller passes the
         # detector's own list and the comparison covers types neither policy
         # mentions.
-        names = set(self.entities) | set(previous.entities) | set(known or ())
+        names = (
+            set(self.service_types())
+            | set(previous.service_types())
+            | {k.name for k in self.keywords}
+            | {k.name for k in previous.keywords}
+            | set(known or ())
+        )
         for name in names:
             if order.index(self.mode_for(name)) < order.index(previous.mode_for(name)):
                 return True
@@ -982,16 +1266,60 @@ class EffectivePolicy:
         """
         name = entity_type.upper()
         order = list(EntityMode)
-        named = [c for c in self.contributors if name in c.policy.entities]
+        named = [c for c in self.contributors if name in c.policy.service_types()]
         if named:
-            return max(named, key=lambda c: order.index(c.policy.entities[name].mode))
+            return max(named, key=lambda c: order.index(c.policy.service_types()[name].mode))
         for contributor in self.contributors:
-            if any(pattern.name == name for pattern in contributor.policy.patterns):
+            if any(pattern.name == name for pattern in contributor.policy.patterns) or any(
+                item.name == name for item in contributor.policy.keywords
+            ):
                 return contributor
         defaults = [c for c in self.contributors if c.policy.default_mode is not EntityMode.OFF]
         if defaults:
             return max(defaults, key=lambda c: order.index(c.policy.default_mode))
         return None
+
+    def asks(self, *, acting: bool = True) -> list[NerAsk]:
+        """The calls to the redaction service this request needs, one per engine.
+
+        Each contributing policy asks for its own engine and types. Policies of
+        the same engine share one call; formats (patterns) are asked once, in the
+        first call, because they do not depend on the engine. The redactor merges
+        the spans of the calls, and the folded policy's strictest mode applies to
+        each span.
+        """
+        if not self.contributors:
+            return self.policy.ner_asks(acting=acting)
+        keep = hides if acting else (lambda mode: mode is not EntityMode.OFF)
+        per_engine: dict[str | None, tuple[set[str] | None, dict[str, str]]] = {}
+        formats: set[str] = set()
+        for contributor in self.contributors:
+            policy = contributor.policy
+            formats.update(n for n, e in policy.formats.items() if keep(e.mode))
+            labels = {c.name: c.label for c in policy.custom_entities if keep(c.mode)}
+            types: set[str] = {n for n, e in policy.entities.items() if keep(e.mode)} | set(labels)
+            held_types, held_labels = per_engine.get(policy.engine, (set(), {}))
+            if policy.default_mode is not EntityMode.OFF:
+                per_engine[policy.engine] = (None, {**held_labels, **labels})
+            elif types:
+                merged = None if held_types is None else held_types | types
+                per_engine[policy.engine] = (merged, {**held_labels, **labels})
+        if not per_engine:
+            return [NerAsk(None, tuple(sorted(formats)), ())]
+        asks: list[NerAsk] = []
+        for index, engine in enumerate(sorted(per_engine, key=lambda e: (e is not None, e or ""))):
+            wanted, labels = per_engine[engine]
+            ask_types = (
+                None
+                if wanted is None
+                else tuple(sorted(wanted | (formats if index == 0 else set())))
+            )
+            asks.append(NerAsk(engine, ask_types, tuple(sorted(labels.items()))))
+        return asks
+
+    def policies_of_engine(self, engine: str | None) -> list[str]:
+        """Names of the policies that chose this engine (for the 503 that names them)."""
+        return [c.name for c in self.contributors if c.policy.engine == engine]
 
 
 @dataclass(frozen=True, slots=True)

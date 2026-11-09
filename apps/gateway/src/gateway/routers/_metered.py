@@ -74,6 +74,7 @@ from gateway.plugins.base import ProviderKind as PluginKind
 from gateway.privacy import attribution
 from gateway.privacy.combine import Combined, plan
 from gateway.privacy.evaluate import Facts
+from gateway.privacy.finds import ContentJudge
 from gateway.privacy.state import state_of
 from gateway.providers import ProviderConfigurationError, ProviderRegistry
 from gateway.quota import (
@@ -1078,8 +1079,19 @@ async def plan_privacy(
         model,
         requested_name=requested_name,
         texts=tuple(texts) if privacy.uses_verdicts(kind) else (),
+        judge=judge_of(request, principal),
     )
     return facts, await plan(privacy.evaluator, privacy.pipelines_of(kind), facts)
+
+
+def judge_of(request: Request, principal: Principal) -> ContentJudge:
+    """What counts a policy's items and asks classifiers for this request (no queries)."""
+    settings: Settings = request.app.state.settings
+    return state_of(request).judge(
+        user_id=str(principal.user.id),
+        redactor=getattr(request.app.state, "redactor", None),
+        default_threshold=settings.redaction.score_threshold,
+    )
 
 
 def effective_policy_of(request: Request, combined: Combined) -> EffectivePolicy | None:
