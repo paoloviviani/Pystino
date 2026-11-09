@@ -96,13 +96,16 @@ class FakeService:
         wanted = payload.get("entity_types")
         ner_off = payload.get("presidio_ner") is False
         patterns_off = payload.get("presidio_pattern_matching") is False
-        unsupported = sorted(
-            e
-            for e in (wanted or [])
-            if (ner_off and e in ("PERSON", "LOCATION", "ORGANIZATION", "AGE"))
-            or (patterns_off and e in self.health["pattern_entities"])
-        )
         labels = {c["entity"] for c in payload.get("custom_labels") or []}
+        unsupported = sorted(
+            {
+                e
+                for e in (wanted or [])
+                if (ner_off and e in ("PERSON", "LOCATION", "ORGANIZATION", "AGE"))
+                or (patterns_off and e in self.health["pattern_entities"])
+            }
+            | (labels if ner_off else set())
+        )
         findings = []
         for index, text in enumerate(payload["texts"]):
             spans = []
@@ -316,6 +319,20 @@ class TestAnUnavailableEngineFailsClosed:
             await redactor.detect(
                 [TEXT], policy=RedactionPolicy(entities={"PERSON": E(mode=M.REDACT)})
             )
+
+    async def test_a_custom_entity_is_refused_not_ignored_when_ner_is_off(self) -> None:
+        # Custom GLiNER names are in no /healthz list either: only the legacy AGE/ID/EMAIL
+        # set may be ignored, so NER off must still refuse a policy that blocks CODENAME.
+        service = FakeService()
+        redactor = service.redactor(presidio_ner=False)
+        policy = RedactionPolicy(
+            engine="gliner",
+            custom_entities=[
+                CustomEntity(name="CODENAME", label="project code name", mode=M.BLOCK)
+            ],
+        )
+        with pytest.raises(EngineUnavailableError):
+            await redactor.detect([TEXT], policy=policy)
 
     async def test_a_type_of_a_switched_off_pattern_family_is_refused_not_ignored(self) -> None:
         service = FakeService()

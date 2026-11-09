@@ -64,6 +64,9 @@ from gateway.sse.pipeline import StreamStage, passthrough
 
 logger = logging.getLogger(__name__)
 
+#: Types the spaCy recogniser's label map once advertised but no stock model ever emits.
+_LEGACY_INERT = frozenset({"AGE", "ID", "EMAIL"})
+
 # Roles whose content is sent for detection. Everything the *user* side of the
 # conversation contributed, plus prior assistant turns — a name the model repeated
 # in turn 3 is still in the transcript the upstream receives in turn 4.
@@ -944,12 +947,11 @@ class HttpDetectionRedactor:
             # by the spaCy recogniser's label map and never detected anything) is not
             # protection lost to a switch: refusing the request for it would be an outage that
             # buys nothing. Said in the log, once per change, instead.
-            listed = await self._listed_types()
-            never = {"AGE", "ID", "EMAIL"} if listed is None else None
+            # Only the legacy set: a custom GLiNER entity, or a model type whose engine slot is
+            # unavailable, is also absent from /healthz's lists, and must stay refused.
+            listed = await self._listed_types() or set()
             inert = [
-                t
-                for t in unsupported
-                if (t.upper() in never if never is not None else t.upper() not in (listed or set()))
+                t for t in unsupported if t.upper() in _LEGACY_INERT and t.upper() not in listed
             ]
             if inert:
                 logger.warning(
