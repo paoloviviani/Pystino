@@ -4,6 +4,7 @@ from llmp_shared.documents import ExtractionKind, ExtractionResponse, PageImage
 from llmp_shared.redaction import (
     PLACEHOLDER_RE,
     SAME_LENGTH_MIN,
+    CustomLabel,
     DetectionRequest,
     DetectionResponse,
     EntitySpan,
@@ -20,6 +21,7 @@ from llmp_shared.redaction import (
 __all__ = [
     "PLACEHOLDER_RE",
     "SAME_LENGTH_MIN",
+    "CustomLabel",
     "DetectionRequest",
     "DetectionResponse",
     "EntitySpan",
