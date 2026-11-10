@@ -124,7 +124,7 @@ describe("A redaction policy page", () => {
       expect(within(patterns).getByText("ana@example.org")).toBeInTheDocument();
       const entities = within(result).getByRole("region", { name: "Entities" });
       expect(within(entities).getByText("Ana")).toBeInTheDocument();
-      expect(within(entities).getByText("Detect only")).toBeInTheDocument();
+      expect(within(entities).queryByText("Detect only")).toBeNull();
       expect(within(entities).getByText("spacy · 0.91")).toBeInTheDocument();
       expect(screen.getByTestId("policy-try-output")).toHaveTextContent("Write to <EMAIL_ADDRESS>, Ana");
     });

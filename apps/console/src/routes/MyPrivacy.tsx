@@ -10,7 +10,7 @@ import { Tip } from "../components/Tip";
 import { PolicyTemplatePicker } from "../components/PolicyTemplatePicker";
 import { buildUserEntries, skippedNote } from "../lib/policyTemplates";
 import { NER_DOCS_URL } from "../components/PolicyFields";
-import { entityLabel, modeLabel } from "../lib/entities";
+import { entityLabel } from "../lib/entities";
 import { FORM, FORM_ROW, MUTED, PAGE } from "../lib/layout";
 import {
   KINDS,
@@ -38,7 +38,6 @@ import { m } from "../paraglide/messages.js";
  * offering what would be refused.
  */
 
-const USER_MODES = ["anonymise_restore", "anonymise", "redact", "block"] as const;
 
 type Tab = "pipelines" | "test";
 
@@ -74,7 +73,6 @@ interface EntryForm {
   kind: "pattern" | "mode";
   name: string;
   regex: string;
-  mode: string;
 }
 
 function PolicyDialog({
@@ -96,7 +94,6 @@ function PolicyDialog({
       kind: e.kind,
       name: e.name,
       regex: e.regex ?? "",
-      mode: e.mode,
     })),
   );
   const types = options.data?.entity_types ?? null;
@@ -124,7 +121,6 @@ function PolicyDialog({
                       (e): UserPolicyEntry => ({
                         kind: e.kind,
                         name: e.name,
-                        mode: e.mode,
                         regex: e.kind === "pattern" ? e.regex : null,
                       }),
                     ),
@@ -197,17 +193,6 @@ function PolicyDialog({
                   onChange={(event) => patch(index, { name: event.target.value })}
                 />
               )}
-              <Select
-                label={m["my_redaction.form.mode"]()}
-                value={e.mode}
-                onChange={(event) => patch(index, { mode: event.target.value })}
-              >
-                {USER_MODES.map((mode) => (
-                  <option key={mode} value={mode}>
-                    {modeLabel(mode)}
-                  </option>
-                ))}
-              </Select>
             </div>
             {e.kind === "pattern" && (
               <Input
@@ -229,13 +214,13 @@ function PolicyDialog({
         <div>
           <Button
             onClick={() =>
-              setEntries([...entries, { kind: "mode", name: "", regex: "", mode: "redact" }])
+              setEntries([...entries, { kind: "mode", name: "", regex: "" }])
             }
           >
             {m["my_privacy.policy.add_entry"]()}
           </Button>
         </div>
-        <p className={`m-0 text-small ${MUTED}`}>{m["my_redaction.form.only_stricter"]()}</p>
+        <p className={`m-0 text-small ${MUTED}`}>{m["policy_fields.placeholder_note"]()}</p>
       </div>
     </Dialog>
   );
@@ -305,7 +290,7 @@ function MyPolicies() {
                 {p.entries.length === 0
                   ? m["my_privacy.policies.no_entries"]()
                   : p.entries
-                      .map((e) => `${e.kind === "mode" ? entityLabel(e.name) : e.name} · ${modeLabel(e.mode)}`)
+                      .map((e) => e.kind === "mode" ? entityLabel(e.name) : e.name)
                       .join(" · ")}
               </span>
               {p.used_by.length > 0 && (

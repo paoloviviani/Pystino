@@ -295,7 +295,7 @@ def test_0063_downgrade_refuses_while_an_alias_exists(tmp_path: Path) -> None:
     and it says so instead of deleting an operator's aliases to get there."""
     database = tmp_path / "downgrade.db"
     url = f"url=sqlite+aiosqlite:///{database}"
-    assert _alembic("-x", url, "upgrade", "head").returncode == 0
+    assert _alembic("-x", url, "upgrade", "0085").returncode == 0
 
     with closing(sqlite3.connect(database)) as connection:
         connection.execute(
@@ -383,7 +383,7 @@ def test_0066_downgrade_refuses_while_an_alias_has_several_targets(tmp_path: Pat
     refuses until the operator reduces each alias to one target."""
     database = tmp_path / "routing-down.db"
     url = f"url=sqlite+aiosqlite:///{database}"
-    assert _alembic("-x", url, "upgrade", "head").returncode == 0
+    assert _alembic("-x", url, "upgrade", "0085").returncode == 0
 
     with closing(sqlite3.connect(database)) as connection:
         _insert_provider(connection, "p1")

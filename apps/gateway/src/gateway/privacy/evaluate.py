@@ -1,28 +1,27 @@
-"""Judging one request against the rules of ONE pipeline (ADR 0113).
+"""Judging one request against the rules of ONE pipeline (ADR 0114).
 
-Stateless: the outcome is a function of the facts, the rules and the
-configuration, and nothing is remembered between requests (the verdict cache
-only saves time). First match wins within a pipeline; an observe-only rule that
-matches is recorded and the search goes on. The trace says, for every rule, why
-it did or did not apply, in the words the console shows an administrator.
-Combining the pipelines of a request is ``gateway.privacy.combine``'s job.
+Stateless: the outcome is a function of the facts, the rules and the configuration, and
+nothing is remembered between requests (the verdict cache only saves time). **Every rule
+is evaluated; there is no first match.** A rule's conditions combine with its ``match``
+(all or any), each can be negated, and all are judged on the original text. The trace says,
+for every rule, whether it matched and why, in the words the console shows an administrator.
+Combining the pipelines of a request, and claiming spans, are ``combine``'s and
+``redaction.http``'s jobs.
 
-Two things are deliberately not here: any I/O of its own (the caller supplies facts and
-a ``Judge`` that counts items and asks classifiers) and any action (the caller carries
-out ``Evaluation.fired``).
+Two things are deliberately not here: any I/O of its own (the caller supplies facts and a
+``Judge`` that counts items and asks classifiers) and any action.
 """
 
 from __future__ import annotations
 
 import enum
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from gateway.privacy.finds import Item, Judge
 from gateway.privacy.rules import (
     CONTENT_KEYS,
-    LADDER,
     Condition,
     Rule,
     glob_matches,
@@ -30,11 +29,10 @@ from gateway.privacy.rules import (
 
 
 class Undecidable(Exception):
-    """A condition that cannot be decided, on a rule where "treat it as a match" would fail open.
+    """A negated condition that cannot be decided, on a rule that protects.
 
-    Raised for a negated condition ("no health data -> pass") or a rule that adds
-    nothing: assuming the condition holds there would let the very text it exists
-    to catch through. The caller refuses (503) naming the rule (ADR 0113, section 4).
+    "Does not find any" cannot be assumed true or false: the text it exists to catch might
+    be there. The caller refuses (503) naming the rule (ADR 0113, section 4; ADR 0114).
     """
 
     def __init__(self, rule: Rule, why: str) -> None:
@@ -54,6 +52,7 @@ class State(enum.StrEnum):
 class Facts:
     """What Pystino observed in one request. Never logged as a whole."""
 
+    #: ``read`` or ``content``.
     kind: str
     user_id: str | None = None
     billing_group_id: str | None = None
@@ -67,6 +66,8 @@ class Facts:
     target_alias: str | None = None
     target_model: str | None = None
     target_provider: str | None = None
+    #: The model's own type (``chat``, ``embedding``, ``rerank``) for a content request.
+    model_type: str | None = None
     provider_id: str | None = None
     model_id: str | None = None
     #: The text the content conditions judge. Held in memory for the call only.
@@ -75,6 +76,11 @@ class Facts:
     texts: tuple[str, ...] = field(default=(), repr=False)
     #: Counts items and asks classifiers (one per request). None: no content side.
     judge: Judge | None = field(default=None, repr=False, compare=False)
+    #: The request path: a content rule with no condition that does not block applies without
+    #: counting what its policies find. Redaction finds the same spans anyway, and counting them
+    #: first would ask the redaction service twice per request. The Test tab leaves it False so
+    #: its trace says exactly whether each rule found something.
+    lazy_implicit: bool = False
 
     @property
     def inputs(self) -> tuple[str, ...]:
@@ -86,61 +92,30 @@ class Step:
     """What happened at one rule, for the log and the test endpoint."""
 
     rule: Rule
-    #: ``fired``, ``observed``, ``not_matched``, ``skipped_off``, ``not_reached``,
-    #: ``pending`` (needs a fact found while reading).
+    #: ``matched``, ``not_matched``, ``skipped_off`` or ``pending`` (needs a fact found while
+    #: reading).
     result: str
     reasons: list[str] = field(default_factory=list)
     #: A content condition could not be decided and the rule acted fail-closed.
     degraded: list[str] = field(default_factory=list)
-    #: Every item a "finds" condition of this rule counted, by policy name.
-    items: dict[str, list[Item]] = field(default_factory=dict)
+    #: Every item the rule's ``finds`` condition counted (a text a rule hides is the same).
+    items: list[Item] = field(default_factory=list)
 
 
 @dataclass(slots=True)
 class Evaluation:
     kind: str
-    fired: Rule | None = None
-    observed: list[Rule] = field(default_factory=list)
     steps: list[Step] = field(default_factory=list)
-    #: Facts the answer waits for ("scan"): the first matching-so-far rule needs them.
-    pending: str | None = None
-    #: The rule that is waiting for it.
+    #: The rules that matched, in order.
+    matched: list[Rule] = field(default_factory=list)
+    #: Some rule waits for a fact found while reading (a scan).
+    pending: bool = False
     pending_rule: Rule | None = None
     #: What the classifiers said, by name: labels only.
     verdicts: dict[str, Any] = field(default_factory=dict)
-    #: Distinct items each "finds" condition counted, by policy name: counts only.
+    #: Distinct items each rule's "finds" condition counted, by rule name: counts only.
     found: dict[str, int] = field(default_factory=dict)
     degraded: list[str] = field(default_factory=list)
-    #: How strict the strictest later enabled rule of the pipeline is (set while a rule is
-    #: judged): an undecided condition may stand in for a match only on a rule at least as
-    #: strict, or the rule would fire in place of a stricter one it was shadowing.
-    later_rules: tuple[Rule, ...] = ()
-
-
-def covers(rule: Rule, later: Sequence[Rule]) -> bool:
-    """Whether ``rule`` is at least as strict as every rule in ``later``.
-
-    Equal strictness on a rule that redacts counts only for the same policy: another policy
-    may redact more (or block), so the rule would shadow it."""
-    mine = strictness(rule)
-    for other in later:
-        theirs = strictness(other)
-        if mine < theirs:
-            return False
-        if (
-            mine == theirs
-            and mine[1]
-            and rule.action.get("redact_with") != other.action.get("redact_with")
-        ):
-            return False
-    return True
-
-
-def strictness(rule: Rule) -> tuple[int, bool]:
-    """Where an action sits on the ladder, and whether it also redacts."""
-    ladder = LADDER[rule.kind]
-    level = ladder.index(rule.level) if rule.level in ladder else 0
-    return level, bool(rule.action.get("redact_with"))
 
 
 _CHEAP_FIRST = ("filetype", "filename", "scan", "finds", "classified")
@@ -188,26 +163,40 @@ def _plural(n: int, word: str = "item") -> str:
     return f"{n} {word}" + ("" if n == 1 else "s")
 
 
+def _hiding(rule: Rule) -> dict[str, str]:
+    """The types a block rule overrides to something other than block or off."""
+    return {t: m for t, m in rule.overrides.items() if m not in ("block", "off")}
+
+
+def _splits(rule: Rule) -> bool:
+    """A content rule in mode block that also hides some types (judged in two parts)."""
+    return (
+        rule.kind == "content"
+        and rule.mode == "block"
+        and bool(rule.policies)
+        and bool(_hiding(rule))
+    )
+
+
 class Evaluator:
     """Evaluates rules against facts. Stateless: the judge and the facts are the whole input."""
 
     def _undecided(
-        self, condition: Condition, rule: Rule, degraded: list[str], why: str, ev: Evaluation
+        self, condition: Condition, rule: Rule, degraded: list[str], why: str
     ) -> tuple[State, str]:
         """What an undecidable condition counts as, so that it can only ever add protection.
 
-        A match on a protective rule whose condition is not negated (the rule then
-        acts). An observe-only rule takes no action, so it simply does not match.
-        Anything else (a negated condition, a rule that adds nothing) could let the
-        text through, so it is refused instead.
+        A rule that does not protect (``off``, ``detect_only``) simply does not match. A
+        rule that protects treats the condition as a match, unless it is negated: then the
+        request is refused (503), because "found nothing" cannot be assumed.
         """
-        if rule.observe_only:
+        if not rule.protective:
             degraded.append(f"{why}; not matched.")
             return State.FALSE, f"{why}; not matched."
-        if rule.protective and not condition.negate and covers(rule, ev.later_rules):
-            degraded.append(f"{why}; treated as a match.")
-            return State.TRUE, f"{why}; treated as a match."
-        raise Undecidable(rule, why)
+        if condition.negate:
+            raise Undecidable(rule, why)
+        degraded.append(f"{why}; treated as a match.")
+        return State.TRUE, f"{why}; treated as a match."
 
     async def _content(
         self,
@@ -216,49 +205,55 @@ class Evaluator:
         ev: Evaluation,
         degraded: list[str],
         rule: Rule,
-        step_items: dict[str, list[Item]],
+        step_items: list[Item],
     ) -> tuple[State, str]:
-        """ "<policy> finds at least N items" and "classified as <classifier>"."""
-        if facts.kind == "read":
+        """ "The rule's policies find at least N items" and "classified as <classifier>"."""
+        if facts.kind == "extract":
             # Reading decides from the file's facts, never its text. A stored row that still
-            # carries a content condition (it cannot be saved any more) is undecidable, so a
-            # protective rule acts and anything else is refused, never read as "found nothing".
+            # carries a content condition (it cannot be saved any more) is undecidable.
             return self._undecided(
-                condition, rule, degraded, "A reading rule cannot judge what the file says", ev
+                condition, rule, degraded, "An extract rule cannot judge what the file says"
             )
         judge = facts.judge
-        target = condition.values[0] if condition.values else ""
         if judge is None:
             return self._undecided(
-                condition, rule, degraded, "Nothing is available to judge the text", ev
+                condition, rule, degraded, "Nothing is available to judge the text"
             )
         texts = facts.inputs
         if condition.key == "finds":
-            name = judge.policy_name(target) or "a policy that no longer exists"
-            result = await judge.find(target, texts)
+            names = [
+                judge.policy_name(p) or "a policy that no longer exists" for p in rule.policies
+            ]
+            shown = " + ".join(names) or "the rule's policies"
+            # A type set to off is never counted. In a block rule only the types that block
+            # count towards the block; the ones overridden to a hiding mode are judged apart
+            # (``_hide_part``): the block is decided first, then hiding applies.
+            off_types = frozenset(
+                t.upper()
+                for t, m in rule.overrides.items()
+                if m == "off" or (rule.mode == "block" and m != "block")
+            )
+            result = await judge.find(rule.policies, texts, off_types)
             n = len(result.items)
-            ev.found[name] = max(ev.found.get(name, 0), n)
+            ev.found[rule.name] = max(ev.found.get(rule.name, 0), n)
             if result.items:
-                step_items[name] = list(result.items)
+                step_items.extend(i for i in result.items if i not in step_items)
             if result.incomplete and n < condition.count:
                 return self._undecided(
-                    condition, rule, degraded, "The text was too large to check in full", ev
+                    condition, rule, degraded, "The text was too large to check in full"
                 )
             if result.unavailable and n < condition.count:
                 # The count may be short, so "fewer than N" cannot be claimed.
                 return self._undecided(
-                    condition,
-                    rule,
-                    degraded,
-                    f"'{name}' cannot be checked ({result.unavailable})",
-                    ev,
+                    condition, rule, degraded, f"'{shown}' cannot be checked ({result.unavailable})"
                 )
             hit = n >= condition.count
             text = (
-                f"'{name}' finds {_plural(n)}"
+                f"'{shown}' finds {_plural(n)}"
                 f" ({'at least ' if hit else 'fewer than '}{condition.count} needed)."
             )
         else:
+            target = condition.values[0] if condition.values else ""
             name = judge.classifier_name(target) or "a classifier that no longer exists"
             verdict = await judge.classify(target, texts)
             ev.verdicts[name] = verdict.positive
@@ -270,7 +265,7 @@ class Evaluator:
                     if verdict.unavailable
                     else "The text was too large to classify in full"
                 )
-                return self._undecided(condition, rule, degraded, why, ev)
+                return self._undecided(condition, rule, degraded, why)
             else:
                 hit = False
             text = f"The text {'is' if hit else 'is not'} classified as '{name}'."
@@ -278,61 +273,145 @@ class Evaluator:
             return State.TRUE, text
         return State.FALSE, text
 
-    async def evaluate(
-        self, rules: Sequence[Rule], facts: Facts, otherwise: Rule | None = None
-    ) -> Evaluation:
+    async def evaluate(self, rules: Sequence[Rule], facts: Facts) -> Evaluation:
         ev = Evaluation(kind=facts.kind)
         for rule in sorted(rules, key=lambda r: r.position):
-            if ev.fired is not None:
-                ev.steps.append(Step(rule, "not_reached", ["An earlier rule already applied."]))
-                continue
             if not rule.enabled:
                 ev.steps.append(Step(rule, "skipped_off", ["The rule is off."]))
                 continue
+            if (
+                facts.lazy_implicit
+                and rule.kind == "content"
+                and not rule.conditions
+                and not rule.blocks_all
+            ):
+                note = "No condition: it applies wherever its policies find something."
+                ev.matched.append(rule)
+                ev.steps.append(Step(rule, "matched", [note]))
+                continue
             reasons: list[str] = []
             degraded: list[str] = []
-            items: dict[str, list[Item]] = {}
-            unknown = False
-            matched = True
-            # The "Everything else" rule is always last and always enabled.
-            ev.later_rules = tuple(
-                later
-                for later in (*rules, *([otherwise] if otherwise is not None else []))
-                if later.position > rule.position and later.enabled and not later.observe_only
-            )
-            for condition in _ordered(rule.conditions):
+            items: list[Item] = []
+            states: list[State] = []
+            judged: dict[Condition, tuple[State, str]] = {}
+            every = rule.match == "all"
+            for condition in _ordered(rule.effective_conditions):
                 state, why = await self._condition(condition, facts, ev, degraded, rule, items)
+                judged[condition] = (state, why)
                 reasons.append(why)
-                if state is State.FALSE:
-                    matched = False
+                states.append(state)
+                if (every and state is State.FALSE) or (not every and state is State.TRUE):
                     break
-                if state is State.UNKNOWN:
-                    unknown = True
-            if not matched:
+            if not states:
+                verdict = State.TRUE  # no condition: nothing can fail (a no-policy block)
+            elif every:
+                verdict = (
+                    State.FALSE
+                    if State.FALSE in states
+                    else State.UNKNOWN
+                    if State.UNKNOWN in states
+                    else State.TRUE
+                )
+            else:
+                verdict = (
+                    State.TRUE
+                    if State.TRUE in states
+                    else State.UNKNOWN
+                    if State.UNKNOWN in states
+                    else State.FALSE
+                )
+            if verdict is State.FALSE and _splits(rule):
+                # The block part did not fire. The types the rule only hides are still hidden
+                # by it: the block part and the hide part are judged separately.
+                hide, hide_why = await self._hide_part(rule, facts, ev, judged, items, degraded)
+                if hide is State.TRUE:
+                    ev.matched.append(replace(rule, mode="off", overrides=_hiding(rule)))
+                    ev.degraded.extend(m for m in degraded if m not in ev.degraded)
+                    note = "Block part: not triggered. Hide part: " + hide_why
+                    ev.steps.append(Step(rule, "matched", [*reasons[-1:], note], degraded, items))
+                elif hide is State.UNKNOWN:
+                    ev.steps.append(Step(rule, "pending", [*reasons, hide_why]))
+                    if ev.pending_rule is None:
+                        ev.pending, ev.pending_rule = True, rule
+                else:
+                    ev.steps.append(
+                        Step(rule, "not_matched", [*reasons[-1:], hide_why], items=items)
+                    )
+            elif verdict is State.FALSE:
                 ev.steps.append(Step(rule, "not_matched", reasons[-1:], items=items))
-                continue
-            if unknown:
+            elif verdict is State.UNKNOWN:
                 ev.steps.append(Step(rule, "pending", reasons))
-                if not rule.observe_only:
-                    # Rules after this one cannot be judged until the fact is known.
-                    ev.pending = "scan"
-                    ev.pending_rule = rule
-                    for later in sorted(rules, key=lambda r: r.position):
-                        if later.position > rule.position:
-                            ev.steps.append(
-                                Step(later, "not_reached", ["Waiting for the file to be read."])
-                            )
-                    return ev
-                continue
-            if rule.observe_only:
-                ev.observed.append(rule)
+                if ev.pending_rule is None and rule.protective:
+                    ev.pending, ev.pending_rule = True, rule
+            else:
+                ev.matched.append(rule)
                 ev.degraded.extend(m for m in degraded if m not in ev.degraded)
-                ev.steps.append(Step(rule, "observed", reasons, degraded, items))
-                continue
-            ev.fired = rule
-            ev.degraded.extend(m for m in degraded if m not in ev.degraded)
-            ev.steps.append(Step(rule, "fired", reasons, degraded, items))
+                ev.steps.append(Step(rule, "matched", reasons, degraded, items))
         return ev
+
+    async def _hide_part(
+        self,
+        rule: Rule,
+        facts: Facts,
+        ev: Evaluation,
+        judged: dict[Condition, tuple[State, str]],
+        items: list[Item],
+        degraded: list[str],
+    ) -> tuple[State, str]:
+        """Whether a block rule that did not block still hides its overridden types.
+
+        Its non-``finds`` conditions must hold (under the rule's all/any; none holds
+        vacuously). Without an explicit ``finds`` at least one of those types must be found;
+        a count that cannot be made counts as found, so that this can only add protection.
+        """
+        hidden = _hiding(rule)
+        others = [c for c in rule.effective_conditions if c.key != "finds"]
+        every = rule.match == "all"
+        states: list[State] = []
+        for condition in _ordered(others):
+            held = judged.get(condition)
+            if held is None:
+                held = await self._condition(condition, facts, ev, degraded, rule, items)
+            states.append(held[0])
+        if not states:
+            verdict = State.TRUE
+        elif every:
+            verdict = (
+                State.FALSE
+                if State.FALSE in states
+                else State.UNKNOWN
+                if State.UNKNOWN in states
+                else State.TRUE
+            )
+        else:
+            verdict = (
+                State.TRUE
+                if State.TRUE in states
+                else State.UNKNOWN
+                if State.UNKNOWN in states
+                else State.FALSE
+            )
+        shown = ", ".join(f"{t} ({m})" for t, m in hidden.items())
+        if verdict is State.FALSE:
+            return verdict, f"the rule's other conditions do not hold; {shown} not hidden."
+        if verdict is State.UNKNOWN:
+            return verdict, "waiting for the file to be read."
+        explicit = any(c.key == "finds" for c in rule.conditions)
+        judge = facts.judge
+        if explicit or facts.lazy_implicit or judge is None or facts.kind == "extract":
+            # Redaction finds the same spans anyway: hiding nothing found is harmless.
+            return State.TRUE, f"{shown} hidden where found."
+        off = frozenset(t.upper() for t, m in rule.overrides.items() if m == "off")
+        result = await judge.find(rule.policies, facts.inputs, off)
+        wanted = {t.upper() for t in hidden}
+        seen = [i for i in result.items if i.type.upper() in wanted]
+        items.extend(i for i in seen if i not in items)
+        if seen:
+            return State.TRUE, f"{shown} found and hidden."
+        if result.incomplete or result.unavailable:
+            degraded.append("Whether those types are present cannot be checked; hidden anyway.")
+            return State.TRUE, f"{shown} could not be checked; hidden where found."
+        return State.FALSE, f"none of {', '.join(hidden)} found; nothing to hide."
 
     async def _condition(
         self,
@@ -341,11 +420,11 @@ class Evaluator:
         ev: Evaluation,
         degraded: list[str],
         rule: Rule,
-        items: dict[str, list[Item]],
+        items: list[Item],
     ) -> tuple[State, str]:
-        # A rule that protects (refuses, reads elsewhere, redacts) is protective
-        # for a file whose name or type is unknown: it matches rather than miss.
-        closed = rule.kind == "read" and rule.protective
+        # A rule that protects (blocks, reads elsewhere, hides) is protective for a file whose
+        # name or type is unknown: it matches rather than miss.
+        closed = rule.kind == "extract" and rule.protective
         if condition.key == "scan":
             return _scan(condition, facts)
         if condition.key == "filetype":

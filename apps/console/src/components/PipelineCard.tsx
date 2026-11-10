@@ -2,13 +2,13 @@ import { Badge, Button, Card, Switch, buttonClasses } from "@llmp/ui";
 import { Link } from "react-router";
 
 import { MUTED } from "../lib/layout";
-import { actionPhrase, issueBadges, ruleSentence, scopeWords } from "../lib/privacy";
+import { issueBadges, ruleSentence, scopeWords } from "../lib/privacy";
 import type { PrivacyKind, PrivacyPipeline } from "../lib/types";
 import { m } from "../paraglide/messages.js";
 
 /**
- * One pipeline as a card: its name and scope, then its rules as sentences, the
- * fixed last rule last. The list is the model, so it has to read aloud.
+ * One pipeline as a card: its name and scope, then its rules as sentences
+ * ("When policies + conditions -> mode"). The list is the model, so it has to read aloud.
  */
 export function PipelineCard({
   pipeline,
@@ -33,9 +33,7 @@ export function PipelineCard({
 }) {
   const kind = pipeline.kind as PrivacyKind;
   const [who, target] = scopeWords(pipeline, own);
-  const flags = [...pipeline.rules, pipeline.otherwise].map(issueBadges);
-  const warn =
-    flags.some((f) => f.never || f.partly || f.check) || pipeline.rules.some((r) => r.note);
+  const warn = pipeline.rules.map(issueBadges).some((f) => f.check) || pipeline.rules.some((r) => r.note);
   return (
     <Card>
       <div className="flex flex-col gap-3">
@@ -113,16 +111,6 @@ export function PipelineCard({
               </span>
             </li>
           ))}
-          <li className="flex gap-2">
-            <span className={`w-5 shrink-0 text-right text-small ${MUTED}`} aria-hidden="true">
-              ∗
-            </span>
-            <span>
-              {m["privacy.phrase.else"]({
-                action: actionPhrase(kind, pipeline.otherwise.action, pipeline.labels),
-              })}
-            </span>
-          </li>
         </ol>
       </div>
     </Card>

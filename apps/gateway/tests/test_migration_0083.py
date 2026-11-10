@@ -5,7 +5,7 @@ Pins what the conversion writes, on SQLite: policies in the two-group shape with
 deployment-default engine, profiles gone, the removed conditions converted and never dropped
 silently (``ids`` to a "finds" condition on a detect-only policy; ``health`` and ``lang`` to a
 rule that is kept, switched off, with a note), and the policies users already apply shared.
-The byte-for-byte proof for requests is ``test_privacy_migration_contract.py``.
+Requests after the conversion are exercised through ``privacy_helpers.py``.
 """
 
 from __future__ import annotations

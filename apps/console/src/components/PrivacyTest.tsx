@@ -4,14 +4,13 @@ import { useState } from "react";
 import { CODE, FIELD_LABEL, FORM, MUTED, TEXTAREA } from "../lib/layout";
 import {
   KINDS,
-  baseLevel,
   kindLabel,
-  levelLabel,
+  ruleModeLabel,
   usePrivacyOptions,
   usePrivacyTest,
   type Area,
 } from "../lib/privacy";
-import { entityLabel, modeLabel } from "../lib/entities";
+import { entityLabel } from "../lib/entities";
 import type { PrivacyKind, PrivacyTestInput, PrivacyTestResult } from "../lib/types";
 import { m } from "../paraglide/messages.js";
 import { Tip } from "./Tip";
@@ -19,9 +18,9 @@ import { Tip } from "./Tip";
 /**
  * The test box (ADR 0113): the real path over facts you give it, no side effects.
  *
- * Shows every pipeline in scope with the rule that fired, the reroute hops, the
- * ladder with its winner, who chose the reader and the engine, and the policies
- * added up with the strictest mode and where it came from. An administrator picks
+ * Shows every pipeline in scope and every rule of it (matched or not, with the items it
+ * found), the reroute hops, who chose the extractor, and which rule claimed which piece of
+ * text (the first rule to hide a piece decides how). An administrator picks
  * the user; a user's box is locked to themselves. The text and the file are never
  * stored or logged.
  */
@@ -35,17 +34,15 @@ function ownerBadge(owner: string) {
 }
 
 const STEP_MARK: Record<string, string> = {
-  fired: "✓",
-  observed: "○",
+  matched: "✓",
   not_matched: "×",
   skipped_off: "–",
-  not_reached: "–",
   pending: "…",
 };
 
 export function TestResult({ result }: { result: PrivacyTestResult }) {
   const tone =
-    result.outcome === "refuse" ? "danger" : result.outcome === "pass" ? "ok" : "warn";
+    result.outcome === "block" ? "danger" : result.outcome === "pass" ? "ok" : "warn";
   const kind = result.kind as PrivacyKind;
   return (
     <div className="flex flex-col gap-4" data-testid="test-result">
@@ -80,13 +77,16 @@ export function TestResult({ result }: { result: PrivacyTestResult }) {
                     <span aria-hidden="true" className="w-4">
                       {STEP_MARK[s.result] ?? "·"}
                     </span>
-                    <span className={s.result === "fired" ? "font-semibold" : MUTED}>
-                      {s.is_otherwise ? m["privacy.edit.else"]() : s.name}
-                      {s.result === "fired" && ` · ${m["privacy.test.fired_mark"]()}`}
-                      {s.result === "observed" && ` · ${m["privacy.test.observed_mark"]()}`}
-                      {s.result === "not_reached" && ` · ${m["privacy.test.not_reached"]()}`}
+                    <span className={s.result === "matched" ? "font-semibold" : MUTED}>
+                      {s.name}
+                      {s.result === "matched" && ` · ${m["privacy.test.fired_mark"]()}`}
                       {s.result === "pending" && ` · ${m["privacy.test.pending"]()}`}
-                      {s.reasons.length > 0 && s.result === "fired" && (
+                      {s.policies.length > 0 && (
+                        <span className={`block text-small font-normal ${MUTED}`}>
+                          {s.policies.join(" + ")} → {ruleModeLabel(s.mode)}
+                        </span>
+                      )}
+                      {s.reasons.length > 0 && s.result === "matched" && (
                         <span className={`block text-small font-normal ${MUTED}`}>
                           {/* i18n: server text, the gateway's own reasons. */}
                           {s.reasons.join(" ")}
@@ -134,9 +134,6 @@ export function TestResult({ result }: { result: PrivacyTestResult }) {
                   </li>
                 ))}
               </ul>
-              <p className={`m-0 text-small ${MUTED}`}>
-                {m["privacy.test.result"]()} <strong>{p.action_text}</strong>
-              </p>
             </div>
           </Card>
         ))}
@@ -189,48 +186,13 @@ export function TestResult({ result }: { result: PrivacyTestResult }) {
         </Notice>
       ))}
 
-      <section className="flex flex-col gap-2" aria-label={m["privacy.test.ladder"]()}>
-        <h2 className="m-0 flex items-center gap-2 text-heading font-semibold">
-          {m["privacy.test.ladder"]()}
-          <Tip text={m["privacy.test.ladder_tip"]()} />
-        </h2>
-        <div className="flex flex-wrap items-stretch gap-2">
-          {result.ladder.map((l, index) => (
-            <div key={l.level} className="flex items-center gap-2">
-              {index > 0 && (
-                <span aria-hidden="true" className={MUTED}>
-                  &lt;
-                </span>
-              )}
-              <div
-                className={`rounded-lg border px-3 py-2 ${
-                  l.winning
-                    ? l.level === "refuse"
-                      ? "border-danger bg-sunken"
-                      : "border-accent bg-sunken"
-                    : "border-line"
-                }`}
-                aria-current={l.winning ? "true" : undefined}
-              >
-                <strong>{l.label}</strong>
-                <span className={`block text-small ${MUTED}`}>
-                  {l.winning
-                    ? result.winner_rule
-                      ? m["privacy.test.wins_by"]({
-                          rule: `${result.winner_pipeline ?? ""} › ${result.winner_rule}`,
-                        })
-                      : m["privacy.test.wins_base"]()
-                    : l.asked_by.length > 0
-                      ? m["privacy.test.asked_by"]({ names: l.asked_by.join(", ") })
-                      : ""}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+      {result.winner_rule && (
+        <p className={`m-0 text-body ${MUTED}`}>
+          {m["privacy.test.wins_by"]({ rule: `${result.winner_pipeline ?? ""} › ${result.winner_rule}` })}
+        </p>
+      )}
 
-      {kind === "read" && (
+      {kind === "extract" && (
         <section className="flex flex-col gap-1" aria-label={m["privacy.test.reader"]()}>
           <h2 className="m-0 text-heading font-semibold">{m["privacy.test.reader"]()}</h2>
           <Card>
@@ -242,7 +204,7 @@ export function TestResult({ result }: { result: PrivacyTestResult }) {
                 </span>
               ) : (
                 <span className={MUTED}>
-                  {result.level === "refuse"
+                  {result.level === "block"
                     ? m["privacy.test.reader_refused"]()
                     : m["privacy.test.reader_default"]()}
                 </span>
@@ -263,45 +225,34 @@ export function TestResult({ result }: { result: PrivacyTestResult }) {
           {m["privacy.test.policies"]()}
           <Tip text={m["privacy.test.policies_tip"]()} />
         </h2>
-        {result.level === "refuse" ? (
+        {result.level === "block" && result.blocked_by === null ? (
           <p className={`m-0 ${MUTED}`}>{m["privacy.test.not_applied_refused"]()}</p>
-        ) : result.policies.length === 0 ? (
+        ) : result.claims.length === 0 ? (
           <p className={`m-0 ${MUTED}`}>{m["privacy.test.no_policy"]()}</p>
         ) : (
-          <>
-            <p className={`m-0 text-small ${MUTED}`}>
-              {m["privacy.test.policies_from"]({ names: result.policies.join(" + ") })}
-            </p>
-            <table className="w-full text-left text-body">
-              <thead>
-                <tr className={`text-small ${MUTED}`}>
-                  <th scope="col">{m["privacy.test.col_type"]()}</th>
-                  <th scope="col">{m["privacy.test.col_strictest"]()}</th>
-                  <th scope="col">{m["privacy.test.col_from"]()}</th>
-                  {result.policy_types.some((t) => t.found !== null) && (
-                    <th scope="col">{m["privacy.test.col_found"]()}</th>
-                  )}
+          <table className="w-full text-left text-body">
+            <thead>
+              <tr className={`text-small ${MUTED}`}>
+                <th scope="col">{m["privacy.test.col_type"]()}</th>
+                <th scope="col">{m["privacy.test.col_strictest"]()}</th>
+                <th scope="col">{m["privacy.test.col_from"]()}</th>
+                <th scope="col">{m["privacy.test.col_found"]()}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.claims.map((c, at) => (
+                <tr key={at}>
+                  <td>{entityLabel(c.type)}</td>
+                  <td>{ruleModeLabel(c.mode)}</td>
+                  <td>
+                    {/* i18n: server text, the pipeline's and rule's own names. */}
+                    {c.pipeline} › {c.rule}
+                  </td>
+                  <td>{c.text !== null ? <code className={CODE}>{c.text}</code> : "–"}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {result.policy_types.map((t) => (
-                  <tr key={t.entity_type}>
-                    <td>{entityLabel(t.entity_type)}</td>
-                    <td>{modeLabel(t.mode as never)}</td>
-                    <td>
-                      {t.source}
-                      {t.per_policy.length > 1 && (
-                        <span className={`text-small ${MUTED}`}> ({t.per_policy.join("; ")})</span>
-                      )}
-                    </td>
-                    {result.policy_types.some((x) => x.found !== null) && (
-                      <td>{t.found === null ? "" : t.found ? <strong>{m["privacy.test.found"]()}</strong> : "–"}</td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
+              ))}
+            </tbody>
+          </table>
         )}
       </section>
       {result.degraded.length > 0 && (
@@ -314,9 +265,6 @@ export function TestResult({ result }: { result: PrivacyTestResult }) {
           </ul>
         </Notice>
       )}
-      <p className={`m-0 text-small ${MUTED}`}>
-        {m["privacy.test.base_level"]({ level: levelLabel(baseLevel(kind)) })}
-      </p>
     </div>
   );
 }
@@ -325,7 +273,7 @@ export function PrivacyTestBox({ area }: { area: Area }) {
   const own = area === "me";
   const options = usePrivacyOptions(area);
   const test = usePrivacyTest(area);
-  const [kind, setKind] = useState<PrivacyKind>("embed");
+  const [kind, setKind] = useState<PrivacyKind>("content");
   const [userId, setUserId] = useState("");
   const [modelId, setModelId] = useState("");
   const [filename, setFilename] = useState("");
@@ -333,18 +281,16 @@ export function PrivacyTestBox({ area }: { area: Area }) {
   const [text, setText] = useState("");
   const opts = options.data;
   const models = (opts?.models ?? []).filter((x) =>
-    kind === "read"
+    kind === "extract"
       ? x.kind === "ocr"
-      : kind === "embed"
-        ? x.kind === "embedding" || x.kind === "rerank"
-        : x.kind === "chat",
+      : x.kind === "chat" || x.kind === "embedding" || x.kind === "rerank",
   );
   const run = () => {
     const body: PrivacyTestInput = {
       kind,
       ...(userId && !own ? { user_id: userId } : {}),
       ...(modelId ? { model_id: modelId } : {}),
-      ...(kind === "read"
+      ...(kind === "extract"
         ? {
             filename: filename || null,
             is_scan: scan === "unknown" ? null : scan === "yes",
@@ -415,7 +361,7 @@ export function PrivacyTestBox({ area }: { area: Area }) {
               </Select>
             </div>
           </div>
-          {kind === "read" ? (
+          {kind === "extract" ? (
             <div className="flex flex-wrap items-end gap-4">
               <div className="min-w-[14rem] flex-1">
                 <label className={FIELD_LABEL} htmlFor="test-file-name">

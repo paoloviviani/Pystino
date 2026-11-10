@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Protocol
 
 from llmp_shared import EntitySpan, normalise_entity
@@ -58,6 +58,8 @@ class Item:
     score: float | None
     #: The text found. In memory only; shown to an administrator testing, never logged.
     value: str = field(repr=False, default="")
+    #: The name of the policy that found it (set when a rule counts, for the trace).
+    policy: str = ""
 
 
 @dataclass(slots=True)
@@ -89,7 +91,12 @@ class Judge(Protocol):
 
     def classifier_name(self, classifier_id: str) -> str | None: ...
 
-    async def find(self, policy_id: str, texts: Sequence[str]) -> FindResult: ...
+    async def find(
+        self,
+        policy_ids: Sequence[str],
+        texts: Sequence[str],
+        exclude: frozenset[str] = frozenset(),
+    ) -> FindResult: ...
 
     async def classify(self, classifier_id: str, texts: Sequence[str]) -> Verdict: ...
 
@@ -245,6 +252,7 @@ class ContentJudge:
         self._threshold = default_threshold
         self._backend = backend
         self._found: dict[tuple[str, tuple[str, ...]], FindResult] = {}
+        self._combined: dict[tuple[Any, ...], FindResult] = {}
         self._verdicts: dict[tuple[str, tuple[str, ...]], Verdict] = {}
 
     def policy_name(self, policy_id: str) -> str | None:
@@ -255,7 +263,7 @@ class ContentJudge:
         found = self._classifiers.get(classifier_id)
         return getattr(found, "name", None)
 
-    async def find(self, policy_id: str, texts: Sequence[str]) -> FindResult:
+    async def _find_one(self, policy_id: str, texts: Sequence[str]) -> FindResult:
         key = (policy_id, tuple(texts))
         if key in self._found:
             return self._found[key]
@@ -266,8 +274,42 @@ class ContentJudge:
             result = await find_in(
                 entry[1], texts, redactor=self._redactor, default_threshold=self._threshold
             )
+            result.items = tuple(replace(i, policy=entry[0]) for i in result.items)
         self._found[key] = result
         return result
+
+    async def find(
+        self,
+        policy_ids: Sequence[str],
+        texts: Sequence[str],
+        exclude: frozenset[str] = frozenset(),
+    ) -> FindResult:
+        """The distinct items the rule's own policies find, combined (ADR 0114).
+
+        Each policy is run once per request (its answer is remembered), and the union is
+        counted by (type, normalised value): two policies finding one name are one item.
+        """
+        ids = tuple(policy_ids)
+        key = (ids, tuple(texts), exclude)
+        held = self._combined.get(key)
+        if held is not None:
+            return held
+        merged = FindResult()
+        seen: dict[tuple[str, str], Item] = {}
+        problems: list[str] = []
+        for pid in ids:
+            one = await self._find_one(pid, texts)
+            merged.incomplete = merged.incomplete or one.incomplete
+            if one.unavailable and one.unavailable not in problems:
+                problems.append(one.unavailable)
+            for item in one.items:
+                if item.type.upper() in exclude:
+                    continue  # a type the rule's override sets to off is not counted
+                seen.setdefault((item.type, normalise_entity(item.type, item.value)), item)
+        merged.items = tuple(seen.values())
+        merged.unavailable = "; ".join(problems) or None
+        self._combined[key] = merged
+        return merged
 
     async def classify(self, classifier_id: str, texts: Sequence[str]) -> Verdict:
         key = (classifier_id, tuple(texts))

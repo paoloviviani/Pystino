@@ -1,10 +1,10 @@
 """``/api/admin/privacy``: pipelines, policies, classifiers and the test box (ADR 0113).
 
-Two objects, one job each. A **policy** is what to find and what to do about it
-(patterns, entity types, a mode for each; see section 0c) and has no scope.
-A **pipeline** is when and how: a kind (read, embed, chat), a scope (who, which
-target), an ordered list of rules where the first match wins, and a fixed last rule.
-Every pipeline in scope runs and the results combine (``gateway.privacy.combine``).
+Two objects, one job each. A **policy** is what to look for (patterns, entity types,
+detection settings; no mode, see ADR 0114) and has no scope. A **pipeline** is when and
+how: a kind (extract or content), a scope (who, which target, a model type) and an ordered
+list of rules "When policies + conditions -> mode". Every rule of every pipeline in scope
+is evaluated (``gateway.privacy.combine``).
 
 Everything an administrator changes is audited like any other admin change, in
 the same transaction as the change. After a write the worker that served it
@@ -28,7 +28,7 @@ from fastapi import APIRouter, Request, status
 from sqlalchemy import func, select
 
 from gateway.admin_audit import record_audit
-from gateway.config import EntityMode, RedactionPolicy
+from gateway.config import EntityMode, PolicyDefinition
 from gateway.deps import (
     AdminUserDep,
     ControlHttpDep,
@@ -59,7 +59,6 @@ from gateway.privacy.engines import (
 )
 from gateway.privacy.pipelines import Pipeline, pipeline_from_row, validate_pipeline
 from gateway.privacy.schemas import (
-    ActionBody,
     ChatModelOption,
     ClassifierCreateRequest,
     ClassifierListResponse,
@@ -240,7 +239,6 @@ async def _clean(
     who: Any,
     target: Any,
     rules: list[dict[str, Any]],
-    otherwise: dict[str, Any] | None,
 ) -> dict[str, Any]:
     context = await service.validation_context(session, owner=None)
     try:
@@ -250,8 +248,6 @@ async def _clean(
             who,
             target,
             rules,
-            otherwise,
-            finds_policy_ids=context.finds_policy_ids,
             classifier_ids=context.classifier_ids,
             policy_ids=context.policy_ids,
             readers=context.readers,
@@ -293,10 +289,6 @@ async def get_pipeline(
     return await _response(session, await _load(session, pipeline_id), request)
 
 
-def _other_action(payload: ActionBody | None) -> dict[str, Any] | None:
-    return payload.clean() if payload is not None else None
-
-
 @router.post("/pipelines", response_model=PipelineResponse, status_code=status.HTTP_201_CREATED)
 async def create_pipeline(
     payload: PipelineCreateRequest, admin: AdminUserDep, session: SessionDep, request: Request
@@ -308,7 +300,6 @@ async def create_pipeline(
         who=payload.who.model_dump(mode="json"),
         target=payload.target.model_dump(mode="json"),
         rules=[r.clean() for r in payload.rules],
-        otherwise=_other_action(payload.otherwise),
     )
     siblings = await _admin_rows(session, payload.kind)
     if any(r.name.lower() == clean["name"].lower() for r in siblings):
@@ -323,7 +314,6 @@ async def create_pipeline(
         who=clean["who"],
         target=clean["target"],
         rules=clean["rules"],
-        otherwise=clean["otherwise"],
         created_by=admin.id,
     )
     session.add(row)
@@ -368,11 +358,6 @@ async def update_pipeline(
             if payload.rules is not None
             else [dict(r) for r in row.rules or []]
         ),
-        otherwise=(
-            _other_action(payload.otherwise)
-            if payload.otherwise is not None
-            else dict(row.otherwise or {})
-        ),
     )
     if clean["name"].lower() != row.name.lower():
         taken = [r for r in await _admin_rows(session, row.kind) if r.id != row.id]
@@ -382,7 +367,6 @@ async def update_pipeline(
     row.who = clean["who"]
     row.target = clean["target"]
     row.rules = clean["rules"]
-    row.otherwise = clean["otherwise"]
     if payload.enabled is not None:
         row.enabled = payload.enabled
     record_audit(
@@ -468,7 +452,6 @@ async def check_pipeline(
             who=payload.who.model_dump(mode="json"),
             target=payload.target.model_dump(mode="json"),
             rules=[r.clean() for r in payload.rules],
-            otherwise=_other_action(payload.otherwise),
         )
     except UnprocessableError as exc:
         return PipelineCheckResponse(error=exc.message, issues=[], soft_cap=rulelib.SOFT_CAP)
@@ -496,7 +479,6 @@ def _draft(kind: str, clean: dict[str, Any], enabled: bool) -> Pipeline:
         who=clean["who"],
         target=clean["target"],
         rules=clean["rules"],
-        otherwise=clean["otherwise"],
     )
     return pipeline_from_row(row)
 
@@ -510,14 +492,10 @@ async def _used_by(session: SessionDep) -> dict[str, list[str]]:
     for row in (await session.execute(select(PrivacyPipeline))).scalars().all():
         name = row.name if row.owner_id is None else f"{row.name} (user)"
         rules = list(row.rules or [])
-        ids = {
-            str(a["redact_with"])
-            for a in [dict(r.get("action") or {}) for r in rules] + [dict(row.otherwise or {})]
-            if a.get("redact_with")
-        }
+        ids = {str(p) for r in rules for p in r.get("policies") or []}
         for rule in rules:
             for condition in rule.get("conditions") or []:
-                if condition.get("key") in rulelib.CONTENT_KEYS and condition.get("values"):
+                if condition.get("key") == "classified" and condition.get("values"):
                     ids.add(str(condition["values"][0]))
         for ident in ids:
             used.setdefault(ident, []).append(name)
@@ -534,7 +512,7 @@ def _policy_response(
     # A stored policy that no longer parses is not replaced with an empty one
     # here: the listing is where an operator would find out the state is
     # ignoring it, so it must raise rather than lie.
-    policy = RedactionPolicy.model_validate(row.policy or {})
+    policy = PolicyDefinition.from_stored(row.policy or {})
     available: bool | None = None
     if engines is not None and engines.reachable and policy.engine is not None:
         available = engine_problem(engines, policy.engine, False) is None
@@ -629,15 +607,11 @@ def _check_engine(policy: Any, engines: EnginesResponse) -> None:
         # spaCy recogniser's label map, never by a pattern) may stay in a policy as
         # long as it is off: kept and visible, never silently dropped, and not asked.
         known = {e.upper() for e in engines.pattern_entities}
-        unknown = sorted(
-            name
-            for name, entry in policy.formats.items()
-            if name not in known and entry.mode is not EntityMode.OFF
-        )
+        unknown = sorted(name for name in policy.formats if name not in known)
         if unknown:
             raise UnprocessableError(
                 f"The redaction service has no built-in format: {', '.join(unknown)}. "
-                "Set it to Off to keep it in the policy, or remove it."
+                "Remove it from the policy."
             )
 
 
@@ -847,7 +821,7 @@ async def update_policy(
         if payload.is_active and not row.is_active:
             # Turning a policy on checks it against what the service offers now: it was saved
             # against what it offered then.
-            _check_engine(RedactionPolicy.model_validate(row.policy or {}), report)
+            _check_engine(PolicyDefinition.from_stored(row.policy or {}), report)
             # Turning a policy on brings its custom types in with the others'.
             await _check_label_budget(session, dict(row.policy or {}), report, ignore=row.id)
         elif payload.is_active and payload.policy is not None:
@@ -932,7 +906,8 @@ async def try_policy(
     if limiter is not None and not limiter.allow(("privacy-test", str(admin.id))):
         raise BadRequestError("Slow down: the test box is limited to 30 runs a minute.")
     redactor = getattr(request.app.state, "redactor", None)
-    policy = payload.policy
+    # A policy only says what to look for: every item is stamped ``redact`` for the preview.
+    policy = payload.policy.stamp(EntityMode.REDACT)
     result = await find_in(
         policy,
         [payload.text],
@@ -940,20 +915,12 @@ async def try_policy(
         default_threshold=settings.redaction.score_threshold,
     )
     items = [
-        FoundItem(
-            group=i.group,
-            type=i.type,
-            engine=i.engine,
-            score=i.score,
-            mode=policy.mode_for(i.type).value,
-            text=i.value,
-        )
+        FoundItem(group=i.group, type=i.type, engine=i.engine, score=i.score, text=i.value)
         for i in result.items
     ]
     redacted: str | None = None
     blocked = False
     if policy.is_active() and result.unavailable is None:
-        # The same spans the redaction would act on: detect_only items are left alone.
         detect = getattr(redactor, "detect", None)
         spans = []
         if detect is not None and getattr(redactor, "name", "noop") != "noop":

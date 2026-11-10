@@ -7,31 +7,32 @@ import type { PrivacyPipeline } from "../lib/types";
 import { jsonResponse } from "../test-helpers";
 import { AdminPrivacy } from "./AdminPrivacy";
 
-/** The Pipelines tab: pipelines by kind, each with its scope, its rules as sentences and the fixed last rule. */
+/** The Pipelines tab: pipelines by kind, each with its scope and its rules as sentences. */
 
-function action(level: string, extra: Record<string, unknown> = {}) {
-  return { level, reader: null, redact_with: null, ...extra };
+function rule(over: Record<string, unknown>) {
+  return {
+    enabled: true,
+    note: null,
+    policies: [],
+    match: "all",
+    conditions: [],
+    mode: "off",
+    overrides: {},
+    action: null,
+    issues: [],
+    ...over,
+  };
 }
 
 function pipeline(overrides: Partial<PrivacyPipeline> & { id: string; name: string }): PrivacyPipeline {
   return {
     owner_id: null,
-    kind: "embed",
+    kind: "content",
     enabled: true,
     position: 0,
     who: { mode: "all", ids: [] },
-    target: { mode: "all", providers: [], models: [] },
+    target: { mode: "all", providers: [], models: [], model_types: [] },
     rules: [],
-    otherwise: {
-      id: "else",
-      name: "Everything else",
-      enabled: true,
-      observe_only: false,
-      note: null,
-      conditions: [],
-      action: action("pass"),
-      issues: [],
-    },
     labels: {},
     summary: [],
     created_at: "2026-11-08T10:00:00Z",
@@ -44,59 +45,34 @@ const REMOTE = pipeline({
   id: "p1",
   name: "Remote embeddings",
   who: { mode: "groups", ids: ["g1"] },
-  target: { mode: "only", providers: ["pv1"], models: [] },
+  target: { mode: "only", providers: ["pv1"], models: [], model_types: ["embedding", "rerank"] },
   labels: { g1: "Finance", pv1: "OpenAI", pol1: "Default", pol2: "Names" },
   rules: [
-    {
+    rule({
       id: "r1",
       name: "Names found",
-      enabled: true,
-      observe_only: false,
-      note: null,
-      conditions: [{ key: "finds", values: ["pol2"], negate: false, count: 2 }],
-      action: action("refuse"),
-      issues: [],
-    },
+      policies: ["pol2"],
+      mode: "block",
+      conditions: [{ key: "finds", values: [], negate: false, count: 2 }],
+    }),
+    rule({ id: "r2", name: "Hide the rest", policies: ["pol1"], mode: "anonymise_restore" }),
   ],
-  otherwise: {
-    id: "else1",
-    name: "Everything else",
-    enabled: true,
-    observe_only: false,
-    note: null,
-    conditions: [],
-    action: action("pass", { redact_with: "pol1" }),
-    issues: [],
-  },
-});
+} as never);
 const SECOND = pipeline({ id: "p2", name: "Second", position: 1 });
-const READ = pipeline({
+const EXTRACT = pipeline({
   id: "p3",
-  kind: "read",
+  kind: "extract",
   name: "Reports",
   rules: [
-    {
+    rule({
       id: "r3",
       name: "Scans",
-      enabled: true,
-      observe_only: false,
-      note: null,
       conditions: [{ key: "scan", values: [], negate: false, count: 1 }],
-      action: action("read_with", { reader: "docling" }),
-      issues: [{ code: "never_fires", message: "above catches it", rule_id: null, rule_name: null }],
-    },
+      action: { level: "extract_with", reader: "docling" },
+      issues: [{ code: "unavailable_now", message: "docling is not offered", rule_id: null, rule_name: null }],
+    }),
   ],
-  otherwise: {
-    id: "else3",
-    name: "Everything else",
-    enabled: true,
-    observe_only: false,
-    note: null,
-    conditions: [],
-    action: action("default"),
-    issues: [],
-  },
-});
+} as never);
 
 interface Seen {
   method: string;
@@ -148,29 +124,25 @@ describe("Pipelines", () => {
   });
 
   it("lists each pipeline under its kind with scope badges and its rules as sentences", async () => {
-    vi.stubGlobal("fetch", api([], [REMOTE, SECOND, READ]));
+    vi.stubGlobal("fetch", api([], [REMOTE, SECOND, EXTRACT]));
     renderPage();
 
-    const embed = await screen.findByRole("region", { name: "Embedding" });
-    expect(within(embed).getByText("Remote embeddings")).toBeInTheDocument();
-    expect(within(embed).getByText("Billing groups: Finance")).toBeInTheDocument();
-    expect(within(embed).getByText("Only OpenAI")).toBeInTheDocument();
-    expect(within(embed).getByText("Names finds at least 2 items → refuse")).toBeInTheDocument();
-    // The fixed last rule is always shown, and names the policy it applies.
-    expect(within(embed).getByText("everything else → redact with Default")).toBeInTheDocument();
+    const content = await screen.findByRole("region", { name: "Content" });
+    expect(within(content).getByText("Remote embeddings")).toBeInTheDocument();
+    expect(within(content).getByText("Billing groups: Finance")).toBeInTheDocument();
+    expect(within(content).getByText("Only OpenAI · Embedding + Rerank")).toBeInTheDocument();
+    expect(
+      within(content).getByText("When Names + it finds at least 2 items → block"),
+    ).toBeInTheDocument();
+    expect(within(content).getByText("When Default → anonymise, restore in the answer")).toBeInTheDocument();
+    expect(within(content).queryByText(/everything else|pass|refuse/i)).toBeNull();
 
-    const read = screen.getByRole("region", { name: "Reading a file" });
+    const extract = screen.getByRole("region", { name: "Extract" });
     expect(
-      within(read).getByText(/the file is a scan → read with docling/),
+      within(extract).getByText(/When the file is a scan → extract with docling/),
     ).toBeInTheDocument();
-    // A rule that never fires is flagged on its pipeline.
-    expect(within(read).getByText("Check")).toBeInTheDocument();
-    // Chat has none yet, and says requests are handled as ever.
-    expect(
-      within(screen.getByRole("region", { name: "Chat" })).getByText(
-        "No pipelines of this kind",
-      ),
-    ).toBeInTheDocument();
+    // A rule with a warning is flagged on its pipeline.
+    expect(within(extract).getByText("Check")).toBeInTheDocument();
   });
 
   it("shows a note the migration left on a rule as a warning on the pipeline", async () => {
@@ -182,10 +154,13 @@ describe("Pipelines", () => {
           id: "r4",
           name: "Old rule",
           enabled: false,
-          observe_only: false,
+          policies: ["pol1"],
+          match: "all",
+          mode: "block",
+          overrides: {},
+          action: null,
           note: "Switched off by the migration: it used a check that no longer exists.",
           conditions: [],
-          action: action("refuse"),
           issues: [{ code: "migrated", message: "Switched off by the migration.", rule_id: "r4", rule_name: "Old rule" }],
         },
       ],
@@ -208,7 +183,7 @@ describe("Pipelines", () => {
 
     await waitFor(() =>
       expect(seen.find((c) => c.url.includes("/pipelines/reorder"))?.body).toEqual({
-        kind: "embed",
+        kind: "content",
         order: ["p2", "p1"],
       }),
     );
@@ -242,6 +217,6 @@ describe("Pipelines", () => {
     await user.click(await screen.findByRole("button", { name: "How it works" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText(/Whole files leave whole/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/A provider is a provider/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/first rule to hide a piece of text/)).toBeInTheDocument();
   });
 });

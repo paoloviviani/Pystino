@@ -5,10 +5,15 @@ import { Link, useNavigate } from "react-router";
 import { PolicyTemplatePicker } from "../components/PolicyTemplatePicker";
 import { PrivacyHeader } from "../components/PrivacyHeader";
 import { Tip } from "../components/Tip";
-import { summarisePolicy } from "../lib/entities";
 import { buildPolicyFromTemplate, skippedNote } from "../lib/policyTemplates";
 import { MUTED, PAGE } from "../lib/layout";
-import { useDeletePolicy, usePolicies, usePrivacyEngines, useSavePolicy } from "../lib/privacy";
+import {
+  summariseDefinition,
+  useDeletePolicy,
+  usePolicies,
+  usePrivacyEngines,
+  useSavePolicy,
+} from "../lib/privacy";
 import type { RedactionPolicyRecord } from "../lib/types";
 import { m } from "../paraglide/messages.js";
 
@@ -120,7 +125,7 @@ export function AdminPolicies() {
                 </Button>
               </div>
             </div>
-            <p className="m-0 text-body">{summarisePolicy(p.policy)}</p>
+            <p className="m-0 text-body">{summariseDefinition(p.policy)}</p>
             {p.used_by.length > 0 && (
               <p className={`m-0 text-small ${MUTED}`}>
                 {m["privacy.policies.used_by_names"]({ names: p.used_by.join(", ") })}

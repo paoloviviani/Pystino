@@ -1073,15 +1073,17 @@ async def plan_privacy(
     """
     privacy = state_of(request)
     privacy.ensure_loaded()
+    # Chat, embeddings and rerank are one kind, content; the model's own type is a fact.
+    facts_kind = "extract" if kind == "extract" else "content"
     facts = attribution.base_facts(
         kind,
         principal,
         model,
         requested_name=requested_name,
-        texts=tuple(texts) if privacy.uses_verdicts(kind) else (),
+        texts=tuple(texts) if privacy.uses_verdicts(facts_kind) else (),
         judge=judge_of(request, principal),
     )
-    return facts, await plan(privacy.evaluator, privacy.pipelines_of(kind), facts)
+    return facts, await plan(privacy.evaluator, privacy.pipelines_of(facts_kind), facts)
 
 
 def judge_of(request: Request, principal: Principal) -> ContentJudge:
@@ -1106,7 +1108,7 @@ def effective_policy_of(request: Request, combined: Combined) -> EffectivePolicy
     if resolver is None:
         return None
     effective: EffectivePolicy = state_of(request).effective_policy(
-        combined.policy_uses(), resolver.policy
+        combined.hiding_hits(), resolver.policy
     )
     return effective
 
@@ -1114,7 +1116,7 @@ def effective_policy_of(request: Request, combined: Combined) -> EffectivePolicy
 def policy_names_of(request: Request, combined: Combined) -> list[str]:
     """Names of the policies applied, for the attribution."""
     privacy = state_of(request)
-    return [n for use in combined.policy_uses() if (n := privacy.policy_name(use.policy_id))]
+    return [n for pid in combined.policy_ids() if (n := privacy.policy_name(pid))]
 
 
 def _routing_for(

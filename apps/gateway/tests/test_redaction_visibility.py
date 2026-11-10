@@ -80,31 +80,35 @@ def state_with(
     admin: list[AdminSpec] | None = None,
     users: dict[uuid.UUID, list[UserRule]] | None = None,
 ) -> PrivacyState:
-    """A privacy state holding these policies, each applied by a pipeline per kind on all."""
-    policies = [
-        RedactionPolicyRecord(
-            id=a.id,
-            name=a.name,
-            policy=a.policy.model_dump(mode="json"),
-            is_active=True,
-            reason="",
+    """A privacy state holding these policies, each applied by a pipeline on all (v2 shapes)."""
+    import privacy_helpers as ph
+
+    policies = []
+    for a in admin or []:
+        stored, modes = ph._M.convert_policy(a.policy.model_dump(mode="json"), [], a.name)
+        ph.PMODES[str(a.id)] = modes
+        policies.append(
+            RedactionPolicyRecord(id=a.id, name=a.name, policy=stored, is_active=True, reason="")
         )
-        for a in admin or []
-    ]
     pipelines: list[PrivacyPipeline] = []
+
+    def rules_for(pid: uuid.UUID, name: str) -> list[dict[str, Any]]:
+        return ph._M.convert_content_rules(
+            [], {"level": "pass", "redact_with": str(pid)}, ph.PMODES, [], name
+        )
+
     for index, a in enumerate(admin or []):
         pipelines.append(
             PrivacyPipeline(
                 id=uuid.uuid4(),
                 owner_id=None,
-                kind="chat",
+                kind="content",
                 name=a.name,
                 enabled=True,
                 position=index,
                 who={"mode": "all", "ids": []},
-                target={"mode": "all", "providers": [], "models": []},
-                rules=[],
-                otherwise={"level": "pass", "redact_with": str(a.id)},
+                target={"mode": "all", "providers": [], "models": [], "model_types": []},
+                rules=rules_for(a.id, a.name),
             )
         )
     user_policies: list[UserPolicy] = []
@@ -118,19 +122,21 @@ def state_with(
                 for r in rules
             ],
         )
+        stored_entries, modes = ph._M.convert_user_entries(list(mine.rules))
+        mine.rules = stored_entries
+        ph.PMODES[str(mine.id)] = modes
         user_policies.append(mine)
         pipelines.append(
             PrivacyPipeline(
                 id=uuid.uuid4(),
                 owner_id=user_id,
-                kind="chat",
+                kind="content",
                 name="Mine",
                 enabled=True,
                 position=0,
                 who={"mode": "users", "ids": [str(user_id)]},
-                target={"mode": "all", "providers": [], "models": []},
-                rules=[],
-                otherwise={"level": "pass", "redact_with": str(mine.id)},
+                target={"mode": "all", "providers": [], "models": [], "model_types": []},
+                rules=rules_for(mine.id, "Mine"),
             )
         )
     state = PrivacyState()
@@ -140,9 +146,9 @@ def state_with(
 
 async def effective(state: PrivacyState, user_id: uuid.UUID) -> Any:
     combined = await plan(
-        state.evaluator, state.pipelines_of("chat"), Facts(kind="chat", user_id=str(user_id))
+        state.evaluator, state.pipelines_of("content"), Facts(kind="content", user_id=str(user_id))
     )
-    return state.effective_policy(combined.policy_uses(), RedactionPolicy())
+    return state.effective_policy(combined.hiding_hits(), RedactionPolicy())
 
 
 class TestTheFold:
@@ -253,50 +259,12 @@ class TestResolution:
         assert [p.name for p in (await effective(state, mine)).policy.patterns] == ["PROJECT"]
         assert (await effective(state, theirs)).policy.patterns == []
 
-    async def test_the_user_rule_takes_the_blame_only_where_it_tightened(self) -> None:
-        user_id = uuid.uuid4()
-        everything = admin_rule(
-            "Everything",
-            entities={
-                "PERSON": EntityPolicy(mode=EntityMode.REDACT),
-                "URL": EntityPolicy(mode=EntityMode.ANONYMISE_RESTORE),
-            },
-        )
-        state = state_with(
-            [everything],
-            {
-                user_id: [
-                    mode_rule("PERSON", EntityMode.ANONYMISE),  # weaker than redact
-                    mode_rule("URL", EntityMode.BLOCK),  # stricter
-                ]
-            },
-        )
-        found = await effective(state, user_id)
-
-        person = found.decider_for("PERSON")
-        url = found.decider_for("URL")
-        assert person is not None and person.owner == "admin" and person.id == everything.id
-        assert person.name == "Everything"
-        assert url is not None and url.owner == "user" and url.name == "URL"
-        assert found.policy.mode_for("PERSON") is EntityMode.REDACT
-        assert found.policy.mode_for("URL") is EntityMode.BLOCK
-
     async def test_the_administrators_answer_is_unchanged_for_a_user_with_no_rules(self) -> None:
         everything = admin_rule("Everything", entities={"PERSON": EntityPolicy()})
         state = state_with([everything], {uuid.uuid4(): [mode_rule("PERSON", EntityMode.BLOCK)]})
 
         found = await effective(state, uuid.uuid4())
         assert found.policy.mode_for("PERSON") is EntityMode.ANONYMISE_RESTORE
-
-    async def test_the_fold_is_memoised_and_cleared_when_the_state_reloads(self) -> None:
-        user_id = uuid.uuid4()
-        state = state_with(users={user_id: [pattern_rule("A", r"aaa")]})
-
-        first = (await effective(state, user_id)).policy
-        assert (await effective(state, user_id)).policy is first
-
-        state = state_with(users={user_id: [pattern_rule("B", r"bbb")]})
-        assert [p.name for p in (await effective(state, user_id)).policy.patterns] == ["B"]
 
     def test_an_unreadable_row_is_dropped_not_fatal(self) -> None:
         good = uuid.uuid4()
@@ -311,12 +279,6 @@ class TestResolution:
                     user_id=bad,
                     name="Bad",
                     rules=[{"kind": "pattern", "name": "X", "regex": "(?=no)", "mode": "redact"}],
-                ),
-                UserPolicy(
-                    id=uuid.uuid4(),
-                    user_id=bad,
-                    name="Off",
-                    rules=[{"kind": "mode", "name": "PERSON", "regex": None, "mode": "off"}],
                 ),
                 UserPolicy(
                     id=uuid.uuid4(),
@@ -486,7 +448,7 @@ class TestTheLog:
         assert entity["count"] == 2
         assert entity["mode"] == "anonymise_restore"
         assert entity["rule"]["owner"] == "admin"
-        assert entity["rule"]["name"] == "Cloud providers"
+        assert entity["rule"]["name"] == "Everything else"
         assert entity["sources"] == ["message", "tool_result"]
         assert SECRET_NAME not in orjson.dumps(events).decode()
 
@@ -505,9 +467,9 @@ class TestTheLog:
 
         item = (await client.get("/api/me/redaction/events")).json()["items"][0]
         assert item["blocked"] is True
-        assert item["entities"][0]["type"] == "PERSON"
-        assert item["entities"][0]["mode"] == "block"
-        assert item["entities"][0]["rule"]["owner"] == "admin"
+        # A block is a rule's (ADR 0114): the entry names the rule that refused, not a type.
+        assert item["routing"]["outcome"] == "refused"
+        assert item["routing"]["handled"]["routing_rule"]["owner"] == "admin"
 
     async def test_a_request_where_nothing_was_found_leaves_no_entry(
         self, app: Any, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: Any
@@ -621,7 +583,7 @@ class TestTheSummary:
                 "mode": "anonymise_restore",
                 "rule": {
                     "id": summary["entities"][0]["rule"]["id"],
-                    "name": "Cloud providers",
+                    "name": "Everything else",
                     "owner": "admin",
                 },
                 "sources": ["message"],
@@ -674,7 +636,7 @@ class TestTheSummary:
         assert response.status_code == 403
         summary = response.json()["pystino_redaction"]
         assert summary["blocked"] is True
-        assert summary["entities"][0]["type"] == "PERSON"
+        assert summary["routing"]["outcome"] == "refused"
         assert "values" not in summary
         assert SECRET_NAME not in response.text
 

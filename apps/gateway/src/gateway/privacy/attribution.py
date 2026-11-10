@@ -72,8 +72,13 @@ def base_facts(
     """The facts every kind shares: the caller and the target."""
     provider = model.provider
     group = principal.billing_group
+    model_type = getattr(getattr(model, "kind", None), "value", None)
+    if model_type not in ("chat", "embedding", "rerank"):
+        # Every other surface that screens text (audio, images, search) is judged as chat.
+        model_type = "chat"
     return Facts(
-        kind=kind,
+        kind="extract" if kind == "extract" else "content",
+        model_type=None if kind == "extract" else model_type,
         user_id=str(principal.user.id),
         billing_group_id=str(group.id) if group is not None else None,
         api_key_id=str(principal.api_key.id) if principal.api_key is not None else None,
@@ -86,6 +91,7 @@ def base_facts(
         model_id=str(model.id),
         texts=texts,
         judge=judge,
+        lazy_implicit=kind != "extract",
     )
 
 
@@ -106,6 +112,23 @@ def _filename_match(facts: Facts, rules: list[Rule]) -> dict[str, Any] | None:
 
 def _owner(run: Any) -> str:
     return "user" if run.pipeline.is_user else "admin"
+
+
+def legacy_kind(facts: Facts) -> str:
+    """The kind a log entry has always carried: read, embed (embeddings, rerank) or chat."""
+    if facts.kind == "extract":
+        return "extract"
+    return "embed" if facts.model_type in ("embedding", "rerank") else "chat"
+
+
+def _run_level(run: Any) -> str:
+    if run.pending:
+        return "pending"
+    levels = [r.level for r in run.evaluation.matched]
+    for level in ("block", "extract_with"):
+        if level in levels:
+            return level
+    return "default" if run.pipeline.kind == "extract" else "pass"
 
 
 def build(
@@ -131,10 +154,8 @@ def build(
     runs = combined.runs if combined is not None else []
     seen_rules: list[Rule] = []
     for run in runs:
-        if run.evaluation.fired is not None:
-            seen_rules.append(run.evaluation.fired)
-        seen_rules.extend(run.evaluation.observed)
-    if facts.kind == "read":
+        seen_rules.extend(run.evaluation.matched)
+    if facts.kind == "extract":
         observed.update(
             {
                 "filename": clean_filename(facts.filename),
@@ -156,6 +177,7 @@ def build(
     if classified:
         observed["classified"] = classified
     winner = combined.winner if combined is not None else None
+    observed["model_type"] = facts.model_type
     handled: dict[str, Any] = {
         "extractor": extractor,
         "fallback_reason": fallback_reason or None,
@@ -167,7 +189,7 @@ def build(
                 "name": winner.rule.name,
                 "pipeline_id": str(winner.pipeline.id),
                 "pipeline": winner.pipeline.name,
-                "owner": _owner(winner),
+                "owner": "user" if winner.pipeline.is_user else "admin",
             }
             if winner is not None
             else None
@@ -176,7 +198,7 @@ def build(
     }
     routing: dict[str, Any] = {
         "v": ROUTING_VERSION,
-        "kind": facts.kind,
+        "kind": legacy_kind(facts),
         "observed": observed,
         "handled": handled,
         "outcome": outcome,
@@ -187,14 +209,23 @@ def build(
                 "owner": _owner(run),
                 "hop": run.hop,
                 "rule": (
-                    None if run.is_otherwise else {"id": str(run.rule.id), "name": run.rule.name}
+                    {
+                        "id": str(run.evaluation.matched[0].id),
+                        "name": run.evaluation.matched[0].name,
+                    }
+                    if run.evaluation.matched
+                    else None
                 ),
-                "level": run.level if not run.pending else "pending",
+                "rules": [{"id": str(r.id), "name": r.name} for r in run.evaluation.matched],
+                "level": _run_level(run),
             }
             for run in runs[:MAX_PIPELINES]
         ],
         "observed_rules": [
-            {"id": str(r.id), "name": r.name} for run in runs for r in run.evaluation.observed
+            {"id": str(r.id), "name": r.name}
+            for run in runs
+            for r in run.evaluation.matched
+            if r.records_only
         ],
     }
     if reason:

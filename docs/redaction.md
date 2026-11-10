@@ -11,26 +11,26 @@ planning; see [Measured performance](performance.md).
 
 ## Policies and pipelines
 
-Two objects, one job each (ADR 0113; see [Privacy](privacy.md) and [Privacy
-pipelines](privacy-routing.md)). A **redaction policy** is *what to look for and
-what to do about it*: items in two groups, [patterns and entities](#items-two-groups-never-mixed),
-and a mode for each, with no scope. Policies are the only object that finds
-things: a pipeline condition "\<policy\> finds at least N items" counts a
-policy's items with the same editor. A **pipeline** is *when
-and how*: a kind (read, embed, chat), a scope (who, which target), ordered rules,
-and a fixed last rule, and any non-refuse action may **redact with** one policy.
+Two objects, one job each (ADR 0113, 0114; see [Privacy](privacy.md) and [Privacy
+pipelines](privacy-routing.md)). A **redaction policy** is *what to look for*:
+items in two groups, [patterns and entities](#items-two-groups-never-mixed), with
+their detection settings (engine, thresholds, allow-list, placeholder style), and
+**no mode and no scope**. A **pipeline** is *when and how*: a kind (extract or
+content), a scope (who, which target, a model type) and ordered rules "When
+policies + conditions -> mode". The **mode** (what to do with what the rule's
+policies find) belongs to the rule.
 
-Every pipeline in scope runs and the results combine: **the policies add up and
-the strictest mode wins for each entity type**, and the highest level on the
-ladder wins for where a request is handled. A policy is applied to the returned
-text (reading), the input (embedding and rerank), or messages and tool results
-(chat).
+Every rule of every pipeline in scope is evaluated, administrators' first, then
+the user's own. A rule in mode `block` refuses the request; otherwise each
+matching rule hides what its policies find, and **the first rule to hide a piece
+of text decides how**. A policy is applied to the extracted text (extract), the
+input (embedding and rerank), or messages and tool results (chat).
 
 | | Redaction policy | Pipeline |
 |---|---|---|
-| Purpose | what is found, and hidden from the provider | when and how a request is handled |
-| Scope | none | who and target |
-| Several apply | **all** apply, and the **strictest** mode wins | all in scope run and combine; the first rule matching wins inside one |
+| Purpose | what to look for | when and how a request is handled |
+| Scope | none | who, target and model type |
+| Several apply | every rule that matches applies; the first to hide a span decides how | every rule of every pipeline in scope is evaluated, in order |
 | Lives in | console: **Privacy, Redaction policies** | console: **Privacy, Pipelines** |
 
 ## Out of process, by contract
@@ -103,28 +103,23 @@ two are different in kind:
   the Italian identifiers, and so on). The console lists what the service reports.
 - **Custom regular expressions** are evaluated in the gateway under RE2 (below).
 - **Keyword lists** are a name, a comma-separated list of words and phrases, a
-  **case sensitive** checkbox and a mode. They are found as **whole words**; spacing
+  **case sensitive** checkbox. They are found as **whole words**; spacing
   and punctuation between the words of a phrase do not matter ("data protection"
   finds "Data-protection"). Unless case sensitive, case is ignored and **accents are
   folded** ("perche" finds "Perché"). Evaluated in the gateway in **linear time**, as
   a trie over word tokens: no regular expression is ever built from what was typed.
   A list holds up to 1,000 entries, each up to 100 characters and six words.
-- **Entities** are the types the chosen NER engine exposes, each with a mode and a
+- **Entities** are the types the chosen NER engine exposes, each with a
   confidence threshold. A policy chooses its **engine**, spaCy or GLiNER, among
   those the service reports available (none chosen: the deployment's default). With
   GLiNER an administrator may add **custom entity types**: an UPPER_SNAKE name and a
   natural-language label the model is given at inference ("project code name").
 
-When policies combine, the mode of a name is the strictest across **every** table that
-names it, in every policy (formats, entities, custom entities, patterns, keyword lists):
-a quieter statement (`detect only`, `off`) in one place never lowers a stricter one in
-another, such as a keyword list `LOCATION` at `redact` next to another policy's entity
-`LOCATION` at `detect only`.
-
-Every item has a mode, including **`detect only`**: found and counted, **never
-hidden**. It sits just above `off` in the order, so the strictest-mode fold and the
-tighten-only user rules are unchanged: a policy that only decides sets its items to
-`detect only`, and a user cannot use it to lower an administrator's mode.
+A policy stores no mode. A rule gives its policies one **mode**, with optional
+overrides by entity type (see [What happens to a detected entity](#what-happens-to-a-detected-entity-the-rule-mode)),
+including **`detect only`**: found and counted, **never hidden**, and recorded in the
+log. A policy that exists only to be counted by a `finds` condition is a policy like
+any other; the rule that uses it says what to do.
 
 Nothing here is specific to any topic: no list ships, no template is seeded.
 
@@ -370,22 +365,23 @@ caller (the policies of the chat pipelines in scope for them, judged without
 content, or the deployment policy) has some entity type, the default, or a custom
 pattern in a mode other than `off`, **or** a chat pipeline in scope refuses them
 (audio has no text for a pipeline to judge, so a refusal that names the caller
-counts as much as a policy). A policy that only lists types as `off` does not count.
-**Known limit:** chat pipelines are judged without content here, so a chat pipeline whose rules depend on what the text says (for example "finds at least 1 item of a policy → refuse") cannot act on audio, and does not by itself block transcription; only a refusal that does not depend on content, or a policy in force, does.
+counts as much as a policy). A rule whose mode is `off` or `detect only` does not count.
+**Known limit:** chat pipelines are judged without content here, so a content pipeline whose rules depend on what the text says (for example "when a policy finds at least 1 item → block") cannot act on audio, and does not by itself block transcription; only a block that does not depend on content, or a rule that hides, does.
 Leave it `true` only if you accept that audio from those callers reaches the
 provider unscreened, although the same words typed as text would have been
 substituted or blocked by their rule. If you do not accept that, set it to
 `false`, or do not grant the transcription model to those groups.
 
-## What happens to a detected entity: the policy model
+## What happens to a detected entity: the rule mode
 
-For each entity type, a policy names a **mode** — two independent questions, what
-the model sees and what the person gets back:
+For each rule, a **mode** (and per entity type overrides) says what happens to what the
+rule's policies find: two independent questions, what the model sees and what the
+user gets back:
 
 | Mode | Upstream sees | The person gets back |
 |---|---|---|
 | `off` | the real value | the real value |
-| `detect_only` | the real value | the real value; the item is found and counted (for a pipeline condition), never hidden |
+| `detect_only` | the real value | the real value; the item is found, counted and recorded in the log, never hidden |
 | `anonymise_restore` | `<PERSON_xxxx>`, stable | the real value, restored |
 | `anonymise` | `<PERSON_xxxx>`, stable | the placeholder |
 | `redact` | `<PERSON>` — lossy, two users collapse into one label | the label |
@@ -563,24 +559,30 @@ An allow-list (values never redacted, compared case-insensitively, **exactly** �
 substring rule would let "it" allow every Italian domain) is taken from the
 **first** policy in the fold, which is the widest scope's, never a narrower one's.
 
-### Adding a pipeline can only tighten
+### The first rule to hide a span decides how
 
-The policies the pipelines in scope chose combine as: `max` over the mode ranking
-(`anonymise_restore` < `anonymise` < `redact` < `block`), `min` over thresholds
-(lower catches more), union over custom patterns (one more regex only finds more),
-allow-list from the first policy alone.
+Rules apply in one order: administrator pipelines in console order, then the user's
+own, each pipeline's rules top to bottom. **Block first**: if any matching rule blocks
+(or an override blocks a type that was found), the request is refused and that rule is
+named. Otherwise one detection pass over the original text finds every span; each
+matching rule, in order, hides what its policies find using its mode and overrides,
+and **a span a rule has hidden is no longer seen by the rules after it**. `off` and
+`detect_only` never claim a span. Thresholds and allow-lists are each policy's own, so
+what one policy exempts is exempt in that policy only. Placeholders stay HMAC-stable
+(`placeholder_for`), and restore works for `anonymise_restore` spans.
 
-So **adding a pipeline can only tighten, by construction** — one saved wrong is
-inert rather than dangerous, which is the difference between a bug and an
-incident. Nothing needs a priority column or a "most specific wins" rule. This is
-the quota model's fold inverted: quotas are *all rules must pass* because a
-permissive rule would raise a ceiling; redaction is *the strictest answer wins*
-because a permissive rule would remove protection.
+Because administrators come first and the first rule to hide decides how, a user's
+rule can add protection and can never loosen what an administrator's did. This
+replaces the strictest-mode fold of ADR 0038 (ADR 0114).
+
+Rotating `GATEWAY_REDACTION__PLACEHOLDER_KEY` invalidates embeddings indexed with
+old placeholders: knowledge bases must be re-embedded.
 
 ### Provenance
 
 Every request records `redaction_scope` and `redaction_rule_id`: the **policy** of
-the narrowest pipeline that applied one (and that pipeline's scope), since the
+the last administrator rule that applied one (and that pipeline's scope); the log's
+per-type `rule` is the privacy rule that claimed the type, since the
 tables are mutable and "why was this request redacted" has to be answerable from
 the request. A policy keeps its id when it is edited. Resolution costs no extra
 queries: every id a scope can name is already loaded on the request, and
@@ -590,33 +592,23 @@ rate (the difference between 13ms and 135ms on a 1,000-token prompt).
 
 ## User policies and pipelines
 
-A user can keep **policies of their own** and **pipelines** that apply them, and
-what they write can only **add** protection. A user's policy is an ordered list of
-entries, folded last, after the administrators' policies have been folded exactly
-as above:
+A user can keep **policies of their own** and **pipelines** whose rules apply them (or an
+administrator's shared policies). What they write can only **add** protection, because
+their rules come after the administrators': the first rule to hide a span decides how, a
+block refuses, and an administrator's choice holds. A user's policy is an ordered list of
+entries, and an entry only says **what to look for** (the rule says what to do):
 
-- **a custom pattern** is added to the patterns in force, under the same RE2
-  engine, the same validation and the same limits as an administrator's custom
-  pattern (no backreferences or lookaround; a pattern that matches the empty
-  string is refused);
-- **a stricter mode for an entity type** wins over a weaker one, by the order
-  `off` < `detect_only` < `anonymise_restore` < `anonymise` < `redact` < `block`. An
-  entity type must be one the administrator has made available to users (Redaction
-  service tab; blank means any). `detect_only` can add something to count in the
-  user's own pipeline and never lowers an administrator's mode.
+- **a custom pattern**, under the same RE2 engine, the same validation and the same
+  limits as an administrator's custom pattern (no backreferences or lookaround; a
+  pattern that matches the empty string is refused);
+- **an entity type** to look for. It must be one the administrator has made available
+  to users (Detectors tab; blank means any).
 
-A user's pattern also never displaces or shrinks what the administrators' policies
-already cover: a pattern span that overlaps a detected or administrator span is
-dropped, and the administrator's span stands whole in the administrators' mode
-(otherwise a pattern such as `ar` would cut `Mario Rossi` down to its own
-letters). A pattern that overlaps nothing simply adds.
-
-A user policy cannot loosen anything. There is no `off` to choose, and no
-threshold, exception, allow-list or placeholder style to set: the request has no
-such fields and an unknown one is refused. An entry that is not stricter than what
-the administrators already say is saved and is inert, and a tie goes to the
-administrators. Names that collide with an administrator's pattern or type cannot
-loosen it either.
+There is no threshold, exception, allow-list or placeholder style to set: the request has
+no such fields and an unknown one is refused. A pattern of theirs never displaces what an
+administrator's rule already claimed (a pattern such as `ar` cannot cut `Mario Rossi` down
+to its own letters): text already hidden is not seen by later rules. Names that collide
+with an administrator's pattern or type are refused.
 
 They apply to requests whose principal is that user: a token the user signed in
 with, and the user's own API keys. They never reach another user's requests. They
@@ -634,7 +626,7 @@ request path stays query-free; the worker that handled the edit has it at once.
 The API is `/api/me/privacy` (policies, pipelines, options, in-force, test; cookie
 session and the `console` capability, like the rest of `/api/me`). `POST
 /api/me/privacy/test` runs the real combination over a text or a file's facts, as
-the user, and answers with the pipelines in scope, the ladder and the policy table.
+the user, and answers with the pipelines in scope (every rule, matched or not) and which rule claimed which text.
 It never echoes the text and never logs it, and it is limited to 30 calls a minute
 per user (per worker); the 31st is a 429. `GET /api/me/privacy/in-force` lists the
 administrators' pipelines that cover the user, read-only (rule names and what each
@@ -727,7 +719,7 @@ otherwise the entry is written only when something was hidden, as before.
 ```json
 {
   "v": 2,
-  "kind": "read",
+  "kind": "extract",
   "observed": {
     "target": {"alias": "reader", "model": "local-reader", "provider": "onsite"},
     "filename": "referto-rossi.pdf (summary only)", "filename_match": {"rule_id": "6c1e...", "pattern_index": 0}, "mime": "application/pdf",
@@ -769,7 +761,7 @@ otherwise the entry is written only when something was hidden, as before.
   level it asked for and `hop` (1 or more for pipelines that ran after a reroute).
 - `outcome` is `default` (nothing applied), `rule`, `rerouted`, `refused`, or
   `blocked` (redaction refused it).
-- `observed_rules` lists observe-only rules that would have applied.
+- `observed_rules` lists `detect only` rules that matched (they record and hide nothing).
 - `degraded` appears when a policy's NER part or a classifier a rule needed was
   unavailable, and says how that was handled (see [Privacy pipelines](privacy-routing.md)).
 - The console's **Redactions** page shows these fields compactly in a "Handled

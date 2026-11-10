@@ -137,7 +137,6 @@ async def _clean(
     name: str,
     target: Any,
     rules: list[dict[str, Any]],
-    otherwise: dict[str, Any] | None,
 ) -> dict[str, Any]:
     context = await service.validation_context(session, owner=user)
     try:
@@ -147,9 +146,7 @@ async def _clean(
             None,
             target,
             rules,
-            otherwise,
             owner_id=user.id,
-            finds_policy_ids=context.finds_policy_ids,
             classifier_ids=context.classifier_ids,
             policy_ids=context.policy_ids,
             readers=context.readers,
@@ -284,7 +281,6 @@ async def create_my_pipeline(
         name=payload.name,
         target=payload.target.model_dump(mode="json"),
         rules=[r.clean() for r in payload.rules],
-        otherwise=payload.otherwise.clean() if payload.otherwise else None,
     )
     await _name_free(session, user, payload.kind, clean["name"])
     row = PrivacyPipeline(
@@ -297,7 +293,6 @@ async def create_my_pipeline(
         who=clean["who"],
         target=clean["target"],
         rules=clean["rules"],
-        otherwise=clean["otherwise"],
         created_by=user.id,
     )
     session.add(row)
@@ -327,18 +322,12 @@ async def update_my_pipeline(
             if payload.rules is not None
             else [dict(r) for r in row.rules or []]
         ),
-        otherwise=(
-            payload.otherwise.clean()
-            if payload.otherwise is not None
-            else dict(row.otherwise or {})
-        ),
     )
     await _name_free(session, user, row.kind, clean["name"], ignore=row.id)
     row.name = clean["name"]
     row.who = clean["who"]
     row.target = clean["target"]
     row.rules = clean["rules"]
-    row.otherwise = clean["otherwise"]
     if payload.enabled is not None:
         row.enabled = payload.enabled
     await session.commit()
@@ -373,7 +362,6 @@ async def check_my_pipeline(
             name=payload.name,
             target=payload.target.model_dump(mode="json"),
             rules=[r.clean() for r in payload.rules],
-            otherwise=payload.otherwise.clean() if payload.otherwise else None,
         )
     except UnprocessableError as exc:
         return PipelineCheckResponse(error=exc.message, issues=[], soft_cap=rulelib.SOFT_CAP)
@@ -387,7 +375,6 @@ async def check_my_pipeline(
         who=clean["who"],
         target=clean["target"],
         rules=clean["rules"],
-        otherwise=clean["otherwise"],
     )
     draft: Pipeline = pipeline_from_row(row)
     found = service.issues_of(
@@ -408,10 +395,7 @@ async def check_my_pipeline(
 async def _policy_used_by(session: SessionDep, user: User) -> dict[str, list[str]]:
     used: dict[str, list[str]] = {}
     for row in await service.pipeline_rows(session, owner=user.id):
-        actions = [dict(r.get("action") or {}) for r in row.rules or []] + [
-            dict(row.otherwise or {})
-        ]
-        for pid in {str(a["redact_with"]) for a in actions if a.get("redact_with")}:
+        for pid in {str(p) for r in row.rules or [] for p in r.get("policies") or []}:
             used.setdefault(pid, []).append(row.name)
     return used
 

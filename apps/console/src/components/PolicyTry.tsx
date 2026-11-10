@@ -1,7 +1,8 @@
-import { Badge, Button, Card, Notice } from "@llmp/ui";
+import { Button, Card, Notice } from "@llmp/ui";
 import { useState } from "react";
 
-import { entityLabel, modeLabel } from "../lib/entities";
+import { entityLabel } from "../lib/entities";
+import { withoutModes } from "../lib/privacy";
 import { CODE, FIELD_LABEL, MUTED, TEXTAREA } from "../lib/layout";
 import { useTryPolicy } from "../lib/privacy";
 import type { PolicyTryItem, PolicyTryResult, RedactionPolicy } from "../lib/types";
@@ -51,7 +52,7 @@ export function PolicyTry({ policy }: { policy: RedactionPolicy }) {
             variant="primary"
             busy={run.isPending}
             disabled={text.trim() === ""}
-            onClick={() => run.mutate({ policy, text })}
+            onClick={() => run.mutate({ policy: withoutModes(policy), text })}
           >
             {m["policy_try.run"]()}
           </Button>
@@ -76,7 +77,6 @@ function ItemList({ heading, items }: { heading: string; items: PolicyTryItem[] 
         {items.map((item, index) => (
           <li key={index} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <strong>{entityLabel(item.type)}</strong>
-            <Badge tone="neutral">{modeLabel(item.mode)}</Badge>
             <code className={CODE}>{item.text}</code>
             {item.group === "entity" && (
               <span className={`text-small ${MUTED}`}>

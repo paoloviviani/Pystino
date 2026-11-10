@@ -1,7 +1,7 @@
 # ruff: noqa: S608, E501  (fixed SQL built from test constants)
 """Migration 0082: scoped redaction rules, users' own rules and routing rules become policies and pipelines (ADR 0113).
 
-The byte-for-byte proof for requests is ``test_privacy_migration_contract.py``; this file
+The behaviour of requests after the conversion is exercised through the helpers of ``privacy_helpers.py``; this file
 pins the shape of what the conversion writes, on SQLite: a policy keeps its id, scopes become
 a who or a target in the order the old fold used, users' rules keep their order, routing rules
 keep first-match meaning, and the downgrade restores the older tables.
@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from gateway.config import RedactionPolicy
 from test_migration_0067 import _alembic
 
 T0 = "2026-11-08 12:00:00.000000"
@@ -287,36 +286,6 @@ def _old_shape(policy: dict[str, Any]) -> dict[str, Any]:
         "allow_list": policy["allow_list"],
         "entities": {k: mode(v) for k, v in merged.items()},
     }
-
-
-def test_the_downgrade_round_trips_every_contract_configuration(tmp_path: Path) -> None:
-    from test_privacy_migration_contract import CONFIGS, _build_old_database
-
-    for name, config in CONFIGS.items():
-        subjects = {k: uuid.uuid4() for k in ("provider", "model", "group", "user", "key", "other")}
-        path = tmp_path / f"{name}.db"
-        _build_old_database(path, name, subjects)
-        down = _alembic(f"sqlite+aiosqlite:///{path}", "downgrade", "0081")
-        assert down.returncode == 0, (name, down.stderr[-1500:])
-        rules, users = _sorted_old(path)
-        want_rules = sorted(
-            (
-                scope,
-                None if subject is None else subjects[subject].hex,
-                _old_shape(
-                    RedactionPolicy(
-                        **{k: v for k, v in kwargs.items() if k != "_inactive"}
-                    ).model_dump(mode="json")
-                ),
-                0 if kwargs.get("_inactive") else 1,
-            )
-            for scope, subject, kwargs in config[0]
-        )
-        assert rules == want_rules, name
-        assert users == [
-            (kind, rname, regex, "block" if mode == "block_never" else mode)
-            for kind, rname, regex, mode in config[1]
-        ], name
 
 
 def test_a_downgrade_that_would_lose_pipelines_is_refused_unless_allowed(

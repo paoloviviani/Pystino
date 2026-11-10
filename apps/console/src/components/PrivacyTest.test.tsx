@@ -5,19 +5,14 @@ import { describe, expect, it } from "vitest";
 import type { PrivacyTestResult } from "../lib/types";
 import { TestResult } from "./PrivacyTest";
 
-/** The Test result: every pipeline in scope with its trace, the reroute, the ladder and who won, the policies added up. */
+/** The Test result: every pipeline in scope with every rule, the reroute, who decided, and which rule claimed which text. */
 
 const BASE: PrivacyTestResult = {
-  kind: "read",
+  kind: "extract",
   outcome: "read_with",
   outcome_headline: "Read by docling",
   outcome_text: "The file is read by the reader chosen.",
-  level: "read_with",
-  ladder: [
-    { level: "default", label: "Default reader", asked_by: [], winning: false },
-    { level: "read_with", label: "Read with docling", asked_by: ["Admin"], winning: true },
-    { level: "refuse", label: "Refuse", asked_by: ["Strict"], winning: false },
-  ],
+  level: "extract_with",
   pipelines: [
     {
       id: "p1",
@@ -26,14 +21,9 @@ const BASE: PrivacyTestResult = {
       hop: 0,
       scope: ["all users", "all targets"],
       steps: [
-        { rule_id: "r1", name: "Scans", position: 0, result: "fired", reasons: ["The file is a scan."], degraded: [], items: [], note: null, is_otherwise: false },
-        { rule_id: "e1", name: "Everything else", position: 1, result: "not_reached", reasons: [], degraded: [], items: [], note: null, is_otherwise: true },
+        { rule_id: "r1", name: "Scans", position: 0, result: "matched", reasons: ["The file is a scan."], degraded: [], items: [], policies: [], mode: "off", overrides: {}, note: null },
+        { rule_id: "r2", name: "Big files", position: 1, result: "not_matched", reasons: [], degraded: [], items: [], policies: [], mode: "off", overrides: {}, note: null },
       ],
-      fired_rule_id: "r1",
-      fired_rule: "Scans",
-      fired_otherwise: false,
-      level: "read_with",
-      action_text: "Read with docling",
       summary: [],
     },
     {
@@ -43,13 +33,8 @@ const BASE: PrivacyTestResult = {
       hop: 0,
       scope: ["only you", "all targets"],
       steps: [
-        { rule_id: "e2", name: "Everything else", position: 0, result: "fired", reasons: [], degraded: [], items: [], note: null, is_otherwise: true },
+        { rule_id: "r3", name: "Mine too", position: 0, result: "matched", reasons: [], degraded: [], items: [], policies: ["Default"], mode: "redact", overrides: {}, note: null },
       ],
-      fired_rule_id: "e2",
-      fired_rule: null,
-      fired_otherwise: true,
-      level: "read_with",
-      action_text: "Read with markitdown-ocr",
       summary: [],
     },
   ],
@@ -62,9 +47,9 @@ const BASE: PrivacyTestResult = {
   reader_by: "administrator pipeline Admin",
   reader_overridden: [],
   impossible: null,
-  policies: ["Default", "Mine"],
-  policy_types: [
-    { entity_type: "PERSON", mode: "redact", source: "Mine", per_policy: ["Default: anonymise_restore", "Mine: redact"], found: null },
+  policies: ["Default"],
+  claims: [
+    { pipeline: "Admin", rule: "Names", rule_id: null, owner: "admin", type: "PERSON", group: "entity", mode: "anonymise_restore", action: "hidden", engine: "spacy", score: 0.9, text: "Mario Rossi" },
   ],
   blocked_by: null,
   facts: {},
@@ -99,16 +84,15 @@ describe("Test result", () => {
 
   it("names the reroute and the pipelines that ran for the new reader", () => {
     show(BASE);
-    expect(screen.getByText("Rerouted to docling")).toBeInTheDocument();
-    expect(screen.getByText("Pipelines for that reader also checked: Guard.")).toBeInTheDocument();
+    expect(screen.getByText("Extractor changed to docling")).toBeInTheDocument();
+    expect(screen.getByText("Pipelines for that extractor also checked: Guard.")).toBeInTheDocument();
   });
 
-  it("names the winner on the ladder, the administrator's on a tie", () => {
+  it("shows every rule of a pipeline, matched or not, and names who decided", () => {
     show(BASE);
-    const ladder = screen.getByRole("region", { name: "Ladder" });
-    expect(within(ladder).getByText("wins · Admin › Scans")).toBeInTheDocument();
-    // A level that lost still says who asked for it.
-    expect(within(ladder).getByText("asked by Strict")).toBeInTheDocument();
+    expect(screen.getByText(/Big files/)).toBeInTheDocument();
+    expect(screen.getByText("Decided by Admin › Scans")).toBeInTheDocument();
+    expect(screen.getByText("Default → Redact")).toBeInTheDocument();
   });
 
   it("says who chose the reader", () => {
@@ -118,13 +102,13 @@ describe("Test result", () => {
     expect(within(reader).getAllByText(/chosen by administrator pipeline Admin/).length).toBe(1);
   });
 
-  it("combines the policies: the strictest mode and where it came from", () => {
+  it("says which rule claimed which text, with the mode it used", () => {
     show(BASE);
-    const policies = screen.getByRole("region", { name: "Policies combined" });
-    expect(within(policies).getByText("From Default + Mine")).toBeInTheDocument();
-    const row = within(policies).getByText("Person name").closest("tr") as HTMLElement;
-    expect(within(row).getByText("Mine")).toBeInTheDocument();
-    expect(within(row).getByText(/Default: anonymise_restore; Mine: redact/)).toBeInTheDocument();
+    const claims = screen.getByRole("region", { name: "Hidden text, by rule" });
+    const row = within(claims).getByText("Person name").closest("tr") as HTMLElement;
+    expect(within(row).getByText(/Admin › Names/)).toBeInTheDocument();
+    expect(within(row).getByText("Anonymise, restore in the answer")).toBeInTheDocument();
+    expect(within(row).getByText("Mario Rossi")).toBeInTheDocument();
   });
 
   it("lists each item that made a condition true, with its group, type, engine and score", () => {
@@ -183,8 +167,13 @@ describe("Test result", () => {
     expect(screen.queryByRole("region", { name: "Classifiers" })).toBeNull();
   });
 
-  it("does not show policies for a refused request", () => {
-    show({ ...BASE, outcome: "refuse", outcome_headline: "Refused (403)", level: "refuse", policies: [], policy_types: [] });
-    expect(screen.getByText("Not applied: refused.")).toBeInTheDocument();
+  it("says nothing was hidden when no rule claimed anything", () => {
+    show({ ...BASE, claims: [], outcome: "pass", level: "default" });
+    expect(screen.getByText("Nothing was hidden or recorded.")).toBeInTheDocument();
+  });
+
+  it("does not list what a blocked request would have hidden", () => {
+    show({ ...BASE, kind: "content", outcome: "block", outcome_headline: "Blocked (403)", level: "block", claims: [] });
+    expect(screen.getByText("Not applied: blocked.")).toBeInTheDocument();
   });
 });

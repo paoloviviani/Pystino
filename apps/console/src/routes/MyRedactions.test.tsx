@@ -155,7 +155,7 @@ describe("My redactions", () => {
     );
     renderPage();
 
-    expect(await screen.findByText("Reading a file · Rule Reports › Scanned PDFs")).toBeInTheDocument();
+    expect(await screen.findByText("Extract · Rule Reports › Scanned PDFs")).toBeInTheDocument();
     expect(screen.getByText("Read with docling")).toBeInTheDocument();
     expect(screen.getByText("pdf · scan")).toBeInTheDocument();
     // A fallback is a warning, not a footnote.

@@ -11,58 +11,56 @@ for both: **Privacy**.
 | Several apply | all of them, and the **strictest mode wins** per entity type | all in scope run and **combine**; inside one pipeline the **first rule that matches wins** |
 | Lives in | console: **Privacy, Redaction policies** | console: **Privacy, Pipelines** |
 
-A policy is also what **conditions** look things up with: a rule can say "*policy*
-finds at least N items" (embed, chat), next to the file type, the file name,
-whether a file is a scan (reading decides from the file, never its text), and
-"classified as *classifier*" (embed and chat; a decision model, for large
-deployments). There is no built-in topic and no quick check.
+A rule's **conditions** can say "it finds at least N items" (content: counted over the
+rule's own policies), next to the file type, the file name, whether a file is a scan
+(extracting decides from the file, never its text), and "classified as *classifier*"
+(content; a decision model, for large deployments). There is no built-in topic and no
+quick check.
 
 The two are documented separately: [Privacy pipelines](privacy-routing.md) (when
-and how: the kinds, the ladder, conditions, readers, user pipelines, migration) and
+and how: the kinds, rules, conditions, extractors, user pipelines, migration) and
 [Redaction](redaction.md) (what is found and hidden: policies, patterns and
 entities, modes, the log and the summary).
 
 ## How a request is handled
 
-1. The **kind** comes from the endpoint: reading a file (`/v1/ocr`), embedding
-   (`/v1/embeddings` and `/v1/rerank`), or chat (every chat surface).
-2. Every pipeline of that kind **whose scope covers the request** runs. Inside
-   each, the first matching rule decides what that pipeline asks for.
-3. The answers **combine**. *Where it is handled* is a ladder and the highest
-   level wins across all pipelines (read: default reader, then read with a chosen
-   reader, then refuse; embed and chat: pass, then refuse). *What is hidden* adds
-   up: the policies the pipelines chose are folded and the strictest mode wins
-   for each entity type.
-4. What is left goes to the provider, or the request is refused with a 403 that
-   names the rule, never the content.
+1. The **kind** comes from the endpoint: extracting a file (`/v1/ocr`), or content
+   (every chat surface, `/v1/embeddings` and `/v1/rerank`).
+2. Every rule of every pipeline of that kind **whose scope covers the request** is
+   evaluated: administrators' pipelines in console order, then the user's own, each
+   top to bottom. There is no first match.
+3. **A rule that blocks refuses the request** (a 403 that names the rule, never the
+   content). Otherwise every matching rule hides what its policies find, and **the first
+   rule to hide a piece of text decides how**. An extract rule may instead choose the
+   extractor (the first matching one wins, an administrator's before a user's).
+4. What is left goes to the provider.
 
 Nothing is remembered between requests, and every OpenAI-compatible client gets
 the same protection with no Cerea headers.
 
 Two things follow from the design and are worth saying once:
 
-- **Whole files leave whole.** A file sent to a remote reader leaves as it is;
-  redaction only screens the text that comes back. To keep a file here, read it
-  with the built-in extractor, or with a reader deployed in your facility.
+- **Whole files leave whole.** A file sent to a remote extractor leaves as it is;
+  redaction only screens the text that comes back. To keep a file here, extract it
+  with the built-in extractor, or with an extractor deployed in your facility.
 - **There is no "local".** A provider is a provider. Pystino does not know which
   are on your own infrastructure; scope decides which pipelines guard which
   targets (leave a facility vLLM or your own embedder out of the scope of the
   pipelines that guard remote providers). Nor is there a reroute between models
   for embedding or chat: vectors from two models do not match, and choosing the
-  model is the caller's job. To keep text in-house, refuse it and point the client
+  model is the caller's job. To keep text in-house, block it and point the client
   at your own model.
 
 ## Users
 
 A user can write **pipelines of their own**, for themselves only, and they can
-only **add** protection: read with a reader they are granted, refuse, redact with
-a policy (an administrator's, or their own). The combination
-takes the highest level and the strictest mode, so a user's pipeline can never
-lower anything an administrator's did. A user may name an administrator's policy
-only if it is marked **shared with users**, in "apply" and in "finds at least N
-items"; "classified as" is the administrators' alone, because it sends text to a
-provider. A user's own policy uses custom patterns and only the entity types an
-administrator has made available (Redaction service tab). See [User pipelines](privacy-routing.md#user-pipelines).
+only **add** protection: their rules come after the administrators', so they can hide
+more, block, or choose an extractor they are granted, and never remove protection an
+administrator set (a value an administrator's rule hides is claimed first). A user may
+name an administrator's policy only if it is marked **shared with users**;
+"classified as" is the administrators' alone, because it sends text to a provider. A
+user's own policy uses custom patterns and only the entity types an administrator has
+made available (Detectors tab). See [User pipelines](privacy-routing.md#user-pipelines).
 
 ## The console
 
