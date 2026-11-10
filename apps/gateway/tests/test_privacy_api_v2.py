@@ -85,7 +85,8 @@ class TestPipelineApi:
         [
             ({"otherwise": {"level": "pass"}}, 400),
             ({"kind": "chat"}, 400),
-            ({"rules": [{"name": "r", "mode": "block"}]}, 422),  # no policy
+            ({"rules": [{"name": "r", "mode": "anonymise"}]}, 422),  # hides, so needs a policy
+            ({"rules": [{"name": "r", "mode": "detect_only"}]}, 422),  # records, needs a condition
             ({"rules": [{"name": "r", "policies": [str(uuid.uuid4())], "mode": "block"}]}, 422),
             (
                 {
