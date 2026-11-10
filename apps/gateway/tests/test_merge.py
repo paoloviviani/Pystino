@@ -303,13 +303,12 @@ class TestScopeIdUser:
         )
         # An administrator's pipeline that names the source among its users.
         named = PrivacyPipeline(
-            kind="chat",
+            kind="content",
             name="Clinic",
             position=0,
             who={"mode": "users", "ids": [str(source.id), str(uuid.uuid4())]},
             target={"mode": "all", "providers": [], "models": []},
             rules=[],
-            otherwise={"level": "pass"},
         )
         session.add_all([user_rule, group_rule, named])
         await session.commit()
@@ -405,13 +404,12 @@ class TestScopeIdUser:
         theirs = UserPolicy(user_id=target.id, name="Mine", rules=[])
         own = PrivacyPipeline(
             owner_id=source.id,
-            kind="chat",
+            kind="content",
             name="P",
             position=0,
             who={"mode": "users", "ids": [str(source.id)]},
             target={"mode": "all", "providers": [], "models": []},
             rules=[],
-            otherwise={"level": "pass"},
         )
         session.add_all([mine, theirs, own])
         await session.commit()

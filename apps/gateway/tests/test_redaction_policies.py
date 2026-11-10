@@ -22,6 +22,7 @@ from conftest import Seeded
 from gateway.config import (
     EntityMode,
     EntityPolicy,
+    PolicyDefinition,
     RedactionPolicy,
     RedactionSettings,
     Settings,
@@ -51,7 +52,12 @@ def settings(settings: Settings) -> Settings:
 
 
 def policy(**kwargs: Any) -> dict[str, Any]:
-    return RedactionPolicy(**kwargs).model_dump(mode="json")
+    """A policy as the API takes it: what to look for, with no mode (ADR 0114)."""
+    from gateway.privacy.rules import MODES  # noqa: F401
+
+    return PolicyDefinition.from_stored(
+        RedactionPolicy(**kwargs).model_dump(mode="json")
+    ).model_dump(mode="json")
 
 
 def install_detector(app: Any, spans_for: dict[str, str]) -> None:
@@ -103,7 +109,7 @@ class TestPolicyCrud:
             },
         )
         assert patched.status_code == 200, patched.text
-        assert patched.json()["policy"]["entities"]["PERSON"]["mode"] == "block"
+        assert "mode" not in patched.json()["policy"]["entities"]["PERSON"]
         # This worker sees the change at once.
         assert app.state.privacy.policies[body["id"]].name == "Default policy"
 
@@ -223,12 +229,12 @@ class TestPreview:
         assert body["blocked"] is False
         assert body["entity_count"] == 1
         assert "Mario Rossi" not in body["redacted_text"]
-        assert "<PERSON_" in body["redacted_text"]
+        assert "<PERSON>" in body["redacted_text"]
         span = body["spans"][0]
         assert span["entity_type"] == "PERSON"
         assert (span["start"], span["end"]) == (13, 24)
         assert span["score"] == pytest.approx(0.9)
-        assert span["mode"] == "anonymise_restore"
+        assert span["mode"] == "redact"
 
     async def test_a_span_the_policy_ignores_is_shown_with_its_mode(
         self,
@@ -259,40 +265,6 @@ class TestPreview:
             "threshold": pytest.approx(0.5),
             "allow_listed": False,
         }
-
-    async def test_a_blocked_preview_is_a_200_that_says_so(
-        self,
-        app: Any,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        """A preview that refuses looks broken at the moment it is working."""
-        await admin_client(app, session_factory, seeded)
-        install_detector(app, {"123-45-6789": "US_SSN"})
-        created = await client.post(
-            "/api/admin/privacy/policies",
-            json={
-                "name": "Block SSN",
-                "policy": policy(entities={"US_SSN": EntityPolicy(mode=EntityMode.BLOCK)}),
-            },
-        )
-        assert created.status_code == 201, created.text
-
-        response = await client.post(
-            "/api/admin/redaction/preview",
-            json={"text": "my ssn is 123-45-6789", "policy_id": created.json()["id"]},
-        )
-
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert body["blocked"] is True
-        assert "US_SSN" in body["blocked_reason"]
-        # Never the matched value: a refusal is logged and pasted into tickets.
-        assert "123-45-6789" not in body["blocked_reason"]
-        # Nothing was rewritten, so there is no text to claim would be sent.
-        assert body["redacted_text"] is None
-        assert body["rule_id"] == created.json()["id"]
 
     async def test_the_sample_never_reaches_a_log(
         self,

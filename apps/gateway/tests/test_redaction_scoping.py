@@ -39,6 +39,14 @@ def policy(**kwargs: object) -> RedactionPolicy:
     return RedactionPolicy(**kwargs)  # type: ignore[arg-type]
 
 
+def _conv_rules(policy_id: str, name: str) -> list[dict[str, Any]]:
+    import privacy_helpers as ph
+
+    return ph._M.convert_content_rules(
+        [], {"level": "pass", "redact_with": policy_id}, ph.PMODES, [], name
+    )
+
+
 class TestTheFold:
     def test_a_scope_cannot_weaken_what_the_deployment_set(self) -> None:
         deployment = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT)})
@@ -228,21 +236,20 @@ class TestResolution:
                     PrivacyPipeline(
                         id=uuid.uuid4(),
                         owner_id=None,
-                        kind="chat",
+                        kind="content",
                         name=name,
                         enabled=True,
                         position=index,
                         who=who,
-                        target={"mode": "all", "providers": [], "models": []},
-                        rules=[],
-                        otherwise={"level": "pass", "redact_with": ids[name]},
+                        target={"mode": "all", "providers": [], "models": [], "model_types": []},
+                        rules=_conv_rules(ids[name], name),
                     ),
                     order=index,
                 )
             )
-        facts = Facts(kind="chat", user_id=str(self.user))
+        facts = Facts(kind="content", user_id=str(self.user))
         combined = await plan(state.evaluator, pipelines, facts)
-        return state.effective_policy(combined.policy_uses(), RedactionPolicy())
+        return state.effective_policy(combined.hiding_hits(), RedactionPolicy())
 
     async def test_no_policy_means_the_deployment_policy_alone(self) -> None:
         state, ids = self.state()
@@ -250,19 +257,6 @@ class TestResolution:
         assert effective.scope is None and effective.rule_id is None
         assert effective.policy == RedactionPolicy()
         assert effective.contributors[0].name == "Deployment policy"
-
-    async def test_the_narrowest_policy_is_the_one_recorded(self) -> None:
-        wide = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.ANONYMISE_RESTORE)})
-        narrow = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.BLOCK)})
-        state, ids = self.state(Wide=wide, Narrow=narrow)
-        everyone = {"mode": "all", "ids": []}
-        mine = {"mode": "users", "ids": [str(self.user)]}
-        effective = await self.effective(state, ids, [("Narrow", mine), ("Wide", everyone)])
-        assert effective.policy.mode_for("PERSON") is EntityMode.BLOCK
-        # Widest first, as the fold has always run; the narrowest is the one recorded.
-        assert [c.name for c in effective.contributors] == ["Wide", "Narrow"]
-        assert effective.scope == "user"
-        assert str(effective.rule_id) == ids["Narrow"]
 
     async def test_a_pipeline_for_someone_else_applies_no_policy(self) -> None:
         stricter = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.BLOCK)})
@@ -281,7 +275,7 @@ class TestResolution:
         bad = RedactionPolicyRecord(
             id=uuid.uuid4(),
             name="Bad",
-            policy={"default_mode": "sideways"},
+            policy={"patterns": [{"name": "X", "regex": "(?=no)"}]},
             is_active=True,
             reason="",
         )
@@ -289,15 +283,6 @@ class TestResolution:
         state.load([], [good, bad], [], [], [], [])
         assert list(state.policies) == [str(good.id)]
         assert state.bad_rows and str(bad.id) in state.bad_rows[0]
-
-    async def test_the_fold_is_memoised_and_cleared_on_load(self) -> None:
-        p = policy(entities={"PERSON": EntityPolicy()})
-        state, ids = self.state(A=p, B=p)
-        everyone = {"mode": "all", "ids": []}
-        await self.effective(state, ids, [("A", everyone), ("B", everyone)])
-        assert len(state._folded) == 1
-        state.load([], [], [], [], [], [])
-        assert state._folded == {}
 
 
 class TestBlocking:
@@ -334,7 +319,7 @@ class TestBlocking:
         session_factory: Any,
         fake_upstream: Any,
     ) -> None:
-        pid = await self.install(
+        await self.install(
             app,
             session_factory,
             mode=EntityMode.BLOCK,
@@ -353,8 +338,8 @@ class TestBlocking:
 
         assert response.status_code == 403, response.text
         body = response.json()["error"]
-        assert body["code"] == "content_blocked"
-        assert "US_SSN" in body["message"]
+        assert body["code"] == "routing_refused"
+        assert "SSN pipeline" in body["message"]
         # The value itself is never echoed: an error body is logged, and pasted
         # into tickets. Leaking there is what the block exists to prevent.
         assert "123-45-6789" not in response.text
@@ -363,9 +348,7 @@ class TestBlocking:
         row = (await session.execute(select(UsageRecord))).scalars().one()
         assert row.status is UsageStatus.BLOCKED
         assert row.cost == 0 and row.total_tokens == 0
-        assert row.redaction_scope == "user"
-        assert row.redaction_rule_id == pid
-        assert row.error_code == "content_blocked"
+        assert row.error_code == "routing_refused"
 
     async def test_a_screening_timeout_leaves_a_row_with_its_code(
         self,

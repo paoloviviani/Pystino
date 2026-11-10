@@ -23,6 +23,7 @@ from gateway.config import (
     EntityPolicy,
     KeywordList,
     NerAsk,
+    PolicyDefinition,
     RedactionPolicy,
 )
 from gateway.errors import ServiceUnavailableError
@@ -492,14 +493,6 @@ class TestTheModeOrder:
 
 
 class TestLegacyShape:
-    def test_a_policy_with_one_table_is_split_by_name(self) -> None:
-        policy = RedactionPolicy.model_validate(
-            {"entities": {"PERSON": {"mode": "redact"}, "iban_code": {"mode": "block"}}}
-        )
-        assert set(policy.entities) == {"PERSON"} and set(policy.formats) == {"IBAN_CODE"}
-        assert policy.engine is None
-        assert policy.mode_for("IBAN_CODE") is M.BLOCK
-
     def test_the_new_shape_is_left_alone(self) -> None:
         raw = RedactionPolicy(
             formats={"IBAN_CODE": E(mode=M.BLOCK)}, entities={"PERSON": E(mode=M.REDACT)}
@@ -565,12 +558,10 @@ class TestAdminApi:
         # A type the engine does not expose, and a format the service does not have.
         unknown = await client.post(
             "/api/admin/privacy/policies",
-            json=body(formats={}, entities={"DRUG": {"mode": "redact"}}),
+            json=body(formats={}, entities={"DRUG": {}}),
         )
         assert unknown.status_code == 422 and "does not find: DRUG" in unknown.text
-        noformat = await client.post(
-            "/api/admin/privacy/policies", json=body(formats={"NOPE": {"mode": "redact"}})
-        )
+        noformat = await client.post("/api/admin/privacy/policies", json=body(formats={"NOPE": {}}))
         assert noformat.status_code == 422 and "no built-in format" in noformat.text
         # An engine that is down cannot be chosen.
         service.set_available("gliner", False)
@@ -605,24 +596,27 @@ class TestAdminApi:
         )
         response = await client.post(
             "/api/admin/privacy/policies/try",
-            json={"policy": policy.model_dump(mode="json"), "text": TEXT},
+            json={
+                "policy": PolicyDefinition.from_stored(policy.model_dump(mode="json")).model_dump(
+                    mode="json"
+                ),
+                "text": TEXT,
+            },
         )
         assert response.status_code == 200, response.text
         body = response.json()
-        rows = sorted(
-            (i["group"], i["type"], i["engine"], i["mode"], i["text"]) for i in body["items"]
-        )
+        rows = sorted((i["group"], i["type"], i["engine"], i["text"]) for i in body["items"])
         assert rows == [
-            ("entity", "CODENAME", "gliner", "anonymise_restore", "Falcon"),
-            ("entity", "PERSON", "gliner", "detect_only", "Mario Rossi"),
-            ("pattern", "IBAN_CODE", "pattern", "redact", "IT60X0542811101000000123456"),
-            ("pattern", "WORDS", "pattern", "detect_only", "Falcon"),
+            ("entity", "CODENAME", "gliner", "Falcon"),
+            ("entity", "PERSON", "gliner", "Mario Rossi"),
+            ("pattern", "IBAN_CODE", "pattern", "IT60X0542811101000000123456"),
+            ("pattern", "WORDS", "pattern", "Falcon"),
         ]
         scores = {i["type"]: i["score"] for i in body["items"]}
         assert scores["PERSON"] == 0.8 and scores["IBAN_CODE"] is None and scores["WORDS"] is None
         # What the redaction would do: detect-only items are left, the rest is hidden.
-        assert "Mario Rossi" in body["redacted_text"] and "IT60X" not in body["redacted_text"]
-        assert "Falcon" not in body["redacted_text"].replace("<CODENAME", "") or True
+        # A policy has no mode: the preview shows everything it finds as removed.
+        assert "Mario Rossi" not in body["redacted_text"] and "IT60X" not in body["redacted_text"]
         assert body["unavailable"] is None and body["blocked"] is False
         # With the engine down the answer says it cannot look; it is not an empty result.
         service.set_available("gliner", False)
@@ -748,7 +742,7 @@ class TestPatternOnlyService:
         await self.install(app, pattern_only_service())
         refused = await client.post(
             "/api/admin/privacy/policies",
-            json={"name": "N", "policy": {"entities": {"PERSON": {"mode": "redact"}}}},
+            json={"name": "N", "policy": {"entities": {"PERSON": {}}}},
         )
         assert refused.status_code == 422
         assert "No NER engine is installed in the redaction service" in refused.text
@@ -756,27 +750,9 @@ class TestPatternOnlyService:
         # Patterns alone are fine.
         ok = await client.post(
             "/api/admin/privacy/policies",
-            json={"name": "P", "policy": {"formats": {"IBAN_CODE": {"mode": "redact"}}}},
+            json={"name": "P", "policy": {"formats": {"IBAN_CODE": {}}}},
         )
         assert ok.status_code == 201
-
-    async def test_a_retired_format_may_stay_only_while_it_is_off(
-        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
-    ) -> None:
-        """AGE was advertised as a pattern format by mistake: a policy that saved it is kept."""
-        as_user(app, await make_admin(session_factory, seeded))
-        await self.install(app, pattern_only_service())
-        acting = await client.post(
-            "/api/admin/privacy/policies",
-            json={"name": "A", "policy": {"formats": {"AGE": {"mode": "redact"}}}},
-        )
-        assert acting.status_code == 422 and "no built-in format: AGE" in acting.text
-        kept = await client.post(
-            "/api/admin/privacy/policies",
-            json={"name": "B", "policy": {"formats": {"AGE": {"mode": "off"}}}},
-        )
-        assert kept.status_code == 201
-        assert kept.json()["policy"]["formats"]["AGE"]["mode"] == "off"
 
     async def test_the_placeholder_style_round_trips_on_every_kind_of_item(
         self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
@@ -784,13 +760,12 @@ class TestPatternOnlyService:
         as_user(app, await make_admin(session_factory, seeded))
         await self.install(app, FakeService())
         policy = {
-            "formats": {"IBAN_CODE": {"mode": "anonymise", "placeholder": "same_length"}},
-            "entities": {"PERSON": {"mode": "anonymise_restore", "placeholder": "same_length"}},
+            "formats": {"IBAN_CODE": {"placeholder": "same_length"}},
+            "entities": {"PERSON": {"placeholder": "same_length"}},
             "patterns": [
                 {
                     "name": "BADGE",
                     "regex": "B-[0-9]+",
-                    "mode": "anonymise",
                     "placeholder": "same_length",
                 }
             ],
@@ -798,7 +773,6 @@ class TestPatternOnlyService:
                 {
                     "name": "CODES",
                     "words": ["falcon"],
-                    "mode": "anonymise",
                     "placeholder": "same_length",
                 }
             ],
@@ -807,7 +781,6 @@ class TestPatternOnlyService:
                 {
                     "name": "CODENAME",
                     "label": "project code name",
-                    "mode": "anonymise",
                     "placeholder": "same_length",
                 }
             ],
@@ -839,14 +812,14 @@ class TestPatternOnlyService:
         assert "No NER engine is installed" in options["ner_note"]
         refused = await client.post(
             "/api/me/privacy/policies",
-            json={"name": "N", "entries": [{"kind": "mode", "name": "PERSON", "mode": "redact"}]},
+            json={"name": "N", "entries": [{"kind": "mode", "name": "PERSON"}]},
         )
         assert refused.status_code == 422 and "No NER engine is installed" in refused.text
         ok = await client.post(
             "/api/me/privacy/policies",
             json={
                 "name": "I",
-                "entries": [{"kind": "mode", "name": "IBAN_CODE", "mode": "redact"}],
+                "entries": [{"kind": "mode", "name": "IBAN_CODE"}],
             },
         )
         assert ok.status_code == 201
@@ -887,7 +860,7 @@ class TestSwitchedOffDetectors:
         assert refused.status_code == 422 and "switched off" in refused.text
         no_format = await client.post(
             "/api/admin/privacy/policies",
-            json={"name": "F", "policy": {"formats": {"IBAN_CODE": {"mode": "redact"}}}},
+            json={"name": "F", "policy": {"formats": {"IBAN_CODE": {}}}},
         )
         assert no_format.status_code == 422 and "no built-in format" in no_format.text
 
@@ -901,9 +874,9 @@ class TestUserPatternNames:
             app,
             session_factory,
             "Admin",
-            patterns=[{"name": "BADGE", "regex": "B-[0-9]+", "mode": "redact"}],
-            keywords=[{"name": "CODES", "words": ["falcon"], "mode": "redact"}],
-            custom_entities=[{"name": "PROJECT", "label": "project code name", "mode": "redact"}],
+            patterns=[{"name": "BADGE", "regex": "B-[0-9]+"}],
+            keywords=[{"name": "CODES", "words": ["falcon"]}],
+            custom_entities=[{"name": "PROJECT", "label": "project code name"}],
             engine="gliner",
         )
         for name in ("BADGE", "CODES", "PROJECT"):
@@ -911,9 +884,7 @@ class TestUserPatternNames:
                 "/api/me/privacy/policies",
                 json={
                     "name": f"U{name}",
-                    "entries": [
-                        {"kind": "pattern", "name": name, "mode": "redact", "regex": "x[0-9]+"}
-                    ],
+                    "entries": [{"kind": "pattern", "name": name, "regex": "x[0-9]+"}],
                 },
             )
             assert refused.status_code == 422, name
@@ -922,9 +893,7 @@ class TestUserPatternNames:
             "/api/me/privacy/policies",
             json={
                 "name": "ok",
-                "entries": [
-                    {"kind": "pattern", "name": "MINE", "mode": "redact", "regex": "x[0-9]+"}
-                ],
+                "entries": [{"kind": "pattern", "name": "MINE", "regex": "x[0-9]+"}],
             },
         )
         assert fresh.status_code == 201
@@ -950,7 +919,7 @@ class TestSwitchedOffSaveTimeGaps:
         assert off.status_code == 200
         refused = await client.post(
             "/api/admin/privacy/policies",
-            json={"name": "N", "policy": {"entities": {"PERSON": {"mode": "redact"}}}},
+            json={"name": "N", "policy": {"entities": {"PERSON": {}}}},
         )
         assert refused.status_code == 422 and "switched off" in refused.text
         # Not "not installed": the engines are there.
@@ -969,7 +938,7 @@ class TestSwitchedOffSaveTimeGaps:
             "/api/admin/privacy/policies",
             json={
                 "name": "N",
-                "policy": {"engine": "gliner", "entities": {"PERSON": {"mode": "redact"}}},
+                "policy": {"engine": "gliner", "entities": {"PERSON": {}}},
             },
         )
         assert refused.status_code == 422 and "switched off" in refused.text
@@ -987,7 +956,7 @@ class TestSwitchedOffSaveTimeGaps:
             "Names",
             active=False,
             engine="gliner",
-            entities={"PERSON": {"mode": "redact"}},
+            entities={"PERSON": {}},
         )
         await client.put(
             "/api/admin/redaction/engine", json={"engine": "noop", "gliner_enabled": False}
@@ -1025,7 +994,7 @@ class TestSwitchedOffSaveTimeGaps:
                 UserPolicy(
                     user_id=seeded.user.id,
                     name="Mine",
-                    rules=[{"kind": "mode", "name": "PERSON", "regex": None, "mode": "redact"}],
+                    rules=[{"kind": "mode", "name": "PERSON", "regex": None}],
                 )
             )
             await db.commit()
@@ -1048,7 +1017,7 @@ class TestSwitchedOffSaveTimeGaps:
         for engine in service.health["ner_engines"]:
             engine["default"] = engine["name"] == "gliner"
         await self.install(app, service)
-        await add_policy(app, session_factory, "Names", entities={"PERSON": {"mode": "redact"}})
+        await add_policy(app, session_factory, "Names", entities={"PERSON": {}})
         # No engine named: it reads with the service's default, which is GLiNER here.
         assert (
             await client.put(
@@ -1109,7 +1078,7 @@ class TestUserFormatsFollowTheSwitches:
             "/api/me/privacy/policies",
             json={
                 "name": "I",
-                "entries": [{"kind": "mode", "name": "IBAN_CODE", "mode": "redact"}],
+                "entries": [{"kind": "mode", "name": "IBAN_CODE"}],
             },
         )
         assert (
@@ -1118,7 +1087,7 @@ class TestUserFormatsFollowTheSwitches:
         )
         ok = await client.post(
             "/api/me/privacy/policies",
-            json={"name": "P", "entries": [{"kind": "mode", "name": "PERSON", "mode": "redact"}]},
+            json={"name": "P", "entries": [{"kind": "mode", "name": "PERSON"}]},
         )
         assert ok.status_code == 201
 
@@ -1158,7 +1127,7 @@ class TestSwitchingOffNeedsTheService:
         app.state.redactor = service.redactor(gliner_enabled=False)
         app.state.redaction = None
         policy_id = await add_policy(
-            app, session_factory, "Names", engine="gliner", entities={"PERSON": {"mode": "redact"}}
+            app, session_factory, "Names", engine="gliner", entities={"PERSON": {}}
         )
         response = await client.post(
             "/api/admin/redaction/preview",

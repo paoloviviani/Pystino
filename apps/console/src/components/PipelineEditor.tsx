@@ -459,7 +459,7 @@ function OverrideAdd({ onAdd }: { onAdd: (type: string) => void }) {
       <input
         className="w-48 rounded-md border border-line bg-surface px-2 py-1 font-mono text-body"
         aria-label={m["privacy.rule.override_type"]()}
-        placeholder="TYPE_NAME"
+        placeholder={m["privacy.rule.override_placeholder"]()}
         value={type}
         onChange={(event) => setType(event.target.value)}
       />

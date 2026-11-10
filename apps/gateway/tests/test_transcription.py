@@ -618,7 +618,7 @@ class TestRedactionSwitch:
         assert fake_upstream.bodies == []
         assert (await session.execute(select(UsageRecord))).first() is None
 
-    async def test_a_chat_refusal_scoped_to_the_caller_blocks_audio_too(
+    async def test_a_hiding_rule_scoped_to_the_caller_blocks_audio_too(
         self,
         app: FastAPI,
         client: httpx.AsyncClient,
@@ -627,22 +627,24 @@ class TestRedactionSwitch:
         fake_upstream: FakeUpstream,
         settings: Settings,
     ) -> None:
-        """Audio has no text for a pipeline to judge, so a refusal that names the caller counts."""
-        from privacy_helpers import add_pipeline
+        """Audio has no text for a pipeline to judge, so a rule that hides for the caller counts."""
+        from gateway.config import EntityPolicy
+        from privacy_helpers import add_pipeline, add_policy, rule
 
         model = await add_model(session, seeded)
+        put_redaction_in_force(app, settings)
+        app.state.redaction = None
         settings.transcription.allowed_under_redaction = False
 
-        async def make() -> Any:
-            return app.state.session_factory
-
+        factory = app.state.session_factory
+        pid = await add_policy(app, factory, "Names", entities={"PERSON": EntityPolicy()})
         await add_pipeline(
             app,
-            await make(),
+            factory,
             "chat",
             "Refuse me",
             who={"mode": "users", "ids": [str(seeded.user.id)]},
-            otherwise={"level": "refuse"},
+            rules=[rule("Hide", [], level="pass", redact_with=str(pid))],
         )
         fake_upstream.set_json({"text": "never"})
         response = await post_audio(client, seeded, model.name)

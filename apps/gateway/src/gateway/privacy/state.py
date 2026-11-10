@@ -69,6 +69,13 @@ def _schema_missing(exc: Exception) -> bool:
     return "privacy_pipelines" in text and ("no such table" in text or "does not exist" in text)
 
 
+def _does_routing(rule: rulelib.Rule) -> bool:
+    """A rule that decides something beyond "hide what these policies find"."""
+    if rule.conditions or rule.blocks_all or rule.records_only:
+        return True
+    return rule.kind == rulelib.KIND_EXTRACT and rule.level != "default"
+
+
 @dataclass(frozen=True, slots=True)
 class PolicyRef:
     """An administrator's policy, parsed once at load."""
@@ -174,13 +181,15 @@ class PrivacyState:
     def configured(self) -> bool:
         """Whether any pipeline does routing: the condition for logging every request.
 
-        A pipeline that only applies a policy (no rule, a last rule that adds a
-        policy and nothing else) is redaction as it always was, and logs as it
-        always did: only a request that something was hidden in. A deployment
-        migrated from scoped redaction rules is all of those, and its log must
-        not change shape because of the migration.
+        A rule that only hides (no condition, no block, no extractor choice) is redaction as it
+        always was, and logs as it always did: only a request that something was hidden in. A
+        deployment migrated from scoped redaction rules is all of those, and its log must not
+        change shape because of the migration.
         """
-        return any(p.enabled and any(r.enabled for r in p.rules) for p in self.pipelines)
+        return any(
+            p.enabled and any(r.enabled and _does_routing(r) for r in p.rules)
+            for p in self.pipelines
+        )
 
     @property
     def bad_rules(self) -> list[str]:

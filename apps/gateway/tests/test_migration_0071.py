@@ -60,7 +60,8 @@ def test_existing_groups_get_local_connectors_on(tmp_path: Path) -> None:
             "(lower(hex(randomblob(16))), '2026-10-23', 'off')"
         )
 
-    assert _alembic(url, "upgrade", "head").returncode == 0
+    # Up to 0085: 0086 (privacy rules v2) cannot be reversed, so the chain is walked only that far.
+    assert _alembic(url, "upgrade", "0085").returncode == 0
     down = _alembic(url, "downgrade", "0070")
     assert down.returncode == 0, down.stderr[-2000:]
     with closing(sqlite3.connect(path)) as conn:

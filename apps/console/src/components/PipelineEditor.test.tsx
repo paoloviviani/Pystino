@@ -114,7 +114,7 @@ describe("Pipeline editor", () => {
     await user.selectOptions(screen.getByLabelText("Add a condition"), "finds");
     await user.clear(screen.getByLabelText("Number of items"));
     await user.type(screen.getByLabelText("Number of items"), "3");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Then" }), "block");
+    await user.selectOptions(screen.getByRole("combobox", { name: /^Then/ }), "block");
     await user.click(screen.getByRole("button", { name: "Create pipeline" }));
 
     await posted(seen);
@@ -182,7 +182,7 @@ describe("Pipeline editor", () => {
     await user.type(await screen.findByLabelText("Name"), "O");
     await user.click(screen.getByRole("button", { name: "Add rule" }));
     await user.selectOptions(screen.getByLabelText("Add policy..."), "pol1");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Then" }), "anonymise_restore");
+    await user.selectOptions(screen.getByRole("combobox", { name: /^Then/ }), "anonymise_restore");
     await user.type(screen.getByLabelText("Entity type"), "it vat code");
     await user.click(screen.getByRole("button", { name: "Add override" }));
     await user.selectOptions(screen.getByLabelText("Mode for IT_VAT_CODE"), "redact");
@@ -216,7 +216,7 @@ describe("Pipeline editor", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Add rule" }));
     expect(screen.queryByRole("radio", { name: /Extract with/ })).toBeNull();
-    expect(screen.getByRole("combobox", { name: "Then" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /^Then/ })).toBeInTheDocument();
   });
 
   it("warns that a file-name-only protection is defeated by renaming", async () => {

@@ -3547,5 +3547,6 @@
   "privacy.edit.model_type_embedding": "Embedding",
   "privacy.edit.model_type_rerank": "Rerank",
   "privacy.cond.finds_rule": "finds at least",
-  "policy_fields.placeholder_note": "What to do with what is found is set by the rules that use this policy."
+  "policy_fields.placeholder_note": "What to do with what is found is set by the rules that use this policy.",
+  "privacy.rule.override_placeholder": "TYPE_NAME"
 }

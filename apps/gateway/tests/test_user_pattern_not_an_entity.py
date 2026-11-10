@@ -138,7 +138,7 @@ class TestStrictDetection:
             app,
             session_factory,
             seeded.user.id,
-            [{"kind": "pattern", "name": "LIVE_PROJECT", "regex": "PRJ-[0-9]+", "mode": "redact"}],
+            [{"kind": "pattern", "name": "LIVE_PROJECT", "regex": "PRJ-[0-9]+"}],
         )
         await add_pipeline(
             app,
@@ -152,7 +152,7 @@ class TestStrictDetection:
         as_user(app, seeded.user)
         with caplog.at_level(logging.WARNING):
             result = await client.post(
-                "/api/me/privacy/test", json={"kind": "chat", "text": "ticket PRJ-42"}
+                "/api/me/privacy/test", json={"kind": "content", "text": "ticket PRJ-42"}
             )
         assert result.status_code == 200, result.text
         assert "cannot serve" not in caplog.text
@@ -173,7 +173,7 @@ class TestSavingAUserPolicy:
                 "/api/me/privacy/policies",
                 json={
                     "name": f"p-{name}",
-                    "entries": [{"kind": "pattern", "name": name, "regex": "x+", "mode": "redact"}],
+                    "entries": [{"kind": "pattern", "name": name, "regex": "x+"}],
                 },
             )
             assert refused.status_code == 422, (name, refused.text)
@@ -187,7 +187,6 @@ class TestSavingAUserPolicy:
                         "kind": "pattern",
                         "name": "LIVE_PROJECT",
                         "regex": "PRJ-[0-9]+",
-                        "mode": "redact",
                     }
                 ],
             },
@@ -205,9 +204,7 @@ class TestSavingAUserPolicy:
             "/api/me/privacy/policies",
             json={
                 "name": "mine",
-                "entries": [
-                    {"kind": "pattern", "name": "CODENAME", "regex": "x+", "mode": "redact"}
-                ],
+                "entries": [{"kind": "pattern", "name": "CODENAME", "regex": "x+"}],
             },
         )
         assert refused.status_code == 422, refused.text

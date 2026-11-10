@@ -73,6 +73,9 @@ def base_facts(
     provider = model.provider
     group = principal.billing_group
     model_type = getattr(getattr(model, "kind", None), "value", None)
+    if model_type not in ("chat", "embedding", "rerank"):
+        # Every other surface that screens text (audio, images, search) is judged as chat.
+        model_type = "chat"
     return Facts(
         kind="extract" if kind == "extract" else "content",
         model_type=None if kind == "extract" else model_type,
