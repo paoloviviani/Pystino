@@ -44,35 +44,61 @@ depends_on: str | Sequence[str] | None = None
 logger = logging.getLogger("alembic.runtime.migration")
 
 MODE_ORDER = ["off", "detect_only", "anonymise_restore", "anonymise", "redact", "block"]
-#: What every engine finds; a policy's old ``default_mode`` becomes these, explicitly.
+#: What the redaction service's own recognisers find without a statistical model
+#: (``services/redaction`` ``PATTERN_ONLY_ENTITIES``), and the types its NER engines expose.
+#: A policy's old ``default_mode`` ("everything not listed") is written out over these.
+DEFAULT_FORMATS = (
+    "CREDIT_CARD", "CRYPTO", "DATE_TIME", "EMAIL_ADDRESS", "IBAN_CODE", "IP_ADDRESS",
+    "PHONE_NUMBER", "MEDICAL_LICENSE", "URL", "US_BANK_NUMBER", "US_DRIVER_LICENSE", "US_ITIN",
+    "US_PASSPORT", "US_SSN", "UK_NHS", "IT_FISCAL_CODE", "IT_DRIVER_LICENSE", "IT_VAT_CODE",
+    "IT_PASSPORT", "IT_IDENTITY_CARD", "ES_NIF", "PL_PESEL", "SG_NRIC_FIN", "AU_ABN", "AU_ACN",
+    "AU_TFN", "AU_MEDICARE", "IN_PAN", "IN_AADHAAR",
+)  # fmt: skip
 DEFAULT_TYPES = ("PERSON", "LOCATION", "NRP", "ORGANIZATION")
 DEFAULT_TYPES_GLINER = ("PERSON", "LOCATION", "ORGANIZATION")
 _NS = uuid.UUID("0a86a086-0000-4000-8000-000000000086")
+MAX_NAME = 120
+
+
+def _stricter(a: str, b: str) -> str:
+    return a if MODE_ORDER.index(a) >= MODE_ORDER.index(b) else b
 
 
 # -- policies ------------------------------------------------------------------------
 
 
-def convert_policy(raw: dict[str, Any], log: list[str], name: str = "") -> tuple[dict[str, Any], dict[str, str]]:
+def convert_policy(
+    raw: dict[str, Any], log: list[str], name: str = ""
+) -> tuple[dict[str, Any], dict[str, str]]:
     """A stored policy without modes, and the ``{item name: mode}`` of what it acted on.
 
     Items whose mode was ``off`` are dropped (they found nothing). ``default_mode`` other
-    than ``off`` is written out as explicit entity entries.
+    than ``off`` is written out as explicit entries for every format and entity type the
+    service knows. A name in two tables keeps the strictest mode.
     """
     policy = json.loads(json.dumps(raw or {}))
     modes: dict[str, str] = {}
     default = str(policy.pop("default_mode", "off") or "off")
+    formats = policy.setdefault("formats", {})
     entities = policy.setdefault("entities", {})
     if default != "off":
-        engine = policy.get("engine")
-        wanted = DEFAULT_TYPES_GLINER if engine == "gliner" else DEFAULT_TYPES
-        for t in wanted:
-            if t not in {k.upper() for k in entities}:
+        ner = DEFAULT_TYPES_GLINER if policy.get("engine") == "gliner" else DEFAULT_TYPES
+        have = {k.upper() for k in (*formats, *entities)}
+        for t in DEFAULT_FORMATS:
+            if t not in have:
+                formats[t] = {"mode": default, "placeholder": "tagged", "threshold": None}
+        for t in ner:
+            if t not in have:
                 entities[t] = {"mode": default, "placeholder": "tagged", "threshold": None}
         log.append(
             f"policy '{name}': default mode {default} written out as entries for "
-            f"{', '.join(wanted)}; other types an engine adds later are no longer covered."
+            f"{len(DEFAULT_FORMATS)} formats and {len(ner)} entity types; a type an engine or the "
+            "service adds later is no longer covered."
         )
+
+    def note(key: str, mode: str) -> None:
+        modes[key] = _stricter(modes[key], mode) if key in modes else mode
+
     for table in ("formats", "entities"):
         kept: dict[str, Any] = {}
         for key, item in (policy.get(table) or {}).items():
@@ -81,27 +107,32 @@ def convert_policy(raw: dict[str, Any], log: list[str], name: str = "") -> tuple
                 log.append(f"policy '{name}': {table[:-1]} {key} was off and is dropped.")
                 continue
             kept[key.upper()] = item
-            modes[key.upper()] = mode
+            note(key.upper(), mode)
         policy[table] = kept
     for table in ("custom_entities", "patterns", "keywords"):
         kept_list = []
         for item in policy.get(table) or []:
-            mode = str(item.pop("mode", "redact" if table != "custom_entities" else "anonymise_restore"))
+            mode = str(
+                item.pop("mode", "redact" if table != "custom_entities" else "anonymise_restore")
+            )
             if mode == "off":
                 log.append(f"policy '{name}': {item.get('name')} was off and is dropped.")
                 continue
             kept_list.append(item)
-            modes[str(item.get("name")).upper()] = mode
+            note(str(item.get("name")).upper(), mode)
         policy[table] = kept_list
     return policy, modes
 
 
-def convert_user_entries(entries: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, str]]:
+def convert_user_entries(
+    entries: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
     out, modes = [], {}
     for entry in entries or []:
         entry = dict(entry)
         mode = str(entry.pop("mode", "redact"))
-        modes[str(entry.get("name")).upper()] = mode
+        key = str(entry.get("name")).upper()
+        modes[key] = _stricter(modes[key], mode) if key in modes else mode
         out.append(entry)
     return out, modes
 
@@ -119,17 +150,75 @@ def mode_and_overrides(modes: dict[str, str]) -> tuple[str, dict[str, str]]:
 
 
 def _hide(pids: list[str], pmodes: dict[str, dict[str, str]]) -> tuple[str, dict[str, str]]:
+    """How a rule hides with these policies. A policy that is gone keeps a hiding mode, so the
+    request path fails closed (503) as it did before, instead of quietly hiding nothing."""
     merged: dict[str, str] = {}
     for pid in pids:
-        for name, mode in pmodes.get(pid, {}).items():
+        if pid not in pmodes:
+            return "redact", {}
+        for name, mode in pmodes[pid].items():
             held = merged.get(name)
-            if held is None or MODE_ORDER.index(mode) > MODE_ORDER.index(held):
-                merged[name] = mode
+            merged[name] = mode if held is None else _stricter(held, mode)
     return mode_and_overrides(merged)
 
 
 def _uuid(rule_id: str, tag: str) -> str:
     return str(uuid.uuid5(uuid.UUID(str(rule_id)), tag))
+
+
+def _name(base: str, suffix: str) -> str:
+    return f"{base} ({suffix})"[:MAX_NAME]
+
+
+def negate_earlier(kind: str, earlier: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """"None of the earlier rules matched" as conditions that must all hold, or None.
+
+    Expressible when every earlier rule has exactly one condition: each is negated, and
+    conditions of one key are combined (not in A, not in B is one "not in A or B"). A content
+    ``finds`` is only expressible over one policy and count, because it counts the rule's own.
+    """
+    conds: list[dict[str, Any]] = []
+    for rule in earlier:
+        cs = rule.get("conditions") or []
+        if len(cs) != 1:
+            return None
+        conds.append(cs[0])
+    out: list[dict[str, Any]] = []
+    by_key: dict[str, list[dict[str, Any]]] = {}
+    for c in conds:
+        by_key.setdefault(str(c.get("key")), []).append(c)
+    for key, group in by_key.items():
+        if key == "classified":
+            for c in group:
+                out.append(
+                    {"key": key, "values": list(c["values"]), "negate": not c.get("negate"), "count": 1}
+                )
+        elif key == "finds":
+            shapes = {(c["values"][0], int(c.get("count") or 1), bool(c.get("negate"))) for c in group}
+            if len(shapes) != 1:
+                return None
+            pid, count, negate = next(iter(shapes))
+            out.append(
+                {"key": key, "values": [], "negate": not negate, "count": count, "_policy": pid}
+            )
+        elif key == "scan":
+            if len({bool(c.get("negate")) for c in group}) != 1:
+                return None
+            out.append({"key": key, "values": [], "negate": not group[0].get("negate")})
+        else:  # filetype, filename
+            if any(c.get("negate") for c in group):
+                if len(group) != 1:
+                    return None
+                out.append({"key": key, "values": list(group[0]["values"]), "negate": False})
+            else:
+                values = list(dict.fromkeys(v for c in group for v in c["values"]))
+                out.append({"key": key, "values": values, "negate": True})
+    return out
+
+
+def _earlier(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The old rules whose match stopped the search (enabled, not observe-only)."""
+    return [r for r in rules if r.get("enabled", True) and not r.get("observe_only")]
 
 
 def convert_content_rules(
@@ -174,40 +263,41 @@ def convert_content_rules(
         level = action.get("level", "pass")
         redact_with = str(action["redact_with"]) if action.get("redact_with") else None
         observe = bool(rule.get("observe_only"))
-        if len(finds) > 1:
+        mixed = len(finds) > 1 and any(c.get("negate") for c in finds)
+        fcond: list[dict[str, Any]] = []
+        if len(finds) > 1 and not mixed:
             log.append(
                 f"{where}: rule '{rule['name']}' had {len(finds)} 'finds' conditions that all had "
                 "to hold; now one count over the union of their policies (it fires at least as often)."
             )
-        fcond: list[dict[str, Any]] = []
-        if finds:
-            c0 = finds[0]
+        if finds and not mixed:
             counts = {int(c.get("count") or 1) for c in finds}
             if len(counts) > 1:
-                log.append(f"{where}: rule '{rule['name']}': counts {sorted(counts)} merged into {max(counts)}.")
-            fcond = [
-                {
-                    "key": "finds",
-                    "values": [],
-                    "negate": bool(c0.get("negate")),
-                    "count": max(counts),
-                }
-            ]
-        if level == "refuse":
-            policies = fids
-            mode = "detect_only" if observe else "block"
-            if not policies:
-                out.append(
-                    disabled(
-                        rule,
-                        "it blocked on a classifier or on everything, and a rule now needs a "
-                        "policy to look for. Choose one and turn it on.",
-                        conditions=classified,
-                        mode=mode,
-                    )
+                log.append(
+                    f"{where}: rule '{rule['name']}': counts {sorted(counts)} merged into {max(counts)}."
                 )
+            fcond = [
+                {"key": "finds", "values": [], "negate": bool(finds[0].get("negate")), "count": max(counts)}
+            ]
+        why_mixed = (
+            f"it had {len(finds)} 'finds' conditions, some negated, that all had to hold; one "
+            "count over their policies cannot say that. Rebuild it from the conditions as needed."
+        )
+        if level == "refuse":
+            mode = "detect_only" if observe else "block"
+            if mixed:
+                out.append(disabled(rule, why_mixed, policies=fids, conditions=classified, mode=mode))
                 continue
-            out.append(new(rule, policies=policies, conditions=[*fcond, *classified], mode=mode))
+            if mode == "detect_only" and not (fcond or classified):
+                log.append(f"{where}: observe-only rule '{rule['name']}' had nothing to look at; dropped.")
+                continue
+            if not fids:
+                log.append(
+                    f"{where}: rule '{rule['name']}' blocked without a policy "
+                    + ("on a classifier" if classified else "on everything in scope")
+                    + ": migrated as an enabled rule with no policy."
+                )
+            out.append(new(rule, policies=fids, conditions=[*fcond, *classified], mode=mode))
             continue
         # pass
         if not redact_with:
@@ -216,15 +306,14 @@ def convert_content_rules(
         mode, over = _hide([redact_with], pmodes)
         if observe:
             mode, over = "detect_only", {}
+        if mixed:
+            out.append(
+                disabled(rule, why_mixed, policies=[redact_with], conditions=classified, mode=mode, overrides=over)
+            )
+            continue
         if not fids or fids == [redact_with]:
             out.append(
-                new(
-                    rule,
-                    policies=[redact_with],
-                    conditions=[*fcond, *classified],
-                    mode=mode,
-                    overrides=over,
-                )
+                new(rule, policies=[redact_with], conditions=[*fcond, *classified], mode=mode, overrides=over)
             )
             continue
         # Decides on X, hides with a different P: two rules in sequence.
@@ -240,7 +329,7 @@ def convert_content_rules(
             new(
                 rule,
                 id=_uuid(rule["id"], "hide"),
-                name=f"{rule['name']} (hide)",
+                name=_name(rule["name"], "hide"),
                 policies=[redact_with],
                 conditions=classified,
                 mode=mode,
@@ -252,17 +341,25 @@ def convert_content_rules(
     final = {"id": str(uuid.uuid5(_NS, where + "|otherwise")), "name": "Everything else"}
     if last_with:
         mode, over = _hide([str(last_with)], pmodes)
+        if rules:
+            log.append(f"{where}: 'everything else' hides unconditionally now (it only applied when no rule above did).")
         out.append({**_blank(final), "policies": [str(last_with)], "mode": mode, "overrides": over})
     elif last_level == "refuse":
-        log.append(f"{where}: 'everything else: refuse' cannot be said without a policy; added switched off.")
-        out.append(
-            {
-                **_blank(final),
-                "enabled": False,
-                "mode": "block",
-                "note": "Migration 0086: this pipeline refused everything else; choose a policy to block on.",
-            }
-        )
+        earlier = _earlier(rules)
+        if any(not (r.get("conditions") or []) for r in earlier):
+            log.append(f"{where}: 'everything else: refuse' never applied (a rule above matches everything); dropped.")
+        else:
+            conds = negate_earlier("content", earlier) if earlier else []
+            if conds is None:
+                log.append(f"{where}: 'everything else: refuse' cannot be said as conditions; added switched off.")
+                out.append(
+                    {**_blank(final), "enabled": False, "mode": "block",
+                     "note": "Migration 0086: this pipeline refused whatever no rule above matched, "
+                     "which cannot be said as conditions. Write the block you want."}
+                )
+            else:
+                pols = list(dict.fromkeys(c.pop("_policy") for c in conds if "_policy" in c))
+                out.append({**_blank(final), "policies": pols, "conditions": conds, "mode": "block"})
     return out
 
 
@@ -275,6 +372,13 @@ def _blank(base: dict[str, Any]) -> dict[str, Any]:
         "mode": "off",
         "overrides": {},
         **base,
+    }
+
+
+def _clamp(mode: str, over: dict[str, str]) -> tuple[str, dict[str, str]]:
+    """An extract rule blocks with its action: its hiding part never has mode block."""
+    return ("redact" if mode == "block" else mode), {
+        k: ("redact" if v == "block" else v) for k, v in over.items()
     }
 
 
@@ -298,7 +402,7 @@ def convert_extract_rules(
     for rule in rules:
         a = rule.get("action") or {}
         policies = [str(a["redact_with"])] if a.get("redact_with") else []
-        mode, over = _hide(policies, pmodes) if policies else ("off", {})
+        mode, over = _clamp(*_hide(policies, pmodes)) if policies else ("off", {})
         r: dict[str, Any] = {
             "id": rule["id"],
             "name": rule["name"],
@@ -322,20 +426,35 @@ def convert_extract_rules(
     lw = [str(last["redact_with"])] if last.get("redact_with") else []
     lvl = last.get("level", "default")
     if lw or lvl not in ("default", "pass"):
-        mode, over = _hide(lw, pmodes) if lw else ("off", {})
-        out.append(
-            {
-                "id": _uuid(pipeline_id, "otherwise"),
-                "name": "Everything else",
-                "enabled": True,
-                "policies": lw,
-                "match": "all",
-                "conditions": [],
-                "mode": mode,
-                "overrides": over,
-                "action": action_of(last),
-            }
-        )
+        mode, over = _clamp(*_hide(lw, pmodes)) if lw else ("off", {})
+        final: dict[str, Any] = {
+            "id": _uuid(pipeline_id, "otherwise"),
+            "name": "Everything else",
+            "enabled": True,
+            "policies": lw,
+            "match": "all",
+            "conditions": [],
+            "mode": mode,
+            "overrides": over,
+            "action": action_of(last),
+        }
+        if action_of(last)["level"] != "default":
+            # It only applied when no rule above did: say that as "none of them" or keep it off.
+            earlier = _earlier(rules)
+            if any(not (r.get("conditions") or []) for r in earlier):
+                log.append(f"{where}: 'everything else' never applied (a rule above matches everything); dropped.")
+                return out
+            conds = negate_earlier("extract", earlier) if earlier else []
+            if conds is None:
+                final["enabled"] = False
+                final["note"] = (
+                    "Migration 0086: this pipeline's last rule applied only when no rule above did, "
+                    "which cannot be said as conditions. Write the conditions you want."
+                )
+                log.append(f"{where}: 'everything else' kept switched off: it cannot be said as conditions.")
+            else:
+                final["conditions"] = conds
+        out.append(final)
     return out
 
 
@@ -365,42 +484,35 @@ def plan_pipelines(
             target["model_types"] = []
             converted.append({**row, "kind": "extract", "rules": rules, "target": target})
             continue
-        rules = convert_content_rules(
-            list(row.get("rules") or []), row.get("otherwise") or {}, pmodes, log, where
-        )
-        # Positions of the old per-kind lists interleave: chat first on a tie.
+        rules = convert_content_rules(list(row.get("rules") or []), row.get("otherwise") or {}, pmodes, log, where)
         target["model_types"] = ["chat"] if kind == "chat" else ["embedding", "rerank"]
-        converted.append(
-            {**row, "kind": "content", "rules": rules, "target": target, "_old": kind}
+        converted.append({**row, "kind": "content", "rules": rules, "target": target, "_old": kind})
+
+    def same(k: dict[str, Any], row: dict[str, Any]) -> bool:
+        return (
+            k["owner_id"] == row["owner_id"]
+            and k["name"].lower() == row["name"].lower()
+            and k["who"] == row["who"]
+            and k["enabled"] == row["enabled"]
+            and {**k["target"], "model_types": []} == {**row["target"], "model_types": []}
+            and _signature(k["rules"]) == _signature(row["rules"])
         )
+
+    # Twins are paired explicitly (each chat copy with at most one embed copy), wherever they sit.
+    chats = [r for r in converted if r.get("_old") == "chat"]
+    paired: set[int] = set()
     drop: list[Any] = []
-    keep: list[dict[str, Any]] = []
     for row in converted:
-        if row["kind"] == "extract":
-            keep.append(row)
+        if row.get("_old") != "embed":
             continue
-        twin = next(
-            (
-                k
-                for k in keep
-                if k["kind"] == "content"
-                and k["owner_id"] == row["owner_id"]
-                and k["_old"] == "chat"
-                and row["_old"] == "embed"
-                and k["name"].lower() == row["name"].lower()
-                and k["who"] == row["who"]
-                and k["enabled"] == row["enabled"]
-                and {**k["target"], "model_types": []} == {**row["target"], "model_types": []}
-                and _signature(k["rules"]) == _signature(row["rules"])
-            ),
-            None,
-        )
+        twin = next((k for k in chats if id(k) not in paired and same(k, row)), None)
         if twin is not None:
+            paired.add(id(twin))
             twin["target"] = {**twin["target"], "model_types": []}
+            row["_drop"] = True
             drop.append(row["id"])
             log.append(f"pipeline '{row['name']}': the chat and embed copies were identical and became one.")
-            continue
-        keep.append(row)
+    keep = [r for r in converted if not r.get("_drop")]
     # Names stay unique within a kind and owner.
     seen: dict[tuple[Any, str], int] = {}
     for row in keep:
@@ -410,7 +522,7 @@ def plan_pipelines(
         key = (row["owner_id"], row["kind"] + row["name"].lower())
         if seen[key] > 1 and row["kind"] == "content":
             kinds = row["target"]["model_types"]
-            row["name"] = f"{row['name']} ({' + '.join(kinds) if kinds else 'any'})"[:120]
+            row["name"] = _name(row["name"], " + ".join(kinds) if kinds else "any")
     # Renumber positions per owner and kind (chat first on a tie).
     groups: dict[tuple[Any, str], list[dict[str, Any]]] = {}
     for row in keep:

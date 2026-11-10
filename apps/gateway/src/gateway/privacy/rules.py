@@ -173,7 +173,9 @@ class Rule:
 
     @property
     def effective_conditions(self) -> tuple[Condition, ...]:
-        if self.conditions or self.kind == KIND_EXTRACT:
+        # A rule with no policy has nothing to count: with no condition it always holds
+        # ("block everything in scope", ADR 0114).
+        if self.conditions or self.kind == KIND_EXTRACT or not self.policies:
             return self.conditions
         return (IMPLICIT_FINDS,)
 
@@ -182,7 +184,7 @@ class Rule:
         """Whether the rule protects (so it must not be skipped for want of a fact)."""
         if self.kind == KIND_EXTRACT:
             return self.level != "default" or self.hides_text
-        return self.hides_text
+        return self.blocks_all or self.hides_text
 
     @property
     def is_noop(self) -> bool:
@@ -508,8 +510,6 @@ def validate_rule(
             )
         if value not in policies:
             policies.append(value)
-    if kind == KIND_CONTENT and not policies:
-        raise RuleError("A rule needs at least one policy: it is what the rule looks for.")
     mode = str(raw.get("mode") or ("off" if kind == KIND_EXTRACT else ""))
     if kind == KIND_CONTENT and not mode:
         raise RuleError(f"Choose what the rule does: {', '.join(MODES)}.")
@@ -520,8 +520,18 @@ def validate_rule(
     overrides = clean_overrides(raw.get("overrides"))
     if kind == KIND_EXTRACT and "block" in overrides.values():
         raise RuleError("An extract rule blocks with its action; an override cannot block.")
-    if (overrides or mode != "off") and not policies:
-        raise RuleError("A mode needs a policy to hide with.")
+    # A rule with no policy hides nothing: it may only block (everything in scope, or when its
+    # conditions hold) or record (when its conditions hold).
+    no_policy_ok = mode == "block" or (mode == "detect_only" and raw.get("conditions"))
+    if kind == KIND_CONTENT and not policies and not no_policy_ok:
+        raise RuleError(
+            "A rule needs at least one policy: it is what the rule looks for. Only a rule "
+            "that blocks (or records, with a condition) may have none."
+        )
+    if overrides and not policies:
+        raise RuleError("Overrides need a policy to apply to.")
+    if mode not in ("off", "block", "detect_only") and not policies:
+        raise RuleError("A mode that hides needs a policy to hide with.")
     match = str(raw.get("match") or "all")
     if match not in MATCHES:
         raise RuleError("'match' is all or any.")

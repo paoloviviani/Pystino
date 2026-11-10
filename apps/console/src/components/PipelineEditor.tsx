@@ -901,7 +901,9 @@ export function PipelineEditorPage({ area }: { area: Area }) {
           )}
           <div className="flex items-center gap-2 text-body">
             <Switch label={m["privacy.edit.enabled"]()} checked={enabled} onChange={setEnabled} />
-            <span aria-hidden>{m["privacy.edit.enabled"]()}</span>
+            <span aria-hidden>
+              {m["privacy.edit.enabled"]()}: {enabled ? m["privacy.row.on"]() : m["privacy.row.off"]()}
+            </span>
           </div>
         </div>
       </Card>
@@ -1022,7 +1024,10 @@ export function PipelineEditorPage({ area }: { area: Area }) {
                         checked={rule.enabled}
                         onChange={(next) => patchRule(rule.uid, { enabled: next })}
                       />
-                      <span aria-hidden>{m["privacy.edit.rule_enabled"]()}</span>
+                      <span aria-hidden>
+                        {m["privacy.edit.rule_enabled"]()}:{" "}
+                        {rule.enabled ? m["privacy.row.on"]() : m["privacy.row.off"]()}
+                      </span>
                     </div>
                   </div>
                 )}
@@ -1054,6 +1059,8 @@ export function PipelineEditorPage({ area }: { area: Area }) {
         </Notice>
       )}
 
+      {/* Room for the sticky bar, so it never covers the last field of an open rule. */}
+      <div aria-hidden className="h-24" />
       <div
         role="region"
         aria-label={m["privacy.edit.savebar"]()}

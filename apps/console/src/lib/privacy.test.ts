@@ -66,7 +66,7 @@ describe("ruleSentence", () => {
       labels,
     );
     expect(text).toBe(
-      "When Default + Strict + it finds at least 3 items or it is classified as Unannounced project → anonymise, restore in the answer (1 overrides)",
+      "When Default + Strict + it finds at least 3 items or it is classified as Unannounced project → anonymise, restore in the answer (1 override)",
     );
   });
 

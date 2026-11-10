@@ -453,10 +453,15 @@ export function conditionPhrase(c: Phrasable, labels: Labels = {}): string {
   const values = c.values.map((v) => valueLabel(c.key, v)).join(" / ");
   const named = c.values.map((v) => labels[v] ?? "?").join(" / ");
   switch (c.key) {
-    case "finds":
+    case "finds": {
+      const one = (c.count ?? 1) === 1;
+      if (one) {
+        return c.negate ? m["privacy.phrase.finds_fewer_one"]() : m["privacy.phrase.finds_one"]();
+      }
       return c.negate
         ? m["privacy.phrase.finds_fewer"]({ count: String(c.count ?? 1) })
         : m["privacy.phrase.finds"]({ count: String(c.count ?? 1) });
+    }
     case "classified":
       return c.negate
         ? m["privacy.phrase.not_classified"]({ classifier: named })
@@ -517,7 +522,13 @@ export function ruleSentence(kind: PrivacyKind, rule: SentenceRule, labels: Labe
   const overrides = Object.keys(rule.overrides ?? {}).length;
   const mode =
     ruleModeLabel(rule.mode ?? "off") +
-    (overrides ? ` (${m["privacy.rule.overrides_count"]({ count: String(overrides) })})` : "");
+    (overrides
+      ? ` (${
+          overrides === 1
+            ? m["privacy.rule.overrides_count_one"]()
+            : m["privacy.rule.overrides_count"]({ count: String(overrides) })
+        })`
+      : "");
   if (kind === "extract") {
     const a = rule.action ?? { level: "default" };
     const action =

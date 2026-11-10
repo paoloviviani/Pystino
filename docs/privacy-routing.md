@@ -23,7 +23,7 @@ A pipeline is a scope and an ordered list of rules. There is no "otherwise".
 
 - **Policies** (one or more) are what the rule looks for, and what it hides: an
   administrator's policy, or for a user pipeline the administrators' shared policies and
-  the user's own. A content rule needs at least one.
+  the user's own. A content rule needs at least one, except a rule that blocks (with any conditions, or none: it blocks everything in scope) or records under at least one condition, which hides nothing and may have none.
 - **Conditions** are optional; `match` says whether **all** (default) or **any** of them
   must hold, and each can be negated. With none, a content rule fires when its policies
   find at least one item.
@@ -143,8 +143,9 @@ did not choose, nor let through unscreened.
    whose action is block, or an override that blocks a type that was found), the request is
    refused, naming the first such rule.
 5. Otherwise hiding is applied **in order**: each matching rule hides what its policies find,
-   using its mode and overrides. **The first rule to hide a span decides how**; later rules only
-   see text not already claimed. `off` and `detect only` never claim a span. This is one
+   using its mode and overrides. **The first rule to hide a span decides how**; a later span that
+   partly overlaps a claim keeps its unclaimed remainder ("Mario Rossi" with Rossi claimed as a
+   location still hides Mario) and later rules otherwise only see text not already claimed. `off` and `detect only` never claim a span. This is one
    detection pass over the original text per request, with overlaps resolved by rule order
    (nothing is detected again on placeholder text). Placeholders stay HMAC-stable and restore
    works for `anonymise and restore` spans.
@@ -256,8 +257,12 @@ becomes "When policies + conditions -> mode" (`refuse` is `block`, `redact with 
 with P's most common item mode and the rest as overrides, `observe_only` is `detect only`,
 "everything else" with a policy is a final rule), and policies lose their per-item modes after they
 are converted. Every lossy case is logged (`privacy rules v2 0086: ...`) and listed in the ADR:
-first-match shadowing is gone, a block with no policy is kept switched off with a note, items that
-were `off` are dropped, and a policy default mode is written out as explicit types.
+first-match shadowing is gone; a refusal with no policy migrates as an enabled no-policy block;
+mixed or negated `finds` conditions and an "everything else" that cannot be said as "none of the rules above" are
+kept switched off with a note; items that were `off` are dropped; a policy default mode is written out over every
+format and entity type the service knows. **Cross-pipeline order now decides**: the first matching rule that hides a
+span (the first administrator pipeline by position) claims it, which can be less strict than the old strictest-mode
+fold when two pipelines gave one type different modes.
 Earlier migrations (`0082` to `0085`) are unchanged.
 
 Rotating `GATEWAY_REDACTION__PLACEHOLDER_KEY` invalidates embeddings indexed with old placeholders:

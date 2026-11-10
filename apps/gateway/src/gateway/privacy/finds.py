@@ -91,7 +91,12 @@ class Judge(Protocol):
 
     def classifier_name(self, classifier_id: str) -> str | None: ...
 
-    async def find(self, policy_ids: Sequence[str], texts: Sequence[str]) -> FindResult: ...
+    async def find(
+        self,
+        policy_ids: Sequence[str],
+        texts: Sequence[str],
+        exclude: frozenset[str] = frozenset(),
+    ) -> FindResult: ...
 
     async def classify(self, classifier_id: str, texts: Sequence[str]) -> Verdict: ...
 
@@ -247,7 +252,7 @@ class ContentJudge:
         self._threshold = default_threshold
         self._backend = backend
         self._found: dict[tuple[str, tuple[str, ...]], FindResult] = {}
-        self._combined: dict[tuple[tuple[str, ...], tuple[str, ...]], FindResult] = {}
+        self._combined: dict[tuple[Any, ...], FindResult] = {}
         self._verdicts: dict[tuple[str, tuple[str, ...]], Verdict] = {}
 
     def policy_name(self, policy_id: str) -> str | None:
@@ -273,14 +278,19 @@ class ContentJudge:
         self._found[key] = result
         return result
 
-    async def find(self, policy_ids: Sequence[str], texts: Sequence[str]) -> FindResult:
+    async def find(
+        self,
+        policy_ids: Sequence[str],
+        texts: Sequence[str],
+        exclude: frozenset[str] = frozenset(),
+    ) -> FindResult:
         """The distinct items the rule's own policies find, combined (ADR 0114).
 
         Each policy is run once per request (its answer is remembered), and the union is
         counted by (type, normalised value): two policies finding one name are one item.
         """
         ids = tuple(policy_ids)
-        key = (ids, tuple(texts))
+        key = (ids, tuple(texts), exclude)
         held = self._combined.get(key)
         if held is not None:
             return held
@@ -293,6 +303,8 @@ class ContentJudge:
             if one.unavailable and one.unavailable not in problems:
                 problems.append(one.unavailable)
             for item in one.items:
+                if item.type.upper() in exclude:
+                    continue  # a type the rule's override sets to off is not counted
                 seen.setdefault((item.type, normalise_entity(item.type, item.value)), item)
         merged.items = tuple(seen.values())
         merged.unavailable = "; ".join(problems) or None

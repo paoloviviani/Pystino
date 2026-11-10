@@ -528,6 +528,42 @@ class Claims:
     blocked: list[tuple[EntitySpan, int]] = field(default_factory=list)
 
 
+def _remainders(text: str, span: EntitySpan, taken: list[EntitySpan]) -> list[EntitySpan]:
+    """What of *span* is not inside text already claimed, as spans (edge whitespace trimmed)."""
+    pieces = [(span.start, span.end)]
+    for other in taken:
+        kept: list[tuple[int, int]] = []
+        for lo, hi in pieces:
+            if other.end <= lo or other.start >= hi:
+                kept.append((lo, hi))
+                continue
+            if lo < other.start:
+                kept.append((lo, other.start))
+            if other.end < hi:
+                kept.append((other.end, hi))
+        pieces = kept
+    out: list[EntitySpan] = []
+    for lo, hi in pieces:
+        if (lo, hi) == (span.start, span.end):
+            out.append(span)
+            continue
+        while lo < hi and text[lo].isspace():
+            lo += 1
+        while hi > lo and text[hi - 1].isspace():
+            hi -= 1
+        if hi > lo:
+            out.append(
+                EntitySpan(
+                    start=lo,
+                    end=hi,
+                    entity_type=span.entity_type,
+                    score=span.score,
+                    engine=span.engine,
+                )
+            )
+    return out
+
+
 def claim_spans(
     text: str,
     detected: list[EntitySpan],
@@ -539,10 +575,10 @@ def claim_spans(
     """Which rule hides which span of *text*, from one detection pass over the original.
 
     Rules are taken in order. Each rule's policies find spans (their own thresholds and
-    allow-lists); spans that overlap text an earlier rule already claimed are dropped, so
-    **the first rule to hide a span decides how**, and the rest of the rule's spans are
-    resolved by score and length as ever. ``off`` and ``detect_only`` never claim: the
-    latter is only recorded. Nothing is detected again on placeholder text.
+    allow-lists); the part of a span inside text an earlier rule already claimed is left to
+    that rule, so **the first rule to hide a piece of text decides how**, and the rest of the
+    rule's spans are resolved by score and length as ever. ``off`` and ``detect_only`` never
+    claim: the latter is only recorded. Nothing is detected again on placeholder text.
     """
     claims = Claims()
     taken: list[EntitySpan] = []
@@ -560,10 +596,14 @@ def claim_spans(
                     if not any(_overlaps(span, other) for other in taken):
                         claims.observed.append((span, index))
                 elif hides(mode):
-                    modes[id(span)] = (mode, part.placeholder_style_for(span.entity_type))
-                    acting.append(span)
-        free = [s for s in acting if not any(_overlaps(s, other) for other in taken)]
-        for span in resolve_overlaps(text, free):
+                    style = part.placeholder_style_for(span.entity_type)
+                    # A span that only partly overlaps text an earlier rule claimed is trimmed to
+                    # what is left, and that is hidden in this rule's mode ("Mario Rossi" with
+                    # Rossi claimed: Mario is still hidden).
+                    for piece in _remainders(text, span, taken):
+                        modes[id(piece)] = (mode, style)
+                        acting.append(piece)
+        for span in resolve_overlaps(text, acting):
             mode, style = modes[id(span)]
             claims.chosen.append(Claim(span, mode, style, index))
             taken.append(span)

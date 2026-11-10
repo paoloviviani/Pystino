@@ -37,10 +37,14 @@ class FakeJudge:
     def classifier_name(self, classifier_id: str) -> str | None:
         return None
 
-    async def find(self, policy_ids: Sequence[str], texts: Sequence[str]) -> FindResult:
+    async def find(
+        self, policy_ids: Sequence[str], texts: Sequence[str], exclude: frozenset[str] = frozenset()
+    ) -> FindResult:
         values: dict[str, Item] = {}
         for pid in policy_ids:
             for v in self.found.get(pid, []):
+                if "T" in exclude:
+                    continue
                 values.setdefault(v, Item("pattern", "T", "pattern", None, v))
         bad = [p for p in policy_ids if p in self.down]
         return FindResult(items=tuple(values.values()), unavailable="down" if bad else None)
@@ -112,7 +116,7 @@ def finds(n: int = 1, negate: bool = False) -> rulelib.Condition:
 class TestValidation:
     def test_a_content_rule_needs_a_policy_and_a_mode(self) -> None:
         with pytest.raises(rulelib.RuleError, match="at least one policy"):
-            rulelib.validate_rule("content", {"name": "r", "mode": "block"})
+            rulelib.validate_rule("content", {"name": "r", "mode": "redact"})
         with pytest.raises(rulelib.RuleError, match="what the rule does"):
             rulelib.validate_rule("content", {"name": "r", "policies": [P1]})
 
@@ -361,7 +365,25 @@ class TestClaims:
         other = EntitySpan(start=10, end=22, entity_type="URL", score=0.9, engine="pattern")
         rules = [hiding("a", DEF, "redact"), hiding("b", {"formats": {"URL": {}}}, "anonymise")]
         claims = claim_spans(TEXT, [*SPANS, other], rules, 0.0)
-        assert [c.rule for c in claims.chosen] == [0]  # the overlapping URL is not left to rule b
+        # The URL overlaps rule a's claim only in part: its remainder is rule b's.
+        assert [(c.rule, TEXT[c.span.start : c.span.end]) for c in claims.chosen] == [
+            (0, "ada@example.org"),
+            (1, "n"),
+        ]
+
+    def test_a_span_that_partly_overlaps_a_claim_keeps_its_remainder(self) -> None:
+        text = "Mario Rossi"
+        person = EntitySpan(start=0, end=11, entity_type="PERSON", score=0.9, engine="spacy")
+        rossi = EntitySpan(start=6, end=11, entity_type="LOCATION", score=0.9, engine="spacy")
+        rules = [
+            hiding("place", {"entities": {"LOCATION": {}}}, "redact"),
+            hiding("who", {"entities": {"PERSON": {}}}, "anonymise"),
+        ]
+        claims = claim_spans(text, [person, rossi], rules, 0.0)
+        assert [(c.rule, text[c.span.start : c.span.end], c.mode) for c in claims.chosen] == [
+            (1, "Mario", EntityMode.ANONYMISE),
+            (0, "Rossi", EntityMode.REDACT),
+        ]
 
 
 class TestRequestPathLaziness:
@@ -373,3 +395,31 @@ class TestRequestPathLaziness:
         lazy = await Evaluator().evaluate([hide, stop], facts(judge, lazy_implicit=True))
         # Hiding finds the same spans itself; only a block has to look before it refuses.
         assert [r.name for r in lazy.matched] == ["hide"]
+
+
+class TestNoPolicyRules:
+    def test_a_rule_with_no_policy_may_only_block_or_record_under_a_condition(self) -> None:
+        assert rulelib.validate_rule("content", {"name": "r", "mode": "block"})["policies"] == []
+        ok = rulelib.validate_rule(
+            "content",
+            {
+                "name": "r",
+                "mode": "detect_only",
+                "conditions": [{"key": "classified", "values": [P2]}],
+            },
+        )
+        assert ok["policies"] == []
+        with pytest.raises(rulelib.RuleError):
+            rulelib.validate_rule("content", {"name": "r", "mode": "detect_only"})
+        with pytest.raises(rulelib.RuleError):
+            rulelib.validate_rule("content", {"name": "r", "mode": "anonymise"})
+
+    async def test_a_no_policy_block_with_no_condition_blocks_everything_in_scope(self) -> None:
+        stop = make_rule("all", policies=(), mode="block")
+        combined = await plan(Evaluator(), [make_pipeline([stop])], facts(FakeJudge({})))
+        assert combined.refused and combined.winner is not None
+
+    async def test_an_override_set_to_off_is_not_counted(self) -> None:
+        r = make_rule(mode="block", overrides={"T": "off"}, conditions=(finds(),))
+        ev = await Evaluator().evaluate([r], facts(FakeJudge({P1: ["x"]})))
+        assert ev.matched == []

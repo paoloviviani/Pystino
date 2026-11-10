@@ -210,7 +210,8 @@ class Evaluator:
                 judge.policy_name(p) or "a policy that no longer exists" for p in rule.policies
             ]
             shown = " + ".join(names) or "the rule's policies"
-            result = await judge.find(rule.policies, texts)
+            off_types = frozenset(t.upper() for t, m in rule.overrides.items() if m == "off")
+            result = await judge.find(rule.policies, texts, off_types)
             n = len(result.items)
             ev.found[rule.name] = max(ev.found.get(rule.name, 0), n)
             if result.items:
@@ -277,7 +278,9 @@ class Evaluator:
                 states.append(state)
                 if (every and state is State.FALSE) or (not every and state is State.TRUE):
                     break
-            if every:
+            if not states:
+                verdict = State.TRUE  # no condition: nothing can fail (a no-policy block)
+            elif every:
                 verdict = (
                     State.FALSE
                     if State.FALSE in states

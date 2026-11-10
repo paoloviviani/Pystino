@@ -68,9 +68,57 @@ def test_refuse_becomes_block_over_the_policies_it_counted() -> None:
     assert out[0]["conditions"][0]["count"] == 2 and out[0]["conditions"][0]["values"] == []
 
 
-def test_refuse_with_no_policy_is_kept_off_with_a_note() -> None:
+def test_refuse_with_no_policy_migrates_enabled_as_a_no_policy_block() -> None:
     out, log = _convert([_rule("all", [])])
-    assert out[0]["enabled"] is False and "needs a policy" in out[0]["note"] and log
+    assert out[0]["enabled"] is True and out[0]["policies"] == [] and out[0]["mode"] == "block"
+    assert out[0]["conditions"] == [] and any("everything in scope" in line for line in log)
+
+
+def test_a_classifier_only_refusal_keeps_its_condition_without_a_policy() -> None:
+    cond = {"key": "classified", "values": [str(uuid.uuid4())], "negate": False}
+    out, _ = _convert([_rule("topic", [cond])])
+    assert out[0]["enabled"] and out[0]["policies"] == [] and out[0]["conditions"] == [cond]
+
+
+def test_mixed_or_all_negated_finds_are_kept_off_and_counted() -> None:
+    mixed = [_finds(P1), _finds(P2, negate=True)]
+    out, log = _convert([_rule("mixed", mixed)])
+    assert out[0]["enabled"] is False and "some negated" in out[0]["note"]
+    assert sum("kept switched off" in line for line in log) == 1
+    allneg = [_finds(P1, negate=True), _finds(P2, negate=True)]
+    out, _ = _convert([_rule("neg", allneg)])
+    assert out[0]["enabled"] is False
+    out, _ = _convert([_rule("both", [_finds(P1), _finds(P2, 3)])])
+    assert (
+        out[0]["enabled"]
+        and out[0]["policies"] == [P1, P2]
+        and out[0]["conditions"][0]["count"] == 3
+    )
+
+
+def test_content_otherwise_refuse_becomes_a_block_when_none_of_the_rules_above_hold() -> None:
+    cl = str(uuid.uuid4())
+    above = [
+        _rule("a", [{"key": "classified", "values": [cl], "negate": False}], level="pass"),
+        _rule("b", [_finds(P1, 2)], level="pass"),
+    ]
+    out, _ = _convert(above, {"level": "refuse"})
+    last = out[-1]
+    assert last["name"] == "Everything else" and last["enabled"] and last["mode"] == "block"
+    assert last["policies"] == [P1]
+    assert {(c["key"], c["negate"]) for c in last["conditions"]} == {
+        ("classified", True),
+        ("finds", True),
+    }
+    # Two finds over different policies cannot be said: switched off with a note, never enabled bare.
+    out, _ = _convert(
+        [_rule("a", [_finds(P1)], level="pass"), _rule("b", [_finds(P2)], level="pass")],
+        {"level": "refuse"},
+    )
+    assert out[-1]["enabled"] is False and out[-1]["note"]
+    # Nothing above: it blocks everything.
+    out, _ = _convert([], {"level": "refuse"})
+    assert out[-1]["enabled"] and out[-1]["mode"] == "block" and out[-1]["conditions"] == []
 
 
 def test_pass_with_redact_becomes_a_rule_over_the_policy_with_overrides() -> None:
@@ -136,7 +184,7 @@ def test_extract_rules_convert_levels() -> None:
                 reader="docling",
             )
         },
-        {**_rule("b", [], level="refuse")},
+        {**_rule("b", [{"key": "scan", "values": [], "negate": False}], level="refuse")},
     ]
     out = m.convert_extract_rules(
         rules,
@@ -170,10 +218,65 @@ def test_policy_modes_are_stripped_and_off_items_dropped() -> None:
     assert modes == {"PERSON": "redact", "KEY": "anonymise"}
 
 
-def test_default_mode_is_written_out_as_entities() -> None:
+def test_default_mode_is_written_out_over_every_format_and_entity_type() -> None:
     log: list[str] = []
     new, modes = m.convert_policy({"default_mode": "redact", "entities": {}}, log, "d")
-    assert set(new["entities"]) == set(m.DEFAULT_TYPES) and modes["PERSON"] == "redact" and log
+    assert set(new["entities"]) == set(m.DEFAULT_TYPES)
+    assert set(new["formats"]) == set(m.DEFAULT_FORMATS) and len(new["formats"]) >= 29
+    assert modes["PERSON"] == modes["IBAN_CODE"] == "redact" and "no longer covered" in log[0]
+    gliner, _ = m.convert_policy({"default_mode": "redact", "engine": "gliner"}, [], "g")
+    assert "NRP" not in gliner["entities"]
+
+
+def test_a_name_in_two_tables_keeps_the_strictest_mode() -> None:
+    _, modes = m.convert_policy(
+        {
+            "entities": {"LOCATION": {"mode": "detect_only"}},
+            "keywords": [{"name": "LOCATION", "words": ["x"], "mode": "block"}],
+            "patterns": [{"name": "LOCATION", "regex": "q+", "mode": "anonymise"}],
+        },
+        [],
+    )
+    assert modes["LOCATION"] == "block"
+
+
+def test_a_missing_policy_keeps_a_hiding_mode_so_the_request_path_fails_closed() -> None:
+    gone = str(uuid.uuid4())
+    out, _ = _convert([_rule("hide", [], level="pass", redact_with=gone)])
+    assert out[0]["policies"] == [gone] and out[0]["mode"] == "redact" and out[0]["enabled"]
+
+
+def test_split_rule_names_are_truncated_to_120_characters() -> None:
+    long = "x" * 118
+    out, _ = _convert([_rule(long, [_finds(P2, 2)], level="pass", redact_with=P1)])
+    assert len(out[1]["name"]) <= 120
+
+
+def test_extract_hiding_never_gets_block_and_otherwise_is_a_negation_or_off() -> None:
+    log: list[str] = []
+    pm = {**PMODES, "pb": {"X": "block", "Y": "block"}}
+    pdf = {"key": "filetype", "values": ["pdf"], "negate": False}
+    word = {"key": "filetype", "values": ["word"], "negate": False}
+    rules = [
+        {**_rule("a", [pdf], level="pass", redact_with="pb")},
+        {**_rule("b", [word], level="read_with", reader="docling")},
+    ]
+    out = m.convert_extract_rules(rules, {"level": "refuse"}, pm, log, "p", str(uuid.uuid4()))
+    assert out[0]["mode"] == "redact" and out[0]["action"] == {"level": "default"}
+    last = out[-1]
+    assert last["enabled"] and last["action"] == {"level": "block"}
+    assert last["conditions"] == [{"key": "filetype", "values": ["pdf", "word"], "negate": True}]
+    # An earlier rule with two conditions cannot be negated as conditions: off with a note.
+    two = {**_rule("c", [pdf, {"key": "scan", "values": [], "negate": False}], level="pass")}
+    out = m.convert_extract_rules(
+        [two], {"level": "read_with", "reader": "docling"}, pm, [], "p", str(uuid.uuid4())
+    )
+    assert out[-1]["enabled"] is False and out[-1]["note"]
+    # Never enabled with no condition: an unconditional rule above makes it unreachable, so it is dropped.
+    out = m.convert_extract_rules(
+        [_rule("all", [], level="pass")], {"level": "refuse"}, pm, [], "p", str(uuid.uuid4())
+    )
+    assert all(r["name"] != "Everything else" for r in out)
 
 
 def _row(kind: str, name: str, rules: list[dict[str, Any]], pos: int = 0) -> dict[str, Any]:
@@ -214,6 +317,15 @@ def test_different_chat_and_embed_pipelines_stay_apart_with_their_model_types() 
     assert keep[0]["target"]["model_types"] == ["chat"]
     assert keep[1]["target"]["model_types"] == ["embedding", "rerank"]
     assert (len({r["name"] for r in keep}) == 2 and [r["position"] for r in keep] == [0, 0]) or True
+
+
+def test_twins_are_paired_whatever_the_row_order() -> None:
+    rule = _rule("r", [_finds(P1)])
+    twin = {**rule, "id": str(uuid.uuid4())}
+    chat, embed = _row("chat", "Same", [rule]), _row("embed", "Same", [twin])
+    for order in ([chat, embed], [embed, chat]):
+        keep, drop = m.plan_pipelines(list(order), PMODES, [])
+        assert len(keep) == 1 and drop == [embed["id"]] and keep[0]["target"]["model_types"] == []
 
 
 def test_read_pipelines_become_extract() -> None:
