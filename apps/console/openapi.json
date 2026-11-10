@@ -8410,6 +8410,22 @@
             ],
             "title": "Enabled"
           },
+          "kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "read",
+                  "embed",
+                  "chat"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
           "name": {
             "anyOf": [
               {

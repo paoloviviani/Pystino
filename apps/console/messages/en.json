@@ -3059,7 +3059,6 @@
   "privacy.kind.read_hint": "A file is read through the document reader. Rules see its name and type, whether it is a scan, and who asked.",
   "privacy.kind.embed_hint": "Text is turned into vectors. Rules see who asked, where it goes and what the text contains.",
   "privacy.badge.off": "Off",
-  "privacy.badge.check": "Check",
   "privacy.row.up": "Move {name} up",
   "privacy.row.down": "Move {name} down",
   "privacy.row.edit": "Edit",

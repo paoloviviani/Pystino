@@ -163,8 +163,8 @@ describe("Pipelines", () => {
     expect(
       within(read).getByText(/the file is a scan → read with docling/),
     ).toBeInTheDocument();
-    // A rule that never fires is flagged on its pipeline.
-    expect(within(read).getByText("Check")).toBeInTheDocument();
+    // The list carries no alarm badge: the editor shows the issues.
+    expect(within(read).queryByText("Check")).toBeNull();
     // Chat has none yet, and says requests are handled as ever.
     expect(
       within(screen.getByRole("region", { name: "Chat" })).getByText(
@@ -195,7 +195,7 @@ describe("Pipelines", () => {
     expect(
       await screen.findByText("Switched off by the migration: it used a check that no longer exists."),
     ).toBeInTheDocument();
-    expect(screen.getByText("Check")).toBeInTheDocument();
+    expect(screen.queryByText("Check")).toBeNull();
   });
 
   it("moves a pipeline within its kind by sending the whole order", async () => {

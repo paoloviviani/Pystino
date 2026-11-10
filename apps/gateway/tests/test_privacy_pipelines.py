@@ -198,6 +198,30 @@ class TestAdminApi:
             "privacy_pipeline.delete",
         } <= actions
 
+    async def test_update_tolerates_the_same_kind_and_refuses_another(
+        self, admin: None, client: httpx.AsyncClient
+    ) -> None:
+        created = await client.post(
+            "/api/admin/privacy/pipelines", json={"kind": "embed", "name": "Embedding"}
+        )
+        assert created.status_code == 201, created.text
+        url = f"/api/admin/privacy/pipelines/{created.json()['id']}"
+
+        same = await client.patch(url, json={"kind": "embed", "name": "Renamed"})
+        assert same.status_code == 200, same.text
+        assert same.json()["name"] == "Renamed" and same.json()["kind"] == "embed"
+
+        other = await client.patch(url, json={"kind": "chat", "name": "Nope"})
+        assert other.status_code == 400
+        assert other.json()["error"]["code"] == "pipeline_kind_immutable"
+        assert other.json()["error"]["message"] == (
+            "A pipeline's kind cannot be changed; create a new pipeline."
+        )
+
+        without = await client.patch(url, json={"name": "Again"})
+        assert without.status_code == 200 and without.json()["name"] == "Again"
+        assert without.json()["kind"] == "embed"
+
     async def test_names_are_unique_per_kind_and_a_new_one_goes_last(
         self, admin: None, client: httpx.AsyncClient
     ) -> None:
@@ -1117,6 +1141,27 @@ class TestUserPipelines:
         body = created.json()
         assert body["who"] == {"mode": "users", "ids": [str(seeded.user.id)]}
         assert body["owner_id"] == str(seeded.user.id)
+
+    async def test_a_users_update_tolerates_the_same_kind_and_refuses_another(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
+    ) -> None:
+        as_user(app, seeded.user)
+        created = await client.post(
+            "/api/me/privacy/pipelines", json={"kind": "embed", "name": "Mine"}
+        )
+        assert created.status_code == 201, created.text
+        url = f"/api/me/privacy/pipelines/{created.json()['id']}"
+
+        same = await client.patch(url, json={"kind": "embed", "name": "Renamed"})
+        assert same.status_code == 200, same.text
+        assert same.json()["name"] == "Renamed"
+
+        other = await client.patch(url, json={"kind": "read", "name": "Nope"})
+        assert other.status_code == 400
+        assert other.json()["error"]["code"] == "pipeline_kind_immutable"
+
+        without = await client.patch(url, json={"name": "Again"})
+        assert without.status_code == 200 and without.json()["name"] == "Again"
 
     async def test_nothing_that_loosens_can_be_written(
         self, app: Any, client: httpx.AsyncClient, seeded: Seeded

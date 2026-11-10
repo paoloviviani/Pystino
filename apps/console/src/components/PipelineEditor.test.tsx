@@ -320,4 +320,59 @@ describe("Pipeline editor", () => {
     expect(within(policy).getByRole("option", { name: "Default" })).toBeInTheDocument();
     expect(within(policy).getByRole("option", { name: "Mine" })).toBeInTheDocument();
   });
+
+  it.each([
+    ["admin", <AdminPipeline key="a" />, "/admin/privacy/pipelines/p1", "/api/admin/privacy/pipelines/p1"],
+    ["user", <MyPipeline key="u" />, "/privacy/pipelines/p1", "/api/me/privacy/pipelines/p1"],
+  ])("saves an existing %s pipeline without the kind, which is fixed once created", async (_who, element, path, url) => {
+    const seen: Seen[] = [];
+    const existing = {
+      id: "p1",
+      owner_id: null,
+      kind: "embed",
+      name: "Embedding",
+      enabled: true,
+      position: 0,
+      who: { mode: "all", ids: [] },
+      target: { mode: "all", providers: [], models: [] },
+      rules: [],
+      otherwise: {
+        id: "else1",
+        name: "Everything else",
+        enabled: true,
+        observe_only: false,
+        note: null,
+        conditions: [],
+        action: { level: "pass", reader: null, redact_with: null },
+        issues: [],
+      },
+      labels: {},
+      summary: [],
+      created_at: "2026-11-08T10:00:00Z",
+      updated_at: "2026-11-08T10:00:00Z",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const u = String(input);
+        const method = init?.method ?? "GET";
+        seen.push({ method, url: u, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        if (u.endsWith("/options")) return jsonResponse(OPTIONS);
+        if (u.includes("/pipelines/check")) return jsonResponse({ error: null, issues: [], soft_cap: 20 });
+        if (u.includes("/pipelines") && method === "GET") {
+          return jsonResponse({ items: [existing], total: 1, limit: 200, offset: 0 });
+        }
+        return jsonResponse(existing);
+      }),
+    );
+    const user = userEvent.setup();
+    renderEditor(element, path);
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(seen.some((c) => c.method === "PATCH")).toBe(true));
+    const patch = seen.find((c) => c.method === "PATCH");
+    expect(patch?.url).toBe(url);
+    expect(patch?.body).toMatchObject({ name: "Embedding", enabled: true });
+    expect(patch?.body).not.toHaveProperty("kind");
+  });
 });

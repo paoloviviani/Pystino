@@ -2,7 +2,7 @@ import { Badge, Button, Card, Switch, buttonClasses } from "@llmp/ui";
 import { Link } from "react-router";
 
 import { MUTED } from "../lib/layout";
-import { actionPhrase, issueBadges, ruleSentence, scopeWords } from "../lib/privacy";
+import { actionPhrase, ruleSentence, scopeWords } from "../lib/privacy";
 import type { PrivacyKind, PrivacyPipeline } from "../lib/types";
 import { m } from "../paraglide/messages.js";
 
@@ -33,9 +33,6 @@ export function PipelineCard({
 }) {
   const kind = pipeline.kind as PrivacyKind;
   const [who, target] = scopeWords(pipeline, own);
-  const flags = [...pipeline.rules, pipeline.otherwise].map(issueBadges);
-  const warn =
-    flags.some((f) => f.never || f.partly || f.check) || pipeline.rules.some((r) => r.note);
   return (
     <Card>
       <div className="flex flex-col gap-3">
@@ -46,7 +43,6 @@ export function PipelineCard({
             <Badge tone="neutral">{who}</Badge>
             <Badge tone="neutral">{target}</Badge>
             {!pipeline.enabled && !onToggle && <Badge tone="neutral">{m["privacy.badge.off"]()}</Badge>}
-            {warn && <Badge tone="warn">{m["privacy.badge.check"]()}</Badge>}
           </div>
           {editTo && (
             <div className="flex flex-wrap items-center gap-1">
