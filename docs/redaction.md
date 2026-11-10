@@ -449,7 +449,11 @@ message on chat completions, `instructions` on the Responses surface, `system`
 on Anthropic Messages). A rule is in force when at least one entity type,
 custom pattern or the default is in an anonymising mode (`anonymise_restore`,
 `anonymise` or `redact`), whether or not this particular request matched
-anything.
+anything. Under privacy rules (v2) that means every enabled hiding rule of every
+pipeline in scope for the request (who and target), **whether or not the rule's
+conditions matched this turn**: a rule that hides only "when it finds 2 or more"
+still puts the note on every turn, so the prefix never changes mid-conversation.
+Redaction itself still follows the matched rules only.
 
 The note is a function of the **policy alone**, never of the request's content.
 Providers cache the start of a request, and the system prompt is the start: a

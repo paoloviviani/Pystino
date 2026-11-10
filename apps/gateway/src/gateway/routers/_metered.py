@@ -1108,7 +1108,7 @@ def effective_policy_of(request: Request, combined: Combined) -> EffectivePolicy
     if resolver is None:
         return None
     effective: EffectivePolicy = state_of(request).effective_policy(
-        combined.hiding_hits(), resolver.policy
+        combined.hiding_hits(), resolver.policy, combined.scope_hiding_hits()
     )
     return effective
 
