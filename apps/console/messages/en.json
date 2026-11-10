@@ -3524,7 +3524,7 @@
   "privacy.rule.mode": "Then",
   "privacy.rule.mode_tip": "What happens to what the policies find. Block refuses the request.",
   "privacy.rule.overrides": "Overrides by entity type",
-  "privacy.rule.overrides_tip": "A different mode for one entity type of the rule's policies. In a block rule, a type overridden to a hiding mode is hidden and does not count towards the block.",
+  "privacy.rule.overrides_tip": "A different mode for one entity type of the rule's policies. In a block rule, only types set to block count towards the block; a type overridden to a hiding mode is hidden when the block does not apply.",
   "privacy.rule.override_add": "Add override",
   "privacy.rule.override_type": "Entity type",
   "privacy.rule.override_mode": "Mode for {type}",

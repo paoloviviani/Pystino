@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from gateway.privacy.finds import Item, Judge
@@ -163,6 +163,21 @@ def _plural(n: int, word: str = "item") -> str:
     return f"{n} {word}" + ("" if n == 1 else "s")
 
 
+def _hiding(rule: Rule) -> dict[str, str]:
+    """The types a block rule overrides to something other than block or off."""
+    return {t: m for t, m in rule.overrides.items() if m not in ("block", "off")}
+
+
+def _splits(rule: Rule) -> bool:
+    """A content rule in mode block that also hides some types (judged in two parts)."""
+    return (
+        rule.kind == "content"
+        and rule.mode == "block"
+        and bool(rule.policies)
+        and bool(_hiding(rule))
+    )
+
+
 class Evaluator:
     """Evaluates rules against facts. Stateless: the judge and the facts are the whole input."""
 
@@ -211,8 +226,8 @@ class Evaluator:
             ]
             shown = " + ".join(names) or "the rule's policies"
             # A type set to off is never counted. In a block rule only the types that block
-            # count towards the block: one overridden to a hiding mode is hidden by the rule,
-            # not counted (the block is decided first, then hiding applies).
+            # count towards the block; the ones overridden to a hiding mode are judged apart
+            # (``_hide_part``): the block is decided first, then hiding applies.
             off_types = frozenset(
                 t.upper()
                 for t, m in rule.overrides.items()
@@ -278,9 +293,11 @@ class Evaluator:
             degraded: list[str] = []
             items: list[Item] = []
             states: list[State] = []
+            judged: dict[Condition, tuple[State, str]] = {}
             every = rule.match == "all"
             for condition in _ordered(rule.effective_conditions):
                 state, why = await self._condition(condition, facts, ev, degraded, rule, items)
+                judged[condition] = (state, why)
                 reasons.append(why)
                 states.append(state)
                 if (every and state is State.FALSE) or (not every and state is State.TRUE):
@@ -303,7 +320,24 @@ class Evaluator:
                     if State.UNKNOWN in states
                     else State.FALSE
                 )
-            if verdict is State.FALSE:
+            if verdict is State.FALSE and _splits(rule):
+                # The block part did not fire. The types the rule only hides are still hidden
+                # by it: the block part and the hide part are judged separately.
+                hide, hide_why = await self._hide_part(rule, facts, ev, judged, items, degraded)
+                if hide is State.TRUE:
+                    ev.matched.append(replace(rule, mode="off", overrides=_hiding(rule)))
+                    ev.degraded.extend(m for m in degraded if m not in ev.degraded)
+                    note = "Block part: not triggered. Hide part: " + hide_why
+                    ev.steps.append(Step(rule, "matched", [*reasons[-1:], note], degraded, items))
+                elif hide is State.UNKNOWN:
+                    ev.steps.append(Step(rule, "pending", [*reasons, hide_why]))
+                    if ev.pending_rule is None:
+                        ev.pending, ev.pending_rule = True, rule
+                else:
+                    ev.steps.append(
+                        Step(rule, "not_matched", [*reasons[-1:], hide_why], items=items)
+                    )
+            elif verdict is State.FALSE:
                 ev.steps.append(Step(rule, "not_matched", reasons[-1:], items=items))
             elif verdict is State.UNKNOWN:
                 ev.steps.append(Step(rule, "pending", reasons))
@@ -314,6 +348,70 @@ class Evaluator:
                 ev.degraded.extend(m for m in degraded if m not in ev.degraded)
                 ev.steps.append(Step(rule, "matched", reasons, degraded, items))
         return ev
+
+    async def _hide_part(
+        self,
+        rule: Rule,
+        facts: Facts,
+        ev: Evaluation,
+        judged: dict[Condition, tuple[State, str]],
+        items: list[Item],
+        degraded: list[str],
+    ) -> tuple[State, str]:
+        """Whether a block rule that did not block still hides its overridden types.
+
+        Its non-``finds`` conditions must hold (under the rule's all/any; none holds
+        vacuously). Without an explicit ``finds`` at least one of those types must be found;
+        a count that cannot be made counts as found, so that this can only add protection.
+        """
+        hidden = _hiding(rule)
+        others = [c for c in rule.effective_conditions if c.key != "finds"]
+        every = rule.match == "all"
+        states: list[State] = []
+        for condition in _ordered(others):
+            held = judged.get(condition)
+            if held is None:
+                held = await self._condition(condition, facts, ev, degraded, rule, items)
+            states.append(held[0])
+        if not states:
+            verdict = State.TRUE
+        elif every:
+            verdict = (
+                State.FALSE
+                if State.FALSE in states
+                else State.UNKNOWN
+                if State.UNKNOWN in states
+                else State.TRUE
+            )
+        else:
+            verdict = (
+                State.TRUE
+                if State.TRUE in states
+                else State.UNKNOWN
+                if State.UNKNOWN in states
+                else State.FALSE
+            )
+        shown = ", ".join(f"{t} ({m})" for t, m in hidden.items())
+        if verdict is State.FALSE:
+            return verdict, f"the rule's other conditions do not hold; {shown} not hidden."
+        if verdict is State.UNKNOWN:
+            return verdict, "waiting for the file to be read."
+        explicit = any(c.key == "finds" for c in rule.conditions)
+        judge = facts.judge
+        if explicit or facts.lazy_implicit or judge is None or facts.kind == "extract":
+            # Redaction finds the same spans anyway: hiding nothing found is harmless.
+            return State.TRUE, f"{shown} hidden where found."
+        off = frozenset(t.upper() for t, m in rule.overrides.items() if m == "off")
+        result = await judge.find(rule.policies, facts.inputs, off)
+        wanted = {t.upper() for t in hidden}
+        seen = [i for i in result.items if i.type.upper() in wanted]
+        items.extend(i for i in seen if i not in items)
+        if seen:
+            return State.TRUE, f"{shown} found and hidden."
+        if result.incomplete or result.unavailable:
+            degraded.append("Whether those types are present cannot be checked; hidden anyway.")
+            return State.TRUE, f"{shown} could not be checked; hidden where found."
+        return State.FALSE, f"none of {', '.join(hidden)} found; nothing to hide."
 
     async def _condition(
         self,

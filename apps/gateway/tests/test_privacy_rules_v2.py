@@ -43,9 +43,12 @@ class FakeJudge:
         values: dict[str, Item] = {}
         for pid in policy_ids:
             for v in self.found.get(pid, []):
-                if "T" in exclude:
+                # "TYPE:value" names the type; a bare value is of type T.
+                kind, _, value = v.rpartition(":")
+                kind = kind or "T"
+                if kind in exclude:
                     continue
-                values.setdefault(v, Item("pattern", "T", "pattern", None, v))
+                values.setdefault(v, Item("pattern", kind, "pattern", None, value))
         bad = [p for p in policy_ids if p in self.down]
         return FindResult(items=tuple(values.values()), unavailable="down" if bad else None)
 
@@ -217,8 +220,6 @@ class TestEvaluation:
 
     async def test_a_block_rule_counts_only_the_types_that_block(self) -> None:
         judge = FakeJudge({P1: ["a"]})  # the fake finds items of type T
-        hidden = make_rule(mode="block", overrides={"T": "redact"})
-        assert (await Evaluator().evaluate([hidden], facts(judge))).matched == []
         ignored = make_rule(mode="block", overrides={"T": "off"})
         assert (await Evaluator().evaluate([ignored], facts(judge))).matched == []
         blocking = make_rule(mode="block", overrides={"T": "block"})
@@ -226,6 +227,49 @@ class TestEvaluation:
         # A hiding rule still counts a type overridden to another hiding mode.
         hiding_rule = make_rule(mode="anonymise", overrides={"T": "redact"})
         assert (await Evaluator().evaluate([hiding_rule], facts(judge))).matched == [hiding_rule]
+
+    async def test_a_block_rule_blocks_one_type_and_hides_another(self) -> None:
+        rule = make_rule("p", mode="block", overrides={"PERSON": "redact"})
+        pipeline = make_pipeline([rule])
+
+        async def run(found: list[str]) -> Any:
+            return await plan(Evaluator(), [pipeline], facts(FakeJudge({P1: found})))
+
+        # Only the hidden type: not blocked, hidden by the rule with its mode.
+        only = await run(["PERSON:Mario"])
+        assert not only.refused
+        (hit,) = only.hiding_hits()
+        assert hit.rule.name == "p" and dict(hit.rule.overrides) == {"PERSON": "redact"}
+        assert hit.rule.mode == "off"
+        step = only.runs[0].evaluation.steps[0]
+        assert step.result == "matched" and "Hide part" in step.reasons[-1]
+        # A blocking type: refused, naming the rule.
+        for found in (["IBAN:x"], ["PERSON:Mario", "IBAN:x"]):
+            blocked = await run(found)
+            assert blocked.refused and blocked.winner is not None
+            assert blocked.winner.rule.name == "p" and blocked.hiding_hits() == []
+        # Nothing found: nothing.
+        none = await run([])
+        assert not none.refused and none.hits() == []
+        assert none.runs[0].evaluation.steps[0].result == "not_matched"
+
+    async def test_the_hide_part_follows_the_other_conditions_and_an_explicit_finds(self) -> None:
+        over = {"PERSON": "redact"}
+        judge = FakeJudge({P1: ["PERSON:Mario", "IBAN:x"]})
+        # finds >= 2 counts only IBAN: one is short, so no block; the person is still hidden.
+        rule = make_rule(mode="block", overrides=over, conditions=(finds(2),))
+        ev = await Evaluator().evaluate([rule], facts(judge))
+        assert [m.mode for m in ev.matched] == ["off"] and not ev.matched[0].blocks_all
+        # The rule's other condition fails: no block part, no hide part.
+        pdf = rulelib.Condition("filetype", ("pdf",))
+        rule = make_rule(mode="block", overrides=over, conditions=(pdf, finds(1)))
+        assert (await Evaluator().evaluate([rule], facts(judge, filetype="txt"))).matched == []
+
+    async def test_the_hide_part_never_fails_open(self) -> None:
+        rule = make_rule(mode="block", overrides={"PERSON": "redact"})
+        # The count cannot be made: the block part is treated as a match, so it refuses.
+        down = FakeJudge({P1: []}, down=[P1])
+        assert (await Evaluator().evaluate([rule], facts(down))).matched == [rule]
 
     async def test_match_any_and_negate(self) -> None:
         ext = {"filetype": "pdf"}

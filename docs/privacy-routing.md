@@ -145,7 +145,7 @@ did not choose, nor let through unscreened.
 5. Otherwise hiding is applied **in order**: each matching rule hides what its policies find,
    using its mode and overrides. **The first rule to hide a span decides how**; a later span that
    partly overlaps a claim keeps its unclaimed remainder ("Mario Rossi" with Rossi claimed as a
-   location still hides Mario) and later rules otherwise only see text not already claimed. `off` and `detect only` never claim a span. In a `block` rule only the types whose mode is `block` count towards the block: a type overridden to a hiding mode is hidden by the rule and not counted, and one overridden to `off` is ignored. This is one
+   location still hides Mario) and later rules otherwise only see text not already claimed. `off` and `detect only` never claim a span. A `block` rule with overrides is judged in two parts, block first: only the types whose mode is `block` count towards its conditions (the implicit "finds at least 1" or an explicit count), and a type overridden to `off` is ignored. If the block part does not hold, the types overridden to a hiding mode are still hidden by the rule, with their modes, provided its other conditions hold (and, with no explicit `finds`, one of them is found). This is one
    detection pass over the original text per request, with overlaps resolved by rule order
    (nothing is detected again on placeholder text). Placeholders stay HMAC-stable and restore
    works for `anonymise and restore` spans.
