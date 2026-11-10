@@ -269,3 +269,68 @@ describe("the master switch and the off banner", () => {
     expect(screen.queryByText("Privacy is off")).toBeNull();
   });
 });
+
+describe("Detectors: a switch never shows On for a detector that cannot run", () => {
+  const stateOf = (which: string) => {
+    const card = screen.getByTestId(`detector-${which}`);
+    return { card, sw: within(card).getByRole("switch") };
+  };
+
+  it("installed and On: the switch is On and usable", async () => {
+    stub({ engines: BOTH });
+    renderUi(<AdminPrivacyDetectors />);
+    await screen.findByTestId("detector-spacy");
+    const { card, sw } = stateOf("spacy");
+    expect(sw).toHaveAttribute("aria-checked", "true");
+    expect(sw).toBeEnabled();
+    expect(within(card).getByText("On")).toBeInTheDocument();
+  });
+
+  it("installed and Off: the switch is Off and usable", async () => {
+    stub({ engines: BOTH, status: status({ spacy_enabled: false }) });
+    renderUi(<AdminPrivacyDetectors />);
+    await screen.findByTestId("detector-spacy");
+    const { card, sw } = stateOf("spacy");
+    expect(sw).toHaveAttribute("aria-checked", "false");
+    expect(sw).toBeEnabled();
+    expect(within(card).getByText("Off")).toBeInTheDocument();
+  });
+
+  it.each([true, false])(
+    "not installed with the stored switch %s: Off, disabled, described by the badge and the hint",
+    async (stored) => {
+      stub({ engines: PATTERN_ONLY, status: status({ spacy_enabled: stored, gliner_enabled: stored }) });
+      renderUi(<AdminPrivacyDetectors />);
+      await screen.findByTestId("detector-spacy");
+      for (const which of ["spacy", "gliner"]) {
+        const { card, sw } = stateOf(which);
+        expect(sw).toHaveAttribute("aria-checked", "false");
+        expect(sw).toBeDisabled();
+        expect(within(card).getByText("Off")).toBeInTheDocument();
+        expect(within(card).queryByText("On")).toBeNull();
+        const described = (sw.getAttribute("aria-describedby") ?? "").split(" ").map((id) => document.getElementById(id));
+        expect(described.map((el) => el?.textContent)).toEqual([
+          expect.stringContaining("Not installed"),
+          expect.stringContaining("Read how"),
+        ]);
+      }
+    },
+  );
+
+  it("service unreachable: every switch is Off and disabled, described by the unreachable message", async () => {
+    stub({
+      engines: { ...base, reachable: false, detail: "connection refused", engines: [] },
+    });
+    renderUi(<AdminPrivacyDetectors />);
+    await screen.findByTestId("detector-patterns");
+    for (const which of ["patterns", "spacy", "gliner"]) {
+      const { card, sw } = stateOf(which);
+      expect(sw).toHaveAttribute("aria-checked", "false");
+      expect(sw).toBeDisabled();
+      expect(within(card).getByText("Off")).toBeInTheDocument();
+      expect(document.getElementById(sw.getAttribute("aria-describedby") ?? "")).toHaveTextContent(
+        "The redaction service did not answer",
+      );
+    }
+  });
+});

@@ -4,6 +4,8 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **Detectors: a switch never shows On for a detector that cannot run.** On Admin, Privacy, Detectors, the spaCy and GLiNER cards showed On beside "Not installed". A detector that is not installed, or whose service did not answer, now shows Off and disabled, described by the badge and install hint (or the unreachable message); the stored preference is untouched and shows again once the engine is installed. Console only: the gateway already refuses a request whose policy needs an engine the service lacks.
+
 ## v0.32.0 — 2026-11-09
 
 Paired with Cerea 0.47.0.
