@@ -210,7 +210,14 @@ class Evaluator:
                 judge.policy_name(p) or "a policy that no longer exists" for p in rule.policies
             ]
             shown = " + ".join(names) or "the rule's policies"
-            off_types = frozenset(t.upper() for t, m in rule.overrides.items() if m == "off")
+            # A type set to off is never counted. In a block rule only the types that block
+            # count towards the block: one overridden to a hiding mode is hidden by the rule,
+            # not counted (the block is decided first, then hiding applies).
+            off_types = frozenset(
+                t.upper()
+                for t, m in rule.overrides.items()
+                if m == "off" or (rule.mode == "block" and m != "block")
+            )
             result = await judge.find(rule.policies, texts, off_types)
             n = len(result.items)
             ev.found[rule.name] = max(ev.found.get(rule.name, 0), n)

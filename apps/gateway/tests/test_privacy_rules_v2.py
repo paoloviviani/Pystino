@@ -215,6 +215,18 @@ class TestEvaluation:
         judge = FakeJudge({P1: ["a"], P2: ["a"]})
         assert (await Evaluator().evaluate([r], facts(judge))).matched == []
 
+    async def test_a_block_rule_counts_only_the_types_that_block(self) -> None:
+        judge = FakeJudge({P1: ["a"]})  # the fake finds items of type T
+        hidden = make_rule(mode="block", overrides={"T": "redact"})
+        assert (await Evaluator().evaluate([hidden], facts(judge))).matched == []
+        ignored = make_rule(mode="block", overrides={"T": "off"})
+        assert (await Evaluator().evaluate([ignored], facts(judge))).matched == []
+        blocking = make_rule(mode="block", overrides={"T": "block"})
+        assert (await Evaluator().evaluate([blocking], facts(judge))).matched == [blocking]
+        # A hiding rule still counts a type overridden to another hiding mode.
+        hiding_rule = make_rule(mode="anonymise", overrides={"T": "redact"})
+        assert (await Evaluator().evaluate([hiding_rule], facts(judge))).matched == [hiding_rule]
+
     async def test_match_any_and_negate(self) -> None:
         ext = {"filetype": "pdf"}
         conds = (

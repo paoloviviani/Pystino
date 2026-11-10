@@ -295,6 +295,23 @@ describe("Pipeline editor", () => {
     expect(within(policy).getByRole("option", { name: "Mine" })).toBeInTheDocument();
   });
 
+  it("asks for a policy only where a rule without one is still invalid", async () => {
+    vi.stubGlobal("fetch", api([]));
+    const user = userEvent.setup();
+    renderEditor(<AdminPipeline />, "/admin/privacy/pipelines/new?kind=content");
+    await user.click(await screen.findByRole("button", { name: "Add rule" }));
+    const hint = "No policy yet: pick at least one.";
+    const mode = screen.getByRole("combobox", { name: /^Then/ });
+    await user.selectOptions(mode, "redact");
+    expect(screen.getByText(hint)).toBeInTheDocument();
+    await user.selectOptions(mode, "block");
+    expect(screen.queryByText(hint)).toBeNull();
+    await user.selectOptions(mode, "detect_only");
+    expect(screen.getByText(hint)).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Add a condition"), "finds");
+    expect(screen.queryByText(hint)).toBeNull();
+  });
+
   it("shows a migration note as a warning on the rule and sends it back unchanged", async () => {
     const seen: Seen[] = [];
     const note = "Migration 0086: it needs a policy to look for.";

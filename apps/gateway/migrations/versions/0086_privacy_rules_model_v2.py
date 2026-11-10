@@ -102,6 +102,9 @@ def convert_policy(
     for table in ("formats", "entities"):
         kept: dict[str, Any] = {}
         for key, item in (policy.get(table) or {}).items():
+            if not isinstance(item, dict):
+                log.append(f"policy '{name}': {table[:-1]} {key} is empty (null); skipped.")
+                continue
             mode = str(item.pop("mode", "anonymise_restore"))
             if mode == "off":
                 log.append(f"policy '{name}': {table[:-1]} {key} was off and is dropped.")
@@ -112,6 +115,9 @@ def convert_policy(
     for table in ("custom_entities", "patterns", "keywords"):
         kept_list = []
         for item in policy.get(table) or []:
+            if not isinstance(item, dict):
+                log.append(f"policy '{name}': an empty (null) entry in {table} was skipped.")
+                continue
             mode = str(
                 item.pop("mode", "redact" if table != "custom_entities" else "anonymise_restore")
             )
@@ -194,6 +200,8 @@ def negate_earlier(kind: str, earlier: list[dict[str, Any]]) -> list[dict[str, A
                     {"key": key, "values": list(c["values"]), "negate": not c.get("negate"), "count": 1}
                 )
         elif key == "finds":
+            if any(not c.get("values") for c in group):
+                return None  # a count over no policy cannot be judged
             shapes = {(c["values"][0], int(c.get("count") or 1), bool(c.get("negate"))) for c in group}
             if len(shapes) != 1:
                 return None
@@ -213,6 +221,26 @@ def negate_earlier(kind: str, earlier: list[dict[str, Any]]) -> list[dict[str, A
             else:
                 values = list(dict.fromkeys(v for c in group for v in c["values"]))
                 out.append({"key": key, "values": values, "negate": True})
+    return out
+
+
+def dedupe_conditions(conds: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """The conditions without exact repeats, or None when two of them contradict.
+
+    A condition and its exact negation (same key, values, count and policy) can never both
+    hold, so a rule built from them could never fire.
+    """
+    out: list[dict[str, Any]] = []
+    seen: dict[tuple[Any, ...], bool] = {}
+    for c in conds:
+        ident = (c.get("key"), tuple(c.get("values") or ()), c.get("count"), c.get("_policy"))
+        negate = bool(c.get("negate"))
+        if ident in seen:
+            if seen[ident] != negate:
+                return None
+            continue
+        seen[ident] = negate
+        out.append(c)
     return out
 
 
@@ -283,6 +311,20 @@ def convert_content_rules(
             f"it had {len(finds)} 'finds' conditions, some negated, that all had to hold; one "
             "count over their policies cannot say that. Rebuild it from the conditions as needed."
         )
+        if any(not c.get("values") for c in finds):
+            why_empty = "a 'finds' condition named no policy, so it cannot be judged. Rebuild it."
+            if level == "refuse":
+                out.append(
+                    disabled(rule, why_empty, conditions=classified, mode="detect_only" if observe else "block")
+                )
+            elif redact_with:
+                mode, over = ("detect_only", {}) if observe else _hide([redact_with], pmodes)
+                out.append(
+                    disabled(rule, why_empty, policies=[redact_with], conditions=classified, mode=mode, overrides=over)
+                )
+            else:
+                log.append(f"{where}: rule '{rule['name']}' only passed; dropped (no first match now).")
+            continue
         if level == "refuse":
             mode = "detect_only" if observe else "block"
             if mixed:
@@ -350,6 +392,17 @@ def convert_content_rules(
             log.append(f"{where}: 'everything else: refuse' never applied (a rule above matches everything); dropped.")
         else:
             conds = negate_earlier("content", earlier) if earlier else []
+            if conds is not None:
+                conds = dedupe_conditions(conds)
+                if conds is None:
+                    log.append(f"{where}: 'everything else: refuse' contradicts itself; added switched off.")
+                    out.append(
+                        {**_blank(final), "enabled": False, "mode": "block",
+                         "note": "Migration 0086: this pipeline refused whatever no rule above matched, "
+                         "but those rules contradict each other, so the block could never fire. "
+                         "Write the block you want."}
+                    )
+                    return out
             if conds is None:
                 log.append(f"{where}: 'everything else: refuse' cannot be said as conditions; added switched off.")
                 out.append(

@@ -382,3 +382,40 @@ def test_the_whole_chain_runs_and_drops_the_otherwise_column(tmp_path: Path) -> 
         assert "mode" not in json.dumps(policy)
     down = _alembic(url, "downgrade", "0085")
     assert down.returncode != 0
+
+
+def test_otherwise_refuse_drops_repeated_conditions() -> None:
+    cl = {"key": "classified", "values": ["c1"], "negate": False, "count": 1}
+    out, _ = _convert([_rule("a", [dict(cl)]), _rule("b", [dict(cl)])], {"level": "refuse"})
+    last = out[-1]
+    assert last["enabled"] and len(last["conditions"]) == 1 and last["conditions"][0]["negate"]
+
+
+def test_otherwise_refuse_that_contradicts_itself_is_kept_off_with_a_note() -> None:
+    pos = {"key": "classified", "values": ["c1"], "negate": False, "count": 1}
+    neg = {**pos, "negate": True}
+    out, log = _convert([_rule("a", [pos]), _rule("b", [neg])], {"level": "refuse"})
+    last = out[-1]
+    assert last["enabled"] is False and last["mode"] == "block" and last["conditions"] == []
+    assert "contradict" in last["note"] and any("contradicts" in line for line in log)
+
+
+def test_a_null_policy_item_is_skipped_with_a_log_line() -> None:
+    log: list[str] = []
+    policy, modes = m.convert_policy(
+        {"entities": {"PERSON": None, "EMAIL_ADDRESS": {"mode": "redact"}}, "patterns": [None]},
+        log,
+        "pol",
+    )
+    assert list(policy["entities"]) == ["EMAIL_ADDRESS"] and modes == {"EMAIL_ADDRESS": "redact"}
+    assert sum("skipped" in line for line in log) == 2
+
+
+def test_a_finds_condition_without_values_keeps_the_rule_off() -> None:
+    empty = {"key": "finds", "values": [], "negate": False, "count": 1}
+    out, log = _convert([_rule("a", [empty])])
+    assert len(out) == 1 and out[0]["enabled"] is False and out[0]["mode"] == "block"
+    assert "cannot be judged" in out[0]["note"] and log
+    # ...and as an earlier rule of "everything else: refuse" it cannot be negated.
+    out, _ = _convert([_rule("a", [empty], level="pass", redact_with=P1)], {"level": "refuse"})
+    assert out[-1]["enabled"] is False

@@ -384,7 +384,12 @@ function PoliciesEditor({
           {policies.length === 0 && (
             <span className={`text-small ${MUTED}`}>{m["privacy.rule.no_policies_available"]()}</span>
           )}
-          {kind === "content" && rule.policies.length === 0 && policies.length > 0 && (
+          {kind === "content" &&
+            rule.policies.length === 0 &&
+            policies.length > 0 &&
+            // A block, or a recording under a condition, needs no policy to look for.
+            rule.mode !== "block" &&
+            !(rule.mode === "detect_only" && rule.conditions.length > 0) && (
             <span className={`text-small ${MUTED}`}>{m["privacy.rule.no_policies"]()}</span>
           )}
         </div>
