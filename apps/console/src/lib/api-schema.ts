@@ -7180,6 +7180,8 @@ export interface components {
         PipelineUpdateRequest: {
             /** Enabled */
             enabled?: boolean | null;
+            /** Kind */
+            kind?: ("read" | "embed" | "chat") | null;
             /** Name */
             name?: string | null;
             otherwise?: components["schemas"]["ActionBody"] | null;

@@ -14,6 +14,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from gateway.config import RedactionPolicy
+from gateway.errors import BadRequestError
 from gateway.response_model import ResponseModel
 
 Kind = Literal["read", "embed", "chat"]
@@ -116,12 +117,22 @@ class PipelineUpdateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    #: Accepted only to be tolerant: it must equal the stored kind, and is ignored.
+    kind: Kind | None = None
     name: str | None = Field(default=None, min_length=1, max_length=120)
     enabled: bool | None = None
     who: WhoBody | None = None
     target: TargetBody | None = None
     rules: list[RuleBody] | None = None
     otherwise: ActionBody | None = None
+
+    def require_same_kind(self, stored: str) -> None:
+        """Refuse an attempt to change the kind; the same kind is a no-op."""
+        if self.kind is not None and getattr(self.kind, "value", self.kind) != stored:
+            raise BadRequestError(
+                "A pipeline's kind cannot be changed; create a new pipeline.",
+                code="pipeline_kind_immutable",
+            )
 
 
 class PipelineCheckRequest(PipelineCreateRequest):

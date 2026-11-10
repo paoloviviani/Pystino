@@ -34,6 +34,7 @@ import type {
   PrivacyKind,
   PrivacyOptions,
   PrivacyPipelineInput,
+  PrivacyPipelineUpdate,
 } from "../lib/types";
 import { m } from "../paraglide/messages.js";
 import { PageHeader } from "./PageHeader";
@@ -480,6 +481,12 @@ function ActionEditor({
 
 // -- the page ------------------------------------------------------------------
 
+/** An update body: the create body without the kind, which the gateway refuses to change. */
+function updateBody(body: PrivacyPipelineInput): PrivacyPipelineUpdate {
+  const { kind: _kind, ...rest } = body;
+  return rest;
+}
+
 function newRule(index: number, kind: PrivacyKind): DraftRule {
   return {
     uid: uid(),
@@ -666,9 +673,10 @@ export function PipelineEditorPage({ area }: { area: Area }) {
   const labels: Record<string, string> = {};
   for (const p of [...opts.policies, ...opts.own_policies, ...opts.classifiers]) labels[p.id] = p.name;
 
+  // The kind is fixed once saved: only a new pipeline sends it.
   const submit = () =>
     save.mutate(
-      { id, body },
+      { id, body: existing ? updateBody(body) : body },
       {
         onSuccess: () => {
           setSaved(true);

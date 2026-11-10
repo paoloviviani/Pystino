@@ -354,6 +354,7 @@ async def update_pipeline(
     request: Request,
 ) -> PipelineResponse:
     row = await _load(session, pipeline_id)
+    payload.require_same_kind(row.kind)
     before = service.pipeline_view_json(row)
     fields = payload.model_fields_set
     clean = await _clean(
