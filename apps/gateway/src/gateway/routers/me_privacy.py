@@ -315,6 +315,7 @@ async def update_my_pipeline(
     request: Request,
 ) -> PipelineResponse:
     row = await _mine(session, user, pipeline_id)
+    payload.require_same_kind(row.kind)
     clean = await _clean(
         session,
         user,
