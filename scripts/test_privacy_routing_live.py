@@ -5,13 +5,13 @@ What only this can prove, that the unit suite on SQLite cannot:
 
 * pipelines, policies, classifiers and the `routing` log entry round-trip through
   **PostgreSQL** (a JSON column read with `->`, the two-group policy shape);
-* an embedding pipeline refuses a text in which a keyword list finds an item
-  ("when the policy finds at least 1 item -> block"), and the *fake upstream receives nothing at all*; a
-  pipeline that redacts with a policy hides what it names;
+* a content pipeline for embedding models blocks a text in which a keyword list finds an
+  item ("when the policy finds at least 1 item -> block"), and the *fake upstream
+  receives nothing at all*; a pipeline that hides with a policy hides what it names;
 * `/v1/ocr` reads a real PDF on the real extractor service: a file-name rule
-  refuses before anything is read, a scan rule reads first on the built-in
-  extractor and then refuses (and lets a PDF with a text layer through), and a
-  "read with" rule names the extractor's model for an engine: a model whose engine
+  blocks before anything is read, a scan rule reads first on the built-in
+  extractor and then blocks (and lets a PDF with a text layer through), and an
+  "extract with" rule names the extractor's model for an engine: a model whose engine
   the service does not run (docling on the pattern image) is refused rather than read
   by another engine, and the default model's read lands in the log;
 * every refusal is a 403 naming the rule and its pipeline and never the content.
@@ -183,9 +183,7 @@ def main() -> int:
         "/api/admin/privacy/policies",
         json_body={
             "name": "Codenames",
-            "policy": {
-                "keywords": [{"name": "CODENAME", "words": "Falcon"}]
-            },
+            "policy": {"keywords": [{"name": "CODENAME", "words": "Falcon"}]},
         },
         method="POST",
     )

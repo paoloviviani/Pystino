@@ -314,9 +314,7 @@ def visibility(auth: dict[str, str]) -> None:
         f"{mine}/policies",
         json_body={
             "name": "live-check mine",
-            "entries": [
-                {"kind": "pattern", "name": "live_project", "regex": "PRJ-[0-9]+"}
-            ],
+            "entries": [{"kind": "pattern", "name": "live_project", "regex": "PRJ-[0-9]+"}],
         },
         method="POST",
     )
@@ -437,7 +435,9 @@ def install_admin_redaction(admin: Any, formats: tuple[str, ...] = ADMIN_FORMATS
         json_body={
             "kind": "content",
             "name": ADMIN_POLICY,
-            "rules": [{"name": ADMIN_POLICY, "policies": [policy["id"]], "mode": "anonymise_restore"}],
+            "rules": [
+                {"name": ADMIN_POLICY, "policies": [policy["id"]], "mode": "anonymise_restore"}
+            ],
         },
         method="POST",
     )
