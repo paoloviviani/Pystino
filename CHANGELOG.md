@@ -5,7 +5,6 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 ## Unreleased
 
 - **Saving an existing privacy pipeline works again.** The console sent the pipeline's `kind` on update, which the gateway refused ("kind: Extra inputs are not permitted"). The editor now sends `kind` only on create, and the gateway accepts a `kind` equal to the stored one (ignored) and answers 400 `pipeline_kind_immutable` ("A pipeline's kind cannot be changed; create a new pipeline.") for a different one, for administrator and user pipelines alike.
-- **No amber "Check" badge in the pipeline list.** It was alarming; the issues still show inside the pipeline editor, and the server-side check is unchanged.
 
 ## v0.32.0 — 2026-11-09
 
