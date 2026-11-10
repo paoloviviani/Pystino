@@ -10,6 +10,7 @@ import { Tip } from "../components/Tip";
 import { FORM, PAGE } from "../lib/layout";
 import { usePolicies, usePrivacyEngines, useSavePolicy } from "../lib/privacy";
 import { useOptionalToast } from "../lib/toast";
+import { withModes, withoutModes } from "../lib/privacy";
 import type { RedactionPolicy, RedactionPolicyRecord } from "../lib/types";
 import { m } from "../paraglide/messages.js";
 
@@ -45,7 +46,7 @@ export function AdminPolicy() {
   );
   const [policy, setPolicy] = useState<RedactionPolicy>(
     cloneFrom
-      ? structuredClone(cloneFrom.policy)
+      ? withModes(structuredClone(cloneFrom.policy))
       : fromTemplate
         ? structuredClone(fromTemplate.policy)
         : seededPolicy(),
@@ -58,7 +59,7 @@ export function AdminPolicy() {
   if (existing && loadedFor !== existing.id) {
     setLoadedFor(existing.id);
     setName(existing.name);
-    setPolicy(structuredClone(existing.policy));
+    setPolicy(withModes(structuredClone(existing.policy)));
     setShared(existing.shared_with_users);
     setReason(existing.reason);
     setActive(existing.is_active);
@@ -87,7 +88,7 @@ export function AdminPolicy() {
         id: policyId,
         body: {
           name,
-          policy,
+          policy: withoutModes(policy) as never,
           reason,
           is_active: active,
           shared_with_users: shared,
@@ -159,6 +160,7 @@ export function AdminPolicy() {
             onChange={setPolicy}
             engines={engines.data ?? null}
             scoreThreshold={status.data?.score_threshold ?? null}
+            detectionOnly
           />
         </div>
         <aside className="min-w-0 min-[80rem]:sticky min-[80rem]:top-[5.5rem]">

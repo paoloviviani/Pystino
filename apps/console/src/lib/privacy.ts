@@ -4,6 +4,8 @@ import { ApiError, request } from "./api";
 import type { Page } from "./paging";
 import type {
   PrivacyAction,
+  PrivacyModelType,
+  PrivacyMode,
   PrivacyKind,
   PrivacyOptions,
   PrivacyPipeline,
@@ -22,15 +24,22 @@ import type {
   PrivacyTestInput,
   PrivacyTestResult,
   RedactionPolicyRecord,
+  PolicyDefinition,
   RedactionPolicy,
   UserPolicy,
   UserPolicyInput,
 } from "./types";
 import { m } from "../paraglide/messages.js";
+import { MODES } from "./entities";
+
+const MODES_BY_VALUE: Record<string, (typeof MODES)[number]> = Object.fromEntries(
+  MODES.map((mode) => [mode.value, mode]),
+);
 
 /**
- * Privacy pipelines (ADR 0113): the two objects, the pipelines that say when and
- * how, the policies that say what to hide, and the vocabulary both editors share.
+ * Privacy pipelines (ADR 0113, 0114): the two objects, the pipelines that say when and
+ * how (rules "When policies + conditions -> mode"), the policies that say what to look
+ * for, and the vocabulary both editors share.
  *
  * An administrator's are under `/api/admin/privacy`, a user's own under
  * `/api/me/privacy`: the same shapes, with the user's who fixed to themselves and
@@ -286,48 +295,49 @@ export function usePrivacyTest(area: Area) {
 
 // -- the vocabulary ---------------------------------------------------------------
 
-export const KINDS: PrivacyKind[] = ["read", "embed", "chat"];
+export const KINDS: PrivacyKind[] = ["extract", "content"];
 
 export function kindLabel(kind: string): string {
   switch (kind) {
-    case "read":
-      return m["privacy.kind.read"]();
-    case "embed":
-      return m["privacy.kind.embed"]();
-    case "chat":
-      return m["privacy.kind.chat"]();
+    case "extract":
+      return m["privacy.kind.extract"]();
+    case "content":
+      return m["privacy.kind.content"]();
     default:
       return kind;
   }
 }
 
 export function kindHint(kind: PrivacyKind): string {
-  return kind === "read"
-    ? m["privacy.kind.read_hint"]()
-    : kind === "embed"
-      ? m["privacy.kind.embed_hint"]()
-      : m["privacy.kind.chat_hint"]();
+  return kind === "extract" ? m["privacy.kind.extract_hint"]() : m["privacy.kind.content_hint"]();
 }
 
-/** The ladder, lowest to highest. The highest level across all pipelines wins. */
-export const LADDER: Record<PrivacyKind, string[]> = {
-  read: ["default", "read_with", "refuse"],
-  embed: ["pass", "refuse"],
-  chat: ["pass", "refuse"],
-};
+export const MODEL_TYPES: PrivacyModelType[] = ["chat", "embedding", "rerank"];
 
-export function baseLevel(kind: PrivacyKind): string {
-  return LADDER[kind][0] ?? "pass";
+export function modelTypeLabel(value: string): string {
+  switch (value) {
+    case "chat":
+      return m["privacy.edit.model_type_chat"]();
+    case "embedding":
+      return m["privacy.edit.model_type_embedding"]();
+    case "rerank":
+      return m["privacy.edit.model_type_rerank"]();
+    default:
+      return m["privacy.edit.model_type_any"]();
+  }
 }
+
+/** What an extract rule does with the file, lowest to highest. */
+export const EXTRACT_LEVELS = ["default", "extract_with", "block"];
 
 export function levelLabel(level: string): string {
   switch (level) {
     case "default":
       return m["privacy.level.default"]();
-    case "read_with":
-      return m["privacy.level.read_with"]();
-    case "refuse":
-      return m["privacy.level.refuse"]();
+    case "extract_with":
+      return m["privacy.level.extract_with"]();
+    case "block":
+      return m["privacy.level.block"]();
     case "pass":
       return m["privacy.level.pass"]();
     case "pending":
@@ -341,27 +351,22 @@ export function levelHint(level: string): string {
   switch (level) {
     case "default":
       return m["privacy.level.default_hint"]();
-    case "read_with":
+    case "extract_with":
       return m["privacy.level.read_with_hint"]();
-    case "refuse":
-      return m["privacy.level.refuse_hint"]();
     default:
-      return m["privacy.level.pass_hint"]();
+      return m["privacy.level.block_hint"]();
   }
 }
 
-/** What a "read with" rule that names no reader means: the default-engine model of the built-in extractor. */
+/** The extractor an "extract with" rule that names none means: the built-in default-engine model. */
 export const DEFAULT_READER = "markitdown";
 
 /**
- * What a rule may test. `finds` is available everywhere; `classified` only to an
- * administrator (it sends the text to a model's provider, so a user's own
- * pipeline cannot name it).
+ * What a rule may test. `classified` only to an administrator (it sends the text to
+ * a model's provider). An extract rule decides from the file, never its text.
  */
 export function conditionKeys(kind: PrivacyKind, own: boolean): string[] {
-  // Reading decides from the file (its type, whether it is a scan, its name), never its
-  // text; content is checked when the text is embedded or sent to chat.
-  if (kind === "read") return ["filetype", "scan", "filename"];
+  if (kind === "extract") return ["filetype", "scan", "filename"];
   return own ? ["finds"] : ["finds", "classified"];
 }
 /** Yes/no conditions: they carry no values, only "is" and "is not". */
@@ -377,7 +382,7 @@ export function conditionLabel(key: string): string {
     case "filename":
       return m["privacy.cond.filename"]();
     case "finds":
-      return m["privacy.cond.finds"]();
+      return m["privacy.cond.finds_rule"]();
     case "classified":
       return m["privacy.cond.classified"]();
     default:
@@ -437,18 +442,15 @@ export interface Cond {
 
 type Phrasable = Pick<Cond, "key" | "values" | "negate"> & { count?: number };
 
-/**
- * One condition as words: "is a PDF or Word file", "Contact details finds at
- * least 2 items". `labels` names policies and classifiers by id.
- */
+/** One condition as words: "it is a PDF", "it finds at least 2 items". */
 export function conditionPhrase(c: Phrasable, labels: Labels = {}): string {
   const values = c.values.map((v) => valueLabel(c.key, v)).join(" / ");
   const named = c.values.map((v) => labels[v] ?? "?").join(" / ");
   switch (c.key) {
     case "finds":
       return c.negate
-        ? m["privacy.phrase.finds_fewer"]({ policy: named, count: String(c.count ?? 1) })
-        : m["privacy.phrase.finds"]({ policy: named, count: String(c.count ?? 1) });
+        ? m["privacy.phrase.finds_fewer"]({ count: String(c.count ?? 1) })
+        : m["privacy.phrase.finds"]({ count: String(c.count ?? 1) });
     case "classified":
       return c.negate
         ? m["privacy.phrase.not_classified"]({ classifier: named })
@@ -468,48 +470,69 @@ export function conditionPhrase(c: Phrasable, labels: Labels = {}): string {
   }
 }
 
-interface Actionable {
-  level: string;
-  reader?: string | null;
-  redact_with?: string | null;
-}
+/** The six modes, weakest to strongest, as the rule's "then". */
+export const RULE_MODES: PrivacyMode[] = [
+  "off",
+  "detect_only",
+  "anonymise_restore",
+  "anonymise",
+  "redact",
+  "block",
+];
 
-/** What an action does, in words. `labels` names policies by id. */
-export function actionPhrase(kind: PrivacyKind, a: Actionable, labels: Labels): string {
-  const parts: string[] = [];
-  if (a.level === "refuse") parts.push(m["privacy.action.refuse"]());
-  else if (a.level === "read_with") {
-    parts.push(m["privacy.action.read_with"]({ reader: a.reader || DEFAULT_READER }));
-  } else if (a.level === baseLevel(kind) && !a.redact_with) {
-    parts.push(
-      kind === "read" ? m["privacy.action.default"]() : m["privacy.action.pass"](),
-    );
-  }
-  if (a.redact_with) {
-    parts.push(m["privacy.action.redact_with"]({ policy: labels[a.redact_with] ?? "?" }));
-  }
-  return parts.join(" · ");
+export function ruleModeLabel(mode: string): string {
+  return MODES_BY_VALUE[mode]?.label() ?? mode;
 }
 
 interface SentenceRule {
+  policies?: readonly string[];
+  match?: string;
   conditions: { key: string; values?: string[]; negate?: boolean; count?: number }[];
-  action: Actionable;
-  observe_only?: boolean;
+  mode?: string;
+  overrides?: Readonly<Record<string, string>>;
+  action?: { level: string; reader?: string | null } | null;
 }
 
+/** A rule as one sentence: "When [policies] + [conditions] → [mode]". */
 export function ruleSentence(kind: PrivacyKind, rule: SentenceRule, labels: Labels): string {
-  const when = rule.conditions.length
-    ? rule.conditions
-        .map((c) =>
-          conditionPhrase(
-            { key: c.key, values: c.values ?? [], negate: c.negate ?? false, count: c.count },
-            labels,
-          ),
-        )
-        .join(m["privacy.phrase.and"]())
-    : m["privacy.phrase.any"]();
-  const text = m["privacy.phrase.rule"]({ when, action: actionPhrase(kind, rule.action, labels) });
-  return rule.observe_only ? `${text} ${m["privacy.phrase.observe"]()}` : text;
+  const join =
+    rule.match === "any"
+      ? m["privacy.rule.conditions_join_any"]()
+      : m["privacy.rule.conditions_join_all"]();
+  const conds = rule.conditions
+    .map((c) =>
+      conditionPhrase(
+        { key: c.key, values: c.values ?? [], negate: c.negate ?? false, count: c.count },
+        labels,
+      ),
+    )
+    .join(join);
+  const names = (rule.policies ?? []).map((p) => labels[p] ?? "?").join(m["privacy.rule.plus"]());
+  const overrides = Object.keys(rule.overrides ?? {}).length;
+  const mode =
+    ruleModeLabel(rule.mode ?? "off") +
+    (overrides ? ` (${m["privacy.rule.overrides_count"]({ count: String(overrides) })})` : "");
+  if (kind === "extract") {
+    const a = rule.action ?? { level: "default" };
+    const action =
+      a.level === "block"
+        ? m["privacy.action.block"]()
+        : a.level === "extract_with"
+          ? m["privacy.action.extract_with"]({ reader: a.reader || DEFAULT_READER })
+          : m["privacy.action.default"]();
+    const head = m["privacy.rule.sentence_extract"]({
+      conditions: conds || m["privacy.rule.all_requests"](),
+      action,
+    });
+    return names && rule.mode && rule.mode !== "off"
+      ? m["privacy.rule.sentence_hide"]({ action: head, mode: mode.toLowerCase(), policies: names })
+      : head;
+  }
+  return m["privacy.rule.sentence"]({
+    policies: names || m["privacy.rule.no_policies"](),
+    conditions: conds ? ` + ${conds}` : "",
+    mode: mode.toLowerCase(),
+  });
 }
 
 /** The scope of a pipeline as two short phrases: who, and which target. */
@@ -525,26 +548,22 @@ export function scopeWords(p: PrivacyPipeline, own: boolean): [string, string] {
           ? m["privacy.scope.groups"]({ names: names(p.who.ids) })
           : m["privacy.scope.keys"]({ names: names(p.who.ids) });
   const targets = names([...p.target.providers, ...p.target.models]);
-  const target =
+  const base =
     p.target.mode === "all"
       ? m["privacy.scope.all_targets"]()
       : p.target.mode === "only"
         ? m["privacy.scope.only"]({ names: targets })
         : m["privacy.scope.except"]({ names: targets });
+  const types = p.target.model_types ?? [];
+  const target = types.length
+    ? `${base} · ${types.map((t) => modelTypeLabel(t)).join(" + ")}`
+    : base;
   return [who, target];
 }
 
-/** A pipeline's rules warnings, flattened: never-fires and partly-shadowed get their own badges. */
-export function issueBadges(rule: PrivacyRuleView): {
-  never: boolean;
-  partly: boolean;
-  check: boolean;
-} {
-  return {
-    never: rule.issues.some((i) => i.code === "never_fires"),
-    partly: rule.issues.some((i) => i.code === "partly_shadowed"),
-    check: rule.issues.some((i) => i.code !== "never_fires" && i.code !== "partly_shadowed"),
-  };
+/** A rule's warnings, flattened into one badge: there is no shadowing any more. */
+export function issueBadges(rule: PrivacyRuleView): { check: boolean } {
+  return { check: rule.issues.length > 0 };
 }
 
 /** What the save sends for one rule. */
@@ -553,22 +572,79 @@ export function ruleBody(rule: PrivacyRuleView): PrivacyRuleBody {
     id: rule.id,
     name: rule.name,
     enabled: rule.enabled,
-    observe_only: rule.observe_only,
     note: rule.note ?? null,
+    policies: [...rule.policies],
+    match: rule.match,
+    mode: rule.mode,
+    overrides: { ...rule.overrides },
     conditions: rule.conditions.map((c) => ({
       key: c.key,
       values: [...(c.values ?? [])],
       negate: c.negate ?? false,
       ...(c.key === "finds" ? { count: c.count ?? 1 } : {}),
     })),
-    action: actionBody(rule.action),
+    ...(rule.action ? { action: actionBody(rule.action) } : {}),
   };
 }
 
-export function actionBody(a: Actionable): PrivacyAction {
+export function actionBody(a: { level: string; reader?: string | null }): PrivacyAction {
+  return { level: a.level, ...(a.reader ? { reader: a.reader } : {}) };
+}
+
+// -- policies: what to look for, no mode -------------------------------------------
+
+/**
+ * A stored policy as the policy editor holds it. The editor's controls speak the
+ * request path's own shape, which has a mode on each item; a stored policy has none
+ * (ADR 0114), so one is written on here and never shown (the editor runs detection-only).
+ */
+export function withModes(def: PolicyDefinition): RedactionPolicy {
+  const stamp = <T extends object>(item: T) => ({ ...item, mode: "redact" as const });
   return {
-    level: a.level,
-    ...(a.reader ? { reader: a.reader } : {}),
-    ...(a.redact_with ? { redact_with: a.redact_with } : {}),
+    default_mode: "off",
+    engine: (def.engine ?? null) as RedactionPolicy["engine"],
+    allow_list: [...(def.allow_list ?? [])],
+    formats: Object.fromEntries(Object.entries(def.formats ?? {}).map(([k, v]) => [k, stamp(v)])),
+    entities: Object.fromEntries(Object.entries(def.entities ?? {}).map(([k, v]) => [k, stamp(v)])),
+    custom_entities: (def.custom_entities ?? []).map(stamp),
+    patterns: (def.patterns ?? []).map(stamp),
+    keywords: (def.keywords ?? []).map(stamp),
+  } as RedactionPolicy;
+}
+
+/** The inverse of `withModes`: what a save sends. */
+export function withoutModes(policy: RedactionPolicy): PolicyDefinition {
+  const strip = <T extends { mode?: unknown }>(item: T) => {
+    const { mode: _mode, ...rest } = item;
+    return rest;
   };
+  return {
+    engine: policy.engine ?? null,
+    allow_list: [...policy.allow_list],
+    formats: Object.fromEntries(Object.entries(policy.formats).map(([k, v]) => [k, strip(v)])),
+    entities: Object.fromEntries(Object.entries(policy.entities).map(([k, v]) => [k, strip(v)])),
+    custom_entities: policy.custom_entities.map(strip),
+    patterns: policy.patterns.map(strip),
+    keywords: policy.keywords.map(strip),
+  } as PolicyDefinition;
+}
+
+/** A policy in one line: how much it looks for. */
+export function summariseDefinition(policy: PolicyDefinition): string {
+  const parts: string[] = [];
+  const entities = Object.keys(policy.entities ?? {}).length + (policy.custom_entities ?? []).length;
+  if (entities > 0) parts.push(m["policy_summary.types"]({ count: entities }));
+  const formats = Object.keys(policy.formats ?? {}).length;
+  if (formats > 0) parts.push(m["policy_summary.formats"]({ count: formats }));
+  if ((policy.patterns ?? []).length > 0) {
+    parts.push(m["policy_summary.patterns"]({ count: (policy.patterns ?? []).length }));
+  }
+  if ((policy.keywords ?? []).length > 0) {
+    parts.push(m["policy_summary.keywords"]({ count: (policy.keywords ?? []).length }));
+  }
+  if (policy.engine) parts.push(m["policy_summary.engine"]({ engine: policy.engine }));
+  if ((policy.allow_list ?? []).length > 0) {
+    parts.push(m["policy_summary.allow_list"]({ count: (policy.allow_list ?? []).length }));
+  }
+  return parts.join(" · ");
 }

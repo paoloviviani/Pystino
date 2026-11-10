@@ -451,7 +451,7 @@ export type RedactionStatus = Narrow<
 export type RedactionPolicyRecord = Narrow<
   Schemas["PolicyResponse"],
   {
-    policy: RedactionPolicy;
+    policy: PolicyDefinition;
   }
 >;
 
@@ -663,7 +663,11 @@ export type RedactionEvent = Schemas["RedactionEventRow"];
 
 // -- privacy pipelines (ADR 0113) ----------------------------------------------
 
-export type PrivacyKind = "read" | "embed" | "chat";
+export type PrivacyKind = "extract" | "content";
+export type PrivacyModelType = "chat" | "embedding" | "rerank";
+export type PrivacyMode = EntityMode;
+/** What a policy stores: what to look for, never what to do about it (ADR 0114). */
+export type PolicyDefinition = Schemas["PolicyDefinition"];
 export type PrivacyPipeline = Schemas["PipelineResponse"];
 export type PrivacyRuleView = Schemas["RuleView"];
 /** A rule as written: what the save sends. */

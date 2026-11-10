@@ -1,6 +1,6 @@
 import { Badge, Button, Card, Dialog, Input, Notice, Select } from "@llmp/ui";
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { MODES, entityLabel, modeRank } from "../lib/entities";
 import { m } from "../paraglide/messages.js";
 import { REDACTION_PATTERN_TEMPLATES } from "../lib/redactionTemplates";
@@ -38,6 +38,8 @@ export interface PolicyFieldsProps {
   floor?: RedactionPolicy | null;
   /** The gateway will not use this policy's allowlist, so the card says so. */
   allowListIgnored?: boolean;
+  /** A stored policy: what to look for, with no mode (ADR 0114). */
+  detectionOnly?: boolean;
 }
 
 /** The comma-separated words of a keyword list, as the list they stand for. */
@@ -154,13 +156,16 @@ export function PolicyFields({
   allowList = true,
   floor = null,
   allowListIgnored = false,
+  detectionOnly = false,
 }: PolicyFieldsProps) {
   const engines = usableEngines(reported);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const engine = chosenEngine(policy, engines);
   // Formats the service stopped offering are moved or turned off once, in the
   // open (a notice says so), rather than dropped or left acting on nothing.
-  const migration = migrateFormats(policy, engines);
+  const migration = detectionOnly
+    ? { policy, moved: [] as string[], retired: [] as string[] }
+    : migrateFormats(policy, engines);
   const movedRef = useRef<string[]>([]);
   const [moved, setMoved] = useState<string[]>([]);
   useEffect(() => {
@@ -186,7 +191,9 @@ export function PolicyFields({
     });
 
   return (
+    <DetectionOnly.Provider value={detectionOnly}>
     <div className="flex flex-col gap-5">
+      {!detectionOnly && (
       <Card title={m["policy_fields.default_card"]()}>
         <div className={FORM}>
           {/* Applies to a recogniser the engine gains in a later release, which
@@ -209,6 +216,7 @@ export function PolicyFields({
           </details>
         </div>
       </Card>
+      )}
 
       {/* Group one: found by a pattern, so exact and fast, and the same in any
           language. */}
@@ -447,6 +455,7 @@ export function PolicyFields({
         </Card>
       )}
     </div>
+    </DetectionOnly.Provider>
   );
 }
 
@@ -1123,7 +1132,11 @@ const SEGMENT_ON: Record<EntityMode, string> = {
   block: "peer-checked:bg-danger peer-checked:font-semibold peer-checked:text-ink-inverse",
 };
 
-function ModeSegments({
+function ModeSegments(props: Parameters<typeof ModeSegmentsInner>[0]) {
+  return useContext(DetectionOnly) ? null : <ModeSegmentsInner {...props} />;
+}
+
+function ModeSegmentsInner({
   name,
   legend,
   visibleLegend = false,
@@ -1208,6 +1221,13 @@ function ModeKey() {
 }
 
 /** Whether a mode writes a derived token, which is what a placeholder style shapes. */
+/**
+ * A policy only says what to look for (ADR 0114): what to do with what it finds is a rule's.
+ * In that mode the editor shows no mode selector and no default mode, and the placeholder
+ * style is always offered (it applies wherever a rule writes a derived token).
+ */
+const DetectionOnly = createContext(false);
+
 export function writesToken(mode: EntityMode): boolean {
   return mode === "anonymise" || mode === "anonymise_restore";
 }
@@ -1229,7 +1249,8 @@ function PlaceholderSelect({
   value: PlaceholderStyle;
   onChange: (value: PlaceholderStyle) => void;
 }) {
-  if (!writesToken(mode)) return null;
+  const detection = useContext(DetectionOnly);
+  if (!detection && !writesToken(mode)) return null;
   return (
     <Select
       label={label}
@@ -1263,7 +1284,9 @@ function ModeSelect({
   hint?: ReactNode;
   onChange: (mode: EntityMode) => void;
 }) {
+  const detection = useContext(DetectionOnly);
   const least = floor === null ? -1 : modeRank(floor);
+  if (detection) return null;
   return (
     <Select
       label={label}

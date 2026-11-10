@@ -256,7 +256,6 @@ export function buildUserEntries(
           kind: "pattern",
           name: source.name,
           regex: source.regex,
-          mode: item.mode ?? source.mode,
         });
       }
     } else if (item.kind === "entity" && options.nerAvailable === false) {
@@ -267,7 +266,7 @@ export function buildUserEntries(
     } else if (allowed && !allowed.has(item.name)) {
       skips.push(["not_allowed", item.name]);
     } else {
-      entries.push({ kind: "mode", name: item.name, regex: null, mode: item.mode });
+      entries.push({ kind: "mode", name: item.name, regex: null });
     }
   }
   return { entries, skipped: group(skips) };

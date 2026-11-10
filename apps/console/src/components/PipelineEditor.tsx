@@ -5,11 +5,11 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { FIELD_LABEL, FORM, MUTED, PAGE } from "../lib/layout";
 import {
   DEFAULT_READER,
+  EXTRACT_LEVELS,
   FILETYPES,
   KINDS,
-  LADDER,
-  actionBody,
-  baseLevel,
+  MODEL_TYPES,
+  RULE_MODES,
   conditionHint,
   conditionKeys,
   conditionLabel,
@@ -18,7 +18,9 @@ import {
   kindLabel,
   levelHint,
   levelLabel,
+  modelTypeLabel,
   ruleBody,
+  ruleModeLabel,
   ruleSentence,
   useCheckPipeline,
   usePipelines,
@@ -32,6 +34,7 @@ import type {
   PrivacyAction,
   PrivacyIssue,
   PrivacyKind,
+  PrivacyModelType,
   PrivacyOptions,
   PrivacyPipelineInput,
   PrivacyPipelineUpdate,
@@ -41,12 +44,11 @@ import { PageHeader } from "./PageHeader";
 import { Tip } from "./Tip";
 
 /**
- * The pipeline editor, one for an administrator and for a user (ADR 0113).
+ * The pipeline editor, one for an administrator and for a user (ADR 0113, 0114).
  *
  * The same object, so the same form; what differs is what is offered. A user's
- * who is fixed to them, and the "nothing" level of the ladder is not offered as
- * a rule's action (what happens anyway is not an addition). Everything a user
- * may not do is also refused by the gateway: the form only avoids offering it.
+ * who is fixed to them and `classified` is not offered. Each rule is one sentence,
+ * "When [policies] + [conditions] -> [mode]", with the per-type overrides collapsed.
  */
 
 interface DraftRule {
@@ -55,11 +57,15 @@ interface DraftRule {
   id?: string;
   name: string;
   enabled: boolean;
-  observe_only: boolean;
   /** A warning the migration left on a rule it switched off; kept as it came. */
   note: string | null;
+  policies: string[];
+  match: "all" | "any";
   conditions: Cond[];
-  action: PrivacyAction;
+  mode: string;
+  overrides: Record<string, string>;
+  /** Extract rules only. */
+  action: PrivacyAction | null;
 }
 
 let counter = 0;
@@ -137,26 +143,26 @@ function Segmented<T extends string>({
 function ConditionsEditor({
   kind,
   conditions,
+  match,
   onChange,
+  onMatch,
   own,
-  policies,
   classifiers,
   warnNameOnly,
 }: {
   kind: PrivacyKind;
   conditions: Cond[];
+  match: "all" | "any";
   onChange: (next: Cond[]) => void;
-  /** A user's own editor: no `classified`, and only the policies it may name. */
+  onMatch: (next: "all" | "any") => void;
+  /** A user's own editor: no `classified`. */
   own: boolean;
-  policies: { id: string; name: string }[];
   classifiers: { id: string; name: string }[];
   warnNameOnly: boolean;
 }) {
-  // A key may appear once, except `finds` and `classified`, which name one
-  // policy or classifier each and so may be added again.
-  const repeatable = ["finds", "classified"];
+  // A key may appear once, except `classified`, which names one classifier each.
   const available = conditionKeys(kind, own).filter(
-    (k) => repeatable.includes(k) || !conditions.some((c) => c.key === k),
+    (k) => k === "classified" || !conditions.some((c) => c.key === k),
   );
   const set = (index: number, patch: Partial<Cond>) =>
     onChange(conditions.map((c, i) => (i === index ? { ...c, ...patch } : c)));
@@ -177,9 +183,20 @@ function ConditionsEditor({
   );
   return (
     <div className="flex flex-col gap-2">
-      <div className={`${FIELD_LABEL} flex items-center gap-2`}>
+      <div className={`${FIELD_LABEL} flex flex-wrap items-center gap-2`}>
         {m["privacy.edit.conditions"]()}
         <Tip text={m["privacy.edit.conditions_tip"]()} />
+        {conditions.length > 1 && (
+          <Segmented
+            label={m["privacy.rule.match"]()}
+            value={match}
+            options={[
+              { value: "all", label: m["privacy.rule.match_all"]() },
+              { value: "any", label: m["privacy.rule.match_any"]() },
+            ]}
+            onChange={onMatch}
+          />
+        )}
       </div>
       {conditions.map((c, index) => {
         const name = conditionLabel(c.key);
@@ -217,45 +234,26 @@ function ConditionsEditor({
               />
             )}
             {c.key === "finds" && (
-              <>
-                <select
-                  className="rounded-md border border-line bg-surface px-2 py-1 text-body"
-                  aria-label={m["privacy.cond.finds_policy"]()}
-                  value={c.values[0] ?? ""}
-                  onChange={(event) => set(index, { values: event.target.value ? [event.target.value] : [] })}
-                >
-                  <option value="">{m["privacy.cond.choose_policy"]()}</option>
-                  {policies.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-                <span className="flex items-center gap-1 text-dense">
-                  {m["privacy.cond.at_least"]()}
-                  <input
-                    type="number"
-                    min={1}
-                    max={1000}
-                    className="w-16 rounded-md border border-line bg-surface px-2 py-1 text-body"
-                    aria-label={m["privacy.cond.finds_count"]()}
-                    value={c.count ?? ""}
-                    onChange={(event) =>
-                      // Empty while it is being retyped; the save sends 1 for it.
-                      set(index, {
-                        count:
-                          event.target.value === ""
-                            ? undefined
-                            : Math.min(1000, Math.max(1, Math.trunc(Number(event.target.value)) || 1)),
-                      })
-                    }
-                  />
-                  {m["privacy.cond.items"]()}
-                </span>
-                {policies.length === 0 && (
-                  <span className={`text-small ${MUTED}`}>{m["privacy.cond.no_policies"]()}</span>
-                )}
-              </>
+              <span className="flex items-center gap-1 text-dense">
+                <input
+                  type="number"
+                  min={1}
+                  max={1000}
+                  className="w-16 rounded-md border border-line bg-surface px-2 py-1 text-body"
+                  aria-label={m["privacy.cond.finds_count"]()}
+                  value={c.count ?? ""}
+                  onChange={(event) =>
+                    // Empty while it is being retyped; the save sends 1 for it.
+                    set(index, {
+                      count:
+                        event.target.value === ""
+                          ? undefined
+                          : Math.min(1000, Math.max(1, Math.trunc(Number(event.target.value)) || 1)),
+                    })
+                  }
+                />
+                {m["privacy.cond.items"]()}
+              </span>
             )}
             {c.key === "classified" && (
               <>
@@ -294,32 +292,27 @@ function ConditionsEditor({
       })}
       {available.length > 0 && (
         <div className="flex items-center gap-2">
-        <select
-          className="w-fit rounded-md border border-line bg-surface px-2 py-1 text-body"
-          aria-label={m["privacy.cond.add"]()}
-          value=""
-          onChange={(event) => {
-            const key = event.target.value;
-            if (!key) return;
-            onChange([
-              ...conditions,
-              {
-                key,
-                values: key === "finds" && policies[0] ? [policies[0].id] : [],
-                negate: false,
-                ...(key === "finds" ? { count: 1 } : {}),
-              },
-            ]);
-          }}
-        >
-          <option value="">{m["privacy.cond.add_option"]()}</option>
-          {available.map((k) => (
-            <option key={k} value={k}>
-              {conditionLabel(k)}
-            </option>
-          ))}
-        </select>
-        {kind === "read" && <Tip text={m["privacy.cond.read_hint"]()} />}
+          <select
+            className="w-fit rounded-md border border-line bg-surface px-2 py-1 text-body"
+            aria-label={m["privacy.cond.add"]()}
+            value=""
+            onChange={(event) => {
+              const key = event.target.value;
+              if (!key) return;
+              onChange([
+                ...conditions,
+                { key, values: [], negate: false, ...(key === "finds" ? { count: 1 } : {}) },
+              ]);
+            }}
+          >
+            <option value="">{m["privacy.cond.add_option"]()}</option>
+            {available.map((k) => (
+              <option key={k} value={k}>
+                {conditionLabel(k)}
+              </option>
+            ))}
+          </select>
+          {kind === "extract" && <Tip text={m["privacy.cond.read_hint"]()} />}
         </div>
       )}
       {warnNameOnly && (
@@ -331,85 +324,200 @@ function ConditionsEditor({
   );
 }
 
-// -- actions -------------------------------------------------------------------
+// -- policies, mode and overrides ------------------------------------------------
 
-function ActionEditor({
+function PoliciesEditor({
   kind,
-  action,
+  rule,
   onChange,
   options,
-  own,
-  last,
   prefix,
 }: {
   kind: PrivacyKind;
+  rule: DraftRule;
+  onChange: (patch: Partial<DraftRule>) => void;
+  options: PrivacyOptions;
+  prefix: string;
+}) {
+  const policies = [...options.policies, ...options.own_policies];
+  const nameOf = (id: string) => policies.find((p) => p.id === id)?.name ?? "?";
+  const free = policies.filter((p) => !rule.policies.includes(p.id));
+  const overrides = Object.entries(rule.overrides);
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <div className={`${FIELD_LABEL} flex items-center gap-2`}>
+          {kind === "extract" ? m["privacy.rule.hide_extract"]() : m["privacy.rule.policies"]()}
+          <Tip text={m["privacy.rule.policies_tip"]()} />
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {rule.policies.map((id) => (
+            <span key={id} className={`${chip(true)} flex items-center gap-1`}>
+              {nameOf(id)}
+              <button
+                type="button"
+                className="cursor-pointer"
+                aria-label={m["privacy.rule.remove_policy"]({ name: nameOf(id) })}
+                onClick={() => onChange({ policies: rule.policies.filter((p) => p !== id) })}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          {free.length > 0 && (
+            <select
+              className="rounded-md border border-line bg-surface px-2 py-1 text-body"
+              aria-label={m["privacy.rule.add_policy"]()}
+              value=""
+              onChange={(event) =>
+                event.target.value && onChange({ policies: [...rule.policies, event.target.value] })
+              }
+            >
+              <option value="">{m["privacy.rule.add_policy"]()}</option>
+              {free.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {policies.length === 0 && (
+            <span className={`text-small ${MUTED}`}>{m["privacy.rule.no_policies_available"]()}</span>
+          )}
+          {kind === "content" && rule.policies.length === 0 && policies.length > 0 && (
+            <span className={`text-small ${MUTED}`}>{m["privacy.rule.no_policies"]()}</span>
+          )}
+        </div>
+      </div>
+      <div className="flex flex-col gap-1">
+        <label htmlFor={`${prefix}-mode`} className={`${FIELD_LABEL} flex items-center gap-2`}>
+          {m["privacy.rule.mode"]()}
+          <Tip text={m["privacy.rule.mode_tip"]()} />
+        </label>
+        <select
+          id={`${prefix}-mode`}
+          className="w-fit rounded-md border border-line bg-surface px-2 py-1 text-body"
+          value={rule.mode}
+          onChange={(event) => onChange({ mode: event.target.value })}
+        >
+          {RULE_MODES.filter((mode) => kind === "content" || mode !== "block").map((mode) => (
+            <option key={mode} value={mode}>
+              {ruleModeLabel(mode)}
+            </option>
+          ))}
+        </select>
+      </div>
+      <details className="rounded-lg border border-line-quiet p-2" open={overrides.length > 0}>
+        <summary className={`cursor-pointer ${FIELD_LABEL}`}>
+          {m["privacy.rule.overrides"]()}
+          {overrides.length > 0 && ` (${overrides.length})`}
+        </summary>
+        <div className="mt-2 flex flex-col gap-2">
+          <span className={`text-small ${MUTED}`}>{m["privacy.rule.overrides_tip"]()}</span>
+          {overrides.map(([type, mode]) => (
+            <div key={type} className="flex flex-wrap items-center gap-2">
+              <code className="text-dense">{type}</code>
+              <select
+                className="rounded-md border border-line bg-surface px-2 py-1 text-body"
+                aria-label={m["privacy.rule.override_mode"]({ type })}
+                value={mode}
+                onChange={(event) =>
+                  onChange({ overrides: { ...rule.overrides, [type]: event.target.value } })
+                }
+              >
+                {RULE_MODES.filter((x) => kind === "content" || x !== "block").map((x) => (
+                  <option key={x} value={x}>
+                    {ruleModeLabel(x)}
+                  </option>
+                ))}
+              </select>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={m["privacy.rule.override_remove"]({ type })}
+                onClick={() => {
+                  const next = { ...rule.overrides };
+                  delete next[type];
+                  onChange({ overrides: next });
+                }}
+              >
+                ×
+              </Button>
+            </div>
+          ))}
+          <OverrideAdd onAdd={(type) => onChange({ overrides: { ...rule.overrides, [type]: "redact" } })} />
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function OverrideAdd({ onAdd }: { onAdd: (type: string) => void }) {
+  const [type, setType] = useState("");
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        className="w-48 rounded-md border border-line bg-surface px-2 py-1 font-mono text-body"
+        aria-label={m["privacy.rule.override_type"]()}
+        placeholder="TYPE_NAME"
+        value={type}
+        onChange={(event) => setType(event.target.value)}
+      />
+      <Button
+        size="sm"
+        disabled={!type.trim()}
+        onClick={() => {
+          onAdd(type.trim().toUpperCase().replace(/[^A-Z0-9_]+/g, "_"));
+          setType("");
+        }}
+      >
+        {m["privacy.rule.override_add"]()}
+      </Button>
+    </div>
+  );
+}
+
+function ExtractActionEditor({
+  action,
+  onChange,
+  options,
+  prefix,
+}: {
   action: PrivacyAction;
   onChange: (next: PrivacyAction) => void;
   options: PrivacyOptions;
-  own: boolean;
-  /** The fixed last rule: a user's may add nothing. */
-  last: boolean;
   prefix: string;
 }) {
-  const ladder = LADDER[kind];
-  const policies = [...options.policies, ...options.own_policies];
   return (
     <div className="flex flex-col gap-3">
-      <div>
-        <div className={`${FIELD_LABEL} flex items-center gap-2`}>
-          {m["privacy.edit.where"]()}
-          <Tip
-            text={m["privacy.edit.where_tip"]({
-              ladder: ladder.map((l) => levelLabel(l)).join(" < "),
-            })}
-          />
-          {kind !== "read" && (
-            <span className={`text-small ${MUTED}`}>
-              {m["privacy.edit.provider_stays"]()}
-              <Tip
-                text={
-                  kind === "embed"
-                    ? m["privacy.edit.provider_stays_embed"]()
-                    : m["privacy.edit.provider_stays_chat"]()
-                }
-              />
+      <div className={`${FIELD_LABEL} flex items-center gap-2`}>{m["privacy.rule.extract_action"]()}</div>
+      <div role="radiogroup" aria-label={m["privacy.rule.extract_action"]()} className="flex flex-col gap-1">
+        {EXTRACT_LEVELS.map((level) => (
+          <label
+            key={level}
+            className={`flex cursor-pointer items-start gap-2 rounded-lg border p-2 ${
+              action.level === level ? "border-accent bg-sunken" : "border-line"
+            }`}
+          >
+            <input
+              type="radio"
+              name={`${prefix}-level`}
+              checked={action.level === level}
+              onChange={() =>
+                onChange({
+                  level,
+                  ...(level === "extract_with" ? { reader: action.reader ?? DEFAULT_READER } : {}),
+                })
+              }
+            />
+            <span>
+              <strong>{levelLabel(level)}</strong>
+              <span className={`block text-small ${MUTED}`}>{levelHint(level)}</span>
             </span>
-          )}
-        </div>
-        <div role="radiogroup" aria-label={m["privacy.edit.where"]()} className="mt-1 flex flex-col gap-1">
-          {ladder.map((level) => {
-            const noop = own && !last && level === baseLevel(kind);
-            return (
-              <label
-                key={level}
-                title={noop ? m["privacy.edit.noop_tip"]() : undefined}
-                className={`flex items-start gap-2 rounded-lg border p-2 ${
-                  action.level === level && !noop ? "border-accent bg-sunken" : "border-line"
-                } ${noop ? "opacity-60" : "cursor-pointer"}`}
-              >
-                <input
-                  type="radio"
-                  name={`${prefix}-level`}
-                  checked={action.level === level}
-                  disabled={noop && action.level !== level}
-                  onChange={() =>
-                    onChange({
-                      level,
-                      ...(level === "refuse" ? {} : action.redact_with ? { redact_with: action.redact_with } : {}),
-                      ...(level === "read_with" ? { reader: action.reader ?? DEFAULT_READER } : {}),
-                    })
-                  }
-                />
-                <span>
-                  <strong>{levelLabel(level)}</strong>
-                  <span className={`block text-small ${MUTED}`}>{levelHint(level)}</span>
-                </span>
-              </label>
-            );
-          })}
-        </div>
+          </label>
+        ))}
       </div>
-      {kind === "read" && action.level === "read_with" && (
+      {action.level === "extract_with" && (
         <div className="flex flex-col gap-2">
           <div className={`${FIELD_LABEL} flex items-center gap-2`}>
             {m["privacy.edit.reader"]()}
@@ -422,13 +530,7 @@ function ActionEditor({
                 type="button"
                 aria-pressed={(action.reader ?? DEFAULT_READER) === r.id}
                 className={`${chip((action.reader ?? DEFAULT_READER) === r.id)} cursor-pointer`}
-                onClick={() =>
-                  onChange({
-                    level: "read_with",
-                    reader: r.id,
-                    ...(action.redact_with ? { redact_with: action.redact_with } : {}),
-                  })
-                }
+                onClick={() => onChange({ level: "extract_with", reader: r.id })}
               >
                 {r.name}
               </button>
@@ -437,42 +539,6 @@ function ActionEditor({
               <span className={`text-small ${MUTED}`}>{m["privacy.edit.no_readers"]()}</span>
             )}
           </div>
-        </div>
-      )}
-      {action.level === "refuse" ? (
-        <p className={`m-0 text-small ${MUTED}`}>{m["privacy.edit.refused_no_policy"]()}</p>
-      ) : (
-        <div className="flex flex-col gap-1">
-          <div className={`${FIELD_LABEL} flex items-center gap-2`}>
-            <label htmlFor={`${prefix}-policy`}>
-              {kind === "read"
-                ? m["privacy.edit.redact_with_read"]()
-                : kind === "embed"
-                  ? m["privacy.edit.redact_with_embed"]()
-                  : m["privacy.edit.redact_with_chat"]()}
-            </label>
-            <Tip text={m["privacy.edit.redact_with_tip"]()} />
-          </div>
-          <select
-            id={`${prefix}-policy`}
-            className="w-fit rounded-md border border-line bg-surface px-2 py-1 text-body"
-            value={action.redact_with ?? ""}
-            onChange={(event) =>
-              onChange(
-                actionBody({
-                  ...action,
-                  redact_with: event.target.value || undefined,
-                }),
-              )
-            }
-          >
-            <option value="">{m["privacy.edit.no_policy"]()}</option>
-            {policies.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
         </div>
       )}
     </div>
@@ -492,10 +558,13 @@ function newRule(index: number, kind: PrivacyKind): DraftRule {
     uid: uid(),
     name: m["privacy.edit.rule_default_name"]({ number: String(index + 1) }),
     enabled: true,
-    observe_only: false,
     note: null,
+    policies: [],
+    match: "all",
     conditions: [],
-    action: { level: kind === "read" ? "default" : "pass" },
+    mode: kind === "content" ? "anonymise_restore" : "off",
+    overrides: {},
+    action: kind === "extract" ? { level: "default" } : null,
   };
 }
 
@@ -514,7 +583,7 @@ export function PipelineEditorPage({ area }: { area: Area }) {
   const check = useCheckPipeline(area);
   const existing = pipelines.data?.items.find((p) => p.id === id) ?? null;
 
-  const initialKind = (KINDS.find((k) => k === search.get("kind")) ?? "embed") as PrivacyKind;
+  const initialKind = (KINDS.find((k) => k === search.get("kind")) ?? "content") as PrivacyKind;
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [kind, setKind] = useState<PrivacyKind>(initialKind);
@@ -524,8 +593,8 @@ export function PipelineEditorPage({ area }: { area: Area }) {
   const [targetMode, setTargetMode] = useState<"all" | "only" | "except">("all");
   const [providers, setProviders] = useState<string[]>([]);
   const [models, setModels] = useState<string[]>([]);
+  const [modelTypes, setModelTypes] = useState<PrivacyModelType[]>([]);
   const [rules, setRules] = useState<DraftRule[]>([]);
-  const [otherwise, setOtherwise] = useState<PrivacyAction>({ level: baseLevel(initialKind) });
   const [open, setOpen] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<PrivacyIssue[]>([]);
   const [saved, setSaved] = useState(false);
@@ -542,6 +611,7 @@ export function PipelineEditorPage({ area }: { area: Area }) {
     setTargetMode(existing.target.mode);
     setProviders([...existing.target.providers]);
     setModels([...existing.target.models]);
+    setModelTypes([...(existing.target.model_types ?? [])]);
     setRules(
       existing.rules.map((r) => {
         const body = ruleBody(r);
@@ -550,19 +620,21 @@ export function PipelineEditorPage({ area }: { area: Area }) {
           id: body.id ?? undefined,
           name: body.name,
           enabled: body.enabled ?? true,
-          observe_only: body.observe_only ?? false,
           note: body.note ?? null,
+          policies: [...(body.policies ?? [])],
+          match: (body.match ?? "all") as "all" | "any",
           conditions: (body.conditions ?? []).map((c) => ({
             key: c.key,
             values: c.values ?? [],
             negate: c.negate ?? false,
             ...(c.key === "finds" ? { count: c.count ?? 1 } : {}),
           })),
-          action: body.action,
+          mode: body.mode ?? "off",
+          overrides: { ...(body.overrides ?? {}) },
+          action: body.action ?? null,
         };
       }),
     );
-    setOtherwise(actionBody(existing.otherwise.action));
   }
 
   const body: PrivacyPipelineInput = useMemo(
@@ -571,24 +643,26 @@ export function PipelineEditorPage({ area }: { area: Area }) {
       name,
       enabled,
       who: { mode: whoMode, ids: whoIds },
-      target: { mode: targetMode, providers, models },
+      target: { mode: targetMode, providers, models, model_types: kind === "content" ? modelTypes : [] },
       rules: rules.map((r) => ({
         ...(r.id ? { id: r.id } : {}),
         name: r.name,
         enabled: r.enabled,
-        observe_only: r.observe_only,
         note: r.note,
+        policies: r.policies,
+        match: r.match,
+        mode: r.mode,
+        overrides: r.overrides,
         conditions: r.conditions.map((c) => ({
           key: c.key,
           values: c.values,
           negate: c.negate,
           ...(c.key === "finds" ? { count: c.count ?? 1 } : {}),
         })),
-        action: r.action,
+        ...(r.action ? { action: r.action } : {}),
       })),
-      otherwise,
     }),
-    [kind, name, enabled, whoMode, whoIds, targetMode, providers, models, rules, otherwise],
+    [kind, name, enabled, whoMode, whoIds, targetMode, providers, models, modelTypes, rules],
   );
 
   // The warnings are asked for as the pipeline is written, never to block saving.
@@ -645,20 +719,22 @@ export function PipelineEditorPage({ area }: { area: Area }) {
   }
 
   const targetModels = opts.models.filter((x) =>
-    kind === "read" ? x.kind === "ocr" : kind === "embed" ? x.kind === "embedding" || x.kind === "rerank" : x.kind === "chat",
+    kind === "extract"
+      ? x.kind === "ocr"
+      : modelTypes.length
+        ? modelTypes.includes(x.kind as PrivacyModelType)
+        : x.kind === "chat" || x.kind === "embedding" || x.kind === "rerank",
   );
   const whoOptions =
     whoMode === "users" ? opts.users : whoMode === "groups" ? opts.groups : whoMode === "keys" ? opts.keys : [];
-  // What `finds` may name: the administrators' shared policies and the user's own.
-  const policyList = [...opts.policies, ...opts.own_policies];
   const classifierList = opts.classifiers;
 
   const changeKind = (next: PrivacyKind) => {
     setKind(next);
     setRules([]);
-    setOtherwise({ level: baseLevel(next) });
     setProviders([]);
     setModels([]);
+    setModelTypes([]);
     setOpen(null);
   };
   const patchRule = (u: string, patch: Partial<DraftRule>) =>
@@ -766,7 +842,7 @@ export function PipelineEditorPage({ area }: { area: Area }) {
           <div>
             <div className={`${FIELD_LABEL} flex items-center gap-2`}>
               {m["privacy.edit.target"]()}
-              <Tip text={kind === "read" ? m["privacy.edit.target_tip_read"]() : m["privacy.edit.target_tip"]()} />
+              <Tip text={kind === "extract" ? m["privacy.edit.target_tip_read"]() : m["privacy.edit.target_tip"]()} />
             </div>
             <div className="flex flex-col gap-2">
               <Segmented
@@ -806,6 +882,23 @@ export function PipelineEditorPage({ area }: { area: Area }) {
               )}
             </div>
           </div>
+          {kind === "content" && (
+            <div>
+              <div className={`${FIELD_LABEL} flex items-center gap-2`}>
+                {m["privacy.edit.model_type"]()}
+                <Tip text={m["privacy.edit.model_type_tip"]()} />
+              </div>
+              <Chips
+                label={m["privacy.edit.model_type"]()}
+                options={MODEL_TYPES.map((t) => ({ value: t, label: modelTypeLabel(t) }))}
+                selected={modelTypes}
+                onToggle={(v) => setModelTypes(toggled(modelTypes, v))}
+              />
+              {modelTypes.length === 0 && (
+                <span className={`text-small ${MUTED}`}>{m["privacy.edit.model_type_any"]()}</span>
+              )}
+            </div>
+          )}
           <div className="flex items-center gap-2 text-body">
             <Switch label={m["privacy.edit.enabled"]()} checked={enabled} onChange={setEnabled} />
             <span aria-hidden>{m["privacy.edit.enabled"]()}</span>
@@ -816,19 +909,16 @@ export function PipelineEditorPage({ area }: { area: Area }) {
       <section className="flex flex-col gap-2" aria-label={m["privacy.edit.rules"]()}>
         <div className="flex flex-wrap items-baseline gap-2">
           <h2 className="m-0 text-heading font-semibold">{m["privacy.edit.rules"]()}</h2>
-          <span className={`flex items-center gap-1 text-small ${MUTED}`}>
-            {m["privacy.edit.first_match"]()}
-            <Tip text={m["privacy.edit.first_match_tip"]()} />
-          </span>
         </div>
+        <p className={`m-0 text-small ${MUTED}`}>{m["privacy.edit.first_match_tip"]()}</p>
         <ol className="m-0 flex list-none flex-col gap-2 p-0">
           {rules.map((rule, index) => {
             const isOpen = open === rule.uid;
             const nameOnly =
-              kind === "read" &&
+              kind === "extract" &&
               rule.conditions.length > 0 &&
               rule.conditions.every((c) => c.key === "filename" || c.key === "filetype") &&
-              rule.action.level !== baseLevel(kind);
+              (rule.action?.level ?? "default") !== "default";
             return (
               <li key={rule.uid} className="rounded-lg border border-line bg-surface p-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -838,7 +928,7 @@ export function PipelineEditorPage({ area }: { area: Area }) {
                   <span className="min-w-0 flex-1">
                     <strong>{rule.name}</strong>
                     <span className={`block text-dense ${MUTED}`}>
-                      {ruleSentence(kind, { ...rule, conditions: rule.conditions }, labels)}
+                      {ruleSentence(kind, rule, labels)}
                     </span>
                     {rule.note && (
                       <span className="mt-1 flex flex-wrap items-center gap-2 text-dense">
@@ -889,33 +979,42 @@ export function PipelineEditorPage({ area }: { area: Area }) {
                         {rule.note}
                       </Notice>
                     )}
+                    {kind === "content" && (
+                      <PoliciesEditor
+                        kind={kind}
+                        rule={rule}
+                        onChange={(patch) => patchRule(rule.uid, patch)}
+                        options={opts}
+                        prefix={rule.uid}
+                      />
+                    )}
                     <ConditionsEditor
                       kind={kind}
                       conditions={rule.conditions}
+                      match={rule.match}
                       onChange={(conditions) => patchRule(rule.uid, { conditions })}
+                      onMatch={(match) => patchRule(rule.uid, { match })}
                       own={own}
-                      policies={policyList}
                       classifiers={classifierList}
                       warnNameOnly={nameOnly}
                     />
-                    <ActionEditor
-                      kind={kind}
-                      action={rule.action}
-                      onChange={(action) => patchRule(rule.uid, { action })}
-                      options={opts}
-                      own={own}
-                      last={false}
-                      prefix={rule.uid}
-                    />
-                    <label className="flex items-center gap-2 text-body">
-                      <input
-                        type="checkbox"
-                        checked={rule.observe_only}
-                        onChange={(e) => patchRule(rule.uid, { observe_only: e.target.checked })}
-                      />
-                      {m["privacy.edit.observe"]()}
-                      <Tip text={m["privacy.edit.observe_tip"]()} />
-                    </label>
+                    {kind === "extract" && rule.action && (
+                      <>
+                        <ExtractActionEditor
+                          action={rule.action}
+                          onChange={(action) => patchRule(rule.uid, { action })}
+                          options={opts}
+                          prefix={rule.uid}
+                        />
+                        <PoliciesEditor
+                          kind={kind}
+                          rule={rule}
+                          onChange={(patch) => patchRule(rule.uid, patch)}
+                          options={opts}
+                          prefix={`${rule.uid}-hide`}
+                        />
+                      </>
+                    )}
                     <div className="flex items-center gap-2 text-body">
                       <Switch
                         size="sm"
@@ -930,36 +1029,6 @@ export function PipelineEditorPage({ area }: { area: Area }) {
               </li>
             );
           })}
-          <li className="rounded-lg border border-dashed border-line bg-surface p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`w-5 text-right text-small ${MUTED}`} aria-hidden="true">
-                ∗
-              </span>
-              <span className="min-w-0 flex-1">
-                <strong>{m["privacy.edit.else"]()}</strong>
-                <Tip text={m["privacy.edit.else_tip"]()} />
-                <span className={`block text-dense ${MUTED}`}>
-                  {ruleSentence(kind, { conditions: [], action: otherwise, observe_only: false }, labels)}
-                </span>
-              </span>
-              <Button size="sm" onClick={() => setOpen(open === "else" ? null : "else")}>
-                {open === "else" ? m["privacy.edit.close"]() : m["privacy.row.edit"]()}
-              </Button>
-            </div>
-            {open === "else" && (
-              <div className="mt-3 border-t border-line-quiet pt-3">
-                <ActionEditor
-                  kind={kind}
-                  action={otherwise}
-                  onChange={setOtherwise}
-                  options={opts}
-                  own={own}
-                  last
-                  prefix="else"
-                />
-              </div>
-            )}
-          </li>
         </ol>
         <div>
           <Button

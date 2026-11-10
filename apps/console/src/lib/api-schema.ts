@@ -3957,18 +3957,14 @@ export interface components {
     schemas: {
         /**
          * ActionBody
-         * @description Where it is handled, and what is hidden.
-         *
-         *     ``level`` is on the ladder of the pipeline's kind (read: ``default``,
-         *     ``read_with``, ``refuse``; embed and chat: ``pass``, ``refuse``).
+         * @description A reading rule's action: ``default`` (the reader the caller named), ``extract_with`` a
+         *     reader, or ``block``. A content rule has none: its mode says what it does.
          */
         ActionBody: {
             /** Level */
             level: string;
             /** Reader */
             reader?: string | null;
-            /** Redact With */
-            redact_with?: string | null;
         };
         /** ActionView */
         ActionView: {
@@ -3976,8 +3972,6 @@ export interface components {
             level: string;
             /** Reader */
             reader: string | null;
-            /** Redact With */
-            redact_with: string | null;
         };
         /** AdminAuditEventResponse */
         AdminAuditEventResponse: {
@@ -4941,12 +4935,7 @@ export interface components {
         };
         /**
          * CustomEntity
-         * @description An entity type the NER engine finds from a description (GLiNER) (ADR 0113, section 0c).
-         *
-         *     ``name`` is the entity label (UPPER_SNAKE) and ``label`` the natural-language
-         *     description the model is given at inference ("project code name"). Only an
-         *     engine that accepts labels (``custom_labels`` in the service's health) can use
-         *     one; a policy that names one with another engine is refused when saved.
+         * @description A custom entity with a mode stamped on, as the request path holds it.
          */
         CustomEntity: {
             /** Label */
@@ -4961,17 +4950,29 @@ export interface components {
             threshold?: number | null;
         };
         /**
+         * CustomEntityItem
+         * @description An entity type the NER engine finds from a description (GLiNER) (ADR 0113, section 0c).
+         *
+         *     ``name`` is the entity label (UPPER_SNAKE) and ``label`` the natural-language
+         *     description the model is given at inference ("project code name"). Only an
+         *     engine that accepts labels (``custom_labels`` in the service's health) can use
+         *     one; a policy that names one with another engine is refused when saved.
+         */
+        CustomEntityItem: {
+            /** Label */
+            label: string;
+            /** @default anonymise_restore */
+            mode?: components["schemas"]["EntityMode"];
+            /** Name */
+            name: string;
+            /** @default tagged */
+            placeholder?: components["schemas"]["PlaceholderStyle"];
+            /** Threshold */
+            threshold?: number | null;
+        };
+        /**
          * CustomPattern
-         * @description A regex an operator wrote, treated as one more entity type.
-         *
-         *     ``name`` becomes the entity label, so a match is substituted, restored and
-         *     counted by exactly the machinery every other type uses — and shows up in the
-         *     ledger's entity count without a second concept.
-         *
-         *     Evaluated in the gateway rather than sent to the detection service: no
-         *     contract change, works for any engine, and it keeps one deployment's regexes
-         *     out of a service every deployment shares. Also outside the detection cache,
-         *     since a regex is cheap and deterministic and would otherwise fragment the key.
+         * @description A pattern with a mode stamped on, as the request path holds it.
          */
         CustomPattern: {
             /** @default redact */
@@ -5103,6 +5104,34 @@ export interface components {
             /** Upstream Model */
             upstream_model: string;
         };
+        /**
+         * DryRunClaim
+         * @description A piece of text a rule hid (or only recorded), and which rule claimed it.
+         */
+        DryRunClaim: {
+            /** Action */
+            action: string;
+            /** Engine */
+            engine: string | null;
+            /** Group */
+            group: string;
+            /** Mode */
+            mode: string;
+            /** Owner */
+            owner: string;
+            /** Pipeline */
+            pipeline: string;
+            /** Rule */
+            rule: string;
+            /** Rule Id */
+            rule_id: string | null;
+            /** Score */
+            score: number | null;
+            /** Text */
+            text: string | null;
+            /** Type */
+            type: string;
+        };
         /** DryRunHop */
         DryRunHop: {
             /** Added */
@@ -5130,30 +5159,8 @@ export interface components {
             /** Type */
             type: string;
         };
-        /** DryRunLevel */
-        DryRunLevel: {
-            /** Asked By */
-            asked_by: string[];
-            /** Label */
-            label: string;
-            /** Level */
-            level: string;
-            /** Winning */
-            winning: boolean;
-        };
         /** DryRunPipeline */
         DryRunPipeline: {
-            /** Action Text */
-            action_text: string;
-            /**
-             * Fired Otherwise
-             * @default false
-             */
-            fired_otherwise: boolean;
-            /** Fired Rule */
-            fired_rule: string | null;
-            /** Fired Rule Id */
-            fired_rule_id: string | null;
             /** Hop */
             hop: number;
             /**
@@ -5161,8 +5168,6 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Level */
-            level: string;
             /** Name */
             name: string;
             /** Owner */
@@ -5173,19 +5178,6 @@ export interface components {
             steps: components["schemas"]["DryRunStep"][];
             /** Summary */
             summary: string[];
-        };
-        /** DryRunPolicyType */
-        DryRunPolicyType: {
-            /** Entity Type */
-            entity_type: string;
-            /** Found */
-            found: boolean | null;
-            /** Mode */
-            mode: string;
-            /** Per Policy */
-            per_policy: string[];
-            /** Source */
-            source: string;
         };
         /**
          * DryRunRequest
@@ -5202,7 +5194,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "read" | "embed" | "chat";
+            kind: "extract" | "content";
             /** Mime */
             mime?: string | null;
             /** Model Id */
@@ -5218,6 +5210,8 @@ export interface components {
         DryRunResponse: {
             /** Blocked By */
             blocked_by: string | null;
+            /** Claims */
+            claims: components["schemas"]["DryRunClaim"][];
             /** Degraded */
             degraded: string[];
             /** Estimate Ms */
@@ -5238,9 +5232,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "read" | "embed" | "chat";
-            /** Ladder */
-            ladder: components["schemas"]["DryRunLevel"][];
+            kind: "extract" | "content";
             /** Level */
             level: string;
             /** Needs */
@@ -5255,8 +5247,6 @@ export interface components {
             pipelines: components["schemas"]["DryRunPipeline"][];
             /** Policies */
             policies: string[];
-            /** Policy Types */
-            policy_types: components["schemas"]["DryRunPolicyType"][];
             /** Reader */
             reader: string | null;
             /** Reader By */
@@ -5294,17 +5284,23 @@ export interface components {
         DryRunStep: {
             /** Degraded */
             degraded: string[];
-            /**
-             * Is Otherwise
-             * @default false
-             */
-            is_otherwise: boolean;
             /** Items */
             items: components["schemas"]["DryRunItem"][];
+            /**
+             * Mode
+             * @default off
+             */
+            mode: string;
             /** Name */
             name: string;
             /** Note */
             note: string | null;
+            /** Overrides */
+            overrides: {
+                [key: string]: string;
+            };
+            /** Policies */
+            policies: string[];
             /** Position */
             position: number;
             /** Reasons */
@@ -5382,6 +5378,19 @@ export interface components {
             reachable: boolean;
         };
         /**
+         * EntityItem
+         * @description A type a policy looks for: how sure the detector must be, how a stand-in is written.
+         *
+         *     What a policy stores (ADR 0114): no mode. What to *do* with what it finds is the
+         *     rule's (``EntityPolicy`` is this item with a mode stamped on, for the request path).
+         */
+        EntityItem: {
+            /** @default tagged */
+            placeholder?: components["schemas"]["PlaceholderStyle"];
+            /** Threshold */
+            threshold?: number | null;
+        };
+        /**
          * EntityMode
          * @description What happens to one kind of detected entity.
          *
@@ -5414,8 +5423,6 @@ export interface components {
             engine: string | null;
             /** Group */
             group: string;
-            /** Mode */
-            mode: string;
             /** Score */
             score: number | null;
             /** Text */
@@ -5839,7 +5846,7 @@ export interface components {
             rule_name: string | null;
         };
         /**
-         * KeywordList
+         * KeywordItem
          * @description A comma-separated list of words and phrases, found as whole words (ADR 0113, section 0c).
          *
          *     One more pattern type, beside the built-in formats and the regular expressions
@@ -5852,6 +5859,25 @@ export interface components {
          *     ignored **and accents are folded** ("Perche" finds "perché"). It is linear in
          *     the text (``gateway.redaction.keywords``): no regular expression is ever built
          *     from what an administrator typed.
+         */
+        KeywordItem: {
+            /**
+             * Case Sensitive
+             * @default false
+             */
+            case_sensitive?: boolean;
+            /** @default redact */
+            mode?: components["schemas"]["EntityMode"];
+            /** Name */
+            name: string;
+            /** @default tagged */
+            placeholder?: components["schemas"]["PlaceholderStyle"];
+            /** Words */
+            words: string[];
+        };
+        /**
+         * KeywordList
+         * @description A keyword list with a mode stamped on, as the request path holds it.
          */
         KeywordList: {
             /**
@@ -7006,6 +7032,29 @@ export interface components {
             password: string;
         };
         /**
+         * PatternItem
+         * @description A regex an operator wrote, treated as one more entity type.
+         *
+         *     ``name`` becomes the entity label, so a match is substituted, restored and
+         *     counted by exactly the machinery every other type uses — and shows up in the
+         *     ledger's entity count without a second concept.
+         *
+         *     Evaluated in the gateway rather than sent to the detection service: no
+         *     contract change, works for any engine, and it keeps one deployment's regexes
+         *     out of a service every deployment shares. Also outside the detection cache,
+         *     since a regex is cheap and deterministic and would otherwise fragment the key.
+         */
+        PatternItem: {
+            /** @default redact */
+            mode?: components["schemas"]["EntityMode"];
+            /** Name */
+            name: string;
+            /** @default tagged */
+            placeholder?: components["schemas"]["PlaceholderStyle"];
+            /** Regex */
+            regex: string;
+        };
+        /**
          * PendingErasuresResponse
          * @description ``GET /admin/erasures/pending`` (ADR 0093 §9.3): the Users page's own
          *     banner, "N erasures waiting for the chat", while any are pending.
@@ -7054,13 +7103,12 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "read" | "embed" | "chat";
+            kind: "extract" | "content";
             /**
              * Name
              * @default Draft
              */
             name?: string;
-            otherwise?: components["schemas"]["ActionBody"] | null;
             /** Position */
             position?: number | null;
             /**
@@ -7071,6 +7119,7 @@ export interface components {
             /**
              * @default {
              *       "mode": "all",
+             *       "model_types": [],
              *       "models": [],
              *       "providers": []
              *     }
@@ -7104,10 +7153,9 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "read" | "embed" | "chat";
+            kind: "extract" | "content";
             /** Name */
             name: string;
-            otherwise?: components["schemas"]["ActionBody"] | null;
             /** Position */
             position?: number | null;
             /**
@@ -7118,6 +7166,7 @@ export interface components {
             /**
              * @default {
              *       "mode": "all",
+             *       "model_types": [],
              *       "models": [],
              *       "providers": []
              *     }
@@ -7149,14 +7198,13 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "read" | "embed" | "chat";
+            kind: "extract" | "content";
             /** Labels */
             labels: {
                 [key: string]: string;
             };
             /** Name */
             name: string;
-            otherwise: components["schemas"]["RuleView"];
             /** Owner Id */
             owner_id: string | null;
             /** Position */
@@ -7181,10 +7229,9 @@ export interface components {
             /** Enabled */
             enabled?: boolean | null;
             /** Kind */
-            kind?: ("read" | "embed" | "chat") | null;
+            kind?: ("extract" | "content") | null;
             /** Name */
             name?: string | null;
-            otherwise?: components["schemas"]["ActionBody"] | null;
             /** Rules */
             rules?: components["schemas"]["RuleBody"][] | null;
             target?: components["schemas"]["TargetBody"] | null;
@@ -7223,7 +7270,7 @@ export interface components {
             is_active?: boolean;
             /** Name */
             name: string;
-            policy: components["schemas"]["RedactionPolicy"];
+            policy: components["schemas"]["PolicyDefinition"];
             /**
              * Reason
              * @default
@@ -7234,6 +7281,36 @@ export interface components {
              * @default false
              */
             shared_with_users?: boolean;
+        };
+        /**
+         * PolicyDefinition
+         * @description What a policy stores and the API shows: what to look for, never what to do (ADR 0114).
+         *
+         *     The two groups stay apart as ever (patterns: ``formats``, ``patterns``, ``keywords``;
+         *     entities: ``entities``, ``custom_entities``, ``engine``), with the detection settings
+         *     (thresholds, placeholder style, allow-list). The **mode** (what to do with what is
+         *     found) belongs to a rule of a pipeline: :meth:`stamp` writes it onto a copy, which is
+         *     the :class:`RedactionPolicy` the request path and the redaction service already speak.
+         */
+        PolicyDefinition: {
+            /** Allow List */
+            allow_list?: string[];
+            /** Custom Entities */
+            custom_entities?: components["schemas"]["CustomEntityItem"][];
+            /** Engine */
+            engine?: ("spacy" | "gliner") | null;
+            /** Entities */
+            entities?: {
+                [key: string]: components["schemas"]["EntityItem"];
+            };
+            /** Formats */
+            formats?: {
+                [key: string]: components["schemas"]["EntityItem"];
+            };
+            /** Keywords */
+            keywords?: components["schemas"]["KeywordItem"][];
+            /** Patterns */
+            patterns?: components["schemas"]["PatternItem"][];
         };
         /** PolicyResponse */
         PolicyResponse: {
@@ -7257,7 +7334,7 @@ export interface components {
             is_active: boolean;
             /** Name */
             name: string;
-            policy: components["schemas"]["RedactionPolicy"];
+            policy: components["schemas"]["PolicyDefinition"];
             /** Reason */
             reason: string;
             /** Shared With Users */
@@ -7275,7 +7352,7 @@ export interface components {
          * @description A policy as it is being edited, and a text to run it over. Nothing is stored or logged.
          */
         PolicyTryRequest: {
-            policy: components["schemas"]["RedactionPolicy"];
+            policy: components["schemas"]["PolicyDefinition"];
             /** Text */
             text: string;
         };
@@ -7299,7 +7376,7 @@ export interface components {
             is_active?: boolean | null;
             /** Name */
             name?: string | null;
-            policy?: components["schemas"]["RedactionPolicy"] | null;
+            policy?: components["schemas"]["PolicyDefinition"] | null;
             /** Reason */
             reason?: string | null;
             /** Shared With Users */
@@ -7953,7 +8030,7 @@ export interface components {
          *     has defeated itself.
          */
         RedactionPreviewRequest: {
-            policy?: components["schemas"]["RedactionPolicy"] | null;
+            policy?: components["schemas"]["PolicyDefinition"] | null;
             /** Policy Id */
             policy_id?: string | null;
             /** Text */
@@ -8155,7 +8232,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "read" | "embed" | "chat";
+            kind: "extract" | "content";
             /** Order */
             order: string[];
         };
@@ -8321,7 +8398,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "read" | "embed" | "chat";
+            kind: "read" | "extract" | "embed" | "chat";
             observed: components["schemas"]["RoutingObserved"];
             /** Observed Rules */
             observed_rules: components["schemas"]["RoutingRule"][];
@@ -8349,6 +8426,8 @@ export interface components {
             is_scan: boolean | null;
             /** Mime */
             mime: string | null;
+            /** Model Type */
+            model_type: string | null;
             target: components["schemas"]["RoutingTarget"];
             verdicts: components["schemas"]["RoutingVerdicts"] | null;
         };
@@ -8374,6 +8453,8 @@ export interface components {
             /** Owner */
             owner: string;
             rule: components["schemas"]["RoutingRule"] | null;
+            /** Rules */
+            rules: components["schemas"]["RoutingRule"][];
         };
         /** RoutingRule */
         RoutingRule: {
@@ -8411,9 +8492,12 @@ export interface components {
              */
             method: string;
         };
-        /** RuleBody */
+        /**
+         * RuleBody
+         * @description When <policies> + <conditions> -> <mode> (ADR 0114).
+         */
         RuleBody: {
-            action: components["schemas"]["ActionBody"];
+            action?: components["schemas"]["ActionBody"] | null;
             /**
              * Conditions
              * @default []
@@ -8426,19 +8510,34 @@ export interface components {
             enabled?: boolean;
             /** Id */
             id?: string | null;
+            /**
+             * Match
+             * @default all
+             * @enum {string}
+             */
+            match?: "all" | "any";
+            /** Mode */
+            mode?: string | null;
             /** Name */
             name: string;
             /** Note */
             note?: string | null;
             /**
-             * Observe Only
-             * @default false
+             * Overrides
+             * @default {}
              */
-            observe_only?: boolean;
+            overrides?: {
+                [key: string]: string;
+            };
+            /**
+             * Policies
+             * @default []
+             */
+            policies?: string[];
         };
         /** RuleView */
         RuleView: {
-            action: components["schemas"]["ActionView"];
+            action: components["schemas"]["ActionView"] | null;
             /** Conditions */
             conditions: components["schemas"]["ConditionView"][];
             /** Enabled */
@@ -8450,12 +8549,23 @@ export interface components {
             id: string;
             /** Issues */
             issues: components["schemas"]["IssueView"][];
+            /**
+             * Match
+             * @enum {string}
+             */
+            match: "all" | "any";
+            /** Mode */
+            mode: string;
             /** Name */
             name: string;
             /** Note */
             note: string | null;
-            /** Observe Only */
-            observe_only: boolean;
+            /** Overrides */
+            overrides: {
+                [key: string]: string;
+            };
+            /** Policies */
+            policies: string[];
         };
         /**
          * SearchBackendDeleteResponse
@@ -8795,6 +8905,11 @@ export interface components {
              */
             mode?: "all" | "only" | "except";
             /**
+             * Model Types
+             * @default []
+             */
+            model_types?: ("chat" | "embedding" | "rerank")[];
+            /**
              * Models
              * @default []
              */
@@ -8812,6 +8927,8 @@ export interface components {
              * @enum {string}
              */
             mode: "all" | "only" | "except";
+            /** Model Types */
+            model_types: ("chat" | "embedding" | "rerank")[];
             /** Models */
             models: string[];
             /** Providers */
@@ -9016,7 +9133,9 @@ export interface components {
         };
         /**
          * UserEntryBody
-         * @description One entry of a user's own policy: a custom pattern, or a stricter mode for a type.
+         * @description One entry of a user's own policy: a custom pattern, or an entity type to look for.
+         *
+         *     ``kind`` stays ``mode`` for an entity type, as stored (ADR 0114: it carries no mode).
          */
         UserEntryBody: {
             /**
@@ -9024,8 +9143,6 @@ export interface components {
              * @enum {string}
              */
             kind: "pattern" | "mode";
-            /** Mode */
-            mode: string;
             /** Name */
             name: string;
             /** Regex */
@@ -9038,8 +9155,6 @@ export interface components {
              * @enum {string}
              */
             kind: "pattern" | "mode";
-            /** Mode */
-            mode: string;
             /** Name */
             name: string;
             /** Regex */

@@ -3,7 +3,7 @@
     "schemas": {
       "ActionBody": {
         "additionalProperties": false,
-        "description": "Where it is handled, and what is hidden.\n\n``level`` is on the ladder of the pipeline's kind (read: ``default``,\n``read_with``, ``refuse``; embed and chat: ``pass``, ``refuse``).",
+        "description": "A reading rule's action: ``default`` (the reader the caller named), ``extract_with`` a\nreader, or ``block``. A content rule has none: its mode says what it does.",
         "properties": {
           "level": {
             "title": "Level",
@@ -19,18 +19,6 @@
               }
             ],
             "title": "Reader"
-          },
-          "redact_with": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Redact With"
           }
         },
         "required": [
@@ -55,24 +43,11 @@
               }
             ],
             "title": "Reader"
-          },
-          "redact_with": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Redact With"
           }
         },
         "required": [
           "level",
-          "reader",
-          "redact_with"
+          "reader"
         ],
         "title": "ActionView",
         "type": "object"
@@ -2568,7 +2543,7 @@
         "type": "object"
       },
       "CustomEntity": {
-        "description": "An entity type the NER engine finds from a description (GLiNER) (ADR 0113, section 0c).\n\n``name`` is the entity label (UPPER_SNAKE) and ``label`` the natural-language\ndescription the model is given at inference (\"project code name\"). Only an\nengine that accepts labels (``custom_labels`` in the service's health) can use\none; a policy that names one with another engine is refused when saved.",
+        "description": "A custom entity with a mode stamped on, as the request path holds it.",
         "properties": {
           "label": {
             "maxLength": 80,
@@ -2611,8 +2586,52 @@
         "title": "CustomEntity",
         "type": "object"
       },
+      "CustomEntityItem": {
+        "description": "An entity type the NER engine finds from a description (GLiNER) (ADR 0113, section 0c).\n\n``name`` is the entity label (UPPER_SNAKE) and ``label`` the natural-language\ndescription the model is given at inference (\"project code name\"). Only an\nengine that accepts labels (``custom_labels`` in the service's health) can use\none; a policy that names one with another engine is refused when saved.",
+        "properties": {
+          "label": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/EntityMode",
+            "default": "anonymise_restore"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "placeholder": {
+            "$ref": "#/components/schemas/PlaceholderStyle",
+            "default": "tagged"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          }
+        },
+        "required": [
+          "name",
+          "label"
+        ],
+        "title": "CustomEntityItem",
+        "type": "object"
+      },
       "CustomPattern": {
-        "description": "A regex an operator wrote, treated as one more entity type.\n\n``name`` becomes the entity label, so a match is substituted, restored and\ncounted by exactly the machinery every other type uses — and shows up in the\nledger's entity count without a second concept.\n\nEvaluated in the gateway rather than sent to the detection service: no\ncontract change, works for any engine, and it keeps one deployment's regexes\nout of a service every deployment shares. Also outside the detection cache,\nsince a regex is cheap and deterministic and would otherwise fragment the key.",
+        "description": "A pattern with a mode stamped on, as the request path holds it.",
         "properties": {
           "mode": {
             "$ref": "#/components/schemas/EntityMode",
@@ -2962,6 +2981,99 @@
         "title": "DiscoveredModel",
         "type": "object"
       },
+      "DryRunClaim": {
+        "description": "A piece of text a rule hid (or only recorded), and which rule claimed it.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "pipeline": {
+            "title": "Pipeline",
+            "type": "string"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          },
+          "rule_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Id"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pipeline",
+          "rule",
+          "rule_id",
+          "owner",
+          "type",
+          "group",
+          "mode",
+          "action",
+          "engine",
+          "score",
+          "text"
+        ],
+        "title": "DryRunClaim",
+        "type": "object"
+      },
       "DryRunHop": {
         "properties": {
           "added": {
@@ -3048,71 +3160,8 @@
         "title": "DryRunItem",
         "type": "object"
       },
-      "DryRunLevel": {
-        "properties": {
-          "asked_by": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Asked By",
-            "type": "array"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          },
-          "level": {
-            "title": "Level",
-            "type": "string"
-          },
-          "winning": {
-            "title": "Winning",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "level",
-          "label",
-          "asked_by",
-          "winning"
-        ],
-        "title": "DryRunLevel",
-        "type": "object"
-      },
       "DryRunPipeline": {
         "properties": {
-          "action_text": {
-            "title": "Action Text",
-            "type": "string"
-          },
-          "fired_otherwise": {
-            "default": false,
-            "title": "Fired Otherwise",
-            "type": "boolean"
-          },
-          "fired_rule": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Fired Rule"
-          },
-          "fired_rule_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Fired Rule Id"
-          },
           "hop": {
             "title": "Hop",
             "type": "integer"
@@ -3120,10 +3169,6 @@
           "id": {
             "format": "uuid",
             "title": "Id",
-            "type": "string"
-          },
-          "level": {
-            "title": "Level",
             "type": "string"
           },
           "name": {
@@ -3163,57 +3208,9 @@
           "hop",
           "scope",
           "steps",
-          "fired_rule_id",
-          "fired_rule",
-          "fired_otherwise",
-          "level",
-          "action_text",
           "summary"
         ],
         "title": "DryRunPipeline",
-        "type": "object"
-      },
-      "DryRunPolicyType": {
-        "properties": {
-          "entity_type": {
-            "title": "Entity Type",
-            "type": "string"
-          },
-          "found": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Found"
-          },
-          "mode": {
-            "title": "Mode",
-            "type": "string"
-          },
-          "per_policy": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Per Policy",
-            "type": "array"
-          },
-          "source": {
-            "title": "Source",
-            "type": "string"
-          }
-        },
-        "required": [
-          "entity_type",
-          "mode",
-          "source",
-          "per_policy",
-          "found"
-        ],
-        "title": "DryRunPolicyType",
         "type": "object"
       },
       "DryRunRequest": {
@@ -3256,9 +3253,8 @@
           },
           "kind": {
             "enum": [
-              "read",
-              "embed",
-              "chat"
+              "extract",
+              "content"
             ],
             "title": "Kind",
             "type": "string"
@@ -3342,6 +3338,13 @@
             ],
             "title": "Blocked By"
           },
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/DryRunClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
           "degraded": {
             "items": {
               "type": "string"
@@ -3407,19 +3410,11 @@
           },
           "kind": {
             "enum": [
-              "read",
-              "embed",
-              "chat"
+              "extract",
+              "content"
             ],
             "title": "Kind",
             "type": "string"
-          },
-          "ladder": {
-            "items": {
-              "$ref": "#/components/schemas/DryRunLevel"
-            },
-            "title": "Ladder",
-            "type": "array"
           },
           "level": {
             "title": "Level",
@@ -3460,13 +3455,6 @@
               "type": "string"
             },
             "title": "Policies",
-            "type": "array"
-          },
-          "policy_types": {
-            "items": {
-              "$ref": "#/components/schemas/DryRunPolicyType"
-            },
-            "title": "Policy Types",
             "type": "array"
           },
           "reader": {
@@ -3550,7 +3538,6 @@
           "outcome_headline",
           "outcome_text",
           "level",
-          "ladder",
           "pipelines",
           "skipped",
           "hops",
@@ -3562,7 +3549,7 @@
           "reader_overridden",
           "impossible",
           "policies",
-          "policy_types",
+          "claims",
           "blocked_by",
           "facts",
           "verdicts",
@@ -3613,17 +3600,17 @@
             "title": "Degraded",
             "type": "array"
           },
-          "is_otherwise": {
-            "default": false,
-            "title": "Is Otherwise",
-            "type": "boolean"
-          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/DryRunItem"
             },
             "title": "Items",
             "type": "array"
+          },
+          "mode": {
+            "default": "off",
+            "title": "Mode",
+            "type": "string"
           },
           "name": {
             "title": "Name",
@@ -3639,6 +3626,20 @@
               }
             ],
             "title": "Note"
+          },
+          "overrides": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Overrides",
+            "type": "object"
+          },
+          "policies": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Policies",
+            "type": "array"
           },
           "position": {
             "title": "Position",
@@ -3669,8 +3670,10 @@
           "reasons",
           "degraded",
           "items",
-          "note",
-          "is_otherwise"
+          "policies",
+          "mode",
+          "overrides",
+          "note"
         ],
         "title": "DryRunStep",
         "type": "object"
@@ -3829,6 +3832,31 @@
         "title": "EnginesResponse",
         "type": "object"
       },
+      "EntityItem": {
+        "additionalProperties": false,
+        "description": "A type a policy looks for: how sure the detector must be, how a stand-in is written.\n\nWhat a policy stores (ADR 0114): no mode. What to *do* with what it finds is the\nrule's (``EntityPolicy`` is this item with a mode stamped on, for the request path).",
+        "properties": {
+          "placeholder": {
+            "$ref": "#/components/schemas/PlaceholderStyle",
+            "default": "tagged"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          }
+        },
+        "title": "EntityItem",
+        "type": "object"
+      },
       "EntityMode": {
         "description": "What happens to one kind of detected entity.\n\nTwo independent questions, and collapsing them into one switch is what makes\na redaction screen confusing: *what does the model see*, and *what does the\nreader get back*. Four combinations are useful and the fifth\n(opaque upstream, real value back) is not — an opaque label cannot be mapped\nto anything, which is the whole point of choosing it.\n\nOrdered weakest to strongest, which is also the order the console lists them\nand the order ``weakens`` compares by.",
         "enum": [
@@ -3887,10 +3915,6 @@
             "title": "Group",
             "type": "string"
           },
-          "mode": {
-            "title": "Mode",
-            "type": "string"
-          },
           "score": {
             "anyOf": [
               {
@@ -3916,7 +3940,6 @@
           "type",
           "engine",
           "score",
-          "mode",
           "text"
         ],
         "title": "FoundItem",
@@ -4822,8 +4845,46 @@
         "title": "IssueView",
         "type": "object"
       },
-      "KeywordList": {
+      "KeywordItem": {
         "description": "A comma-separated list of words and phrases, found as whole words (ADR 0113, section 0c).\n\nOne more pattern type, beside the built-in formats and the regular expressions\nan operator writes: fast, deterministic, evaluated in the gateway. ``name``\nbecomes the entity label exactly as a :class:`CustomPattern`'s does, so a hit is\nsubstituted, counted and logged by the machinery every other type uses.\n\nMatching is by whole words, on letters and digits; spacing and punctuation\nbetween the words of a phrase do not matter. Unless ``case_sensitive``, case is\nignored **and accents are folded** (\"Perche\" finds \"perché\"). It is linear in\nthe text (``gateway.redaction.keywords``): no regular expression is ever built\nfrom what an administrator typed.",
+        "properties": {
+          "case_sensitive": {
+            "default": false,
+            "title": "Case Sensitive",
+            "type": "boolean"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/EntityMode",
+            "default": "redact"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "placeholder": {
+            "$ref": "#/components/schemas/PlaceholderStyle",
+            "default": "tagged"
+          },
+          "words": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Words",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "words"
+        ],
+        "title": "KeywordItem",
+        "type": "object"
+      },
+      "KeywordList": {
+        "description": "A keyword list with a mode stamped on, as the request path holds it.",
         "properties": {
           "case_sensitive": {
             "default": false,
@@ -8054,6 +8115,37 @@
         "title": "PasswordResetResponse",
         "type": "object"
       },
+      "PatternItem": {
+        "description": "A regex an operator wrote, treated as one more entity type.\n\n``name`` becomes the entity label, so a match is substituted, restored and\ncounted by exactly the machinery every other type uses — and shows up in the\nledger's entity count without a second concept.\n\nEvaluated in the gateway rather than sent to the detection service: no\ncontract change, works for any engine, and it keeps one deployment's regexes\nout of a service every deployment shares. Also outside the detection cache,\nsince a regex is cheap and deterministic and would otherwise fragment the key.",
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/EntityMode",
+            "default": "redact"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "placeholder": {
+            "$ref": "#/components/schemas/PlaceholderStyle",
+            "default": "tagged"
+          },
+          "regex": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Regex",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "regex"
+        ],
+        "title": "PatternItem",
+        "type": "object"
+      },
       "PendingErasuresResponse": {
         "description": "``GET /admin/erasures/pending`` (ADR 0093 §9.3): the Users page's own\nbanner, \"N erasures waiting for the chat\", while any are pending.",
         "properties": {
@@ -8122,9 +8214,8 @@
           },
           "kind": {
             "enum": [
-              "read",
-              "embed",
-              "chat"
+              "extract",
+              "content"
             ],
             "title": "Kind",
             "type": "string"
@@ -8133,16 +8224,6 @@
             "default": "Draft",
             "title": "Name",
             "type": "string"
-          },
-          "otherwise": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ActionBody"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "position": {
             "anyOf": [
@@ -8168,6 +8249,7 @@
             "$ref": "#/components/schemas/TargetBody",
             "default": {
               "mode": "all",
+              "model_types": [],
               "models": [],
               "providers": []
             }
@@ -8229,9 +8311,8 @@
           },
           "kind": {
             "enum": [
-              "read",
-              "embed",
-              "chat"
+              "extract",
+              "content"
             ],
             "title": "Kind",
             "type": "string"
@@ -8241,16 +8322,6 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
-          },
-          "otherwise": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ActionBody"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "position": {
             "anyOf": [
@@ -8276,6 +8347,7 @@
             "$ref": "#/components/schemas/TargetBody",
             "default": {
               "mode": "all",
+              "model_types": [],
               "models": [],
               "providers": []
             }
@@ -8313,9 +8385,8 @@
           },
           "kind": {
             "enum": [
-              "read",
-              "embed",
-              "chat"
+              "extract",
+              "content"
             ],
             "title": "Kind",
             "type": "string"
@@ -8330,9 +8401,6 @@
           "name": {
             "title": "Name",
             "type": "string"
-          },
-          "otherwise": {
-            "$ref": "#/components/schemas/RuleView"
           },
           "owner_id": {
             "anyOf": [
@@ -8386,7 +8454,6 @@
           "who",
           "target",
           "rules",
-          "otherwise",
           "labels",
           "summary",
           "created_at",
@@ -8414,9 +8481,8 @@
             "anyOf": [
               {
                 "enum": [
-                  "read",
-                  "embed",
-                  "chat"
+                  "extract",
+                  "content"
                 ],
                 "type": "string"
               },
@@ -8438,16 +8504,6 @@
               }
             ],
             "title": "Name"
-          },
-          "otherwise": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ActionBody"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "rules": {
             "anyOf": [
@@ -8530,7 +8586,7 @@
             "type": "string"
           },
           "policy": {
-            "$ref": "#/components/schemas/RedactionPolicy"
+            "$ref": "#/components/schemas/PolicyDefinition"
           },
           "reason": {
             "default": "",
@@ -8549,6 +8605,72 @@
           "policy"
         ],
         "title": "PolicyCreateRequest",
+        "type": "object"
+      },
+      "PolicyDefinition": {
+        "additionalProperties": false,
+        "description": "What a policy stores and the API shows: what to look for, never what to do (ADR 0114).\n\nThe two groups stay apart as ever (patterns: ``formats``, ``patterns``, ``keywords``;\nentities: ``entities``, ``custom_entities``, ``engine``), with the detection settings\n(thresholds, placeholder style, allow-list). The **mode** (what to do with what is\nfound) belongs to a rule of a pipeline: :meth:`stamp` writes it onto a copy, which is\nthe :class:`RedactionPolicy` the request path and the redaction service already speak.",
+        "properties": {
+          "allow_list": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allow List",
+            "type": "array"
+          },
+          "custom_entities": {
+            "items": {
+              "$ref": "#/components/schemas/CustomEntityItem"
+            },
+            "maxItems": 30,
+            "title": "Custom Entities",
+            "type": "array"
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "enum": [
+                  "spacy",
+                  "gliner"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "entities": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EntityItem"
+            },
+            "title": "Entities",
+            "type": "object"
+          },
+          "formats": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EntityItem"
+            },
+            "title": "Formats",
+            "type": "object"
+          },
+          "keywords": {
+            "items": {
+              "$ref": "#/components/schemas/KeywordItem"
+            },
+            "title": "Keywords",
+            "type": "array"
+          },
+          "patterns": {
+            "items": {
+              "$ref": "#/components/schemas/PatternItem"
+            },
+            "title": "Patterns",
+            "type": "array"
+          }
+        },
+        "title": "PolicyDefinition",
         "type": "object"
       },
       "PolicyResponse": {
@@ -8606,7 +8728,7 @@
             "type": "string"
           },
           "policy": {
-            "$ref": "#/components/schemas/RedactionPolicy"
+            "$ref": "#/components/schemas/PolicyDefinition"
           },
           "reason": {
             "title": "Reason",
@@ -8651,7 +8773,7 @@
         "description": "A policy as it is being edited, and a text to run it over. Nothing is stored or logged.",
         "properties": {
           "policy": {
-            "$ref": "#/components/schemas/RedactionPolicy"
+            "$ref": "#/components/schemas/PolicyDefinition"
           },
           "text": {
             "maxLength": 50000,
@@ -8743,7 +8865,7 @@
           "policy": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/RedactionPolicy"
+                "$ref": "#/components/schemas/PolicyDefinition"
               },
               {
                 "type": "null"
@@ -10551,7 +10673,7 @@
           "policy": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/RedactionPolicy"
+                "$ref": "#/components/schemas/PolicyDefinition"
               },
               {
                 "type": "null"
@@ -11062,9 +11184,8 @@
         "properties": {
           "kind": {
             "enum": [
-              "read",
-              "embed",
-              "chat"
+              "extract",
+              "content"
             ],
             "title": "Kind",
             "type": "string"
@@ -11520,6 +11641,7 @@
           "kind": {
             "enum": [
               "read",
+              "extract",
               "embed",
               "chat"
             ],
@@ -11631,6 +11753,17 @@
             ],
             "title": "Mime"
           },
+          "model_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Type"
+          },
           "target": {
             "$ref": "#/components/schemas/RoutingTarget"
           },
@@ -11647,6 +11780,7 @@
         },
         "required": [
           "target",
+          "model_type",
           "filename",
           "filename_match",
           "mime",
@@ -11691,6 +11825,13 @@
                 "type": "null"
               }
             ]
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingRule"
+            },
+            "title": "Rules",
+            "type": "array"
           }
         },
         "required": [
@@ -11699,6 +11840,7 @@
           "owner",
           "hop",
           "rule",
+          "rules",
           "level"
         ],
         "title": "RoutingPipelineRun",
@@ -11863,9 +12005,17 @@
       },
       "RuleBody": {
         "additionalProperties": false,
+        "description": "When <policies> + <conditions> -> <mode> (ADR 0114).",
         "properties": {
           "action": {
-            "$ref": "#/components/schemas/ActionBody"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionBody"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "conditions": {
             "default": [],
@@ -11892,6 +12042,26 @@
             ],
             "title": "Id"
           },
+          "match": {
+            "default": "all",
+            "enum": [
+              "all",
+              "any"
+            ],
+            "title": "Match",
+            "type": "string"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
           "name": {
             "maxLength": 120,
             "minLength": 1,
@@ -11910,15 +12080,26 @@
             ],
             "title": "Note"
           },
-          "observe_only": {
-            "default": false,
-            "title": "Observe Only",
-            "type": "boolean"
+          "overrides": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Overrides",
+            "type": "object"
+          },
+          "policies": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Policies",
+            "type": "array"
           }
         },
         "required": [
-          "name",
-          "action"
+          "name"
         ],
         "title": "RuleBody",
         "type": "object"
@@ -11926,7 +12107,14 @@
       "RuleView": {
         "properties": {
           "action": {
-            "$ref": "#/components/schemas/ActionView"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "conditions": {
             "items": {
@@ -11951,6 +12139,18 @@
             "title": "Issues",
             "type": "array"
           },
+          "match": {
+            "enum": [
+              "all",
+              "any"
+            ],
+            "title": "Match",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -11966,17 +12166,31 @@
             ],
             "title": "Note"
           },
-          "observe_only": {
-            "title": "Observe Only",
-            "type": "boolean"
+          "overrides": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Overrides",
+            "type": "object"
+          },
+          "policies": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Policies",
+            "type": "array"
           }
         },
         "required": [
           "id",
           "name",
           "enabled",
-          "observe_only",
+          "policies",
+          "match",
           "conditions",
+          "mode",
+          "overrides",
           "action",
           "issues",
           "note"
@@ -12642,6 +12856,19 @@
             "title": "Mode",
             "type": "string"
           },
+          "model_types": {
+            "default": [],
+            "items": {
+              "enum": [
+                "chat",
+                "embedding",
+                "rerank"
+              ],
+              "type": "string"
+            },
+            "title": "Model Types",
+            "type": "array"
+          },
           "models": {
             "default": [],
             "items": {
@@ -12675,6 +12902,18 @@
             "title": "Mode",
             "type": "string"
           },
+          "model_types": {
+            "items": {
+              "enum": [
+                "chat",
+                "embedding",
+                "rerank"
+              ],
+              "type": "string"
+            },
+            "title": "Model Types",
+            "type": "array"
+          },
           "models": {
             "items": {
               "format": "uuid",
@@ -12695,7 +12934,8 @@
         "required": [
           "mode",
           "providers",
-          "models"
+          "models",
+          "model_types"
         ],
         "title": "TargetView",
         "type": "object"
@@ -13272,7 +13512,7 @@
       },
       "UserEntryBody": {
         "additionalProperties": false,
-        "description": "One entry of a user's own policy: a custom pattern, or a stricter mode for a type.",
+        "description": "One entry of a user's own policy: a custom pattern, or an entity type to look for.\n\n``kind`` stays ``mode`` for an entity type, as stored (ADR 0114: it carries no mode).",
         "properties": {
           "kind": {
             "enum": [
@@ -13280,10 +13520,6 @@
               "mode"
             ],
             "title": "Kind",
-            "type": "string"
-          },
-          "mode": {
-            "title": "Mode",
             "type": "string"
           },
           "name": {
@@ -13307,8 +13543,7 @@
         },
         "required": [
           "kind",
-          "name",
-          "mode"
+          "name"
         ],
         "title": "UserEntryBody",
         "type": "object"
@@ -13321,10 +13556,6 @@
               "mode"
             ],
             "title": "Kind",
-            "type": "string"
-          },
-          "mode": {
-            "title": "Mode",
             "type": "string"
           },
           "name": {
@@ -13346,8 +13577,7 @@
         "required": [
           "kind",
           "name",
-          "regex",
-          "mode"
+          "regex"
         ],
         "title": "UserEntryView",
         "type": "object"
