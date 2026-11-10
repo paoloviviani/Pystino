@@ -1,9 +1,9 @@
-"""Pipelines: when and how a kind of request is handled (ADR 0113, section 0).
+"""Pipelines: when and how a kind of request is handled (ADR 0113, section 0; ADR 0114).
 
-A pipeline has a kind (read, embed, chat), a scope (who, which target), an
-ordered list of rules where the first match wins, and a fixed last rule,
-"everything else". A request meets only the pipelines whose scope covers it,
-and **every** pipeline in scope runs (``gateway.privacy.combine``).
+A pipeline has a kind (read or content), a scope (who, which target, and for content an
+optional model type: chat, embedding, rerank) and an ordered list of rules. Every rule of
+every pipeline in scope is evaluated (``gateway.privacy.combine``); there is no first
+match and no "everything else".
 
 This module is data and shape: the immutable snapshot the request path holds,
 the scope predicate, validation of what an administrator or a user writes, and
@@ -52,7 +52,8 @@ class Pipeline:
     providers: frozenset[str]
     models: frozenset[str]
     rules: tuple[Rule, ...]
-    otherwise: Rule
+    #: Content only: the model types the pipeline covers; empty is any.
+    model_types: frozenset[str] = frozenset()
     #: Stable order among equals (creation order), so a fold is deterministic.
     order: int = 0
 
@@ -72,25 +73,12 @@ class Pipeline:
 
     def uses_verdicts(self) -> bool:
         return self.enabled and any(
-            r.enabled and any(c.key in rulelib.CONTENT_KEYS for c in r.conditions)
+            r.enabled and (r.policies or any(c.key in rulelib.CONTENT_KEYS for c in r.conditions))
             for r in self.rules
         )
 
     def all_rules(self) -> tuple[Rule, ...]:
-        return (*self.rules, self.otherwise)
-
-
-def otherwise_rule(pipeline_id: uuid.UUID, kind: str, action: Mapping[str, Any]) -> Rule:
-    return Rule(
-        id=uuid.uuid5(pipeline_id, "otherwise"),
-        kind=kind,
-        name="Everything else",
-        enabled=True,
-        observe_only=False,
-        position=10_000,
-        conditions=(),
-        action=dict(action) if action else {"level": rulelib.base_level(kind)},
-    )
+        return self.rules
 
 
 def pipeline_from_row(row: PrivacyPipeline, order: int = 0) -> Pipeline:
@@ -111,9 +99,11 @@ def pipeline_from_row(row: PrivacyPipeline, order: int = 0) -> Pipeline:
     rules = tuple(
         rulelib.rule_from_json(row.kind, index, raw) for index, raw in enumerate(row.rules or [])
     )
-    otherwise = otherwise_rule(row.id, row.kind, row.otherwise or {})
-    if otherwise.level not in rulelib.LADDER[row.kind]:
-        raise ValueError("the last rule has no valid action")
+    model_types = frozenset(str(i) for i in target.get("model_types") or ())
+    if not model_types <= set(rulelib.MODEL_TYPES) or (
+        row.kind == rulelib.KIND_EXTRACT and model_types
+    ):
+        raise ValueError("unknown model type")
     pipeline = Pipeline(
         id=row.id,
         owner_id=row.owner_id,
@@ -127,25 +117,13 @@ def pipeline_from_row(row: PrivacyPipeline, order: int = 0) -> Pipeline:
         providers=frozenset(str(i) for i in target.get("providers") or ()),
         models=frozenset(str(i) for i in target.get("models") or ()),
         rules=rules,
-        otherwise=otherwise,
+        model_types=model_types,
         order=order,
     )
-    if pipeline.is_user and not tightens_only(pipeline):
-        # Enforced when it is read as well as when it is saved: a row edited by
-        # hand into something that loosens is not served.
-        raise ValueError("a user's pipeline may only tighten")
+    # A user's pipeline can never loosen anything, by construction (ADR 0114): administrator
+    # pipelines come first, the first rule to hide a span decides how, a block refuses, and
+    # the administrator's reader holds. So there is nothing to police here.
     return pipeline
-
-
-def tightens_only(pipeline: Pipeline) -> bool:
-    """Whether every action of a (user's) pipeline adds protection or adds nothing.
-
-    The ladder is monotone and the combination takes the highest level, so a
-    user's pipeline cannot lower anything. The only thing left to refuse is a
-    user's *rule* whose whole point is to add nothing: harmless, but refused on
-    save so a list does not fill with sentences that do nothing.
-    """
-    return all(rule.level in rulelib.LADDER[pipeline.kind] for rule in pipeline.all_rules())
 
 
 # -- scope -------------------------------------------------------------------------
@@ -159,10 +137,13 @@ def not_in_scope(
     key_id: str | None,
     provider_id: str | None,
     model_id: str | None,
+    model_type: str | None = None,
 ) -> str:
     """Why *pipeline* does not cover this request, or "" when it does."""
     if not pipeline.enabled:
         return "the pipeline is off"
+    if pipeline.model_types and model_type is not None and model_type not in pipeline.model_types:
+        return "the model type is not covered"
     if pipeline.is_user and (user_id is None or str(pipeline.owner_id) != user_id):
         return "it belongs to another user"
     if pipeline.who_mode == "users" and user_id not in pipeline.who_ids:
@@ -206,6 +187,7 @@ def validate_scope(
     target: Mapping[str, Any] | None,
     *,
     owner_id: uuid.UUID | None,
+    kind: str = rulelib.KIND_CONTENT,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """The clean who and target, or :class:`RuleError`.
 
@@ -230,7 +212,20 @@ def validate_scope(
     models = _ids("Models", target.get("models") or []) if tmode != "all" else []
     if tmode != "all" and not (providers or models):
         raise RuleError("Choose at least one provider or model, or choose all.")
-    return clean_who, {"mode": tmode, "providers": providers, "models": models}
+    types = target.get("model_types") or []
+    if not isinstance(types, list) or any(t not in rulelib.MODEL_TYPES for t in types):
+        raise RuleError(f"A model type is one of: {', '.join(rulelib.MODEL_TYPES)}.")
+    clean_types = [t for t in rulelib.MODEL_TYPES if t in types]
+    if clean_types and kind != rulelib.KIND_CONTENT:
+        raise RuleError("A model type narrows a content pipeline; an extract pipeline has none.")
+    if len(clean_types) == len(rulelib.MODEL_TYPES):
+        clean_types = []
+    return clean_who, {
+        "mode": tmode,
+        "providers": providers,
+        "models": models,
+        "model_types": clean_types,
+    }
 
 
 def validate_pipeline(
@@ -239,17 +234,15 @@ def validate_pipeline(
     who: Mapping[str, Any] | None,
     target: Mapping[str, Any] | None,
     rules: Sequence[Mapping[str, Any]],
-    otherwise: Mapping[str, Any] | None,
     *,
     owner_id: uuid.UUID | None = None,
-    finds_policy_ids: Collection[str] | None = None,
     classifier_ids: Collection[str] | None = None,
     policy_ids: Collection[str] | None = None,
     readers: Collection[str] | None = None,
 ) -> dict[str, Any]:
     """Everything a pipeline row stores, clean, or :class:`RuleError`."""
     if kind not in KINDS:
-        raise RuleError("Choose what the pipeline is for: reading, embedding or chat.")
+        raise RuleError("Choose what the pipeline is for: extract or content.")
     name = (name or "").strip()
     if not name:
         raise RuleError("Give the pipeline a name.")
@@ -257,13 +250,12 @@ def validate_pipeline(
         raise RuleError(f"The name is longer than {_MAX_NAME} characters.")
     if len(rules) > rulelib.MAX_RULES:
         raise RuleError(f"A pipeline has at most {rulelib.MAX_RULES} rules.")
-    clean_who, clean_target = validate_scope(who, target, owner_id=owner_id)
+    clean_who, clean_target = validate_scope(who, target, owner_id=owner_id, kind=kind)
     user = owner_id is not None
     clean_rules = [
         rulelib.validate_rule(
             kind,
             raw,
-            finds_policy_ids=finds_policy_ids,
             classifier_ids=classifier_ids,
             policy_ids=policy_ids,
             readers=readers,
@@ -277,42 +269,20 @@ def validate_pipeline(
         if lowered in seen:
             raise RuleError(f"Two rules are named '{item['name']}'.")
         seen.add(lowered)
-    last = rulelib.clean_action(
-        kind,
-        otherwise or {"level": rulelib.base_level(kind)},
-        policy_ids=policy_ids,
-        readers=readers,
-        user=user,
-        otherwise=True,
-    )
-    return {
-        "name": name,
-        "who": clean_who,
-        "target": clean_target,
-        "rules": clean_rules,
-        "otherwise": last,
-    }
+    return {"name": name, "who": clean_who, "target": clean_target, "rules": clean_rules}
 
 
 # -- words -------------------------------------------------------------------------
 
 
-def _condition_words(rule: Rule, names: Mapping[str, str]) -> str:
+def _condition_words(rule: Rule) -> str:
     parts: list[str] = []
     for c in rule.conditions:
         if c.key == "finds":
-            name = names.get(c.values[0], "a policy") if c.values else "a policy"
             many = "an item" if c.count == 1 else f"{c.count} or more items"
-            parts.append(
-                f"text where {name} finds {many}"
-                if not c.negate
-                else f"text where {name} does not find {many}"
-            )
+            parts.append("it finds " + many if not c.negate else "it does not find " + many)
         elif c.key == "classified":
-            name = names.get(c.values[0], "a classifier") if c.values else "a classifier"
-            parts.append(
-                f"text classified as {name}" if not c.negate else f"text not classified as {name}"
-            )
+            parts.append("the text is classified" if not c.negate else "the text is not classified")
         elif c.key == "scan":
             parts.append("scans" if not c.negate else "files that are not scans")
         elif c.key == "filetype":
@@ -321,7 +291,17 @@ def _condition_words(rule: Rule, names: Mapping[str, str]) -> str:
             parts.append(
                 ("names not matching " if c.negate else "names matching ") + ", ".join(c.values)
             )
-    return " and ".join(parts)
+    return (" or " if rule.match == "any" else " and ").join(parts)
+
+
+_VERB = {
+    "off": "",
+    "detect_only": "records",
+    "anonymise_restore": "hides and restores",
+    "anonymise": "hides",
+    "redact": "removes",
+    "block": "blocks",
+}
 
 
 def summarize(
@@ -329,26 +309,28 @@ def summarize(
     policy_names: Mapping[str, str],
     reader_names: Mapping[str, str] | None = None,
 ) -> list[str]:
-    """What the pipeline does, in short words ("refuses health data").
+    """What the pipeline does, in short words ("blocks what Policy finds").
 
-    Labels only: never a pattern, an allow-list or another user's anything.
-    Observe-only rules and rules that are off are left out, because they change
-    nothing for the caller.
+    Labels only: never a pattern, an allow-list or another user's anything. Rules that are
+    off, or that only record what they find, are left out: they change nothing for the caller.
     """
     words: list[str] = []
-    for rule in pipeline.all_rules():
-        if not rule.enabled or rule.observe_only or rule.is_noop:
+    for rule in pipeline.rules:
+        if not rule.enabled or rule.is_noop:
             continue
-        when = _condition_words(rule, policy_names)
-        if rule.level == rulelib.LEVEL_REFUSE:
-            words.append(f"refuses {when}" if when else "refuses everything")
+        named = " + ".join(policy_names.get(p, "a policy") for p in rule.policies)
+        when = _condition_words(rule)
+        suffix = f" when {when}" if when else ""
+        if rule.level == rulelib.LEVEL_BLOCK:
+            words.append(f"blocks {named}{suffix}" if named else f"blocks{suffix}")
             continue
-        if rule.level == rulelib.LEVEL_READ_WITH:
+        if rule.level == rulelib.LEVEL_EXTRACT_WITH:
             reader = rule.action.get("reader")
             label = (reader_names or {}).get(str(reader), str(reader or rulelib.DEFAULT_READER))
-            words.append(f"reads {when} with {label}" if when else f"reads with {label}")
-        policy = rule.action.get("redact_with")
-        if policy:
-            name = policy_names.get(str(policy), "a policy")
-            words.append(f"redacts with {name}" + (f" for {when}" if when else ""))
+            words.append(f"reads{suffix} with {label}")
+        verb = _VERB.get(rule.mode, rule.mode)
+        if rule.hides_text and rule.mode != "off":
+            words.append(f"{verb} {named}{suffix}")
+        elif rule.hides_text:
+            words.append(f"hides {named} by type{suffix}")
     return list(dict.fromkeys(words))

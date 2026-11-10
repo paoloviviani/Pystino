@@ -76,7 +76,14 @@ from gateway.byok import (
 )
 from gateway.capabilities import Capabilities, effective_capabilities, new_group_flags
 from gateway.catalogue import Catalogue, CatalogueEntry
-from gateway.config import EffectivePolicy, RedactionPolicy, RedactionSettings, Settings
+from gateway.config import (
+    EffectivePolicy,
+    EntityMode,
+    PolicyDefinition,
+    RedactionPolicy,
+    RedactionSettings,
+    Settings,
+)
 from gateway.deployment_state import mark_bootstrap_consumed
 from gateway.deps import (
     AdminUserDep,
@@ -7047,13 +7054,14 @@ async def preview_redaction(
         # A policy that is not saved yet: the policy page previews the form as it
         # stands, which no stored policy can answer. Its own effect is the
         # question, so nothing else is folded in.
-        effective = EffectivePolicy(policy=payload.policy)
+        effective = EffectivePolicy(policy=payload.policy.stamp(EntityMode.REDACT))
     elif payload.policy_id is not None:
         stored = await session.get(RedactionPolicyRecord, payload.policy_id)
         if stored is None:
             raise NotFoundError(f"No redaction policy with id {payload.policy_id}.")
         effective = EffectivePolicy(
-            policy=RedactionPolicy.model_validate(stored.policy or {}), rule_id=stored.id
+            policy=PolicyDefinition.from_stored(stored.policy or {}).stamp(EntityMode.REDACT),
+            rule_id=stored.id,
         )
 
     if not isinstance(redactor, _DetectingRedactor):

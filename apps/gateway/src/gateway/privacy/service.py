@@ -53,17 +53,16 @@ from gateway.models import (
 )
 from gateway.privacy import attribution
 from gateway.privacy import rules as rulelib
-from gateway.privacy.combine import Combined, PipelineRun, Retarget, plan
+from gateway.privacy.combine import Retarget, plan
 from gateway.privacy.evaluate import Facts
 from gateway.privacy.pipelines import Pipeline, pipeline_from_row, summarize
 from gateway.privacy.schemas import (
     ActionView,
     ConditionView,
+    DryRunClaim,
     DryRunHop,
     DryRunItem,
-    DryRunLevel,
     DryRunPipeline,
-    DryRunPolicyType,
     DryRunRequest,
     DryRunResponse,
     DryRunSkipped,
@@ -76,12 +75,11 @@ from gateway.privacy.schemas import (
 )
 from gateway.privacy.state import PrivacyState
 from gateway.redaction.http import EngineUnavailableError
-from gateway.redaction.user_rules import UserRule
 
 LEVEL_LABELS = {
     "default": "Default reader",
-    "read_with": "Read with…",
-    "refuse": "Refuse",
+    "extract_with": "Read with…",
+    "block": "Block",
     "pass": "Pass",
 }
 
@@ -147,7 +145,6 @@ def pipeline_view_json(row: PrivacyPipeline) -> dict[str, Any]:
         "who": dict(row.who or {}),
         "target": dict(row.target or {}),
         "rules": [dict(r) for r in row.rules or []],
-        "otherwise": dict(row.otherwise or {}),
     }
 
 
@@ -184,11 +181,7 @@ def issues_of(
     engines: Any = None,
     unavailable_readers: Collection[str] = (),
 ) -> dict[uuid.UUID, list[rulelib.Issue]]:
-    return rulelib.check(
-        list(pipeline.rules),
-        pipeline.otherwise,
-        check_context(state, engines, unavailable_readers),
-    )
+    return rulelib.check(list(pipeline.rules), check_context(state, engines, unavailable_readers))
 
 
 def issue_views(found: Iterable[rulelib.Issue]) -> list[IssueView]:
@@ -203,34 +196,29 @@ def _rule_view(rule: rulelib.Rule, issues: Sequence[rulelib.Issue]) -> RuleView:
         id=rule.id,
         name=rule.name,
         enabled=rule.enabled,
-        observe_only=rule.observe_only,
+        policies=[uuid.UUID(p) for p in rule.policies],
+        match=cast("Any", rule.match),
         conditions=[
             ConditionView(key=c.key, values=list(c.values), negate=c.negate, count=c.count)
             for c in rule.conditions
         ],
-        action=ActionView.model_validate(
-            {
-                **dict(rule.action),
-                "redact_with": rule.action.get("redact_with"),
-            }
-        ),
+        mode=rule.mode,
+        overrides=dict(rule.overrides),
+        action=ActionView.model_validate(dict(rule.action)) if rule.action else None,
         issues=issue_views(issues),
         note=rule.note,
     )
 
 
-def content_ids(pipelines: Sequence[Pipeline]) -> tuple[set[str], set[str]]:
-    """The policy and the classifier ids the conditions of these pipelines name."""
-    finds: set[str] = set()
+def content_ids(pipelines: Sequence[Pipeline]) -> set[str]:
+    """The classifier ids the conditions of these pipelines name."""
     classified: set[str] = set()
     for p in pipelines:
         for rule in p.all_rules():
             for c in rule.conditions:
-                if c.values and c.key == "finds":
-                    finds.add(c.values[0])
-                elif c.values and c.key == "classified":
+                if c.values and c.key == "classified":
                     classified.add(c.values[0])
-    return finds, classified
+    return classified
 
 
 async def labels_for(session: AsyncSession, pipelines: Sequence[Pipeline]) -> dict[str, str]:
@@ -241,15 +229,13 @@ async def labels_for(session: AsyncSession, pipelines: Sequence[Pipeline]) -> di
     providers: set[str] = set()
     models: set[str] = set()
     policies: set[str] = set()
-    named_finds, named_classifiers = content_ids(pipelines)
-    policies |= named_finds
+    named_classifiers = content_ids(pipelines)
     for p in pipelines:
         {"users": users, "groups": groups, "keys": keys}.get(p.who_mode, set()).update(p.who_ids)
         providers.update(p.providers)
         models.update(p.models)
         for rule in p.all_rules():
-            if rule.action.get("redact_with"):
-                policies.add(str(rule.action["redact_with"]))
+            policies.update(rule.policies)
     out: dict[str, str] = {}
 
     def ids(values: set[str]) -> list[uuid.UUID]:
@@ -296,11 +282,8 @@ def pipeline_response(
     # whole list, and a pipeline must not carry the names of another's scope.
     used = {*pipeline.who_ids, *pipeline.providers, *pipeline.models}
     for rule in pipeline.all_rules():
-        if rule.action.get("redact_with"):
-            used.add(str(rule.action["redact_with"]))
-        used.update(
-            c.values[0] for c in rule.conditions if c.key in rulelib.CONTENT_KEYS and c.values
-        )
+        used.update(rule.policies)
+        used.update(c.values[0] for c in rule.conditions if c.key == "classified" and c.values)
     labels = {k: v for k, v in labels.items() if k in used}
     return PipelineResponse(
         id=row.id,
@@ -316,9 +299,9 @@ def pipeline_response(
             mode=cast("Any", pipeline.target_mode),
             providers=[uuid.UUID(i) for i in pipeline.providers],
             models=[uuid.UUID(i) for i in pipeline.models],
+            model_types=cast("Any", [t for t in rulelib.MODEL_TYPES if t in pipeline.model_types]),
         ),
         rules=[_rule_view(r, issues.get(r.id, [])) for r in pipeline.rules],
-        otherwise=_rule_view(pipeline.otherwise, issues.get(pipeline.otherwise.id, [])),
         labels=labels,
         summary=summarize(pipeline, labels, reader_names),
         created_at=row.created_at,
@@ -434,12 +417,10 @@ async def unavailable_readers(
 
 @dataclass(slots=True)
 class ValidationContext:
-    """What a rule may name: policies to apply, policies to count, classifiers, readers."""
+    """What a rule may name: policies, classifiers, readers."""
 
-    #: Policies "redact with" may name.
+    #: Policies a rule may name.
     policy_ids: set[str]
-    #: Policies "finds at least" may name (the same set).
-    finds_policy_ids: set[str]
     classifier_ids: set[str]
     readers: set[str]
 
@@ -456,7 +437,7 @@ async def validation_context(session: AsyncSession, *, owner: User | None) -> Va
         policies |= {str(p.id) for p in await user_policy_rows(session, owner.id)}
         readers = set(await granted_readers(session, owner))
         classifiers = set()
-    return ValidationContext(policies, set(policies), classifiers, readers)
+    return ValidationContext(policies, classifiers, readers)
 
 
 # -- user policies --------------------------------------------------------------------
@@ -489,12 +470,7 @@ def clean_entries(
     allowed = {t.upper() for t in allowed_types} if allowed_types is not None else None
     for entry in entries:
         name = user_rules.clean_label(entry.name)
-        try:
-            mode = EntityMode(entry.mode)
-        except ValueError as exc:
-            raise ValueError(f"'{entry.mode}' is not a mode.") from exc
-        if mode is EntityMode.OFF:
-            raise ValueError("a rule of yours can only add protection, so it cannot be 'off'")
+        mode = EntityMode.REDACT
         if entry.kind == "pattern":
             if not entry.regex:
                 raise ValueError("A pattern needs a regular expression.")
@@ -521,7 +497,7 @@ def clean_entries(
         if key in seen:
             raise ValueError(f"'{name}' is listed twice.")
         seen.add(key)
-        out.append({"kind": entry.kind, "name": name, "regex": regex, "mode": mode.value})
+        out.append({"kind": entry.kind, "name": name, "regex": regex})
     if len(out) > user_rules.MAX_RULES_PER_USER:
         raise ValueError(f"A policy has at most {user_rules.MAX_RULES_PER_USER} entries.")
     return out
@@ -573,43 +549,8 @@ def _scope_words(pipeline: Pipeline, labels: dict[str, str]) -> list[str]:
     return [who, target]
 
 
-def _action_text(rule: rulelib.Rule, labels: dict[str, str]) -> str:
-    parts = [LEVEL_LABELS.get(rule.level, rule.level)]
-    if rule.level == rulelib.LEVEL_READ_WITH:
-        parts = [f"Read with {rule.action.get('reader') or rulelib.DEFAULT_READER}"]
-    if rule.action.get("redact_with"):
-        parts.append(f"redact with {labels.get(str(rule.action['redact_with']), 'a policy')}")
-    return ", ".join(parts)
-
-
-def _policy_modes(
-    state: PrivacyState, combined: Combined
-) -> tuple[dict[str, list[tuple[str, str]]], list[str]]:
-    """entity type -> [(policy name, mode)] for the policies this request applies."""
-    table: dict[str, list[tuple[str, str]]] = {}
-    names: list[str] = []
-    for use in combined.policy_uses():
-        ref = state.policies.get(use.policy_id)
-        if ref is not None:
-            names.append(ref.name)
-            types = ref.policy.service_types()
-            for entity, entry in types.items():
-                if entry.mode is not EntityMode.OFF:
-                    table.setdefault(entity, []).append((ref.name, entry.mode.value))
-            for pattern in ref.policy.patterns:
-                if pattern.mode is not EntityMode.OFF and pattern.name not in types:
-                    table.setdefault(pattern.name, []).append((ref.name, pattern.mode.value))
-            for keywords in ref.policy.keywords:
-                if keywords.mode is not EntityMode.OFF and keywords.name not in types:
-                    table.setdefault(keywords.name, []).append((ref.name, keywords.mode.value))
-            continue
-        mine = state.user_policies.get(use.policy_id)
-        if mine is not None:
-            names.append(mine.name)
-            rule: UserRule
-            for rule in mine.rules:
-                table.setdefault(rule.name, []).append((mine.name, rule.mode.value))
-    return table, names
+def _rule_words(rule: rulelib.Rule, labels: dict[str, str]) -> list[str]:
+    return [labels.get(p, "a policy") for p in rule.policies]
 
 
 async def dry_run(
@@ -639,14 +580,12 @@ async def dry_run(
         provider = await session.get(Provider, model.provider_id) if model.provider_id else None
     elif payload.provider_id is not None:
         provider = await session.get(Provider, payload.provider_id)
-    order = list(EntityMode)
-
     filename = attribution.clean_filename(payload.filename)
     mime = payload.mime
     is_scan = payload.is_scan
     extractor: str | None = None
     fallback_reason: str | None = None
-    if payload.kind == "read" and payload.file_base64:
+    if payload.kind == "extract" and payload.file_base64:
         try:
             data = base64.b64decode(payload.file_base64, validate=True)
         except (binascii.Error, ValueError) as exc:
@@ -669,6 +608,7 @@ async def dry_run(
     def facts_for(m: ModelDef | None, p: Provider | None, scan: bool | None) -> Facts:
         return Facts(
             kind=payload.kind,
+            model_type=(m.kind.value if m is not None and payload.kind == "content" else None),
             user_id=str(user.id) if user is not None else None,
             billing_group_id=str(group) if group else None,
             filename=filename,
@@ -679,9 +619,9 @@ async def dry_run(
             target_provider=p.name if p is not None else None,
             provider_id=str(p.id) if p is not None else None,
             model_id=str(m.id) if m is not None else None,
-            # Reading decides from the file's facts; only embed and chat judge text.
+            # Reading decides from the file's facts; only content judges text.
             text=payload.text
-            if payload.kind != "read" and state.uses_verdicts(payload.kind)
+            if payload.kind == "content" and state.uses_verdicts(payload.kind)
             else None,
             judge=judge,
         )
@@ -734,28 +674,34 @@ async def dry_run(
         state.evaluator,
         pipelines,
         facts,
-        retarget=retarget if payload.kind == "read" else None,
+        retarget=retarget if payload.kind == "extract" else None,
     )
 
-    # --- policy table ---
-    table, policy_names = _policy_modes(state, combined)
-    detected_types: set[str] | None = None
+    # --- hiding: which rule claims which span (content, a text was given) ---
+    hits = combined.hiding_hits()
+    policy_names = [n for p in combined.policy_ids() if (n := state.policy_name(p))]
+    claims_out: list[DryRunClaim] = []
     blocked_by: str | None = None
     if (
         payload.text
-        and payload.kind != "read"
+        and payload.kind == "content"
         and not combined.refused
+        and hits
         and hasattr(redactor, "detect")
         and getattr(redactor, "name", "noop") != "noop"
     ):
-        from gateway.redaction.http import eligible_for
+        from gateway.privacy.finds import group_of
+        from gateway.redaction.http import claim_spans
 
-        effective = state.effective_policy(combined.policy_uses(), settings.redaction.policy)
+        effective = state.effective_policy(hits, settings.redaction.policy)
         detector = cast("Any", redactor)
         try:
             spans: list[EntitySpan] = (
                 await detector.detect(
-                    [payload.text], policy=effective.policy, asks=effective.asks(), strict=True
+                    [payload.text],
+                    policy=effective.policy,
+                    asks=effective.asks(acting=not effective.needs_observed()),
+                    strict=True,
                 )
             )[0]
         except EngineUnavailableError as exc:
@@ -763,37 +709,40 @@ async def dry_run(
                 f"The NER engine {exc.engine or 'chosen by default'} cannot run: "
                 f"{exc.reason or 'it is not available'}."
             ) from exc
-        eligible = eligible_for(
-            payload.text,
-            spans,
-            effective.policy,
-            settings.redaction.score_threshold,
-            effective.user_pattern_keys(),
-        )
-        detected_types = {s.entity_type for s in eligible}
-        for span in eligible:
-            if effective.policy.mode_for(span.entity_type) is EntityMode.BLOCK:
-                blocked_by = span.entity_type
-                break
+        rules_in_force = effective.hiding_rules()
+        found = claim_spans(payload.text, spans, rules_in_force, settings.redaction.score_threshold)
 
-    types: list[DryRunPolicyType] = []
-    for entity, per in sorted(table.items()):
-        best = max(per, key=lambda item: order.index(EntityMode(item[1])))
-        types.append(
-            DryRunPolicyType(
-                entity_type=entity,
-                mode=best[1],
-                source=best[0],
-                per_policy=[f"{name}: {mode}" for name, mode in per],
-                found=(entity in detected_types) if detected_types is not None else None,
+        def claim_of(span: EntitySpan, index: int, mode: EntityMode, action: str) -> DryRunClaim:
+            hit = hits[index]
+            part = rules_in_force[index].parts[0]
+            return DryRunClaim(
+                pipeline=hit.pipeline.name,
+                rule=hit.rule.name,
+                rule_id=hit.rule.id,
+                owner="user" if hit.pipeline.is_user else "admin",
+                type=span.entity_type,
+                group=group_of(span, part),
+                mode=mode.value,
+                action=action,
+                engine=span.engine,
+                score=None if span.engine == "pattern" else span.score,
+                text=None if viewer_only else span.slice_of(payload.text or ""),
             )
-        )
+
+        if found.blocked:
+            blocked_by = found.blocked[0][0].entity_type
+            for span, index in found.blocked:
+                claims_out.append(claim_of(span, index, EntityMode.BLOCK, "blocked"))
+        for claim in found.chosen:
+            claims_out.append(claim_of(claim.span, claim.rule, claim.mode, "hidden"))
+        for span, index in found.observed:
+            claims_out.append(claim_of(span, index, EntityMode.DETECT_ONLY, "recorded"))
 
     # --- labels and views ---
     everything = [r.pipeline for r in combined.runs] + [s.pipeline for s in combined.skipped]
     labels = await labels_for(session, everything)
 
-    def run_view(run: PipelineRun) -> DryRunPipeline:
+    def run_view(run: Any) -> DryRunPipeline:
         steps = [
             DryRunStep(
                 rule_id=s.rule.id,
@@ -804,33 +753,22 @@ async def dry_run(
                 degraded=s.degraded,
                 items=[
                     DryRunItem(
-                        policy=name,
+                        policy=item.policy,
                         group=item.group,
                         type=item.type,
                         engine=item.engine,
                         score=item.score,
                         text=None if viewer_only else item.value,
                     )
-                    for name, found in s.items.items()
-                    for item in found
+                    for item in s.items
                 ],
+                policies=_rule_words(s.rule, labels),
+                mode=s.rule.mode,
+                overrides=dict(s.rule.overrides),
                 note=s.rule.note,
             )
             for s in run.evaluation.steps
         ]
-        steps.append(
-            DryRunStep(
-                rule_id=run.pipeline.otherwise.id,
-                name="Everything else",
-                position=run.pipeline.otherwise.position,
-                result="not_reached"
-                if not run.is_otherwise
-                else ("pending" if run.pending else "fired"),
-                reasons=[],
-                degraded=[],
-                is_otherwise=True,
-            )
-        )
         return DryRunPipeline(
             id=run.pipeline.id,
             name=run.pipeline.name,
@@ -838,34 +776,10 @@ async def dry_run(
             hop=run.hop,
             scope=_scope_words(run.pipeline, labels),
             steps=steps,
-            fired_rule_id=None if run.pending else run.rule.id,
-            fired_rule=None if run.pending or run.is_otherwise else run.rule.name,
-            fired_otherwise=run.is_otherwise and not run.pending,
-            level="pending" if run.pending else run.level,
-            action_text=_action_text(run.rule, labels),
             summary=summarize(run.pipeline, labels),
         )
 
-    ladder_levels = rulelib.LADDER[payload.kind]
-    asked: dict[str, list[str]] = {}
-    for run in combined.runs:
-        if not run.pending and run.level != ladder_levels[0]:
-            asked.setdefault(run.level, []).append(run.pipeline.name)
     reader_label = combined.reader
-    ladder = [
-        DryRunLevel(
-            level=level,
-            label=(
-                f"Read with {reader_label}"
-                if level == "read_with" and combined.reader
-                else LEVEL_LABELS[level]
-            ),
-            asked_by=asked.get(level, []),
-            winning=level == combined.level,
-        )
-        for level in ladder_levels
-    ]
-
     verdicts: dict[str, Any] = {}
     for run in combined.runs:
         verdicts.update(run.evaluation.verdicts)
@@ -876,8 +790,9 @@ async def dry_run(
     outcome, headline, text = (
         "pass",
         "Passes unchanged",
-        "No pipeline is in scope: handled as today.",
+        "No rule applies: handled as today.",
     )
+    hidden = [c for c in claims_out if c.action == "hidden"]
     if combined.pending:
         outcome, headline = "pending", "Needs the file read"
         text = (
@@ -885,22 +800,25 @@ async def dry_run(
             "whether it is one."
         )
     elif combined.impossible:
-        outcome, headline = "refuse", "Refused (403)"
+        outcome, headline = "block", "Blocked (403)"
         named = combined.reader_run.rule.name if combined.reader_run else ""
         text = f"Named rule: {named}. {combined.impossible}"
     elif combined.refused and winner is not None:
-        outcome, headline = "refuse", "Refused (403)"
+        outcome, headline = "block", "Blocked (403)"
         text = (
             f"Named rule: {winner.rule.name} in pipeline {winner.pipeline.name}. The message names "
             "the rule, never the content."
         )
     elif blocked_by is not None:
-        outcome, headline = "refuse", "Refused (403)"
-        text = f"Type '{blocked_by}' is set to block and was found in the text."
-    elif payload.kind == "read":
-        if combined.level == rulelib.LEVEL_READ_WITH:
+        outcome, headline = "block", "Blocked (403)"
+        first = next(c for c in claims_out if c.action == "blocked")
+        text = (
+            f"Rule '{first.rule}' sets type '{blocked_by}' to block and it was found in the text."
+        )
+    elif payload.kind == "extract":
+        if combined.level == rulelib.LEVEL_EXTRACT_WITH:
             moved = bool(combined.hops)
-            outcome = "read_with"
+            outcome = "extract_with"
             headline = f"Read by {reader_label}"
             text = (
                 "The file goes whole to the reader chosen, instead of the one the caller named. "
@@ -912,17 +830,27 @@ async def dry_run(
             headline = "Read by the reader the caller named"
             text = "The file leaves as it is; redaction only screens the text that comes back. "
         if policy_names:
-            text += f"Text that comes back is screened with {' + '.join(policy_names)}."
-    elif combined.runs:
-        if policy_names:
-            outcome = "redact"
+            text += f"Text that comes back is screened by: {' + '.join(policy_names)}."
+    elif hits:
+        if hidden:
+            outcome = "hide"
             headline = "Goes on after hiding"
             text = (
-                f"Policies: {' + '.join(policy_names)}. "
-                "Types found in the text are hidden by the strictest mode."
+                f"{len(hidden)} piece{'s' if len(hidden) != 1 else ''} of text hidden: each by "
+                "the first rule that hides it."
             )
+        elif claims_out:
+            headline, text = (
+                "Passes unchanged",
+                "Only recorded: the rules that matched hide nothing.",
+            )
+        elif payload.text:
+            headline, text = "Passes unchanged", "The rules that matched found nothing to hide."
         else:
-            headline, text = "Passes unchanged", "The pipelines in scope add no policy."
+            outcome = "hide"
+            headline = "Goes on after hiding"
+            names = ", ".join(h.rule.name for h in hits)
+            text = f"Rules that apply: {names}. Give a text to see what is hidden."
 
     return DryRunResponse(
         kind=payload.kind,
@@ -930,7 +858,6 @@ async def dry_run(
         outcome_headline=headline,
         outcome_text=text,
         level=combined.level,
-        ladder=ladder,
         pipelines=[run_view(r) for r in combined.runs],
         skipped=[
             DryRunSkipped(
@@ -952,7 +879,7 @@ async def dry_run(
         winner_rule=None if winner is None else winner.rule.name,
         winner_pipeline=None if winner is None else winner.pipeline.name,
         winner_owner=None if winner is None else ("user" if winner.pipeline.is_user else "admin"),
-        reader=reader_label if combined.level == "read_with" else None,
+        reader=reader_label if combined.level == "extract_with" else None,
         reader_by=(
             None
             if combined.reader_run is None
@@ -960,12 +887,12 @@ async def dry_run(
             f"pipeline {combined.reader_run.pipeline.name}"
         ),
         reader_overridden=[
-            f"{r.pipeline.name} asked for {r.rule.action.get('reader') or rulelib.DEFAULT_READER}"
-            for r in combined.overridden
+            f"{h.pipeline.name} asked for {h.rule.action.get('reader') or rulelib.DEFAULT_READER}"
+            for h in combined.overridden
         ],
         impossible=combined.impossible,
         policies=policy_names,
-        policy_types=types,
+        claims=claims_out,
         blocked_by=blocked_by,
         facts={
             "filename": filename,
@@ -974,6 +901,7 @@ async def dry_run(
             "is_scan": facts.is_scan,
             "target_model": facts.target_model,
             "target_provider": facts.target_provider,
+            "model_type": facts.model_type,
             "text_checked": facts.text is not None,
         },
         verdicts=verdicts,
@@ -1026,7 +954,7 @@ async def summary_for(
         kind = "embed" if model.kind is ModelKind.EMBEDDING else "chat"
         words: list[str] = []
         used: list[str] = []
-        for p in state.pipelines_of(kind):
+        for p in state.pipelines_of("content"):
             why = not_in_scope(
                 p,
                 user_id=str(user.id),
@@ -1034,6 +962,7 @@ async def summary_for(
                 key_id=str(key_id) if key_id else None,
                 provider_id=str(model.provider_id) if model.provider_id else None,
                 model_id=str(model.id),
+                model_type=model.kind.value,
             )
             if why:
                 # A key-scoped pipeline is in scope only for calls made with that key.

@@ -1,26 +1,24 @@
-"""Combining the pipelines of one request (ADR 0113, section 0).
+"""Combining the pipelines of one request (ADR 0114, superseding ADR 0113 section 0).
 
-**Every pipeline in scope runs, and the results combine.** Inside a pipeline the
-first matching rule wins (``evaluate``); across pipelines nothing is first:
+**Every rule of every pipeline in scope is evaluated; there is no first match.** The
+rules are taken in one order: administrator pipelines in console order (``position``),
+then the user's own, each pipeline's rules top to bottom. Then:
 
-* **Where it is handled** is the ladder, and the highest level wins (read:
-  default reader < read with < refuse; embed and chat: pass < refuse).
-* **What is hidden** adds up: the policies each pipeline chose are folded by
-  ``RedactionPolicy.combine`` (the strictest mode per entity type) and a user's
-  own policies on top of that. The caller does the fold; this module only says
-  *which* policies and *who asked for them*.
-* **The reader** is the administrator's choice if any administrator pipeline
-  made one, else a user's, else the default.
-* **Naming**: the rule that set the winning level, and on a tie the
-  administrator's. The trace keeps every pipeline in scope and the rule that
-  fired in each.
+* **Block first.** If any matching rule blocks (a content rule in mode ``block``, a
+  reading rule whose action is block), the request is refused and the first such rule is
+  named. (A type an override sets to ``block`` is found while hiding: ``redaction.http``.)
+* **Hiding** is applied in that order, the first rule to hide a span deciding how
+  (``redaction.http.claim_spans``). This module only says *which* rules matched.
+* **The reader** (reading): the first matching "read with" rule in the order above, an
+  administrator's before a user's. A pipeline that guards a reader a request was
+  re-pointed at gets the say on the next hop.
 
-Because the ladder takes a maximum and policies only add, a user's pipeline can
-raise a level or add a policy but can never lower what an administrator's did.
+Because administrators come first, a user's pipeline can add protection or block, and can
+never loosen what an administrator's did.
 
-After a reroute (a read rule named another reader), the pipelines whose target
-scope covers the new reader also run, so a reroute can never escape a pipeline
-that guards that reader. The loop is bounded.
+After a reroute (a read rule named another reader), the pipelines whose target scope covers
+the new reader also run, so a reroute can never escape a pipeline that guards that reader.
+The loop is bounded.
 """
 
 from __future__ import annotations
@@ -33,7 +31,7 @@ from gateway.errors import ServiceUnavailableError
 from gateway.privacy import rules as rulelib
 from gateway.privacy.evaluate import Evaluation, Evaluator, Facts, Undecidable
 from gateway.privacy.pipelines import Pipeline, not_in_scope
-from gateway.privacy.rules import KIND_READ, LEVEL_READ_WITH, LEVEL_REFUSE, Rule
+from gateway.privacy.rules import KIND_EXTRACT, LEVEL_BLOCK, LEVEL_EXTRACT_WITH, Rule
 
 #: How many times a read may be re-pointed at another reader.
 MAX_HOPS = 3
@@ -41,45 +39,35 @@ MAX_HOPS = 3
 
 @dataclass(slots=True)
 class PipelineRun:
-    """One pipeline's result for the request: the rule that set its action."""
+    """One pipeline's result for the request: every rule judged."""
 
     pipeline: Pipeline
     evaluation: Evaluation
-    #: The rule that fired, or the pipeline's last rule when none did.
-    rule: Rule
-    is_otherwise: bool
     hop: int = 0
-    #: The pipeline waits for a fact found while reading (a scan).
-    pending: bool = False
 
     @property
-    def level(self) -> str:
-        return self.rule.level
+    def pending(self) -> bool:
+        """Some rule waits for a fact found while reading (a scan)."""
+        return self.evaluation.pending
+
+
+@dataclass(frozen=True, slots=True)
+class Hit:
+    """A rule that matched, and the pipeline it belongs to."""
+
+    pipeline: Pipeline
+    rule: Rule
+    hop: int = 0
 
     @property
-    def action(self) -> dict[str, object]:
-        return dict(self.rule.action)
-
-    def rank(self, kind: str) -> int:
-        return rulelib.LADDER[kind].index(self.level)
+    def user(self) -> bool:
+        return self.pipeline.is_user
 
 
 @dataclass(slots=True)
 class Skipped:
     pipeline: Pipeline
     why: str
-
-
-@dataclass(slots=True)
-class PolicyUse:
-    """A policy some pipeline chose to apply."""
-
-    policy_id: str
-    run: PipelineRun
-
-    @property
-    def user(self) -> bool:
-        return self.run.pipeline.is_user
 
 
 @dataclass(slots=True)
@@ -97,63 +85,95 @@ class Combined:
     skipped: list[Skipped] = field(default_factory=list)
     hops: list[Hop] = field(default_factory=list)
     level: str = ""
-    #: The run that set the winning level (an administrator's on a tie); None when
-    #: nothing asked for more than what happens anyway.
-    winner: PipelineRun | None = None
+    #: The rule that decided where the request goes (the first blocking rule, else the
+    #: rule whose reader was chosen); None when nothing asked for more than what happens anyway.
+    winner: Hit | None = None
     #: Some pipeline waits for a fact found while reading: read first, plan again.
     pending: bool = False
-    pending_run: PipelineRun | None = None
+    pending_run: Hit | None = None
     #: The reader of a "read with" level: an OCR model's name.
     reader: str | None = None
-    reader_run: PipelineRun | None = None
-    #: Readers other pipelines asked for and that were not used, with who asked.
-    overridden: list[PipelineRun] = field(default_factory=list)
+    reader_run: Hit | None = None
+    #: Readers other rules asked for and that were not used.
+    overridden: list[Hit] = field(default_factory=list)
     #: The reroute could not be carried out (a link to a built-in reader, a reader
     #: the caller may not use): fail closed, naming this reason.
     impossible: str | None = None
 
     @property
     def refused(self) -> bool:
-        return self.level == LEVEL_REFUSE
+        return self.level == LEVEL_BLOCK
 
-    def in_ladder_order(self) -> list[PipelineRun]:
-        """Administrators' pipelines first, then users', each in list order."""
+    def in_order(self) -> list[PipelineRun]:
+        """Administrators' pipelines first (console order), then users', each in list order."""
         return sorted(
             self.runs,
             key=lambda r: (r.pipeline.is_user, r.pipeline.position, r.pipeline.order),
         )
 
-    def policy_uses(self) -> list[PolicyUse]:
-        """The policies to apply, widest scope first, each named once.
+    def hits(self) -> list[Hit]:
+        """Every matching rule, in the order the rules apply."""
+        return [
+            Hit(run.pipeline, rule, run.hop)
+            for run in self.in_order()
+            if not run.pending or run.evaluation.matched
+            for rule in run.evaluation.matched
+        ]
 
-        Not at all for a refused request. Every administrator pipeline's policy
-        comes before any user's, then the broadest scope first (the order ADR 0038's
-        fold always used), which matters for exactly one field, the allow-list,
-        taken from the first policy alone: a user's pipeline must never decide it.
+    def hiding_hits(self) -> list[Hit]:
+        """The matching rules that hide, or record what they find, in order.
+
+        Not at all for a refused request.
         """
         if self.refused:
             return []
-        out: list[PolicyUse] = []
-        seen: set[str] = set()
-        for run in sorted(
-            (r for r in self.runs if not r.pending),
-            key=lambda r: (r.pipeline.is_user, r.pipeline.scope_rank, r.pipeline.order),
-        ):
-            policy = run.rule.action.get("redact_with")
-            if policy and str(policy) not in seen:
-                seen.add(str(policy))
-                out.append(PolicyUse(str(policy), run))
+        return [
+            h for h in self.hits() if h.rule.policies and (h.rule.hides_text or h.rule.records_only)
+        ]
+
+    def policy_ids(self) -> list[str]:
+        """The policies the hiding rules apply, each once, in order."""
+        out: list[str] = []
+        for hit in self.hiding_hits():
+            out.extend(p for p in hit.rule.policies if p not in out)
         return out
 
 
-def run_of(pipeline: Pipeline, evaluation: Evaluation, hop: int = 0) -> PipelineRun:
-    if evaluation.pending is not None:
-        return PipelineRun(
-            pipeline, evaluation, pipeline.otherwise, is_otherwise=True, hop=hop, pending=True
-        )
-    if evaluation.fired is not None:
-        return PipelineRun(pipeline, evaluation, evaluation.fired, False, hop)
-    return PipelineRun(pipeline, evaluation, pipeline.otherwise, True, hop)
+def combine(kind: str, runs: Sequence[PipelineRun]) -> Combined:
+    """Where the request goes, and by which rule, from the runs that have an answer."""
+    combined = Combined(kind=kind, runs=list(runs))
+    hits = combined.hits()
+    blockers = [h for h in hits if h.rule.level == LEVEL_BLOCK]
+    combined.level = rulelib.base_level(kind)
+    if blockers:
+        combined.level, combined.winner = LEVEL_BLOCK, blockers[0]
+        return combined
+    pending = [r for r in combined.in_order() if r.pending and r.evaluation.pending_rule]
+    if pending:
+        combined.pending = True
+        rule = pending[0].evaluation.pending_rule
+        assert rule is not None
+        combined.pending_run = Hit(pending[0].pipeline, rule, pending[0].hop)
+    withs = [h for h in hits if h.rule.level == LEVEL_EXTRACT_WITH]
+    if kind == KIND_EXTRACT and withs:
+        combined.level = LEVEL_EXTRACT_WITH
+        # An administrator's choice holds over a user's. Among those that may decide, the
+        # run from the latest hop wins: a pipeline that guards the reader the request has
+        # been re-pointed at gets the say on where it goes next, so a reroute can never
+        # walk past it. Within a hop the first rule in order wins.
+        admin_withs = [h for h in withs if not h.user]
+        deciding = admin_withs or withs
+        latest = max(h.hop for h in deciding)
+        first = next(h for h in deciding if h.hop == latest)
+        combined.reader = str(first.rule.action.get("reader") or rulelib.DEFAULT_READER)
+        combined.reader_run = first
+        combined.winner = first
+        combined.overridden = [
+            h
+            for h in withs
+            if str(h.rule.action.get("reader") or rulelib.DEFAULT_READER) != combined.reader
+        ]
+    return combined
 
 
 async def run_in_scope(
@@ -177,56 +197,22 @@ async def run_in_scope(
             key_id=facts.api_key_id,
             provider_id=facts.provider_id,
             model_id=facts.model_id,
+            model_type=facts.model_type,
         )
         if why:
             skipped.append(Skipped(pipeline, why))
             continue
         seen.add(pipeline.id)
         try:
-            evaluation = await evaluator.evaluate(list(pipeline.rules), facts, pipeline.otherwise)
+            evaluation = await evaluator.evaluate(list(pipeline.rules), facts)
         except Undecidable as exc:
             raise ServiceUnavailableError(
                 f"The privacy rule '{exc.rule.name}' (pipeline '{pipeline.name}') cannot be "
                 f"decided now ({exc.why}), so the request is refused rather than let through.",
                 code="privacy_undecidable",
             ) from exc
-        runs.append(run_of(pipeline, evaluation, hop))
+        runs.append(PipelineRun(pipeline, evaluation, hop))
     return runs, skipped
-
-
-def combine(kind: str, runs: Sequence[PipelineRun]) -> Combined:
-    """The level, the winner, the reader, from the runs that have an answer."""
-    combined = Combined(kind=kind, runs=list(runs))
-    ladder = rulelib.LADDER[kind]
-    answered = [r for r in runs if not r.pending]
-    pending = [r for r in runs if r.pending]
-    if pending:
-        combined.pending = True
-        combined.pending_run = pending[0]
-    best = max((r.rank(kind) for r in answered), default=0)
-    combined.level = ladder[best]
-    if best > 0:
-        tied = [r for r in combined.in_ladder_order() if not r.pending and r.rank(kind) == best]
-        combined.winner = tied[0]
-    if combined.level == LEVEL_READ_WITH:
-        withs = [
-            r for r in combined.in_ladder_order() if not r.pending and r.level == LEVEL_READ_WITH
-        ]
-        # An administrator's choice holds over a user's. Among those that may
-        # decide, the run from the latest hop wins: a pipeline that guards the
-        # reader the request has been re-pointed at gets the say on where it goes
-        # next, so a reroute can never walk past it.
-        admin_withs = [r for r in withs if not r.pipeline.is_user]
-        deciding = admin_withs or withs
-        first = max(deciding, key=lambda r: r.hop) if deciding else withs[0]
-        combined.reader = str(first.rule.action.get("reader") or rulelib.DEFAULT_READER)
-        combined.reader_run = first
-        combined.overridden = [
-            r
-            for r in withs
-            if str(r.rule.action.get("reader") or rulelib.DEFAULT_READER) != combined.reader
-        ]
-    return combined
 
 
 @dataclass(slots=True)
@@ -260,14 +246,14 @@ async def plan(
     runs, skipped = await run_in_scope(evaluator, pipelines, facts, seen=seen)
     combined = combine(facts.kind, runs)
     combined.skipped = skipped
-    if facts.kind != KIND_READ or retarget is None:
+    if facts.kind != KIND_EXTRACT or retarget is None:
         return combined
     hops: list[Hop] = []
     all_runs = list(runs)
     settled = False
-    visited: list[tuple[str, PipelineRun | None]] = []
+    visited: list[tuple[str, Hit | None]] = []
     for hop in range(1, MAX_HOPS + 1):
-        if combined.pending or combined.level != LEVEL_READ_WITH or combined.reader is None:
+        if combined.pending or combined.level != LEVEL_EXTRACT_WITH or combined.reader is None:
             settled = True
             break
         if any(name == combined.reader for name, _ in visited):
@@ -304,7 +290,7 @@ async def plan(
         not settled
         and combined.impossible is None
         and not combined.pending
-        and combined.level == LEVEL_READ_WITH
+        and combined.level == LEVEL_EXTRACT_WITH
         and combined.reader is not None
     ):
         # Out of hops with the pipelines still asking for another reader than the
@@ -313,20 +299,19 @@ async def plan(
         probe = await retarget(combined.reader)
         if not probe.same:
             combined.impossible = "the pipelines keep re-pointing the file (too many reroutes)."
-    if hops and combined.impossible is None and combined.level == LEVEL_READ_WITH:
+    if hops and combined.impossible is None and combined.level == LEVEL_EXTRACT_WITH:
         # The pipelines that guard the reader the request ended on ran at the last
         # hop; if an administrator's of them asks for another reader, it was not
         # honoured, so the request is refused.
-        for run in combined.runs:
+        for hit in combined.hits():
             if (
-                run.hop == len(hops)
-                and not run.pending
-                and not run.pipeline.is_user
-                and run.level == LEVEL_READ_WITH
-                and str(run.rule.action.get("reader") or rulelib.DEFAULT_READER) != combined.reader
+                hit.hop == len(hops)
+                and not hit.user
+                and hit.rule.level == LEVEL_EXTRACT_WITH
+                and str(hit.rule.action.get("reader") or rulelib.DEFAULT_READER) != combined.reader
             ):
                 combined.impossible = (
-                    f"'{run.rule.name}' asks for another reader than the one the file ended on."
+                    f"'{hit.rule.name}' asks for another reader than the one the file ended on."
                 )
                 break
     combined.hops = hops

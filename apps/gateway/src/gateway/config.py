@@ -10,13 +10,21 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, PrivateAttr, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 if TYPE_CHECKING:
@@ -634,6 +642,19 @@ class PlaceholderStyle(StrEnum):
     SAME_LENGTH = "same_length"
 
 
+class EntityItem(BaseModel):
+    """A type a policy looks for: how sure the detector must be, how a stand-in is written.
+
+    What a policy stores (ADR 0114): no mode. What to *do* with what it finds is the
+    rule's (``EntityPolicy`` is this item with a mode stamped on, for the request path).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    placeholder: PlaceholderStyle = PlaceholderStyle.TAGGED
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
 class EntityPolicy(BaseModel):
     """How one entity type is treated, and how sure the detector must be."""
 
@@ -649,7 +670,7 @@ class EntityPolicy(BaseModel):
     _or_default: bool = PrivateAttr(default=False)
 
 
-class CustomPattern(BaseModel):
+class PatternItem(BaseModel):
     """A regex an operator wrote, treated as one more entity type.
 
     ``name`` becomes the entity label, so a match is substituted, restored and
@@ -714,6 +735,14 @@ class CustomPattern(BaseModel):
 
 #: The NER engines a policy may choose (ADR 0113, section 0c). The redaction service
 #: says which of them it has installed; the console offers only those.
+class CustomPattern(PatternItem):
+    """A pattern with a mode stamped on, as the request path holds it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    mode: EntityMode = EntityMode.REDACT
+
+
 NER_ENGINES = ("spacy", "gliner")
 NerEngine = Literal["spacy", "gliner"]
 
@@ -739,7 +768,7 @@ def _label(value: str, what: str) -> str:
     return cleaned
 
 
-class KeywordList(BaseModel):
+class KeywordItem(BaseModel):
     """A comma-separated list of words and phrases, found as whole words (ADR 0113, section 0c).
 
     One more pattern type, beside the built-in formats and the regular expressions
@@ -797,7 +826,15 @@ class KeywordList(BaseModel):
         return _label(value, "a keyword list name")
 
 
-class CustomEntity(BaseModel):
+class KeywordList(KeywordItem):
+    """A keyword list with a mode stamped on, as the request path holds it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    mode: EntityMode = EntityMode.REDACT
+
+
+class CustomEntityItem(BaseModel):
     """An entity type the NER engine finds from a description (GLiNER) (ADR 0113, section 0c).
 
     ``name`` is the entity label (UPPER_SNAKE) and ``label`` the natural-language
@@ -826,6 +863,15 @@ class CustomEntity(BaseModel):
         if not cleaned:
             raise ValueError("an entity needs a short description for the model")
         return cleaned
+
+
+class CustomEntity(CustomEntityItem):
+    """A custom entity with a mode stamped on, as the request path holds it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    mode: EntityMode = EntityMode.ANONYMISE_RESTORE
+    _or_default: bool = PrivateAttr(default=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1265,6 +1311,140 @@ class RedactionPolicy(BaseModel):
         return not set(self.allow_list).issubset(previous.allow_list)
 
 
+class PolicyDefinition(BaseModel):
+    """What a policy stores and the API shows: what to look for, never what to do (ADR 0114).
+
+    The two groups stay apart as ever (patterns: ``formats``, ``patterns``, ``keywords``;
+    entities: ``entities``, ``custom_entities``, ``engine``), with the detection settings
+    (thresholds, placeholder style, allow-list). The **mode** (what to do with what is
+    found) belongs to a rule of a pipeline: :meth:`stamp` writes it onto a copy, which is
+    the :class:`RedactionPolicy` the request path and the redaction service already speak.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    engine: NerEngine | None = None
+    formats: dict[str, EntityItem] = Field(default_factory=dict)
+    entities: dict[str, EntityItem] = Field(default_factory=dict)
+    custom_entities: list[CustomEntityItem] = Field(default_factory=list, max_length=30)
+    patterns: list[PatternItem] = Field(default_factory=list)
+    keywords: list[KeywordItem] = Field(default_factory=list)
+    allow_list: list[str] = Field(default_factory=list)
+
+    @field_validator("formats", "entities")
+    @classmethod
+    def _upper(cls, value: dict[str, EntityItem]) -> dict[str, EntityItem]:
+        return {key.upper(): item for key, item in value.items()}
+
+    @model_validator(mode="after")
+    def _distinct_names(self) -> PolicyDefinition:
+        for group, names in (
+            ("a custom entity", [c.name for c in self.custom_entities]),
+            ("a keyword list", [k.name for k in self.keywords]),
+        ):
+            if len(set(names)) != len(names):
+                raise ValueError(f"a name is used twice in this policy ({group})")
+        return self
+
+    def names(self) -> set[str]:
+        """Every type or label this policy looks for (what an override may name)."""
+        return {
+            *self.formats,
+            *self.entities,
+            *(c.name for c in self.custom_entities),
+            *(p.name for p in self.patterns),
+            *(k.name for k in self.keywords),
+        }
+
+    def stamp(
+        self, mode: EntityMode, overrides: Mapping[str, EntityMode] | None = None
+    ) -> RedactionPolicy:
+        """This policy with *mode* on every item, and a rule's per-type overrides on top."""
+        over = {k.upper(): v for k, v in (overrides or {}).items()}
+
+        def pick(name: str) -> EntityMode:
+            return over.get(name.upper(), mode)
+
+        return RedactionPolicy.model_construct(
+            engine=self.engine,
+            default_mode=EntityMode.OFF,
+            formats={
+                n: EntityPolicy(mode=pick(n), placeholder=i.placeholder, threshold=i.threshold)
+                for n, i in self.formats.items()
+            },
+            entities={
+                n: EntityPolicy(mode=pick(n), placeholder=i.placeholder, threshold=i.threshold)
+                for n, i in self.entities.items()
+            },
+            custom_entities=[
+                CustomEntity(
+                    name=c.name,
+                    label=c.label,
+                    mode=pick(c.name),
+                    placeholder=c.placeholder,
+                    threshold=c.threshold,
+                )
+                for c in self.custom_entities
+            ],
+            patterns=[
+                CustomPattern(
+                    name=p.name, regex=p.regex, mode=pick(p.name), placeholder=p.placeholder
+                )
+                for p in self.patterns
+            ],
+            keywords=[
+                KeywordList(
+                    name=k.name,
+                    words=k.words,
+                    case_sensitive=k.case_sensitive,
+                    mode=pick(k.name),
+                    placeholder=k.placeholder,
+                )
+                for k in self.keywords
+            ],
+            allow_list=list(self.allow_list),
+        )
+
+    @classmethod
+    def from_stored(cls, raw: Mapping[str, Any]) -> PolicyDefinition:
+        """A stored policy, tolerating a row written before modes moved to rules."""
+        return cls.model_validate(_without_modes(dict(raw)))
+
+
+def _without_modes(raw: dict[str, Any]) -> dict[str, Any]:
+    out = {k: v for k, v in raw.items() if k != "default_mode"}
+    for table in ("formats", "entities"):
+        if isinstance(out.get(table), dict):
+            out[table] = {
+                k: {a: b for a, b in v.items() if a != "mode"} if isinstance(v, dict) else v
+                for k, v in out[table].items()
+            }
+    for table in ("custom_entities", "patterns", "keywords"):
+        if isinstance(out.get(table), list):
+            out[table] = [
+                {a: b for a, b in v.items() if a != "mode"} if isinstance(v, dict) else v
+                for v in out[table]
+            ]
+    return out
+
+
+@dataclass(frozen=True, slots=True)
+class HidingRule:
+    """One matching rule's hiding, in the order the rules apply (ADR 0114).
+
+    ``parts`` are the rule's policies, each stamped with the rule's mode and overrides:
+    every part keeps its own thresholds and allow-list, so what one policy exempts is
+    exempt in that policy only.
+    """
+
+    id: uuid.UUID | None
+    name: str
+    #: ``admin`` or ``user``: who wrote the rule.
+    owner: str
+    parts: tuple[RedactionPolicy, ...]
+    part_names: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True, slots=True)
 class EffectivePolicy:
     """The policy governing one request, and the rule to record against it.
@@ -1283,6 +1463,31 @@ class EffectivePolicy:
     #: before the user's own. Only read after detection, to say which rule
     #: decided a type (the redaction log and the per-response summary).
     contributors: tuple[Contributor, ...] = ()
+    #: The matching rules that hide, in the order they apply (administrators first). When
+    #: present the redactor claims spans rule by rule (first to hide a span decides how)
+    #: and ``policy`` is only the strictest-mode fold of them, which the system note reads.
+    rules: tuple[HidingRule, ...] = ()
+
+    def hiding_rules(self) -> tuple[HidingRule, ...]:
+        """The rules the redactor applies: the request's own, or the policy as one rule."""
+        if self.rules:
+            return self.rules
+        return (HidingRule(None, "", "admin", (self.policy,)),)
+
+    def needs_observed(self) -> bool:
+        """Whether some rule only records what it finds (``detect_only``), so it is asked for."""
+        return any(
+            e.mode is EntityMode.DETECT_ONLY
+            for rule in self.rules
+            for part in rule.parts
+            for e in part.service_types().values()
+        ) or any(
+            p.mode is EntityMode.DETECT_ONLY
+            for rule in self.rules
+            for part in rule.parts
+            for p in (*part.patterns, *part.keywords)
+            if isinstance(p, (CustomPattern, KeywordList))
+        )
 
     def user_pattern_keys(self) -> frozenset[tuple[str, str]]:
         """``(name, regex)`` of the patterns only a user's own rules supply.
@@ -1308,6 +1513,21 @@ class EffectivePolicy:
 
     def decider_for(self, entity_type: str) -> Contributor | None:
         """The rule whose answer became this type's mode.
+
+        With rules (ADR 0114) it is the first rule, in order, that names the type with a
+        mode that hides or blocks: the one that claims it.
+        """
+        if self.rules:
+            name = entity_type.upper()
+            for rule in self.rules:
+                for part in rule.parts:
+                    if hides(part.mode_for(name)) or part.mode_for(name) is EntityMode.DETECT_ONLY:
+                        return Contributor(rule.id, rule.name, rule.owner, part, rule.name)
+            return None
+        return self._decider_folded(entity_type)
+
+    def _decider_folded(self, entity_type: str) -> Contributor | None:
+        """The rule whose answer became this type's mode (a plain fold of policies).
 
         Mirrors :meth:`RedactionPolicy.combine`: a policy that *names* the type
         votes by its mode and the strictest wins; failing that the pattern of
@@ -1385,6 +1605,8 @@ class Contributor:
     #: ``admin`` or ``user``: who wrote the rule.
     owner: str
     policy: RedactionPolicy
+    #: The privacy rule's own name, when it differs from ``name`` (the policy's).
+    rule_name: str | None = None
 
 
 #: What a deployment redacts before anybody has written a rule: **nothing**.

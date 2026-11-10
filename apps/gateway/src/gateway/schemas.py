@@ -31,7 +31,7 @@ from pydantic import (
     model_validator,
 )
 
-from gateway.config import RedactionPolicy
+from gateway.config import PolicyDefinition, RedactionPolicy
 from gateway.pagination import Page
 from gateway.plugins import registry as plugin_registry
 from gateway.response_model import ResponseModel
@@ -2841,7 +2841,7 @@ class RedactionPreviewRequest(BaseModel):
 
     text: str = Field(min_length=1, max_length=20_000)
     policy_id: uuid.UUID | None = None
-    policy: RedactionPolicy | None = None
+    policy: PolicyDefinition | None = None
 
 
 class RedactionPreviewSpan(ResponseModel):
@@ -3069,6 +3069,8 @@ class RoutingObserved(ResponseModel):
     """What Pystino saw in the request (ADR 0113). Labels and names, never content."""
 
     target: RoutingTarget = Field(default_factory=RoutingTarget)
+    #: The model's own type for a content request: chat, embedding or rerank.
+    model_type: str | None = None
     #: Reading only: type and whether it is a scan. `filename` is present only in
     #: the per-response summary, never in the log; the log says which `filename`
     #: condition matched instead.
@@ -3096,9 +3098,11 @@ class RoutingPipelineRun(ResponseModel):
     name: str
     owner: str
     hop: int = 0
-    #: Null when no rule matched and the pipeline's last rule ("everything else") applied.
+    #: The first rule that matched (kept for older readers); null when none did.
     rule: RoutingRule | None = None
-    #: The level the pipeline asked for, or ``pending``.
+    #: Every rule that matched in this pipeline, in order.
+    rules: list[RoutingRule] = Field(default_factory=list)
+    #: The level asked for (``block``, ``extract_with``, ``pass``, ``default``), or ``pending``.
     level: str
 
 
@@ -3119,7 +3123,7 @@ class RoutingHandled(ResponseModel):
 class RoutingInfo(ResponseModel):
     """The ``routing`` block of a log entry and of the per-response summary."""
 
-    kind: Literal["read", "embed", "chat"]
+    kind: Literal["read", "extract", "embed", "chat"]
     observed: RoutingObserved = Field(default_factory=RoutingObserved)
     handled: RoutingHandled = Field(default_factory=RoutingHandled)
     #: ``default`` (no rule applied), ``rule``, ``rerouted``, ``refused`` or ``blocked``.

@@ -30,6 +30,8 @@ from gateway.config import (
     Contributor,
     EffectivePolicy,
     EntityMode,
+    HidingRule,
+    PolicyDefinition,
     RedactionPolicy,
 )
 from gateway.models import (
@@ -44,7 +46,7 @@ from gateway.models import (
 )
 from gateway.privacy import rules as rulelib
 from gateway.privacy.classifiers import ClassifierRef
-from gateway.privacy.combine import PolicyUse
+from gateway.privacy.combine import Hit
 from gateway.privacy.evaluate import Evaluator
 from gateway.privacy.finds import ClassifierBackend, ContentJudge
 from gateway.privacy.pipelines import Pipeline, pipeline_from_row
@@ -73,9 +75,15 @@ class PolicyRef:
 
     id: uuid.UUID
     name: str
-    policy: RedactionPolicy
+    #: What it looks for (no mode: that is the rule's). ``policy`` is the same stamped
+    #: with a mode, for counting what it finds.
+    definition: PolicyDefinition
     #: Whether a user's own pipeline may name it.
     shared: bool = False
+
+    @property
+    def policy(self) -> RedactionPolicy:
+        return self.definition.stamp(EntityMode.REDACT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,10 +97,12 @@ class UserPolicyRef:
 
 
 def user_rule_of(raw: dict[str, Any], rule_id: uuid.UUID) -> UserRule:
-    """One stored entry, under the administrators' own validation. Raises ``ValueError``."""
-    mode = EntityMode(str(raw.get("mode")))
-    if mode is EntityMode.OFF:
-        raise ValueError("a user rule cannot be off")
+    """One stored entry, under the administrators' own validation. Raises ``ValueError``.
+
+    An entry says what to look for, not what to do about it (ADR 0114): the mode is stamped
+    when a rule applies it.
+    """
+    mode = EntityMode.REDACT
     kind = str(raw.get("kind"))
     name = str(raw.get("name") or "")
     regex = raw.get("regex")
@@ -107,39 +117,16 @@ def user_rule_of(raw: dict[str, Any], rule_id: uuid.UUID) -> UserRule:
     )
 
 
-def policy_as_user_rules(ref: PolicyRef) -> list[UserRule]:
-    """An administrator's policy as tighten-only additions (a user picked it).
-
-    Only what can add protection survives: a mode for a type, a pattern (keyword lists
-    and custom entity types travel beside them, into ``user_rules.fold``). The
-    thresholds, placeholder styles and the allow-list of the policy are not
-    carried (they are administrator-only fields, and ``user_rules.fold`` has no
-    place for them); its default mode is applied as a floor by the caller.
-    """
-    out: list[UserRule] = []
-    for name, entry in ref.policy.service_types().items():
-        if entry.mode is not EntityMode.OFF:
-            out.append(UserRule(uuid.uuid5(ref.id, f"mode:{name}"), "mode", name, None, entry.mode))
-    for pattern in ref.policy.patterns:
-        if pattern.mode is not EntityMode.OFF:
-            out.append(
-                UserRule(
-                    uuid.uuid5(ref.id, f"pattern:{pattern.name}:{pattern.regex}"),
-                    "pattern",
-                    pattern.name,
-                    pattern.regex,
-                    pattern.mode,
-                )
-            )
-    return out
-
-
 def user_policy_of(row: UserPolicy) -> UserPolicyRef:
     rules = tuple(
         user_rule_of(raw, uuid.uuid5(row.id, f"{index}:{raw.get('name')}"))
         for index, raw in enumerate(row.rules or [])
     )
     return UserPolicyRef(row.id, row.user_id, row.name, rules)
+
+
+def _modes_key(mode: str, overrides: dict[str, str]) -> tuple[str, tuple[tuple[str, str], ...]]:
+    return mode, tuple(sorted(overrides.items()))
 
 
 class PrivacyState:
@@ -171,11 +158,8 @@ class PrivacyState:
         #: Entity types users' own policies may name; None means any.
         self.user_entity_types: tuple[str, ...] | None = None
         self.evaluator = Evaluator()
-        #: The folded policies, keyed by the ids that produced them; cleared on load.
-        self._folded: dict[tuple[str, ...], RedactionPolicy] = {}
-        self._user_folded: dict[
-            tuple[str, ...], tuple[RedactionPolicy, tuple[Contributor, ...]]
-        ] = {}
+        #: Policies with a rule's mode stamped on, keyed by what produced them; cleared on load.
+        self._stamped: dict[tuple[Any, ...], RedactionPolicy] = {}
         #: False until the pipelines have been read once. A worker that has never
         #: read them cannot say what they are, so requests of the kinds they
         #: govern fail closed (503) rather than run with none. An app built
@@ -196,11 +180,7 @@ class PrivacyState:
         migrated from scoped redaction rules is all of those, and its log must
         not change shape because of the migration.
         """
-        return any(
-            p.enabled
-            and (any(r.enabled for r in p.rules) or p.otherwise.level != rulelib.base_level(p.kind))
-            for p in self.pipelines
-        )
+        return any(p.enabled and any(r.enabled for r in p.rules) for p in self.pipelines)
 
     @property
     def bad_rules(self) -> list[str]:
@@ -252,52 +232,78 @@ class PrivacyState:
         mine = self.user_policies.get(policy_id)
         return mine.name if mine is not None else None
 
-    # -- the fold ------------------------------------------------------------
+    # -- hiding ----------------------------------------------------------------
+
+    def stamped(
+        self, policy_id: str, rule: rulelib.Rule, owner_id: uuid.UUID | None
+    ) -> RedactionPolicy | None:
+        """The policy *policy_id* with *rule*'s mode and overrides stamped on, or None."""
+        key = (policy_id, owner_id, *_modes_key(rule.mode, dict(rule.overrides)))
+        held = self._stamped.get(key)
+        if held is not None:
+            return held
+        mode = EntityMode(rule.mode)
+        over = {k: EntityMode(v) for k, v in rule.overrides.items()}
+        ref = self.policies.get(policy_id)
+        if ref is not None:
+            built = ref.definition.stamp(mode, over)
+        else:
+            mine = self.user_policies.get(policy_id)
+            if mine is None or mine.user_id != owner_id:
+                return None
+            from dataclasses import replace
+
+            built = user_rules.fold(
+                RedactionPolicy(),
+                [replace(r, mode=over.get(r.name.upper(), mode)) for r in mine.rules],
+            )
+        self._stamped[key] = built
+        return built
 
     def effective_policy(
-        self, uses: Sequence[PolicyUse], environment: RedactionPolicy
+        self, hits: Sequence[Hit], environment: RedactionPolicy
     ) -> EffectivePolicy:
-        """The policy governing one request, from the policies its pipelines chose.
+        """What hides the request: the matching rules, in order, each with its policies stamped.
 
-        The administrators' policies fold by ``RedactionPolicy.combine``, widest
-        scope first, and are the whole answer when any applies (the
-        environment's policy, which ships filtering nothing, stands only when
-        none does: ADR 0039). The requesting user's own policies are folded in
-        last by ``user_rules.fold`` and can only tighten (ADR 0112). Zero
-        queries: everything here arrived on the poll.
+        Administrator rules come first, then the user's own (``Combined.hiding_hits``). The
+        environment's policy, which ships filtering nothing (ADR 0039), stands only when no
+        rule hides. Zero queries: everything here arrived on the poll.
         """
-        admin_refs: list[tuple[PolicyRef, PolicyUse]] = []
-        #: Administrator policies a *user's* pipeline chose, and the user's own.
-        user_picked: list[PolicyRef] = []
-        own: list[UserPolicyRef] = []
-        for use in uses:
-            ref = self.policies.get(use.policy_id)
-            by_user = use.run.pipeline.is_user
-            if ref is not None:
-                if by_user:
-                    user_picked.append(ref)
-                else:
-                    admin_refs.append((ref, use))
-                continue
-            mine = self.user_policies.get(use.policy_id)
-            if mine is not None and mine.user_id == use.run.pipeline.owner_id:
-                if all(mine.id != m.id for m in own):
-                    own.append(mine)
-                continue
-            # The policy a pipeline chose cannot be read (stored rows over the current limits,
-            # a policy turned off by hand): refusing is the only answer that cannot let
-            # through what it was written to hide.
-            logger.error("a pipeline names policy %s, which is not loaded", use.policy_id)
-            from gateway.errors import ServiceUnavailableError
+        rules: list[HidingRule] = []
+        contributors: list[Contributor] = []
+        last_admin: Hit | None = None
+        for hit in hits:
+            rule = hit.rule
+            parts: list[RedactionPolicy] = []
+            names: list[str] = []
+            for pid in rule.policies:
+                built = self.stamped(pid, rule, hit.pipeline.owner_id)
+                if built is None:
+                    # The policy a rule chose cannot be read (stored rows over the current
+                    # limits, a policy turned off by hand): refusing is the only answer that
+                    # cannot let through what it was written to hide.
+                    logger.error("a pipeline names policy %s, which is not loaded", pid)
+                    from gateway.errors import ServiceUnavailableError
 
-            raise ServiceUnavailableError(
-                f"The pipeline '{use.run.pipeline.name}' applies a redaction policy that cannot "
-                "be loaded (it is unreadable or switched off), so the request is refused "
-                "rather than sent without it. An administrator must fix or replace the policy.",
-                code="privacy_policy_unavailable",
+                    raise ServiceUnavailableError(
+                        f"The rule '{rule.name}' (pipeline '{hit.pipeline.name}') applies a "
+                        "redaction policy that cannot be loaded (it is unreadable or switched "
+                        "off), so the request is refused rather than sent without it. An "
+                        "administrator must fix or replace the policy.",
+                        code="privacy_policy_unavailable",
+                    )
+                parts.append(built)
+                names.append(self.policy_name(pid) or "a policy")
+            owner = "user" if hit.pipeline.is_user else "admin"
+            rules.append(HidingRule(rule.id, rule.name, owner, tuple(parts), tuple(names)))
+            contributors.extend(
+                Contributor(rule.id, name, owner, part, rule.name)
+                for name, part in zip(names, parts, strict=True)
             )
-        if not admin_refs:
-            admin = EffectivePolicy(
+            if not hit.pipeline.is_user:
+                last_admin = hit
+        if not rules:
+            return EffectivePolicy(
                 policy=environment,
                 contributors=(
                     Contributor(
@@ -305,69 +311,14 @@ class PrivacyState:
                     ),
                 ),
             )
-        else:
-            key = tuple(str(ref.id) for ref, _ in admin_refs)
-            folded = self._folded.get(key)
-            if folded is None:
-                folded = RedactionPolicy.combine([ref.policy for ref, _ in admin_refs])
-                self._folded[key] = folded
-            narrowest_ref, narrowest_use = admin_refs[-1]
-            admin = EffectivePolicy(
-                policy=folded,
-                scope=narrowest_use.run.pipeline.scope_name,
-                rule_id=narrowest_ref.id,
-                contributors=tuple(
-                    Contributor(id=ref.id, name=ref.name, owner="admin", policy=ref.policy)
-                    for ref, _ in admin_refs
-                ),
-            )
-        # What a user's pipelines add comes after, as tighten-only additions to the
-        # administrators' answer (or the environment's): a user's choice never
-        # decides the allow-list and never replaces the environment's policy.
-        rules = tuple(
-            [r for ref in user_picked for r in policy_as_user_rules(ref)]
-            + [rule for policy in own for rule in policy.rules]
-        )
-        if not rules and not user_picked:
-            return admin
-        ukey = (
-            *(str(c.id) for c in admin.contributors),
-            "|",
-            *(str(p.id) for p in user_picked),
-            "|",
-            *(str(p.id) for p in own),
-        )
-        cached = self._user_folded.get(ukey)
-        if cached is None:
-            folded_user = user_rules.fold(
-                admin.policy,
-                rules,
-                keywords=[k for ref in user_picked for k in ref.policy.keywords],
-                custom_entities=[c for ref in user_picked for c in ref.policy.custom_entities],
-            )
-            floor = max(
-                [admin.policy.default_mode, *(ref.policy.default_mode for ref in user_picked)],
-                key=list(EntityMode).index,
-            )
-            if floor is not folded_user.default_mode:
-                folded_user = folded_user.model_copy(update={"default_mode": floor})
-            cached = (
-                folded_user,
-                (
-                    *(
-                        Contributor(id=ref.id, name=ref.name, owner="admin", policy=ref.policy)
-                        for ref in user_picked
-                    ),
-                    *(rule.contributor() for policy in own for rule in policy.rules),
-                ),
-            )
-            self._user_folded[ukey] = cached
-        policy, contributors = cached
+        narrowest = last_admin or hits[-1]
+        folded = RedactionPolicy.combine([p for r in rules for p in r.parts])
         return EffectivePolicy(
-            policy=policy,
-            scope=admin.scope,
-            rule_id=admin.rule_id,
-            contributors=(*admin.contributors, *contributors),
+            policy=folded,
+            scope=narrowest.pipeline.scope_name,
+            rule_id=uuid.UUID(narrowest.rule.policies[0]) if narrowest.rule.policies else None,
+            contributors=tuple(contributors),
+            rules=tuple(rules),
         )
 
     # -- loading -------------------------------------------------------------
@@ -408,7 +359,7 @@ class PrivacyState:
                 parsed[str(record.id)] = PolicyRef(
                     record.id,
                     record.name or "Policy",
-                    RedactionPolicy.model_validate(record.policy or {}),
+                    PolicyDefinition.from_stored(record.policy or {}),
                     bool(record.shared_with_users),
                 )
             except ValidationError:
@@ -427,8 +378,7 @@ class PrivacyState:
         self.bad_rows = bad
         self.loaded = True
         self.load_error = None
-        self._folded.clear()
-        self._user_folded.clear()
+        self._stamped.clear()
         self.classifiers = {c.id: c for c in classifiers}
         self._admin_views = {pid: (ref.name, ref.policy) for pid, ref in parsed.items()}
         self._user_views = {}

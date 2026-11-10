@@ -1,4 +1,4 @@
-"""Request and response models for the privacy pipelines API (ADR 0113).
+"""Request and response models for the privacy pipelines API (ADR 0113, ADR 0114).
 
 Shared by ``/api/admin/privacy`` and ``/api/me/privacy``: a user's pipeline is
 the same object as an administrator's, with its scope fixed and its actions
@@ -13,11 +13,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from gateway.config import RedactionPolicy
+from gateway.config import PolicyDefinition
 from gateway.errors import BadRequestError
 from gateway.response_model import ResponseModel
 
-Kind = Literal["read", "embed", "chat"]
+Kind = Literal["extract", "content"]
+ModelType = Literal["chat", "embedding", "rerank"]
 WhoMode = Literal["all", "users", "groups", "keys"]
 TargetMode = Literal["all", "only", "except"]
 
@@ -29,7 +30,8 @@ class ConditionBody(BaseModel):
 
     #: ``filetype``, ``scan``, ``filename``, ``finds`` or ``classified``.
     key: str
-    #: ``finds``: the id of the policy. ``classified``: the id of the classifier.
+    #: ``classified``: the id of the classifier. ``finds`` names none: it counts what the
+    #: rule's own policies find.
     values: list[str] = []
     negate: bool = False
     #: ``finds`` only: at least this many distinct items (1 to 1000).
@@ -37,36 +39,41 @@ class ConditionBody(BaseModel):
 
 
 class ActionBody(BaseModel):
-    """Where it is handled, and what is hidden.
-
-    ``level`` is on the ladder of the pipeline's kind (read: ``default``,
-    ``read_with``, ``refuse``; embed and chat: ``pass``, ``refuse``).
-    """
+    """A reading rule's action: ``default`` (the reader the caller named), ``extract_with`` a
+    reader, or ``block``. A content rule has none: its mode says what it does."""
 
     model_config = ConfigDict(extra="forbid")
 
     level: str
-    #: ``read_with``: the name of an OCR model (the built-in extractor's engines are
+    #: ``extract_with``: the name of an OCR model (the built-in extractor's engines are
     #: models: ``markitdown``, ``markitdown-ocr``, ``docling``). Default: ``markitdown``.
     reader: str | None = None
-    #: The policy to apply to what is returned (read), the input (embed) or the
-    #: messages and tool results (chat). Never with ``refuse``.
-    redact_with: uuid.UUID | None = None
 
     def clean(self) -> dict[str, Any]:
         return self.model_dump(exclude_none=True, mode="json")
 
 
 class RuleBody(BaseModel):
+    """When <policies> + <conditions> -> <mode> (ADR 0114)."""
+
     model_config = ConfigDict(extra="forbid")
 
     #: Kept across saves so the log's rule id stays stable; made if absent.
     id: uuid.UUID | None = None
     name: str = Field(min_length=1, max_length=120)
     enabled: bool = True
-    observe_only: bool = False
+    #: What the rule looks for, and hides. A content rule needs at least one.
+    policies: list[uuid.UUID] = []
+    #: ``all`` (default) or ``any`` of the conditions must hold.
+    match: Literal["all", "any"] = "all"
     conditions: list[ConditionBody] = []
-    action: ActionBody
+    #: ``off``, ``detect_only``, ``anonymise_restore``, ``anonymise``, ``redact`` or
+    #: ``block``. Required for a content rule; a reading rule's default is ``off``.
+    mode: str | None = None
+    #: Per entity type modes, over the rule's policies: ``{TYPE: mode}``.
+    overrides: dict[str, str] = {}
+    #: Reading rules only.
+    action: ActionBody | None = None
     #: A warning left by the migration; kept only while the rule is off.
     note: str | None = Field(default=None, max_length=500)
 
@@ -75,9 +82,12 @@ class RuleBody(BaseModel):
             "id": str(self.id) if self.id else None,
             "name": self.name,
             "enabled": self.enabled,
-            "observe_only": self.observe_only,
+            "policies": [str(p) for p in self.policies],
+            "match": self.match,
             "conditions": [c.model_dump() for c in self.conditions],
-            "action": self.action.clean(),
+            "mode": self.mode,
+            "overrides": dict(self.overrides),
+            "action": self.action.clean() if self.action else None,
             "note": self.note,
         }
 
@@ -95,6 +105,8 @@ class TargetBody(BaseModel):
     mode: TargetMode = "all"
     providers: list[uuid.UUID] = []
     models: list[uuid.UUID] = []
+    #: Content pipelines: the model types covered; empty is any.
+    model_types: list[ModelType] = []
 
 
 class PipelineCreateRequest(BaseModel):
@@ -107,7 +119,6 @@ class PipelineCreateRequest(BaseModel):
     who: WhoBody = WhoBody()
     target: TargetBody = TargetBody()
     rules: list[RuleBody] = []
-    otherwise: ActionBody | None = None
     #: Where in the kind's list (0 first). Omitted: last.
     position: int | None = Field(default=None, ge=0)
 
@@ -124,7 +135,6 @@ class PipelineUpdateRequest(BaseModel):
     who: WhoBody | None = None
     target: TargetBody | None = None
     rules: list[RuleBody] | None = None
-    otherwise: ActionBody | None = None
 
     def require_same_kind(self, stored: str) -> None:
         """Refuse an attempt to change the kind; the same kind is a no-op."""
@@ -160,16 +170,19 @@ class ConditionView(ResponseModel):
 class ActionView(ResponseModel):
     level: str
     reader: str | None = None
-    redact_with: uuid.UUID | None = None
 
 
 class RuleView(ResponseModel):
     id: uuid.UUID
     name: str
     enabled: bool
-    observe_only: bool
+    policies: list[uuid.UUID]
+    match: Literal["all", "any"]
     conditions: list[ConditionView]
-    action: ActionView
+    mode: str
+    overrides: dict[str, str]
+    #: Reading rules only.
+    action: ActionView | None = None
     issues: list[IssueView]
     #: Left by the migration on a rule it had to switch off: read before turning it on.
     note: str | None = None
@@ -184,6 +197,7 @@ class TargetView(ResponseModel):
     mode: TargetMode
     providers: list[uuid.UUID]
     models: list[uuid.UUID]
+    model_types: list[ModelType]
 
 
 class PipelineResponse(ResponseModel):
@@ -197,7 +211,6 @@ class PipelineResponse(ResponseModel):
     who: WhoView
     target: TargetView
     rules: list[RuleView]
-    otherwise: RuleView
     #: id -> name for every user, group, key, provider, model and policy named.
     labels: dict[str, str]
     #: What it does, in short words ("refuses health data").
@@ -209,7 +222,7 @@ class PipelineResponse(ResponseModel):
 class PipelineCheckResponse(ResponseModel):
     #: ``None`` when the draft cannot be saved; the reason is in ``error``.
     error: str | None = None
-    #: Issues by rule id, and for the last rule under its own id (``otherwise``).
+    #: Issues, each naming its rule.
     issues: list[IssueView]
     soft_cap: int
 
@@ -218,7 +231,7 @@ class ReorderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Kind
-    #: Every administrator pipeline id of the kind, in the new order.
+    #: Every administrator pipeline id of the kind, in the new order (the order the rules apply).
     order: list[uuid.UUID]
 
 
@@ -229,7 +242,7 @@ class PolicyCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=255)
-    policy: RedactionPolicy
+    policy: PolicyDefinition
     is_active: bool = True
     #: Whether users' own pipelines may name it (to apply it, or in "finds at least").
     shared_with_users: bool = False
@@ -240,7 +253,7 @@ class PolicyUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
-    policy: RedactionPolicy | None = None
+    policy: PolicyDefinition | None = None
     is_active: bool | None = None
     shared_with_users: bool | None = None
     reason: str | None = Field(default=None, max_length=500)
@@ -249,7 +262,7 @@ class PolicyUpdateRequest(BaseModel):
 class PolicyResponse(ResponseModel):
     id: uuid.UUID
     name: str
-    policy: RedactionPolicy
+    policy: PolicyDefinition
     is_active: bool
     shared_with_users: bool
     #: Whether the NER engine the policy chose can run now: ``None`` when the policy
@@ -265,21 +278,22 @@ class PolicyResponse(ResponseModel):
 
 
 class UserEntryBody(BaseModel):
-    """One entry of a user's own policy: a custom pattern, or a stricter mode for a type."""
+    """One entry of a user's own policy: a custom pattern, or an entity type to look for.
+
+    ``kind`` stays ``mode`` for an entity type, as stored (ADR 0114: it carries no mode).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["pattern", "mode"]
     name: str = Field(min_length=1, max_length=64)
     regex: str | None = Field(default=None, max_length=512)
-    mode: str
 
 
 class UserEntryView(ResponseModel):
     kind: Literal["pattern", "mode"]
     name: str
     regex: str | None = None
-    mode: str
 
 
 class UserPolicyRequest(BaseModel):
@@ -391,7 +405,7 @@ class PolicyTryRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    policy: RedactionPolicy
+    policy: PolicyDefinition
     text: str = Field(min_length=1, max_length=50_000)
 
 
@@ -403,8 +417,6 @@ class FoundItem(ResponseModel):
     engine: str | None = None
     #: Entities only.
     score: float | None = None
-    #: The mode the policy gives it.
-    mode: str
     #: The text found: it came from the box, so it is shown to the one who typed it.
     text: str
 
@@ -413,7 +425,8 @@ class PolicyTryResponse(ResponseModel):
     items: list[FoundItem]
     #: The part the redaction service answers could not run, and why.
     unavailable: str | None = None
-    #: What the redaction would do to the text (``detect_only`` items are left as they are).
+    #: The text with what was found removed (a preview: the mode is a rule's, so it is shown
+    #: as ``redact``).
     redacted_text: str | None = None
     blocked: bool = False
 
@@ -490,7 +503,7 @@ class DryRunRequest(BaseModel):
     kind: Kind
     #: The caller to pretend to be (an administrator's test). A user's test is always them.
     user_id: uuid.UUID | None = None
-    #: The target the request goes to: a model id (any kind), or a provider id alone.
+    #: The target the request goes to: a model id (its type is a fact), or a provider id alone.
     model_id: uuid.UUID | None = None
     provider_id: uuid.UUID | None = None
     #: Reading: the file's name, MIME type, and whether it is a scan (omit to
@@ -501,7 +514,7 @@ class DryRunRequest(BaseModel):
     #: Reading: the file itself, base64, read on the built-in extractor to learn
     #: its type and whether it is a scan. Never kept.
     file_base64: str | None = Field(default=None, max_length=34_000_000)
-    #: Embedding and chat: text the content conditions judge. Never logged.
+    #: Content: text the rules judge. Never logged.
     text: str | None = Field(default=None, max_length=200_000)
 
 
@@ -524,15 +537,18 @@ class DryRunStep(ResponseModel):
     rule_id: uuid.UUID
     name: str
     position: int
-    #: ``fired``, ``observed``, ``not_matched``, ``skipped_off``, ``not_reached`` or ``pending``.
+    #: ``matched``, ``not_matched``, ``skipped_off`` or ``pending``.
     result: str
     reasons: list[str]
     degraded: list[str]
-    #: Every item the rule's "finds" conditions counted.
+    #: What the rule's policies found (what a ``finds`` condition counted).
     items: list[DryRunItem] = Field(default_factory=list)
+    #: The rule in words: its policies, its mode, its overrides.
+    policies: list[str] = Field(default_factory=list)
+    mode: str = "off"
+    overrides: dict[str, str] = Field(default_factory=dict)
     #: Left by the migration on a rule it switched off.
     note: str | None = None
-    is_otherwise: bool = False
 
 
 class DryRunPipeline(ResponseModel):
@@ -543,13 +559,8 @@ class DryRunPipeline(ResponseModel):
     hop: int
     #: Short words for the scope ("all users, OpenAI embeddings").
     scope: list[str]
+    #: Every rule, matched or not.
     steps: list[DryRunStep]
-    #: The rule that set the pipeline's action; null when pending.
-    fired_rule_id: uuid.UUID | None = None
-    fired_rule: str | None = None
-    fired_otherwise: bool = False
-    level: str
-    action_text: str
     summary: list[str]
 
 
@@ -567,38 +578,38 @@ class DryRunHop(ResponseModel):
     added: list[str]
 
 
-class DryRunLevel(ResponseModel):
-    level: str
-    label: str
-    #: Who asked for it, by pipeline name (above the base level only).
-    asked_by: list[str]
-    winning: bool
+class DryRunClaim(ResponseModel):
+    """A piece of text a rule hid (or only recorded), and which rule claimed it."""
 
-
-class DryRunPolicyType(ResponseModel):
-    entity_type: str
-    #: The strictest mode, and the policy it came from.
+    pipeline: str
+    rule: str
+    rule_id: uuid.UUID | None = None
+    #: ``admin`` or ``user``.
+    owner: str
+    type: str
+    #: ``pattern`` or ``entity``.
+    group: str
     mode: str
-    source: str
-    #: Every policy that names it, with its own mode.
-    per_policy: list[str]
-    #: Whether the text contains it (embed and chat, when a text was given and a
-    #: detector ran); null when not checked.
-    found: bool | None = None
+    #: What the claim did: ``hidden`` or ``recorded`` (a ``detect_only`` rule: never hidden).
+    action: str
+    engine: str | None = None
+    score: float | None = None
+    #: The text. Only in an administrator's test.
+    text: str | None = None
 
 
 class DryRunResponse(ResponseModel):
     kind: Kind
-    #: ``pass``, ``refuse``, ``read_default``, ``read_with``, ``redact`` or ``pending``.
+    #: ``pass``, ``block``, ``read_default``, ``extract_with``, ``hide`` or ``pending``.
     outcome: str
     outcome_headline: str
     outcome_text: str
+    #: ``pass``, ``block``, ``default`` or ``extract_with``.
     level: str
-    ladder: list[DryRunLevel]
     pipelines: list[DryRunPipeline]
     skipped: list[DryRunSkipped]
     hops: list[DryRunHop]
-    #: The rule (and pipeline) that set the winning level; null at the base level.
+    #: The rule that blocked the request, or chose the reader.
     winner_rule: str | None = None
     winner_pipeline: str | None = None
     winner_owner: str | None = None
@@ -607,9 +618,11 @@ class DryRunResponse(ResponseModel):
     reader_by: str | None = None
     reader_overridden: list[str]
     impossible: str | None = None
+    #: Names of the policies the matching rules apply.
     policies: list[str]
-    policy_types: list[DryRunPolicyType]
-    #: A type set to block was found in the text.
+    #: Which rule claimed which span of the text (content, when a text was given).
+    claims: list[DryRunClaim] = Field(default_factory=list)
+    #: A type an override sets to block was found in the text.
     blocked_by: str | None = None
     #: What was judged: labels and names, never the text.
     facts: dict[str, Any]

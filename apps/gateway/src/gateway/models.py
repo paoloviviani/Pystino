@@ -2794,7 +2794,7 @@ class UserPolicy(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     name: Mapped[str] = mapped_column(String(120))
-    #: ``[{"kind": "pattern"|"mode", "name": ..., "regex": ...|null, "mode": ...}]``.
+    #: ``[{"kind": "pattern"|"mode", "name": ..., "regex": ...|null}]``: what to look for.
     rules: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
@@ -2854,12 +2854,11 @@ class QuotaReset(Base):
 class PrivacyPipeline(Base):
     """A pipeline: when and how a kind of request is handled (ADR 0113, section 0).
 
-    ``kind`` is read, embed or chat. ``who`` and ``target`` are the scope: a
-    request meets only the pipelines whose scope covers it. ``rules`` is the
-    ordered list of ``{id, name, enabled, observe_only, conditions, action}``,
-    first match wins inside the pipeline; ``otherwise`` is the fixed last rule's
-    action. Every pipeline in scope runs and the results combine
-    (``gateway.privacy.combine``).
+    ``kind`` is read or content (ADR 0114: content covers chat, embeddings and rerank).
+    ``who`` and ``target`` are the scope: a request meets only the pipelines whose scope
+    covers it. ``rules`` is the ordered list of ``{id, name, enabled, policies, match,
+    conditions, mode, overrides, action?}``; every rule of every pipeline in scope is
+    evaluated (``gateway.privacy.combine``).
 
     ``owner_id`` null is an administrator's pipeline. A user's pipeline has its
     owner as the only ``who`` and can only tighten (validated on save, and again
@@ -2880,10 +2879,9 @@ class PrivacyPipeline(Base):
     position: Mapped[int] = mapped_column(Integer, default=0)
     #: ``{"mode": "all"|"users"|"groups"|"keys", "ids": [uuid, ...]}``.
     who: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    #: ``{"mode": "all"|"only"|"except", "providers": [uuid, ...], "models": [uuid, ...]}``.
+    #: ``{"mode": "all"|"only"|"except", "providers": [], "models": [], "model_types": []}``.
     target: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     rules: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-    otherwise: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), default=None
     )

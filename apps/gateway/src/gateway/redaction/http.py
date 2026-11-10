@@ -20,6 +20,7 @@ import logging
 import re
 from collections import Counter, OrderedDict
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
 
@@ -42,6 +43,7 @@ from gateway.config import (
     DEFAULT_REDACTION_POLICY,
     EffectivePolicy,
     EntityMode,
+    HidingRule,
     NerAsk,
     PlaceholderStyle,
     RedactionPolicy,
@@ -506,6 +508,69 @@ def resolve_overlaps(text: str, eligible: list[EntitySpan]) -> list[EntitySpan]:
     return chosen
 
 
+@dataclass(slots=True)
+class Claim:
+    """A span a rule hides, and how: the first rule to hide a span decides (ADR 0114)."""
+
+    span: EntitySpan
+    mode: EntityMode
+    style: PlaceholderStyle
+    rule: int
+
+
+@dataclass(slots=True)
+class Claims:
+    #: What is hidden, left to right, no two overlapping.
+    chosen: list[Claim] = field(default_factory=list)
+    #: Found by a rule that only records (``detect_only``): counted, never hidden.
+    observed: list[tuple[EntitySpan, int]] = field(default_factory=list)
+    #: Types a rule's override blocks, found in the text: ``(span, rule index)``.
+    blocked: list[tuple[EntitySpan, int]] = field(default_factory=list)
+
+
+def claim_spans(
+    text: str,
+    detected: list[EntitySpan],
+    rules: Sequence[HidingRule],
+    default_threshold: float,
+    *,
+    user_patterns: frozenset[PatternKey] = frozenset(),
+) -> Claims:
+    """Which rule hides which span of *text*, from one detection pass over the original.
+
+    Rules are taken in order. Each rule's policies find spans (their own thresholds and
+    allow-lists); spans that overlap text an earlier rule already claimed are dropped, so
+    **the first rule to hide a span decides how**, and the rest of the rule's spans are
+    resolved by score and length as ever. ``off`` and ``detect_only`` never claim: the
+    latter is only recorded. Nothing is detected again on placeholder text.
+    """
+    claims = Claims()
+    taken: list[EntitySpan] = []
+    for index, rule in enumerate(rules):
+        modes: dict[int, tuple[EntityMode, PlaceholderStyle]] = {}
+        acting: list[EntitySpan] = []
+        for part in rule.parts:
+            for span in eligible_for(
+                text, detected, part, default_threshold, user_patterns, acting=False
+            ):
+                mode = part.mode_for(span.entity_type)
+                if mode is EntityMode.BLOCK:
+                    claims.blocked.append((span, index))
+                elif mode is EntityMode.DETECT_ONLY:
+                    if not any(_overlaps(span, other) for other in taken):
+                        claims.observed.append((span, index))
+                elif hides(mode):
+                    modes[id(span)] = (mode, part.placeholder_style_for(span.entity_type))
+                    acting.append(span)
+        free = [s for s in acting if not any(_overlaps(s, other) for other in taken)]
+        for span in resolve_overlaps(text, free):
+            mode, style = modes[id(span)]
+            claims.chosen.append(Claim(span, mode, style, index))
+            taken.append(span)
+    claims.chosen.sort(key=lambda c: c.span.start)
+    return claims
+
+
 def apply_spans(
     text: str,
     spans: list[EntitySpan],
@@ -521,25 +586,31 @@ def apply_spans(
     source: str = SOURCE_MESSAGE,
     issued_types: dict[str, str] | None = None,
     user_patterns: frozenset[PatternKey] = frozenset(),
+    rules: Sequence[HidingRule] | None = None,
+    issued_modes: dict[str, str] | None = None,
 ) -> tuple[str, int]:
-    """Substitute placeholders for *spans* in *text*, according to *policy*.
+    """Substitute placeholders for *spans* in *text*, according to *policy* or *rules*.
 
     Right to left, so each replacement leaves earlier offsets valid — rewriting
     left to right invalidates every span after the first.
 
-    Overlapping spans are resolved by keeping the highest-scoring, then the
-    longest. Two detectors disagreeing about the same characters is normal (an
-    IBAN is also a long number), and replacing one inside another produces
-    corrupted text rather than a redaction.
+    **Block first, then hide in rule order** (ADR 0114): a type a rule blocks that is found
+    refuses the request before any text is rewritten; otherwise each rule hides what its
+    policies find, using its mode, and the first rule to hide a span decides how
+    (:func:`claim_spans`). With *policy* alone it is one rule, which is what every
+    redaction did before rules.
 
-    **The policy is applied before overlap resolution, not after**, and the order
-    is load-bearing: a span the policy discards must not have suppressed the one
-    it overlapped. A `URL` set to off, covering the same characters as a
-    `PERSON`, would otherwise take the person with it.
+    Overlapping spans are resolved by keeping the highest-scoring, then the longest. Two
+    detectors disagreeing about the same characters is normal (an IBAN is also a long
+    number), and replacing one inside another produces corrupted text rather than a
+    redaction. **A span a rule's policy discards must not have suppressed the one it
+    overlapped**: eligibility comes first (a ``URL`` set to off, covering the same
+    characters as a ``PERSON``, would otherwise take the person with it).
 
     What each mode writes, and what it records:
 
     ``off``                 nothing; the text is left as the caller wrote it.
+    ``detect_only``         nothing; the item is recorded in the log.
     ``anonymise_restore``   a derived placeholder, remembered, so the answer can
                             have the real value put back.
     ``anonymise``           the same placeholder, *not* remembered — so the
@@ -547,44 +618,46 @@ def apply_spans(
     ``redact``              ``<PERSON>``: no token, nothing to remember, and two
                             people become the same label.
     """
-    policy = policy or DEFAULT_REDACTION_POLICY
-    # Merged before eligibility and before overlap resolution, so an operator's
-    # pattern competes with the detector's spans on the same terms — and a
-    # pattern the policy has switched off drops out with everything else.
-    #
-    # Before the empty check too, and that is not a detail: a deployment whose
-    # detector finds nothing still has its own patterns, and returning early on
-    # `not spans` would have silently skipped every one of them.
-    eligible = eligible_for(text, spans, policy, default_threshold, user_patterns)
-    if not eligible:
-        return text, 0
-
+    held = (
+        rules
+        if rules is not None
+        else (HidingRule(None, "", "admin", (policy or DEFAULT_REDACTION_POLICY,)),)
+    )
+    claims = claim_spans(text, spans, held, default_threshold, user_patterns=user_patterns)
+    if findings is not None:
+        for span, _ in claims.observed:
+            record(findings, span.entity_type, mode=EntityMode.DETECT_ONLY.value, source=source)
     # Before any rewriting: a blocked request produces no redacted text at all,
     # and deciding this after substitution would mean building a placeholder map
     # for a request that is about to be refused.
-    blocked = [span for span in eligible if policy.mode_for(span.entity_type) is EntityMode.BLOCK]
-    if blocked:
-        kinds = sorted({span.entity_type for span in blocked})
+    if claims.blocked:
+        kinds = sorted({span.entity_type for span, _ in claims.blocked})
         if findings is not None:
             # What the refusal was about, counted by type and never quoted: the
             # caller attaches it to the error so the log can say which rule.
-            for span in blocked:
+            for span, _ in claims.blocked:
                 record(findings, span.entity_type, mode=EntityMode.BLOCK.value, source=source)
-        where = f" by the {scope} policy" if scope else ""
+        first = held[claims.blocked[0][1]]
+        where = (
+            f" by the rule '{first.name}'"
+            if first.name
+            else (f" by the {scope} policy" if scope else "")
+        )
         raise ContentBlockedError(
             f"This request was refused{where}: it contains "
             f"{', '.join(kinds)}, which this deployment does not send to a provider."
         )
-
-    chosen = resolve_overlaps(text, eligible)
+    chosen = claims.chosen
+    if not chosen:
+        return text, 0
 
     # What the caller wrote, before any of our own substitutions: a stand-in is
     # compared against that, not against text this loop has already rewritten,
     # or the second occurrence of one value would collide with the first.
     written = text
-    for span in reversed(chosen):
+    for claim in reversed(chosen):
+        span, mode = claim.span, claim.mode
         original = span.slice_of(text)
-        mode = policy.mode_for(span.entity_type)
         if mode is EntityMode.REDACT:
             placeholder = opaque_placeholder(span.entity_type)
         else:
@@ -592,7 +665,7 @@ def apply_spans(
                 span.entity_type,
                 original,
                 key=key,
-                style=policy.placeholder_style_for(span.entity_type),
+                style=claim.style,
                 placeholders=placeholders,
                 text=written,
                 tally=tally,
@@ -609,6 +682,8 @@ def apply_spans(
             issued[original] = placeholder
         if issued_types is not None:
             issued_types[original] = span.entity_type
+        if issued_modes is not None:
+            issued_modes[original] = mode.value
         if findings is not None:
             record(findings, span.entity_type, mode=mode.value, source=source)
 
@@ -1078,7 +1153,9 @@ class HttpDetectionRedactor:
             found = await self.detect(
                 texts,
                 policy=effective,
-                asks=policy.asks() if policy is not None else None,
+                asks=(
+                    policy.asks(acting=not policy.needs_observed()) if policy is not None else None
+                ),
             )
         except EngineUnavailableError as exc:
             raise engine_unavailable_error(exc.engine, policy, exc.reason) from exc
@@ -1090,7 +1167,9 @@ class HttpDetectionRedactor:
         documents: dict[int, _JsonText] = {}
         issued: dict[str, str] = {}
         issued_types: dict[str, str] = {}
+        issued_modes: dict[str, str] = {}
         findings: dict[str, EntityFinding] = {}
+        hiding = policy.rules if policy is not None else ()
         for target, spans in zip(targets, found, strict=True):
             try:
                 redacted, count = apply_spans(
@@ -1106,7 +1185,9 @@ class HttpDetectionRedactor:
                     findings=findings,
                     source=target.source,
                     issued_types=issued_types,
-                    user_patterns=user_patterns,
+                    user_patterns=user_patterns if not hiding else frozenset(),
+                    rules=hiding or None,
+                    issued_modes=issued_modes,
                 )
             except ContentBlockedError as exc:
                 exc.findings = findings
@@ -1138,7 +1219,7 @@ class HttpDetectionRedactor:
                     record(
                         findings,
                         kind,
-                        mode=effective.mode_for(kind).value,
+                        mode=issued_modes.get(original, effective.mode_for(kind).value),
                         source=source,
                     )
                     return issued[original]

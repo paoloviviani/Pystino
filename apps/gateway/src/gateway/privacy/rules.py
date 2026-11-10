@@ -1,21 +1,21 @@
-"""The rule vocabulary of a pipeline, its validation, and the save-time checks (ADR 0113).
+"""The rule vocabulary of a pipeline, its validation, and the save-time checks (ADR 0114).
 
-A pipeline's rule is a *sentence*: conditions that must all hold, one action.
-This module owns what each kind may say, so the admin API, the user API, the
-test endpoint and the evaluator agree.
+A pipeline's rule is a sentence: **When <policies> + <conditions> -> <mode>**.
 
-Conditions are request facts (file type, file name, scan) and two verdicts: "a
-policy finds at least N items" and "classified as a classifier" (ADR 0113, section
-0c). There is no quick check and no built-in topic.
+* ``policies`` are what the rule looks for and what it hides (admin policy ids; for a user
+  pipeline, the shared administrator policies and their own).
+* ``conditions`` are optional and combine with ``match`` (all or any), each can be
+  negated. ``finds`` is the threshold ("at least N distinct items found by the rule's own
+  policies, combined"); ``classified`` is administrators' only; an extract rule has
+  ``filetype``, ``scan`` and ``filename``. With none, a content rule fires when its
+  policies find one item.
+* ``mode`` is ``off`` < ``detect_only`` < ``anonymise_restore`` < ``anonymise`` <
+  ``redact`` < ``block``, with optional ``overrides`` by entity type. An extract rule has
+  an ``action`` (default reader < read with < block) and hiding that is optional.
 
-Validation is split on purpose. **Errors** (:func:`validate_rule`) block saving:
-an unknown key, a value of the wrong shape, an action the kind does not have, a
-user's rule that would loosen something. **Warnings** (:func:`check`) never
-block: a rule that can never fire, one a renamed file defeats, a policy whose
-engine is down. A warning is a statement about the pipeline as it is now, so it can go
-stale when another rule changes; the console asks for them again each time.
-
-Scope (who, which target) is a pipeline's, not a rule's: see ``pipelines``.
+This module owns what each kind may say, so the admin API, the user API, the test
+endpoint and the evaluator agree. **Errors** (:func:`validate_rule`) block saving;
+**warnings** (:func:`check`) never block.
 """
 
 from __future__ import annotations
@@ -25,48 +25,49 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-KIND_READ = "read"
-KIND_EMBED = "embed"
-KIND_CHAT = "chat"
-KINDS = (KIND_READ, KIND_EMBED, KIND_CHAT)
+from gateway.config import EntityMode, hides
+from gateway.redaction import user_rules
+
+KIND_EXTRACT = "extract"
+KIND_CONTENT = "content"
+KINDS = (KIND_EXTRACT, KIND_CONTENT)
+
+#: What a content pipeline's target may be narrowed to (the model's own type). Empty = any.
+MODEL_TYPES = ("chat", "embedding", "rerank")
 
 #: Past this many rules a pipeline stops being readable aloud. A warning, not a limit.
 SOFT_CAP = 20
 #: A hard bound, because rules are held in memory on every worker.
 MAX_RULES = 100
+MAX_OVERRIDES = 50
 
-#: Which condition keys each kind offers. Reading decides from the request's facts about
-#: the file only (its type, whether it is a scan, its name); what the text says is checked
-#: when it is embedded or sent to chat.
 CONDITION_KEYS: dict[str, tuple[str, ...]] = {
-    KIND_READ: ("filetype", "scan", "filename"),
-    KIND_EMBED: ("finds", "classified"),
-    KIND_CHAT: ("finds", "classified"),
+    KIND_EXTRACT: ("filetype", "scan", "filename"),
+    KIND_CONTENT: ("finds", "classified"),
 }
 #: Keys that are a yes/no about the request: they carry no values, only ``negate``.
 BOOL_KEYS = ("scan",)
-#: Keys decided by reading the request's own text. Their one value is the id of the
-#: policy (``finds``, with ``count``) or the classifier (``classified``).
+#: Keys decided by reading the request's own text.
 CONTENT_KEYS = ("finds", "classified")
 #: Most items a "finds at least N" may ask for.
 MAX_COUNT = 1000
+MATCHES = ("all", "any")
 
 FILETYPES = ("pdf", "word", "excel", "powerpoint", "image", "text")
-#: The reader a "read with" rule that names none means: the built-in extractor's
-#: default-engine model (``gateway.extraction.DEFAULT_MODEL``). The built-in
-#: extractor's other engines are models of their own (``markitdown-ocr``,
-#: ``docling``), picked like any reader.
+#: The reader a "read with" rule that names none means (``gateway.extraction.DEFAULT_MODEL``).
 DEFAULT_READER = "markitdown"
 
-#: The ladder, lowest to highest, per kind. The highest level across the
-#: pipelines in scope wins.
+#: The modes a rule may name, weakest first.
+MODES = tuple(m.value for m in EntityMode)
+#: Reading: what happens to the file, lowest to highest.
+EXTRACT_LEVELS = ("default", "extract_with", "block")
+#: Where a request ends up, per kind, lowest to highest.
 LADDER: dict[str, tuple[str, ...]] = {
-    KIND_READ: ("default", "read_with", "refuse"),
-    KIND_EMBED: ("pass", "refuse"),
-    KIND_CHAT: ("pass", "refuse"),
+    KIND_EXTRACT: EXTRACT_LEVELS,
+    KIND_CONTENT: ("pass", "block"),
 }
-LEVEL_REFUSE = "refuse"
-LEVEL_READ_WITH = "read_with"
+LEVEL_BLOCK = "block"
+LEVEL_EXTRACT_WITH = "extract_with"
 
 
 def base_level(kind: str) -> str:
@@ -84,11 +85,11 @@ class RuleError(ValueError):
 
 
 class ContentOnReadError(RuleError):
-    """A content condition on a reading rule: answered as a 400, not a field error."""
+    """A content condition on an extract rule: answered as a 400, not a field error."""
 
 
 CONTENT_ON_READ = (
-    "Reading rules decide from the file, not its content; content is checked when the text "
+    "Extract rules decide from the file, not its content; content is checked when the text "
     "is embedded or sent to chat."
 )
 
@@ -102,39 +103,90 @@ class Condition:
     count: int = 1
 
 
+#: A rule with no conditions in the content kind fires when its policies find one item.
+IMPLICIT_FINDS = Condition("finds", (), False, 1)
+
+
+def _mode(value: str | None, default: EntityMode = EntityMode.OFF) -> EntityMode:
+    try:
+        return EntityMode(value) if value else default
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True, slots=True)
 class Rule:
     """An immutable snapshot of one rule, as the request path holds it.
 
-    ``action`` is ``{level, reader?, redact_with?}``. The pipeline's
-    fixed last rule ("everything else") is a ``Rule`` with no conditions.
+    ``action`` is the reading rule's ``{level, reader?}`` (empty for content).
     """
 
     id: uuid.UUID
     kind: str
     name: str
     enabled: bool
-    observe_only: bool
     position: int
+    policies: tuple[str, ...]
+    match: str
     conditions: tuple[Condition, ...]
+    mode: str
+    overrides: Mapping[str, str]
     action: Mapping[str, Any]
     #: A warning an administrator must read before turning the rule on (the
-    #: migration leaves one on a rule whose condition no longer exists).
+    #: migration leaves one on a rule it could not convert exactly).
     note: str | None = None
 
     @property
     def level(self) -> str:
-        return str(self.action.get("level") or base_level(self.kind))
+        """Where this rule takes the request: block, read with, or nothing."""
+        if self.kind == KIND_EXTRACT:
+            return str(self.action.get("level") or "default")
+        return LEVEL_BLOCK if self.blocks_all else base_level(self.kind)
 
     @property
-    def is_noop(self) -> bool:
-        """Adds nothing to what happens anyway."""
-        return self.level == base_level(self.kind) and not self.action.get("redact_with")
+    def mode_enum(self) -> EntityMode:
+        return _mode(self.mode)
+
+    @property
+    def blocks_all(self) -> bool:
+        return self.kind == KIND_CONTENT and self.mode_enum is EntityMode.BLOCK
+
+    @property
+    def hides_text(self) -> bool:
+        """Whether the rule's policies hide or block anything (mode or an override)."""
+        if not self.policies:
+            return False
+        if hides(self.mode_enum):
+            return True
+        return any(hides(_mode(m)) for m in self.overrides.values())
+
+    @property
+    def records_only(self) -> bool:
+        return (
+            not self.hides_text
+            and bool(self.policies)
+            and (
+                self.mode_enum is EntityMode.DETECT_ONLY
+                or any(_mode(m) is EntityMode.DETECT_ONLY for m in self.overrides.values())
+            )
+        )
+
+    @property
+    def effective_conditions(self) -> tuple[Condition, ...]:
+        if self.conditions or self.kind == KIND_EXTRACT:
+            return self.conditions
+        return (IMPLICIT_FINDS,)
 
     @property
     def protective(self) -> bool:
-        """Whether the action protects (so it must not be skipped for want of a fact)."""
-        return not self.is_noop
+        """Whether the rule protects (so it must not be skipped for want of a fact)."""
+        if self.kind == KIND_EXTRACT:
+            return self.level != "default" or self.hides_text
+        return self.hides_text
+
+    @property
+    def is_noop(self) -> bool:
+        return not self.protective
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,19 +195,16 @@ class Issue:
 
     code: str
     message: str
-    #: The other rule involved, for shadowing.
     rule_id: uuid.UUID | None = None
     rule_name: str | None = None
 
 
 @dataclass(slots=True)
 class ContentInfo:
-    """What the checks need to know about a policy or a classifier a condition names."""
+    """What the checks need to know about a policy or a classifier a rule names."""
 
     name: str
-    #: Whether what it needs is there now (the NER engine; the model).
     available: bool = True
-    #: Why not, in words an administrator can act on.
     why: str = ""
 
 
@@ -163,10 +212,7 @@ class ContentInfo:
 class CheckContext:
     """Facts about the deployment the checks consult. All optional."""
 
-    #: Policies and classifiers by id.
     content: Mapping[str, ContentInfo] = field(default_factory=dict)
-    #: Names of readers (OCR models) this deployment cannot run now, for example the
-    #: ``docling`` model when the extractor image has no Docling.
     unavailable_readers: Sequence[str] = ()
 
 
@@ -191,14 +237,18 @@ def condition_to_json(condition: Condition) -> dict[str, Any]:
 
 
 def rule_to_json(rule: Rule) -> dict[str, Any]:
-    out = {
+    out: dict[str, Any] = {
         "id": str(rule.id),
         "name": rule.name,
         "enabled": rule.enabled,
-        "observe_only": rule.observe_only,
+        "policies": list(rule.policies),
+        "match": rule.match,
         "conditions": [condition_to_json(c) for c in rule.conditions],
-        "action": dict(rule.action),
+        "mode": rule.mode,
+        "overrides": dict(rule.overrides),
     }
+    if rule.kind == KIND_EXTRACT:
+        out["action"] = dict(rule.action)
     if rule.note:
         out["note"] = rule.note
     return out
@@ -211,17 +261,31 @@ def rule_from_json(kind: str, position: int, raw: Mapping[str, Any]) -> Rule:
             condition.get("values", []), list
         ):
             raise ValueError("a condition has no known key or values")
-    action = dict(raw.get("action") or {})
-    if action.get("level") not in LADDER[kind]:
-        raise ValueError("the rule has no action")
+    mode = str(raw.get("mode") or "off")
+    if mode not in MODES:
+        raise ValueError("the rule has no valid mode")
+    action: dict[str, Any] = {}
+    if kind == KIND_EXTRACT:
+        action = dict(raw.get("action") or {"level": "default"})
+        if action.get("level") not in EXTRACT_LEVELS:
+            raise ValueError("the rule has no action")
+    match = str(raw.get("match") or "all")
+    if match not in MATCHES:
+        raise ValueError("match is all or any")
+    overrides = {str(k): str(v) for k, v in dict(raw.get("overrides") or {}).items()}
+    if any(v not in MODES for v in overrides.values()):
+        raise ValueError("an override has no valid mode")
     return Rule(
         id=uuid.UUID(str(raw["id"])),
         kind=kind,
         name=str(raw.get("name") or ""),
         enabled=bool(raw.get("enabled", True)),
-        observe_only=bool(raw.get("observe_only", False)),
         position=position,
+        policies=tuple(str(p) for p in raw.get("policies") or ()),
+        match=match,
         conditions=tuple(condition_from_json(c) for c in raw.get("conditions") or []),
+        mode=mode,
+        overrides=overrides,
         action=action,
         note=(str(raw["note"]) if raw.get("note") else None),
     )
@@ -337,30 +401,26 @@ def glob_matches(glob: str, name: str) -> bool:
 
 def clean_action(
     kind: str,
-    action: Mapping[str, Any],
+    action: Mapping[str, Any] | None,
     *,
-    policy_ids: Collection[str] | None = None,
     readers: Collection[str] | None = None,
     user: bool = False,
-    otherwise: bool = False,
 ) -> dict[str, Any]:
-    """The clean action of a rule, or :class:`RuleError`.
-
-    ``policy_ids`` and ``readers`` are what may be named (``None``: not checked).
-    For a user (``user=True``) only actions that tighten are accepted: read with a
-    reader, refuse, redact with a policy. A user's rule that adds
-    nothing is refused, except the fixed last rule (``otherwise``), which may.
-    """
-    ladder = LADDER[kind]
-    level = str(action.get("level") or "")
-    if level not in ladder:
-        raise RuleError(f"Choose where it is handled: {', '.join(ladder)}.")
-    unknown = set(action) - {"level", "reader", "redact_with"}
+    """An extract rule's action, clean, or :class:`RuleError`; empty for content rules."""
+    if kind != KIND_EXTRACT:
+        if action:
+            raise RuleError("Only an extract rule has an action; a content rule has a mode.")
+        return {}
+    action = dict(action or {"level": "default"})
+    level = str(action.get("level") or "default")
+    if level not in EXTRACT_LEVELS:
+        raise RuleError(f"Choose what happens to the file: {', '.join(EXTRACT_LEVELS)}.")
+    unknown = set(action) - {"level", "reader"}
     if unknown:
         raise RuleError(f"The action does not take: {', '.join(sorted(unknown))}.")
     clean: dict[str, Any] = {"level": level}
     reader = action.get("reader")
-    if level == LEVEL_READ_WITH:
+    if level == LEVEL_EXTRACT_WITH:
         reader = str(reader or DEFAULT_READER)
         if readers is not None and reader not in readers:
             raise RuleError(
@@ -371,55 +431,55 @@ def clean_action(
         clean["reader"] = reader
     elif reader:
         raise RuleError("A reader goes with 'read with'.")
-    policy = action.get("redact_with")
-    if policy:
-        if level == LEVEL_REFUSE:
-            raise RuleError("A refused request is not handled further, so no policy applies.")
-        if policy_ids is not None and str(policy) not in policy_ids:
-            raise RuleError("The policy chosen for 'redact with' does not exist.")
-        clean["redact_with"] = str(policy)
-    if user and not otherwise and level == base_level(kind) and not clean.get("redact_with"):
-        raise RuleError(
-            "A rule of yours has to add protection: read with a reader, refuse, or redact with a "
-            "policy."
-        )
     return clean
 
 
+def clean_overrides(raw: Any) -> dict[str, str]:
+    """Per entity type modes: ``{TYPE: mode}``, types in the one alphabet placeholders use."""
+    if raw in (None, {}):
+        return {}
+    if not isinstance(raw, Mapping):
+        raise RuleError("Overrides are a mapping of entity type to mode.")
+    if len(raw) > MAX_OVERRIDES:
+        raise RuleError(f"A rule has at most {MAX_OVERRIDES} overrides.")
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        try:
+            name = user_rules.clean_label(str(key))
+        except ValueError as exc:
+            raise RuleError(f"An override names no entity type: {exc}") from exc
+        mode = str(value)
+        if mode not in MODES:
+            raise RuleError(f"'{mode}' is not a mode. Use: {', '.join(MODES)}.")
+        out[name] = mode
+    return out
+
+
 def _content_value(
-    key: str,
-    raw: Iterable[Any],
-    *,
-    finds_policy_ids: Collection[str] | None,
-    classifier_ids: Collection[str] | None,
-    user: bool,
+    key: str, raw: Iterable[Any], *, classifier_ids: Collection[str] | None, user: bool
 ) -> list[str]:
-    """The one id a ``finds`` or ``classified`` condition names, if it may be named."""
     items = [str(v) for v in raw]
-    if len(items) != 1:
-        raise RuleError(f"'{key}' names one {'policy' if key == 'finds' else 'classifier'}.")
-    value = items[0]
-    if key == "classified":
-        if user:
+    if key == "finds":
+        if items:
             raise RuleError(
-                "'classified as' sends the text to a model provider, so only administrators use it."
+                "'finds at least' counts what the rule's own policies find: it names none."
             )
-        if classifier_ids is not None and value not in classifier_ids:
-            raise RuleError("The classifier chosen for 'classified as' does not exist.")
-    elif finds_policy_ids is not None and value not in finds_policy_ids:
+        return []
+    if len(items) != 1:
+        raise RuleError("'classified' names one classifier.")
+    if user:
         raise RuleError(
-            "The policy chosen for 'finds at least' is not one you can use."
-            if user
-            else "The policy chosen for 'finds at least' does not exist."
+            "'classified as' sends the text to a model provider, so only administrators use it."
         )
-    return [value]
+    if classifier_ids is not None and items[0] not in classifier_ids:
+        raise RuleError("The classifier chosen for 'classified as' does not exist.")
+    return items
 
 
 def validate_rule(
     kind: str,
     raw: Mapping[str, Any],
     *,
-    finds_policy_ids: Collection[str] | None = None,
     classifier_ids: Collection[str] | None = None,
     policy_ids: Collection[str] | None = None,
     readers: Collection[str] | None = None,
@@ -427,22 +487,49 @@ def validate_rule(
 ) -> dict[str, Any]:
     """A rule as clean JSON (with an id), or :class:`RuleError`.
 
-    ``finds_policy_ids`` are the policies a "finds" condition may name (for a user:
-    the administrators' shared ones and their own), ``classifier_ids`` the
-    classifiers. ``None`` means not checked.
+    ``policy_ids`` are the policies the rule may name (for a user: the administrators'
+    shared ones and their own), ``classifier_ids`` the classifiers. ``None``: not checked.
     """
     if kind not in KINDS:
-        raise RuleError("Choose what the pipeline is for: reading, embedding or chat.")
+        raise RuleError("Choose what the pipeline is for: extract or content.")
     name = str(raw.get("name") or "").strip()
     if not name:
         raise RuleError("Give every rule a name.")
     if len(name) > _MAX_NAME:
         raise RuleError(f"A rule name is longer than {_MAX_NAME} characters.")
+    policies: list[str] = []
+    for item in raw.get("policies") or ():
+        value = str(item)
+        if policy_ids is not None and value not in policy_ids:
+            raise RuleError(
+                "A policy of this rule is not one you can use."
+                if user
+                else "A policy of this rule does not exist."
+            )
+        if value not in policies:
+            policies.append(value)
+    if kind == KIND_CONTENT and not policies:
+        raise RuleError("A rule needs at least one policy: it is what the rule looks for.")
+    mode = str(raw.get("mode") or ("off" if kind == KIND_EXTRACT else ""))
+    if kind == KIND_CONTENT and not mode:
+        raise RuleError(f"Choose what the rule does: {', '.join(MODES)}.")
+    if mode not in MODES:
+        raise RuleError(f"'{mode}' is not a mode. Use: {', '.join(MODES)}.")
+    if kind == KIND_EXTRACT and mode == "block":
+        raise RuleError("An extract rule blocks with its action; its mode is how it hides.")
+    overrides = clean_overrides(raw.get("overrides"))
+    if kind == KIND_EXTRACT and "block" in overrides.values():
+        raise RuleError("An extract rule blocks with its action; an override cannot block.")
+    if (overrides or mode != "off") and not policies:
+        raise RuleError("A mode needs a policy to hide with.")
+    match = str(raw.get("match") or "all")
+    if match not in MATCHES:
+        raise RuleError("'match' is all or any.")
     seen: set[tuple[str, str]] = set()
     conditions: list[dict[str, Any]] = []
     for item in raw.get("conditions") or []:
         key = str(item.get("key") or "")
-        if kind == KIND_READ and key in CONTENT_KEYS:
+        if kind == KIND_EXTRACT and key in CONTENT_KEYS:
             raise ContentOnReadError(CONTENT_ON_READ)
         if key not in CONDITION_KEYS[kind]:
             allowed = ", ".join(CONDITION_KEYS[kind])
@@ -455,20 +542,16 @@ def validate_rule(
             values: list[str] = []
         elif key in CONTENT_KEYS:
             values = _content_value(
-                key,
-                item.get("values") or (),
-                finds_policy_ids=finds_policy_ids,
-                classifier_ids=classifier_ids,
-                user=user,
+                key, item.get("values") or (), classifier_ids=classifier_ids, user=user
             )
         else:
             values = [_validate_value(key, v) for v in _clean_values(key, item.get("values") or ())]
-        seen_key = (key, values[0] if key in CONTENT_KEYS else "")
+        seen_key = (key, values[0] if key == "classified" else "")
         if seen_key in seen:
             raise RuleError(
                 f"'{key}' is used twice; put the values in one condition."
                 if key not in CONTENT_KEYS
-                else f"The same {'policy' if key == 'finds' else 'classifier'} is used twice."
+                else "The same condition is used twice."
             )
         seen.add(seen_key)
         condition: dict[str, Any] = {
@@ -487,6 +570,8 @@ def validate_rule(
         elif item.get("count") not in (None, 1):
             raise RuleError(f"'{key}' takes no count.")
         conditions.append(condition)
+    if any(c["key"] == "finds" for c in conditions) and not policies:
+        raise RuleError("'finds at least' needs the rule to have a policy.")
     rule_id = raw.get("id")
     try:
         ident = str(uuid.UUID(str(rule_id))) if rule_id else str(uuid.uuid4())
@@ -497,12 +582,16 @@ def validate_rule(
         "id": ident,
         "name": name,
         "enabled": enabled,
-        "observe_only": bool(raw.get("observe_only", False)),
+        "policies": policies,
+        "match": match,
         "conditions": conditions,
-        "action": clean_action(
-            kind, raw.get("action") or {}, policy_ids=policy_ids, readers=readers, user=user
-        ),
+        "mode": mode,
+        "overrides": overrides,
     }
+    if kind == KIND_EXTRACT:
+        out["action"] = clean_action(kind, raw.get("action"), readers=readers, user=user)
+    elif raw.get("action"):
+        raise RuleError("Only an extract rule has an action; a content rule has a mode.")
     # A warning is read, not kept: once the rule is turned on, the note is gone.
     note = str(raw.get("note") or "").strip()[:500]
     if note and not enabled:
@@ -513,123 +602,20 @@ def validate_rule(
 # -- save-time checks --------------------------------------------------------------
 
 
-def _implied_by(rule_c: Condition, earlier_c: Condition) -> bool:
-    """Whether every request satisfying *rule_c* also satisfies *earlier_c*.
-
-    Conservative: ``False`` whenever unsure, because the result is shown as
-    "never fires", and a false claim there would send an administrator to delete
-    a rule that works.
-    """
-    if rule_c.key != earlier_c.key or rule_c.negate != earlier_c.negate:
-        return False
-    if rule_c.key in BOOL_KEYS:
-        return True
-    if rule_c.key == "finds":
-        # At least N of the same policy: more required implies fewer; for "not at
-        # least N", fewer required implies more.
-        if rule_c.values != earlier_c.values:
-            return False
-        return rule_c.count <= earlier_c.count if rule_c.negate else rule_c.count >= earlier_c.count
-    mine, theirs = set(rule_c.values), set(earlier_c.values)
-    if rule_c.key == "filename":
-        if "*" in theirs:
-            return not rule_c.negate
-        mine_l, theirs_l = {v.lower() for v in mine}, {v.lower() for v in theirs}
-        subset = mine_l <= theirs_l
-    else:
-        subset = mine <= theirs
-    # not-in-V: a smaller excluded set is the wider condition.
-    return (theirs <= mine) if rule_c.negate else subset
-
-
-def _overlaps(rule_c: Condition, earlier_c: Condition) -> bool:
-    return (
-        rule_c.key == earlier_c.key
-        and rule_c.key != "finds"
-        and not rule_c.negate
-        and not earlier_c.negate
-        and bool(set(rule_c.values) & set(earlier_c.values))
-    )
-
-
-def covers(earlier: Rule, rule: Rule) -> bool:
-    """Whether *earlier* catches everything *rule* would (so *rule* never fires)."""
-    # No conditions on *earlier* means it matches every request: all([]) is True.
-    return all(any(_implied_by(rc, ec) for rc in rule.conditions) for ec in earlier.conditions)
-
-
-def partly_covers(earlier: Rule, rule: Rule) -> bool:
-    """Whether *earlier* certainly catches some, but not all, of what *rule* would."""
-    if covers(earlier, rule):
-        return False
-    overlapping = False
-    for ec in earlier.conditions:
-        if any(_implied_by(rc, ec) for rc in rule.conditions):
-            continue
-        if any(_overlaps(rc, ec) for rc in rule.conditions):
-            overlapping = True
-            continue
-        return False
-    return overlapping
-
-
-def shadowing(rules: Sequence[Rule]) -> dict[uuid.UUID, tuple[str, Rule]]:
-    """For each rule in order: ``("never"|"partly", the earlier rule)``.
-
-    Only enabled, non-observe-only rules shadow: an observe-only rule takes no
-    action and lets the search continue, so it never hides a later one.
-    """
-    found: dict[uuid.UUID, tuple[str, Rule]] = {}
-    consuming: list[Rule] = []
-    for rule in rules:
-        if rule.enabled:
-            for earlier in consuming:
-                if covers(earlier, rule):
-                    found[rule.id] = ("never", earlier)
-                    break
-                if rule.id not in found and partly_covers(earlier, rule):
-                    found[rule.id] = ("partly", earlier)
-            if not rule.observe_only:
-                consuming.append(rule)
-    return found
-
-
 def check(
-    rules: Sequence[Rule], otherwise: Rule | None = None, context: CheckContext | None = None
+    rules: Sequence[Rule], context: CheckContext | None = None
 ) -> dict[uuid.UUID, list[Issue]]:
-    """Warnings for each rule of ONE pipeline, by id (the last rule included)."""
+    """Warnings for each rule of ONE pipeline, by id."""
     ctx = context or CheckContext()
     ordered = sorted(rules, key=lambda r: r.position)
-    everything = [*ordered, *([otherwise] if otherwise is not None else [])]
-    issues: dict[uuid.UUID, list[Issue]] = {r.id: [] for r in everything}
-    for rule_id, (how, earlier) in shadowing(ordered).items():
-        issues[rule_id].append(
-            Issue(
-                "never_fires" if how == "never" else "partly_shadowed",
-                (
-                    f"'{earlier.name}' above already catches everything this rule does."
-                    if how == "never"
-                    else f"'{earlier.name}' above catches some of what this rule does."
-                ),
-                rule_id=earlier.id,
-                rule_name=earlier.name,
-            )
-        )
-    for rule in everything:
+    issues: dict[uuid.UUID, list[Issue]] = {r.id: [] for r in ordered}
+    for rule in ordered:
         out = issues[rule.id]
-        is_otherwise = rule is otherwise
-        if not rule.conditions and not is_otherwise:
-            out.append(
-                Issue("catches_all", "This rule has no conditions, so it matches every request.")
-            )
         keys = {c.key for c in rule.conditions}
-        live = rule.enabled and not rule.observe_only
         if (
-            rule.kind == KIND_READ
-            and live
-            and rule.protective
-            and rule.level in (LEVEL_REFUSE, LEVEL_READ_WITH)
-            and not is_otherwise
+            rule.kind == KIND_EXTRACT
+            and rule.enabled
+            and rule.level in (LEVEL_BLOCK, LEVEL_EXTRACT_WITH)
             and keys
             and keys <= {"filename", "filetype"}
         ):
@@ -637,11 +623,11 @@ def check(
                 Issue(
                     "convenience_only",
                     "A renamed file will not be caught. To protect content wherever it comes "
-                    "from, add embed and chat pipelines with a 'finds at least' condition.",
+                    "from, add content pipelines with a 'finds at least' condition.",
                 )
             )
         if (
-            rule.level == LEVEL_READ_WITH
+            rule.level == LEVEL_EXTRACT_WITH
             and str(rule.action.get("reader") or DEFAULT_READER) in ctx.unavailable_readers
         ):
             out.append(
@@ -652,7 +638,7 @@ def check(
                     "sends there is refused.",
                 )
             )
-        if rule.kind == KIND_READ and live and keys & {"filetype", "filename"}:
+        if rule.kind == KIND_EXTRACT and rule.enabled and keys & {"filetype", "filename"}:
             out.append(
                 Issue(
                     "unnamed_matches",
@@ -660,16 +646,14 @@ def check(
                     "no name sent) is treated as matching, so this rule applies to it.",
                 )
             )
-        for condition in rule.conditions:
-            if condition.key not in CONTENT_KEYS:
-                continue
-            info = ctx.content.get(condition.values[0]) if condition.values else None
+        for pid in rule.policies:
+            info = ctx.content.get(pid)
             if info is None:
                 out.append(
                     Issue(
                         "unavailable_now",
-                        "The policy or classifier this condition names no longer exists; "
-                        "the request is refused when the rule cannot be decided.",
+                        "A policy this rule names no longer exists; the request is refused "
+                        "when the rule cannot be applied.",
                     )
                 )
             elif not info.available:
@@ -681,6 +665,24 @@ def check(
                         "(503).",
                     )
                 )
+        for condition in rule.conditions:
+            if condition.key == "classified":
+                info = ctx.content.get(condition.values[0]) if condition.values else None
+                if info is None:
+                    out.append(
+                        Issue(
+                            "unavailable_now",
+                            "The classifier this condition names no longer exists; the request "
+                            "is refused when the rule cannot be decided.",
+                        )
+                    )
+                elif not info.available:
+                    out.append(
+                        Issue(
+                            "unavailable_now",
+                            f"{info.name} cannot be used now ({info.why or 'unavailable'}).",
+                        )
+                    )
         if rule.note:
             out.append(Issue("migrated", rule.note))
     if len(ordered) > SOFT_CAP:
@@ -696,7 +698,7 @@ def check(
 
 
 #: Warning codes that mean "look at this" without being a status of their own.
-BADGE_CODES = ("never_fires", "partly_shadowed")
+BADGE_CODES: tuple[str, ...] = ()
 
 
 def filetype_of(mime: str | None, filename: str | None) -> str | None:

@@ -223,17 +223,15 @@ def users_of_detectors(
     engine exposes uses that engine (the default one first), any other type entry uses the
     patterns, and a pattern entry of theirs uses nothing the console switches.
     """
-    from gateway.config import EntityMode, RedactionPolicy
+    from gateway.config import PolicyDefinition
 
     used: dict[str, list[str]] = {"patterns": [], "spacy": [], "gliner": []}
     for name, raw in policies:
-        policy = RedactionPolicy.model_validate(raw or {})
-        if any(item.mode is not EntityMode.OFF for item in policy.formats.values()):
+        policy = PolicyDefinition.from_stored(raw or {})
+        if policy.formats:
             used["patterns"].append(name)
         engine = policy.engine or default_engine
-        reads = any(item.mode is not EntityMode.OFF for item in policy.entities.values()) or any(
-            c.mode is not EntityMode.OFF for c in policy.custom_entities
-        )
+        reads = bool(policy.entities) or bool(policy.custom_entities)
         if reads and engine in ("spacy", "gliner"):
             used[engine].append(name)
     types = engine_types or {}

@@ -424,7 +424,7 @@ async def extract_document(
     privacy = state_of(request)
     privacy.ensure_loaded()
     facts = attribution.base_facts(
-        "read",
+        "extract",
         principal,
         model,
         requested_name=resolved.requested_name,
@@ -469,7 +469,7 @@ async def extract_document(
         return Retarget(
             replace(
                 attribution.base_facts(
-                    "read",
+                    "extract",
                     principal,
                     moved.model,
                     requested_name=moved.requested_name,
@@ -481,7 +481,7 @@ async def extract_document(
             )
         )
 
-    pipelines = privacy.pipelines_of("read")
+    pipelines = privacy.pipelines_of("extract")
     combined = await plan(privacy.evaluator, pipelines, facts, retarget=retarget)
     probe: Any = None
     if combined.pending:
@@ -577,7 +577,7 @@ async def extract_document(
     if rerouted:
         facts = replace(
             attribution.base_facts(
-                "read", principal, model, requested_name=resolved.requested_name
+                "extract", principal, model, requested_name=resolved.requested_name
             ),
             filename=name,
             mime=mime,
@@ -617,7 +617,7 @@ async def extract_document(
         assert inline is not None  # refused above; narrows the type
         data, media_type = inline
 
-        async def read_with(reader: str | None) -> Any:
+        async def extract_with(reader: str | None) -> Any:
             return await extraction.extract_document(
                 control_http,
                 _extractor_endpoint(model, settings),
@@ -646,7 +646,7 @@ async def extract_document(
                 # (unless the caller wants page images, which the probe did not ask for).
                 outcome = probe
             else:
-                outcome = await read_with(engine)
+                outcome = await extract_with(engine)
             facts = replace(facts, is_scan=_scan_of(outcome))
         except extraction.ExtractionTimeout as exc:
             raise await metered.upstream_unreachable(
