@@ -89,6 +89,7 @@ function DetectorCard({
   hint,
   enabled,
   installed,
+  reachable,
   usedBy,
   pending,
   onToggle,
@@ -99,11 +100,23 @@ function DetectorCard({
   hint: string;
   enabled: boolean;
   installed: boolean;
+  /** False when the redaction service did not answer: nothing can be said to run. */
+  reachable: boolean;
   usedBy: string[];
   pending: boolean;
   onToggle: (next: boolean) => void;
   children?: React.ReactNode;
 }) {
+  // A detector that cannot run never shows On, whatever is stored: the stored switch is left
+  // alone and shows again once the engine is installed and the service answers.
+  const runnable = installed && reachable;
+  const shown = enabled && runnable;
+  // The reason a disabled switch is disabled: the badge and install hint, or the unreachable notice.
+  const reason = !reachable
+    ? "detectors-unreachable"
+    : !installed
+      ? `detector-${which}-badge detector-${which}-how`
+      : undefined;
   return (
     <Card>
       <div className="flex flex-col gap-3" data-testid={`detector-${which}`}>
@@ -111,32 +124,37 @@ function DetectorCard({
           <div className="min-w-0">
             <h3 className="m-0 flex flex-wrap items-center gap-2 text-body font-semibold">
               {title}
-              {!installed && <Badge tone="warn">{m["detectors.not_installed"]()}</Badge>}
+              {reachable && !installed && (
+                <span id={`detector-${which}-badge`}>
+                  <Badge tone="warn">{m["detectors.not_installed"]()}</Badge>
+                </span>
+              )}
             </h3>
             <p className={`m-0 text-small ${MUTED}`}>{hint}</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <span aria-hidden className={`text-body ${MUTED}`}>
-              {enabled ? m["detectors.on"]() : m["detectors.off"]()}
+              {shown ? m["detectors.on"]() : m["detectors.off"]()}
             </span>
             <button
               type="button"
               role="switch"
-              aria-checked={enabled}
+              aria-checked={shown}
               aria-label={m["detectors.switch"]({ name: title })}
-              disabled={pending || !installed}
+              aria-describedby={reason}
+              disabled={pending || !runnable}
               onClick={() => onToggle(!enabled)}
-              data-checked={enabled}
+              data-checked={shown}
               className="relative h-9 w-16 shrink-0 cursor-pointer rounded-full border border-line-strong bg-sunken transition-colors data-[checked=true]:border-accent data-[checked=true]:bg-accent disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:shadow-focus"
             >
               <span
                 aria-hidden
-                className={`absolute top-1 left-1 size-7 rounded-full border border-line-strong bg-surface transition-transform ${enabled ? "translate-x-7" : "translate-x-0"}`}
+                className={`absolute top-1 left-1 size-7 rounded-full border border-line-strong bg-surface transition-transform ${shown ? "translate-x-7" : "translate-x-0"}`}
               />
             </button>
           </div>
         </div>
-        {installed && (
+        {runnable && (
           <p className={`m-0 text-small ${MUTED}`}>
             {usedBy.length > 0
               ? `${m["detectors.used_by"]({ count: usedBy.length })}: ${usedBy.join(", ")}`
@@ -168,9 +186,9 @@ function NerDetails({ engine }: { engine: PrivacyEngine }) {
   );
 }
 
-function NotInstalled({ how }: { how: string }) {
+function NotInstalled({ how, id }: { how: string; id: string }) {
   return (
-    <p className={`m-0 text-small ${MUTED}`}>
+    <p id={id} className={`m-0 text-small ${MUTED}`}>
       {how}{" "}
       <a href={DOCS_URL} target="_blank" rel="noreferrer" className="underline">
         {m["detectors.docs"]()}
@@ -224,10 +242,12 @@ export function DetectorCards({
   return (
     <div className="flex flex-col gap-4">
       {!engines.reachable && (
-        <Notice tone="warn" title={m["detectors.unreachable"]()}>
-          {/* i18n: server text, the redaction service's own reason. */}
-          {engines.detail}
-        </Notice>
+        <div id="detectors-unreachable">
+          <Notice tone="warn" title={m["detectors.unreachable"]()}>
+            {/* i18n: server text, the redaction service's own reason. */}
+            {engines.detail}
+          </Notice>
+        </div>
       )}
       {setEngine.error ? (
         <Notice tone="danger" title={m["detectors.failed"]()}>
@@ -243,6 +263,7 @@ export function DetectorCards({
         hint={m["detectors.patterns.hint"]()}
         enabled={now.patterns}
         installed={(engines.pattern_entities ?? []).length > 0 || !engines.reachable}
+        reachable={engines.reachable}
         usedBy={engines.patterns_used_by ?? []}
         pending={setEngine.isPending}
         onToggle={(next) => toggle("patterns", next)}
@@ -273,11 +294,12 @@ export function DetectorCards({
             hint={hint}
             enabled={now[which]}
             installed={installed}
+            reachable={engines.reachable}
             usedBy={engine?.used_by ?? []}
             pending={setEngine.isPending}
             onToggle={(next) => toggle(which, next)}
           >
-            {installed && engine ? <NerDetails engine={engine} /> : <NotInstalled how={how} />}
+            {installed && engine ? <NerDetails engine={engine} /> : <NotInstalled how={how} id={`detector-${which}-how`} />}
           </DetectorCard>
         );
       })}
