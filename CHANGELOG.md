@@ -4,6 +4,10 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+## v0.32.1 — 2026-11-10
+
+Paired with Cerea 0.48.0.
+
 - **Detectors: a switch never shows On for a detector that cannot run.** On Admin, Privacy, Detectors, the spaCy and GLiNER cards showed On beside "Not installed". A detector that is not installed, or whose service did not answer, now shows Off and disabled, described by the badge and install hint (or the unreachable message); the stored preference is untouched and shows again once the engine is installed. Console only: the gateway already refuses a request whose policy needs an engine the service lacks.
 - **Saving an existing privacy pipeline works again.** The console sent the pipeline's `kind` on update, which the gateway refused ("kind: Extra inputs are not permitted"). The editor now sends `kind` only on create, and the gateway accepts a `kind` equal to the stored one (ignored) and answers 400 `pipeline_kind_immutable` ("A pipeline's kind cannot be changed; create a new pipeline.") for a different one, for administrator and user pipelines alike.
 
