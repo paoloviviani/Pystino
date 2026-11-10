@@ -76,6 +76,11 @@ class Facts:
     texts: tuple[str, ...] = field(default=(), repr=False)
     #: Counts items and asks classifiers (one per request). None: no content side.
     judge: Judge | None = field(default=None, repr=False, compare=False)
+    #: The request path: a content rule with no condition that does not block applies without
+    #: counting what its policies find. Redaction finds the same spans anyway, and counting them
+    #: first would ask the redaction service twice per request. The Test tab leaves it False so
+    #: its trace says exactly whether each rule found something.
+    lazy_implicit: bool = False
 
     @property
     def inputs(self) -> tuple[str, ...]:
@@ -250,6 +255,16 @@ class Evaluator:
         for rule in sorted(rules, key=lambda r: r.position):
             if not rule.enabled:
                 ev.steps.append(Step(rule, "skipped_off", ["The rule is off."]))
+                continue
+            if (
+                facts.lazy_implicit
+                and rule.kind == "content"
+                and not rule.conditions
+                and not rule.blocks_all
+            ):
+                note = "No condition: it applies wherever its policies find something."
+                ev.matched.append(rule)
+                ev.steps.append(Step(rule, "matched", [note]))
                 continue
             reasons: list[str] = []
             degraded: list[str] = []

@@ -4961,8 +4961,6 @@ export interface components {
         CustomEntityItem: {
             /** Label */
             label: string;
-            /** @default anonymise_restore */
-            mode?: components["schemas"]["EntityMode"];
             /** Name */
             name: string;
             /** @default tagged */
@@ -5866,8 +5864,6 @@ export interface components {
              * @default false
              */
             case_sensitive?: boolean;
-            /** @default redact */
-            mode?: components["schemas"]["EntityMode"];
             /** Name */
             name: string;
             /** @default tagged */
@@ -7045,8 +7041,6 @@ export interface components {
          *     since a regex is cheap and deterministic and would otherwise fragment the key.
          */
         PatternItem: {
-            /** @default redact */
-            mode?: components["schemas"]["EntityMode"];
             /** Name */
             name: string;
             /** @default tagged */

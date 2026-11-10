@@ -300,9 +300,15 @@ export const KINDS: PrivacyKind[] = ["extract", "content"];
 export function kindLabel(kind: string): string {
   switch (kind) {
     case "extract":
+    case "read":
       return m["privacy.kind.extract"]();
     case "content":
       return m["privacy.kind.content"]();
+    // Log entries keep the kind they were written with: embeddings and chat.
+    case "embed":
+      return m["privacy.kind.embed"]();
+    case "chat":
+      return m["privacy.kind.chat"]();
     default:
       return kind;
   }

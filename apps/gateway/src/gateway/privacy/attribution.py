@@ -88,6 +88,7 @@ def base_facts(
         model_id=str(model.id),
         texts=texts,
         judge=judge,
+        lazy_implicit=kind != "extract",
     )
 
 

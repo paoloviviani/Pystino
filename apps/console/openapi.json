@@ -2587,6 +2587,7 @@
         "type": "object"
       },
       "CustomEntityItem": {
+        "additionalProperties": false,
         "description": "An entity type the NER engine finds from a description (GLiNER) (ADR 0113, section 0c).\n\n``name`` is the entity label (UPPER_SNAKE) and ``label`` the natural-language\ndescription the model is given at inference (\"project code name\"). Only an\nengine that accepts labels (``custom_labels`` in the service's health) can use\none; a policy that names one with another engine is refused when saved.",
         "properties": {
           "label": {
@@ -2594,10 +2595,6 @@
             "minLength": 1,
             "title": "Label",
             "type": "string"
-          },
-          "mode": {
-            "$ref": "#/components/schemas/EntityMode",
-            "default": "anonymise_restore"
           },
           "name": {
             "maxLength": 64,
@@ -4846,16 +4843,13 @@
         "type": "object"
       },
       "KeywordItem": {
+        "additionalProperties": false,
         "description": "A comma-separated list of words and phrases, found as whole words (ADR 0113, section 0c).\n\nOne more pattern type, beside the built-in formats and the regular expressions\nan operator writes: fast, deterministic, evaluated in the gateway. ``name``\nbecomes the entity label exactly as a :class:`CustomPattern`'s does, so a hit is\nsubstituted, counted and logged by the machinery every other type uses.\n\nMatching is by whole words, on letters and digits; spacing and punctuation\nbetween the words of a phrase do not matter. Unless ``case_sensitive``, case is\nignored **and accents are folded** (\"Perche\" finds \"perché\"). It is linear in\nthe text (``gateway.redaction.keywords``): no regular expression is ever built\nfrom what an administrator typed.",
         "properties": {
           "case_sensitive": {
             "default": false,
             "title": "Case Sensitive",
             "type": "boolean"
-          },
-          "mode": {
-            "$ref": "#/components/schemas/EntityMode",
-            "default": "redact"
           },
           "name": {
             "maxLength": 64,
@@ -8116,12 +8110,9 @@
         "type": "object"
       },
       "PatternItem": {
+        "additionalProperties": false,
         "description": "A regex an operator wrote, treated as one more entity type.\n\n``name`` becomes the entity label, so a match is substituted, restored and\ncounted by exactly the machinery every other type uses — and shows up in the\nledger's entity count without a second concept.\n\nEvaluated in the gateway rather than sent to the detection service: no\ncontract change, works for any engine, and it keeps one deployment's regexes\nout of a service every deployment shares. Also outside the detection cache,\nsince a regex is cheap and deterministic and would otherwise fragment the key.",
         "properties": {
-          "mode": {
-            "$ref": "#/components/schemas/EntityMode",
-            "default": "redact"
-          },
           "name": {
             "maxLength": 64,
             "minLength": 1,

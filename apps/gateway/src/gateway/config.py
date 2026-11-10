@@ -683,12 +683,10 @@ class PatternItem(BaseModel):
     since a regex is cheap and deterministic and would otherwise fragment the key.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=64)
     regex: str = Field(min_length=1, max_length=512)
-    #: Defaults to the strongest substitution rather than to the gentlest: a
-    #: pattern somebody wrote by hand is a value they went out of their way to
-    #: name, and the gateway should not guess that they wanted it back.
-    mode: EntityMode = EntityMode.REDACT
     #: How the placeholder is written. See :class:`PlaceholderStyle`.
     placeholder: PlaceholderStyle = PlaceholderStyle.TAGGED
 
@@ -733,16 +731,18 @@ class PatternItem(BaseModel):
         return cleaned
 
 
-#: The NER engines a policy may choose (ADR 0113, section 0c). The redaction service
-#: says which of them it has installed; the console offers only those.
 class CustomPattern(PatternItem):
     """A pattern with a mode stamped on, as the request path holds it."""
 
     model_config = ConfigDict(extra="ignore")
 
+    #: Defaults to the strongest substitution rather than to the gentlest: a pattern somebody
+    #: wrote by hand is a value they went out of their way to name.
     mode: EntityMode = EntityMode.REDACT
 
 
+#: The NER engines a policy may choose (ADR 0113, section 0c). The redaction service
+#: says which of them it has installed; the console offers only those.
 NER_ENGINES = ("spacy", "gliner")
 NerEngine = Literal["spacy", "gliner"]
 
@@ -783,11 +783,11 @@ class KeywordItem(BaseModel):
     from what an administrator typed.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=64)
     words: list[str] = Field(min_length=1)
     case_sensitive: bool = False
-    #: Defaults like a custom pattern: the strongest substitution.
-    mode: EntityMode = EntityMode.REDACT
     placeholder: PlaceholderStyle = PlaceholderStyle.TAGGED
 
     @field_validator("words", mode="before")
@@ -843,13 +843,12 @@ class CustomEntityItem(BaseModel):
     one; a policy that names one with another engine is refused when saved.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=64)
     label: str = Field(min_length=1, max_length=80)
-    mode: EntityMode = EntityMode.ANONYMISE_RESTORE
     placeholder: PlaceholderStyle = PlaceholderStyle.TAGGED
     threshold: float | None = Field(default=None, ge=0.0, le=1.0)
-    #: As on :class:`EntityPolicy`: set by ``combine``, never stored or sent.
-    _or_default: bool = PrivateAttr(default=False)
 
     @field_validator("name")
     @classmethod

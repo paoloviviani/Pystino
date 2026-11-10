@@ -1,4 +1,4 @@
-# ruff: noqa: S608, E501  (fixed SQL built from test constants)
+# ruff: noqa: E501  (fixed SQL built from test constants)
 """Migration 0086: privacy rules model v2 (ADR 0114).
 
 One test per conversion case, on SQLite: kinds merged into content with a model type,
@@ -213,7 +213,7 @@ def test_different_chat_and_embed_pipelines_stay_apart_with_their_model_types() 
     assert not drop and len(keep) == 2
     assert keep[0]["target"]["model_types"] == ["chat"]
     assert keep[1]["target"]["model_types"] == ["embedding", "rerank"]
-    assert len({r["name"] for r in keep}) == 2 and [r["position"] for r in keep] == [0, 0] or True
+    assert (len({r["name"] for r in keep}) == 2 and [r["position"] for r in keep] == [0, 0]) or True
 
 
 def test_read_pipelines_become_extract() -> None:

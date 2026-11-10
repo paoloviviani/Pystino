@@ -315,7 +315,7 @@ def visibility(auth: dict[str, str]) -> None:
         json_body={
             "name": "live-check mine",
             "entries": [
-                {"kind": "pattern", "name": "live_project", "regex": "PRJ-[0-9]+", "mode": "redact"}
+                {"kind": "pattern", "name": "live_project", "regex": "PRJ-[0-9]+"}
             ],
         },
         method="POST",
@@ -327,7 +327,7 @@ def visibility(auth: dict[str, str]) -> None:
         f"{mine}/policies",
         json_body={
             "name": "live-check bad",
-            "entries": [{"kind": "pattern", "name": "bad", "regex": "(?=x)x", "mode": "redact"}],
+            "entries": [{"kind": "pattern", "name": "bad", "regex": "(?=x)x"}],
         },
         method="POST",
     )
@@ -336,12 +336,12 @@ def visibility(auth: dict[str, str]) -> None:
         session,
         f"{mine}/policies",
         json_body={
-            "name": "live-check off",
+            "name": "live-check mode",
             "entries": [{"kind": "mode", "name": "PERSON", "mode": "off"}],
         },
         method="POST",
     )
-    expect("a user policy cannot switch a type off", status in (400, 422), f"HTTP {status}")
+    expect("a policy entry carries no mode (ADR 0114)", status in (400, 422), f"HTTP {status}")
     if policy_id is None:
         return
     pipeline_id = None
@@ -350,10 +350,9 @@ def visibility(auth: dict[str, str]) -> None:
             session,
             f"{mine}/pipelines",
             json_body={
-                "kind": "chat",
+                "kind": "content",
                 "name": "live-check mine",
-                "rules": [],
-                "otherwise": {"level": "pass", "redact_with": policy_id},
+                "rules": [{"name": "hide mine", "policies": [policy_id], "mode": "redact"}],
             },
             method="POST",
         )
@@ -362,14 +361,14 @@ def visibility(auth: dict[str, str]) -> None:
         status, _, body = request(
             session,
             f"{mine}/test",
-            json_body={"kind": "chat", "text": "ticket PRJ-42"},
+            json_body={"kind": "content", "text": "ticket PRJ-42"},
             method="POST",
         )
         result = json.loads(body) if status == 200 else {}
         expect("the test box answers", status == 200, f"HTTP {status}: {body[:200]!r}")
         expect(
             "the test box says the user's policy redacts",
-            result.get("outcome") == "redact"
+            result.get("outcome") == "hide"
             and "live-check mine" in json.dumps(result.get("policies")),
             str(result)[:300],
         )
@@ -424,7 +423,7 @@ def install_admin_redaction(admin: Any, formats: tuple[str, ...] = ADMIN_FORMATS
         "/api/admin/privacy/policies",
         json_body={
             "name": ADMIN_POLICY,
-            "policy": {"formats": {name: {"mode": "anonymise_restore"} for name in formats}},
+            "policy": {"formats": {name: {} for name in formats}},
             "shared_with_users": True,
         },
         method="POST",
@@ -436,14 +435,13 @@ def install_admin_redaction(admin: Any, formats: tuple[str, ...] = ADMIN_FORMATS
         admin,
         "/api/admin/privacy/pipelines",
         json_body={
-            "kind": "chat",
+            "kind": "content",
             "name": ADMIN_POLICY,
-            "rules": [],
-            "otherwise": {"level": "pass", "redact_with": policy["id"]},
+            "rules": [{"name": ADMIN_POLICY, "policies": [policy["id"]], "mode": "anonymise_restore"}],
         },
         method="POST",
     )
-    expect("a chat pipeline on everything applies it", status == 201, f"HTTP {status}: {pipe}")
+    expect("a content pipeline on everything applies it", status == 201, f"HTTP {status}: {pipe}")
     return status == 201
 
 

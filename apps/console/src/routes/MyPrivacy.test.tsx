@@ -8,29 +8,31 @@ import { MyPrivacy, MyPrivacyTest } from "./MyPrivacy";
 
 /** A user's own pipelines and policies, under what the administrator already set (read only). */
 
-const rule = (id: string, name: string, level: string, key = "finds") => ({
+const rule = (id: string, name: string, mode: string) => ({
   id,
   name,
   enabled: true,
-  observe_only: false,
-  conditions: [{ key, values: ["pol1"], negate: false, count: 1 }],
+  policies: ["pol1"],
+  match: "all",
+  conditions: [],
+  mode,
+  overrides: {},
   note: null,
-  action: { level, reader: null, redact_with: null },
+  action: null,
   issues: [],
 });
 
-function pipeline(id: string, name: string, owner: string | null, level: string) {
+function pipeline(id: string, name: string, owner: string | null, mode: string) {
   return {
     id,
     owner_id: owner,
-    kind: "embed",
+    kind: "content",
     name,
     enabled: true,
     position: 0,
     who: owner ? { mode: "users", ids: [owner] } : { mode: "all", ids: [] },
-    target: { mode: "all", providers: [], models: [] },
-    rules: [rule(`r-${id}`, "Names found", level)],
-    otherwise: { ...rule(`o-${id}`, "Everything else", "pass"), conditions: [] },
+    target: { mode: "all", providers: [], models: [], model_types: [] },
+    rules: [rule(`r-${id}`, "Names found", mode)],
     labels: {},
     summary: [],
     created_at: "2026-11-08T10:00:00Z",
@@ -56,16 +58,16 @@ function render_(
       const method = init?.method ?? "GET";
       seen.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
       if (url.includes("/in-force"))
-        return jsonResponse({ items: [pipeline("a1", "Remote embeddings", null, "refuse")], total: 1, limit: 200, offset: 0 });
+        return jsonResponse({ items: [pipeline("a1", "Remote embeddings", null, "block")], total: 1, limit: 200, offset: 0 });
       if (url.includes("/api/me/privacy/pipelines?"))
-        return jsonResponse({ items: [pipeline("m1", "My names rule", "me", "refuse")], total: 1, limit: 200, offset: 0 });
+        return jsonResponse({ items: [pipeline("m1", "My names rule", "me", "block")], total: 1, limit: 200, offset: 0 });
       if (url.includes("/policies") && method === "GET")
         return jsonResponse({
           items: [
             {
               id: "pol1",
               name: "My names",
-              entries: [{ kind: "mode", name: "PERSON", regex: null, mode: "redact" }],
+              entries: [{ kind: "mode", name: "PERSON", regex: null }],
               used_by: [],
               created_at: "",
               updated_at: "",
@@ -135,14 +137,13 @@ describe("My privacy pipelines", () => {
     const types = within(dialog).getByLabelText("Kind of value") as HTMLSelectElement;
     expect([...types.options].map((o) => o.value)).toEqual(["", "PERSON", "IBAN_CODE"]);
     await user.selectOptions(types, "IBAN_CODE");
-    // There is no "off" to pick: a rule of theirs can only add protection.
-    const modes = within(dialog).getByLabelText("What happens to it") as HTMLSelectElement;
-    expect([...modes.options].map((o) => o.value)).toEqual(["anonymise_restore", "anonymise", "redact", "block"]);
+    // A policy only says what to look for: what happens to it is the pipeline rule's.
+    expect(within(dialog).queryByLabelText("What happens to it")).toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "Save policy" }));
     await waitFor(() => expect(seen.some((c) => c.method === "POST" && c.url.endsWith("/policies"))).toBe(true));
     expect(seen.find((c) => c.method === "POST" && c.url.endsWith("/policies"))?.body).toEqual({
       name: "Mine",
-      entries: [{ kind: "mode", name: "IBAN_CODE", mode: "redact", regex: null }],
+      entries: [{ kind: "mode", name: "IBAN_CODE", regex: null }],
     });
   });
 
