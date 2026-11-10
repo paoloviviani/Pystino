@@ -624,7 +624,12 @@ class TestAdminApi:
         down = (
             await client.post(
                 "/api/admin/privacy/policies/try",
-                json={"policy": policy.model_dump(mode="json"), "text": TEXT + " Again."},
+                json={
+                    "policy": PolicyDefinition.from_stored(
+                        policy.model_dump(mode="json")
+                    ).model_dump(mode="json"),
+                    "text": TEXT + " Again.",
+                },
             )
         ).json()
         assert down["unavailable"] and "gliner" in down["unavailable"]
