@@ -8,6 +8,12 @@ It runs the real gateway (ASGI, SQLite ledger, the translation seam) against
 api.anthropic.com, with a handful of small requests on Haiku 5.5 and one
 tool loop on Sonnet 5.5. Set ``ANTHROPIC_LIVE_MODEL`` / ``ANTHROPIC_LIVE_THINKING_MODEL``
 to use others. It prints what it observed; the key is never printed.
+
+``test_5`` is the one to run for prompt caching across a tool loop (buffered and
+streamed)::
+
+    ANTHROPIC_API_KEY=sk-ant-... uv run pytest apps/gateway/tests/test_anthropic_chat_live.py \\
+        -k test_5 -s -q
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ import uuid
 import zlib
 from collections.abc import AsyncIterator
 from decimal import Decimal
+from itertools import pairwise
 from typing import Any
 
 import httpx
@@ -28,6 +35,7 @@ from gateway.models import GroupModelAccess, ModelDef, Provider, UsageRecord
 from gateway.secrets import SecretBox, hint_for
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from test_anthropic_cache_prefix import breakpoint_labels, hits
 
 KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 pytestmark = pytest.mark.skipif(not KEY, reason="ANTHROPIC_API_KEY not set")
@@ -454,3 +462,142 @@ async def test_4_an_image_part(
     print("\n[4] image answer:", repr(answer))
     await show("4", FAST, session_factory)
     assert "red" in answer.lower()
+
+
+def tool_calls_of(
+    response: httpx.Response, *, stream: bool
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """``(assistant message, usage)`` from a buffered or a streamed chat completion."""
+    if not stream:
+        body = response.json()
+        return body["choices"][0]["message"], body["usage"]
+    calls: dict[int, dict[str, Any]] = {}
+    text = ""
+    usage: dict[str, Any] = {}
+    for chunk in frames(response.text):
+        usage = chunk.get("usage") or usage
+        for choice in chunk["choices"]:
+            text += choice["delta"].get("content") or ""
+            for call in choice["delta"].get("tool_calls", []):
+                slot = calls.setdefault(call["index"], {"arguments": ""})
+                slot.update({k: call[k] for k in ("id",) if k in call})
+                slot["name"] = call.get("function", {}).get("name", slot.get("name"))
+                slot["arguments"] += call.get("function", {}).get("arguments") or ""
+    assistant = {
+        "role": "assistant",
+        "content": text or None,
+        "tool_calls": [
+            {
+                "id": c["id"],
+                "type": "function",
+                "function": {"name": c["name"], "arguments": c["arguments"] or "{}"},
+            }
+            for c in calls.values()
+        ],
+    }
+    return assistant, usage
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["buffered", "streamed"])
+async def test_5_a_tool_loop_reads_more_of_the_cache_at_every_step(
+    stream: bool,
+    client: httpx.AsyncClient,
+    seeded: Seeded,
+    live: dict[str, str],
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Four steps of a forced tool loop: ``cached_tokens`` must grow at every step.
+
+    Step 1 writes the prefix (tools, system, first turn). Step 2 reads up to the first
+    turn, which step 1's newest-turn breakpoint wrote, and writes the tool exchange.
+    Step 3 reads through step 2's, and so on: that is the whole point of the
+    "previous user turn" breakpoint. Two things are checked, in this order, because
+    they have different owners:
+
+    1. what the gateway sent: every breakpoint of the request before is a byte prefix
+       of the request after (``test_anthropic_cache_prefix.py`` does this offline;
+       here it is the real wire). If this fails, the gateway changed the prefix.
+    2. what Anthropic did with it: ``cached_tokens`` rises at each step, ``cache_write_tokens``
+       is positive at each, the chat usage equals the provider's own, and the ledger
+       row matches (``show``). If only this fails, rerun once before suspecting the
+       gateway: a cache entry is only readable once the response that wrote it has
+       started, and Anthropic does not promise a hit.
+
+    The system prompt and the tool description carry a fresh uuid, so no earlier run can
+    have written any part of the prefix and step 1 is a clean miss. ``tool_choice`` is
+    ``required`` so the model calls the tool on every step without being asked in words,
+    and it never changes, since a changed ``tool_choice`` invalidates the message cache.
+    """
+    run = uuid.uuid4()
+    system = f"You look notes up with the tool. Run {run}. Reference notes: " + " ".join(
+        f"Note {n}: the quick brown fox number {n} jumps over the lazy dog." for n in range(400)
+    )
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "lookup_note",
+            "description": f"Look a note up by its number (run {run}).",
+            "parameters": {
+                "type": "object",
+                "properties": {"number": {"type": "integer"}},
+                "required": ["number"],
+            },
+        },
+    }
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": "Look up note 1, then keep looking up the next note."},
+    ]
+    sent: list[dict[str, Any]] = []
+    usages: list[dict[str, Any]] = []
+    label = "streamed" if stream else "buffered"
+    for step in range(1, 5):
+        request: dict[str, Any] = {
+            "model": live["fast"],
+            "max_tokens": 128,
+            "tools": [tool],
+            "tool_choice": "required",
+            "messages": messages,
+        }
+        if stream:
+            request |= {"stream": True, "stream_options": {"include_usage": True}}
+        response = await client.post("/v1/chat/completions", json=request, headers=seeded.auth)
+        assert response.status_code == 200, response.text
+        assistant, usage = tool_calls_of(response, stream=stream)
+        sent.append(orjson.loads(REQUESTS[-1]))
+        usages.append(usage)
+        details = usage["prompt_tokens_details"]
+        print(
+            f"\n[5 {label}] step {step}: prompt={usage['prompt_tokens']} "
+            f"cached={details['cached_tokens']} written={details['cache_write_tokens']} "
+            f"breakpoints={breakpoint_labels(sent[-1])}"
+        )
+        await show(f"5 {label} step {step}", FAST, session_factory)
+        assert assistant["tool_calls"], "tool_choice=required, yet the model called no tool"
+        messages.append(assistant)
+        for call in assistant["tool_calls"]:
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call["id"],
+                    "content": f"Note {step}: " + "the answer is forty-two. " * 60,
+                }
+            )
+
+    # 1. the gateway: a stable prefix, within Anthropic's four breakpoints
+    for step, body in enumerate(sent, start=1):
+        assert 1 <= len(breakpoint_labels(body)) <= 4, (step, breakpoint_labels(body))
+    for step, (earlier, later) in enumerate(pairwise(sent), start=1):
+        got = hits(earlier, later)
+        assert all(got.values()), f"step {step} to {step + 1}: the prefix moved, {got}"
+
+    # 2. Anthropic: the cache is read further at every step
+    cached = [u["prompt_tokens_details"]["cached_tokens"] for u in usages]
+    written = [u["prompt_tokens_details"]["cache_write_tokens"] for u in usages]
+    print(f"[5 {label}] cached tokens per step: {cached}; written: {written}")
+    assert cached[0] == 0, "step 1 read a cache that nothing could have written"
+    assert all(w > 0 for w in written), written
+    assert all(later > earlier for earlier, later in pairwise(cached)), cached
+    for usage in usages:
+        details = usage["prompt_tokens_details"]
+        assert details["cached_tokens"] + details["cache_write_tokens"] <= usage["prompt_tokens"]

@@ -277,7 +277,11 @@ newest user-role turn (the last `tool_result` of a loop), the last system
 block, the last tool, and the user-role turn before the newest, so each step of
 a tool loop reads what the previous one wrote. A `cache_control` the client
 sent on a part, message or tool is kept and counts against the four; when there
-is one, no automatic breakpoint adds a TTL. A prompt below the model's minimum
+is one, no automatic breakpoint adds a TTL, except that one with a client's
+one-hour breakpoint after it in the prompt (tools, then system, then messages) is
+made one-hour too, because a one-hour entry must come before any five-minute one
+and a request is billed one-hour writes up to its last one-hour breakpoint
+anyway. A prompt below the model's minimum
 cacheable length (512 to 4096 tokens, by model) is simply not cached. The cost
 is a trade: a cache write is billed above the input rate (1.25x for the
 5-minute TTL), a read far below it (0.1x on most models), so `auto` pays off
@@ -322,6 +326,17 @@ Sonnet 4.5):
 ```bash
 ANTHROPIC_API_KEY=... uv run pytest apps/gateway/tests/test_anthropic_chat_live.py -s
 ```
+
+Its `test_5` is the check for prompt caching across a tool loop, buffered and
+streamed: four forced tool steps, and `cached_tokens` must rise at every step. It
+compares the bodies the gateway sent first (each request starts with the bytes
+every breakpoint of the one before hashed), so a failure says whether the gateway
+changed the prefix or Anthropic did not hit. The same comparison runs offline in
+`test_anthropic_cache_prefix.py`, through redaction too: with a rule that hides
+unconditionally the prefix is byte-identical from step to step, and with a
+conditional rule ("finds 2 or more") that starts to match, the messages written
+before that step are missed once (the first code in the history is re-screened to its
+placeholder) while the tools and the system prompt, note included, are not.
 
 ## Reranking: `/v1/rerank`
 
