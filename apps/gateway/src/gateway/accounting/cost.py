@@ -316,7 +316,10 @@ def _search_requests(usage: dict[str, Any]) -> int:
 #: * ``cache_creation_tokens`` — Nebius returns this *as well*, hence "first
 #:                               match wins" rather than a sum
 #:
-#: See docs/cache-accounting-findings.md for the raw evidence.
+#: The raw evidence (two identical requests per model, usage and cost as each backend
+#: returned them) was a docs page, removed from the tree with the internal notes in
+#: commit 3d21329. Read it with:
+#: ``git show 0d8951a:docs/cache-accounting-findings.md``.
 _CACHE_WRITE_KEYS = (
     "cache_write_tokens",
     "cache_creation_tokens",
