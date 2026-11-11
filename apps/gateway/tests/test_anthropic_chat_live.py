@@ -83,6 +83,12 @@ class _Recording(httpx.AsyncBaseTransport):
         response.stream = Tee()
         return response
 
+    async def aclose(self) -> None:
+        # The app closes its upstream client at shutdown, and httpx closes the transport it was
+        # given. Without this the inner pool's sockets outlive the run, and pytest ends it
+        # with an ExceptionGroup of ResourceWarnings after the tests passed.
+        await self._inner.aclose()
+
 
 class LiveUpstream:
     """Stands in for the ``fake_upstream`` fixture: a real HTTP client."""
