@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="40 140 960 248" width="960" height="248" role="img" aria-labelledby="pystino-title">
+  <title id="pystino-title">Pystino</title>
+  <desc>The mark with the wordmark, horizontal lockup.</desc>
+  <g fill="none" stroke="#14181C" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="168" cy="290" r="58"/>
+    <circle cx="344" cy="290" r="58"/>
+    <path d="M225 282 Q256 256 287 282"/>
+    <path d="M110 288 L72 274"/>
+    <path d="M402 288 L440 274"/>
+  </g>
+  <g fill="none" stroke="#14181C" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M92 214 L146 184 L234 226"/>
+    <path d="M420 214 L366 184 L278 226"/>
+  </g>
+  <text x="500" y="312" fill="#14181C" font-family="Iowan Old Style, Palatino Linotype, Palatino, Book Antiqua, Georgia, serif" font-size="92" letter-spacing="3">pystino</text>
+</svg>

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="80 92 352 352" width="352" height="352" role="img" aria-labelledby="pystino-title">
+  <title id="pystino-title">Pystino</title>
+  <desc>The small cut of the mark: no temples, heavier strokes, drawn for 16 px.</desc>
+  <g fill="none" stroke="#14181C" stroke-width="30" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="168" cy="290" r="62"/>
+    <circle cx="344" cy="290" r="62"/>
+    <path d="M226 280 Q256 250 286 280"/>
+  </g>
+  <g fill="none" stroke="#14181C" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M92 216 L146 182 L236 228"/>
+    <path d="M420 216 L366 182 L276 228"/>
+  </g>
+</svg>
