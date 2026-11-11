@@ -22,6 +22,7 @@ against quotas, redacted, metered and written to a ledger you can report on.
   </picture>
 </p>
 
+
 ## Pystino and Cerea
 
 Pystino is one half of a pair. Each half solves a different problem, and each
@@ -85,13 +86,10 @@ cd deploy && docker compose up -d --wait
 ```
 
 The first sign-in with `PYSTINO_BOOTSTRAP_ADMIN_EMAIL` becomes the
-administrator. Upgrading is `git pull && docker compose pull && docker compose
-up -d --wait`.
-
-For the full stack with the Cerea chat, use the **deploy kit** instead (`kit/`
-in the [Cerea repository](https://github.com/paoloviviani/Cerea)); it uses the
-same variable names, so a `deploy/.env` carries over. Details:
-[docs/deployment.md](docs/deployment.md).
+administrator. Upgrading is `git pull && docker compose pull && docker
+compose up -d --wait`. For the full stack with the Cerea chat, use the
+**deploy kit** instead (`kit/` in the [Cerea repository](https://github.com/paoloviviani/Cerea)); it uses the same variable names, so a
+`deploy/.env` carries over. Details: [docs/deployment.md](docs/deployment.md).
 
 ## Configuration
 
@@ -105,17 +103,17 @@ Settings come from the environment (`deploy/.env`). The groups that matter:
 | Features | `GATEWAY_ACCOUNTING__ENABLED`, `GATEWAY_QUOTA__ENABLED`, `GATEWAY_REDACTION__ENGINE` and the `redaction` profile |
 | First provider | `GATEWAY_UPSTREAM__BASE_URL`, `GATEWAY_UPSTREAM__API_KEY`; more are added in the console |
 
-Every gateway setting is in `apps/gateway/src/gateway/config.py` (`GATEWAY_*`,
-nested with `__`).
+Every gateway setting is in `apps/gateway/src/gateway/config.py`
+(`GATEWAY_*`, nested with `__`).
 
 ## The console
 
 Served at `/console` and signed in through OIDC. Administrators manage
 providers and their credentials, models with prices and access, users and
-groups, quotas, redaction rules and the identity provider's settings, and read
-spend and usage reports. Everyone else sees their own usage, limits and API
-keys. The management API behind it is under `/api`, with a generated reference
-at `/docs`.
+groups, quotas, redaction rules and the identity provider's settings, and
+read spend and usage reports. Everyone else sees their own usage, limits and API keys. The
+management API behind it is under `/api`, with a generated reference at
+`/docs`.
 
 ## The API
 
@@ -131,15 +129,15 @@ at `/docs`.
 | Models, the caller's view | `GET /v1/models` |
 | Who am I, my billing groups, my usage | `GET /v1/me`, `GET /v1/billing/groups`, `GET /v1/pystino/usage` |
 
-Authenticate with an API key (`Authorization: Bearer gwk_…`) or an OIDC
-access token carrying the configured audience. A caller in several groups
-picks the one to bill with `x-bill-to`.
+Authenticate with an API key (`Authorization: Bearer gwk_…`) or an OIDC access
+token carrying the configured audience. A caller in several groups picks the
+one to bill with `x-bill-to`.
 
 ## Development
 
 ```sh
 uv sync && pnpm install
-uv run pytest -q              # SQLite and a fake upstream: no services needed
+uv run pytest -q                                  # SQLite and a fake upstream: no services needed
 uv run ruff check . && uv run ruff format --check .
 uv run mypy apps/gateway/src packages/shared-py/src services
 pnpm -r test && pnpm -r typecheck                 # the console and the UI package
@@ -149,13 +147,10 @@ pnpm -r test && pnpm -r typecheck                 # the console and the UI packa
 Toolchains, git hooks, every test layer, CI, releasing and the repository's
 conventions are in [CONTRIBUTING.md](CONTRIBUTING.md), which is also the
 [Development](https://paoloviviani.github.io/Pystino/development/) page of the
-documentation.
-
-`deploy/dev/smoke.yml` adds a fake upstream to the compose deployment.
-External-IdP paths are developed against any OIDC provider you run separately.
-
-The console is `apps/console` (React, pnpm), built into the gateway image.
-Live checks against a running stack are in `scripts/*_live.py`.
+documentation. `deploy/dev/smoke.yml` adds a fake upstream to the compose
+deployment. External-IdP paths are developed against any OIDC provider you
+run separately. The console is `apps/console` (React, pnpm), built into the
+gateway image. Live checks against a running stack are in `scripts/*_live.py`.
 
 ## Documentation
 
