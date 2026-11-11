@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="logo.png" alt="The Pystino logo" width="256" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/pystino-mark-reversed.svg" />
+    <img src="brand/pystino-mark.svg" alt="The Pystino logo" width="240" />
+  </picture>
 </p>
 
 # Pystino
