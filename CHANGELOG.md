@@ -4,6 +4,10 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+## v0.33.1 — 2026-11-11
+
+Paired with Cerea 0.49.0.
+
 - **The system note no longer lets a model misread a `#TOKEN#` stand-in.** A model counted only the characters between the `#` signs and told a user their 16-character code had 14, and judged the token's structure as if it were the real value. The same-length sentence now says the whole token, both `#` signs included, is exactly as long as the real value and is not the real value (do not check or comment on its format, letters, digits or check characters), and the restorable and hidden notes tell the model not to validate stand-ins (format, check digits, plausibility). The note is still a pure function of the policy and the restore settings, appended at the end of the system content, and it now follows every hiding rule in scope for the request (who and target), whether or not a rule's conditions matched this turn, so a conditional rule ("finds 2 or more") no longer makes the note come and go and the prompt cache holds within a conversation. Redaction itself is unchanged: matched rules only.
 
 ## v0.33.0 — 2026-11-10
