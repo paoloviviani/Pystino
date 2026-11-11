@@ -1466,6 +1466,10 @@ class EffectivePolicy:
     #: present the redactor claims spans rule by rule (first to hide a span decides how)
     #: and ``policy`` is only the strictest-mode fold of them, which the system note reads.
     rules: tuple[HidingRule, ...] = ()
+    #: Every hiding rule *in scope* (matched or not) folded into one policy, which only the
+    #: system note reads: the note must not come and go with a rule's conditions, or the
+    #: provider's prompt cache is lost. None: the note follows ``policy``.
+    note_policy: RedactionPolicy | None = None
 
     def hiding_rules(self) -> tuple[HidingRule, ...]:
         """The rules the redactor applies: the request's own, or the policy as one rule."""

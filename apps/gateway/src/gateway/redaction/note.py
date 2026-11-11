@@ -29,14 +29,16 @@ from gateway.redaction.base import RedactionOutcome
 RESTORABLE_NOTE = (
     "Values written like <LABEL_TOKEN> stand in for the user's real data, which is hidden "
     "from you for privacy. The real values are put back automatically {where}. "
-    "Use them exactly as written wherever the real value belongs{including}, and do not "
-    "comment on their format or length or ask the user for the real value."
+    "Use them exactly as written wherever the real value belongs{including}. They are not "
+    "the real values: do not validate them (format, check digits, plausibility), comment on "
+    "their format or length, or ask the user for the real value."
 )
 
 #: The values stay hidden: tell the model not to try to see through them.
 HIDDEN_NOTE = (
     "Values written like <LABEL_TOKEN> are hidden stand-ins for the user's "
-    "real data, and they stay hidden. Use them exactly as written when you need them, "
+    "real data, and they stay hidden. Use them exactly as written when you need them. "
+    "They are not the real values: do not validate them (format, check digits, plausibility) "
     "and do not try to guess the real value."
 )
 
@@ -50,8 +52,10 @@ REDACT_NOTE = (
 #: Appended when any stand-in was written as ``#TOKEN#``, with the length of the
 #: value it replaced.
 SAME_LENGTH_NOTE = (
-    "Values written as #TOKEN# are stand-ins of the same kind, made as long as the real "
-    "value; treat them the same way."
+    "A value written as #TOKEN# is a stand-in of the same kind. The whole token, both # "
+    "signs included, is exactly as long as the real value. It is not the real value: do not "
+    "check or comment on its format, letters, digits or check characters; use it exactly as "
+    "written."
 )
 
 

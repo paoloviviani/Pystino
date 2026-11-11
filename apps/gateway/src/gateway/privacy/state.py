@@ -269,8 +269,25 @@ class PrivacyState:
         self._stamped[key] = built
         return built
 
+    def note_policy(self, in_scope: Sequence[Hit]) -> RedactionPolicy | None:
+        """The policies of every in-scope hiding rule, stamped and folded; None when none.
+
+        Only the system note reads it. A policy that cannot be loaded is skipped here (a rule
+        that matches still refuses the request, in ``effective_policy``).
+        """
+        parts = [
+            built
+            for hit in in_scope
+            for pid in hit.rule.policies
+            if (built := self.stamped(pid, hit.rule, hit.pipeline.owner_id)) is not None
+        ]
+        return RedactionPolicy.combine(parts) if parts else None
+
     def effective_policy(
-        self, hits: Sequence[Hit], environment: RedactionPolicy
+        self,
+        hits: Sequence[Hit],
+        environment: RedactionPolicy,
+        in_scope: Sequence[Hit] = (),
     ) -> EffectivePolicy:
         """What hides the request: the matching rules, in order, each with its policies stamped.
 
@@ -311,8 +328,10 @@ class PrivacyState:
             )
             if not hit.pipeline.is_user:
                 last_admin = hit
+        note_policy = self.note_policy(in_scope)
         if not rules:
             return EffectivePolicy(
+                note_policy=note_policy,
                 policy=environment,
                 contributors=(
                     Contributor(
@@ -328,6 +347,7 @@ class PrivacyState:
             rule_id=uuid.UUID(narrowest.rule.policies[0]) if narrowest.rule.policies else None,
             contributors=tuple(contributors),
             rules=tuple(rules),
+            note_policy=note_policy,
         )
 
     # -- loading -------------------------------------------------------------

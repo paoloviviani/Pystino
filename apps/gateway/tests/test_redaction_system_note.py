@@ -245,7 +245,7 @@ class TestTheText:
 
     def test_the_wording_is_a_constant_and_short(self) -> None:
         for constant in (RESTORABLE_NOTE, HIDDEN_NOTE):
-            assert constant.count(". ") <= 2
+            assert constant.count(". ") <= 3
 
     def test_a_caller_message_list_is_not_mutated(self) -> None:
         messages = [{"role": "system", "content": "Be brief."}, {"role": "user", "content": "hi"}]
@@ -269,3 +269,45 @@ class TestTheText:
         )
         assert payload["system"][:2] == blocks
         assert payload["system"][2] == {"type": "text", "text": "NOTE"}
+
+
+class TestWordingAndCacheStability:
+    """The note is wording that follows the policy alone, byte for byte, turn after turn."""
+
+    def test_same_length_sentences_name_the_whole_token_and_forbid_checking_it(self) -> None:
+        text = system_note(
+            _policy(EntityMode.ANONYMISE_RESTORE, placeholder=PlaceholderStyle.SAME_LENGTH)
+        )
+        assert text and text.endswith(SAME_LENGTH_NOTE)
+        assert "both # signs included" in SAME_LENGTH_NOTE
+        assert "exactly as long as the real value" in SAME_LENGTH_NOTE
+        assert "not the real value" in SAME_LENGTH_NOTE
+        assert "do not check or comment on its format" in SAME_LENGTH_NOTE
+
+    def test_the_same_length_sentences_are_absent_otherwise(self) -> None:
+        for mode in (EntityMode.ANONYMISE_RESTORE, EntityMode.ANONYMISE):
+            text = system_note(_policy(mode))
+            assert text and "#TOKEN#" not in text and SAME_LENGTH_NOTE not in text
+
+    def test_a_same_length_type_that_does_not_write_a_token_adds_nothing(self) -> None:
+        text = system_note(_policy(EntityMode.REDACT, placeholder=PlaceholderStyle.SAME_LENGTH))
+        assert text == REDACT_NOTE
+
+    def test_the_tagged_notes_forbid_validating_the_stand_ins(self) -> None:
+        for note in (RESTORABLE_NOTE, HIDDEN_NOTE):
+            assert "do not validate them (format, check digits, plausibility)" in note
+
+    def test_the_notes_carry_no_subject_examples(self) -> None:
+        for note in (RESTORABLE_NOTE, HIDDEN_NOTE, SAME_LENGTH_NOTE):
+            assert "fiscal" not in note.lower()
+
+    async def test_two_requests_with_different_content_get_the_same_note(self) -> None:
+        policy = _policy(EntityMode.ANONYMISE_RESTORE, placeholder=PlaceholderStyle.SAME_LENGTH)
+        detector = FakeDetector({CF: "IT_FISCAL_CODE"})
+        redactor = detector.redactor(policy=policy)
+        notes = [
+            (await redactor.redact_request([{"role": "user", "content": content}])).note
+            for content in (f"my code is {CF}", "a long unrelated message, nothing to hide", "x")
+        ]
+        assert notes[0] is not None and notes[0] == notes[1] == notes[2]
+        assert notes[0] == system_note(policy)

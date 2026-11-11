@@ -131,6 +131,22 @@ class Combined:
             h for h in self.hits() if h.rule.policies and (h.rule.hides_text or h.rule.records_only)
         ]
 
+    def scope_hiding_hits(self) -> list[Hit]:
+        """Every enabled rule that hides, of every pipeline in scope, matched or not.
+
+        Scope is who and target, fixed per user, key and model, so this set does not change
+        from turn to turn the way ``hiding_hits`` does with a rule's conditions. The system
+        note reads it, so its text (the start of the provider's cached prompt) stays put.
+        """
+        if self.refused:
+            return []
+        return [
+            Hit(run.pipeline, rule, run.hop)
+            for run in self.in_order()
+            for rule in run.pipeline.rules
+            if rule.enabled and rule.policies and rule.hides_text
+        ]
+
     def policy_ids(self) -> list[str]:
         """The policies the hiding rules apply, each once, in order."""
         out: list[str] = []

@@ -1174,7 +1174,7 @@ class HttpDetectionRedactor:
         in_force = effective.is_active()
         user_patterns = policy.user_pattern_keys() if policy is not None else frozenset()
         note = system_note(
-            effective,
+            policy.note_policy if policy is not None and policy.note_policy else effective,
             restore_text=self._settings.restore_in_response,
             restore_arguments=self._settings.restore_in_response
             and self._settings.restore_in_tool_arguments,
