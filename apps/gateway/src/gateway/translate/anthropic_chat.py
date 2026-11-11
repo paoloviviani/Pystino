@@ -633,7 +633,8 @@ def apply_prompt_cache(body: dict[str, Any], settings: AnthropicSettings) -> Non
     Anthropic's prefix order is tools, system, messages, so the breakpoints are
     in the order the cache walks them. Breakpoints the client wrote itself
     count against the four and are never moved; when there are any, the TTL is
-    left at the default because a 1-hour entry must precede every 5-minute one.
+    left at the default, except where a client's 1-hour breakpoint follows ours
+    (``_keep_longest_first``): a 1-hour entry must precede every 5-minute one.
     A prompt below the model's minimum cacheable length is simply not cached,
     which the API does without an error.
     """
@@ -654,13 +655,66 @@ def apply_prompt_cache(body: dict[str, Any], settings: AnthropicSettings) -> Non
         body["tools"][-1] if body.get("tools") else None,
         _cacheable_block(users[-2]) if len(users) >= 2 else None,
     ]
+    ours: list[dict[str, Any]] = []
     for target in targets:
         if slots <= 0:
             break
         if target is None or "cache_control" in target:
             continue
         target["cache_control"] = dict(control)
+        ours.append(target)
         slots -= 1
+    if existing and ours:
+        _keep_longest_first(body, ours)
+
+
+def _ttl(block: Mapping[str, Any]) -> str:
+    """The lifetime a block's ``cache_control`` asks for, the default included."""
+    control = block.get("cache_control")
+    return str(control.get("ttl", "5m")) if isinstance(control, dict) else "5m"
+
+
+def _in_prompt_order(body: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Every block that can carry a breakpoint, in the order the cache reads them.
+
+    A ``tool_result`` comes before the blocks nested in its ``content``.
+    """
+    blocks: list[Mapping[str, Any]] = [*(body.get("tools") or []), *(body.get("system") or [])]
+    for message in body["messages"]:
+        for block in message["content"]:
+            blocks.append(block)
+            if isinstance(block.get("content"), list):
+                blocks.extend(block["content"])
+    return blocks
+
+
+def _keep_longest_first(body: dict[str, Any], ours: list[dict[str, Any]]) -> None:
+    """Lengthen our breakpoints that precede a client's 1-hour one.
+
+    "Cache entries with longer TTL must appear before shorter TTLs (that is, a
+    1-hour cache entry must appear before any 5-minute cache entries)"
+    (platform.claude.com, prompt caching, "Mixing different TTLs"). Ours carry no
+    ``ttl`` when the client wrote breakpoints, and the prompt order is tools,
+    system, messages: so a client's 1-hour mark on the system prompt, or on any
+    message, followed our 5-minute mark on the last tool, and one on a message
+    followed our system one too. Dropping those breakpoints would lose the ones
+    that make a tool loop hit on every step; keeping them as they were breaks
+    the documented order.
+
+    Giving them the hour is not dearer: a request that carries a 1-hour
+    breakpoint is billed for everything up to its last one as 1-hour writes
+    whichever breakpoint wrote it, so the tokens cost what they would anyway.
+    Only a breakpoint with a 1-hour one *after* it is changed; the client's own
+    are never touched, and the rest keep the default.
+    """
+    mine = {id(block) for block in ours}
+    hour_ahead = False
+    for block in reversed(_in_prompt_order(body)):
+        if "cache_control" not in block:
+            continue
+        if id(block) in mine and hour_ahead and _ttl(block) != "1h":
+            block["cache_control"]["ttl"] = "1h"
+        hour_ahead = hour_ahead or _ttl(block) == "1h"
 
 
 @dataclass(slots=True)

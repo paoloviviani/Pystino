@@ -789,6 +789,335 @@ class TestPromptCache:
         assert body["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
 
+def breakpoints(body: dict) -> list[tuple[str, dict]]:
+    """Every ``cache_control`` in the body, in the order Anthropic reads the prompt.
+
+    Tools, then system, then each message's blocks. A ``tool_result`` is listed
+    before the blocks nested in its ``content``, which is where they sit in the
+    prompt. Each item is ``(label, control)``.
+    """
+    found: list[tuple[str, dict]] = []
+    for tool in body.get("tools") or []:
+        if "cache_control" in tool:
+            found.append((f"tool:{tool['name']}", tool["cache_control"]))
+    for block in body.get("system") or []:
+        if "cache_control" in block:
+            found.append(("system", block["cache_control"]))
+    for index, message in enumerate(body["messages"]):
+        for block in message["content"]:
+            if "cache_control" in block:
+                found.append((f"message{index}:{block['type']}", block["cache_control"]))
+            if isinstance(block.get("content"), list):
+                for inner in block["content"]:
+                    if "cache_control" in inner:
+                        found.append(
+                            (
+                                f"message{index}:{block['type']}>{inner['type']}",
+                                inner["cache_control"],
+                            )
+                        )
+    return found
+
+
+def ttl_of(control: dict) -> str:
+    return str(control.get("ttl", "5m"))
+
+
+def longest_first(body: dict) -> bool:
+    """The ordering Anthropic documents: a 1-hour entry must come before any
+    5-minute one (https://platform.claude.com/docs/en/build-with-claude/prompt-caching,
+    "Mixing different TTLs")."""
+    ttls = [ttl_of(control) for _, control in breakpoints(body)]
+    return ttls == sorted(ttls, key=lambda ttl: ttl != "1h")
+
+
+MARK = {"type": "ephemeral"}
+HOUR = {"type": "ephemeral", "ttl": "1h"}
+
+
+class TestClientCacheControl:
+    """A ``cache_control`` the client wrote is carried to the right block, counted
+    against Anthropic's four, and never doubled by an automatic one."""
+
+    TOOLS: ClassVar[Any] = [
+        {"type": "function", "function": {"name": "a", "parameters": {"type": "object"}}},
+        {"type": "function", "function": {"name": "b", "parameters": {"type": "object"}}},
+    ]
+
+    def test_a_mark_on_a_tool_is_carried_and_the_last_tool_still_gets_ours(self) -> None:
+        tools = [
+            {**self.TOOLS[0], "cache_control": dict(MARK)},
+            self.TOOLS[1],
+        ]
+        body = build({"messages": [user("q")], "tools": tools})
+        assert body["tools"][0]["cache_control"] == MARK
+        assert [label for label, _ in breakpoints(body)] == ["tool:a", "tool:b", "message0:text"]
+
+    def test_a_mark_inside_the_function_object_is_read_too(self) -> None:
+        tools = [
+            self.TOOLS[0],
+            {"type": "function", "function": {**self.TOOLS[1]["function"], "cache_control": HOUR}},
+        ]
+        body = build({"messages": [user("q")], "tools": tools})
+        assert body["tools"][1]["cache_control"] == HOUR
+        assert "cache_control" not in body["tools"][1].get("input_schema", {})
+
+    def test_a_mark_on_the_last_tool_is_not_doubled(self) -> None:
+        tools = [self.TOOLS[0], {**self.TOOLS[1], "cache_control": dict(MARK)}]
+        body = build({"messages": [user("q")], "tools": tools})
+        assert [label for label, _ in breakpoints(body)].count("tool:b") == 1
+        assert len(breakpoints(body)) == 2  # the tool, and the newest user turn
+
+    @pytest.mark.parametrize(
+        "url",
+        [f"data:image/png;base64,{PNG}", "https://example.org/cat.png"],
+        ids=["data url", "http url"],
+    )
+    def test_a_mark_on_an_image_part_lands_on_the_image_block(self, url: str) -> None:
+        body = build(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "what is this"},
+                            {"type": "image_url", "image_url": {"url": url}, "cache_control": HOUR},
+                        ],
+                    }
+                ]
+            }
+        )
+        blocks = body["messages"][0]["content"]
+        assert blocks[1]["type"] == "image"
+        assert blocks[1]["cache_control"] == HOUR
+        assert "cache_control" not in blocks[0]
+        # the image is already the newest turn's last cacheable block: ours reuses it
+        assert len(breakpoints(body)) == 1
+
+    def test_a_mark_on_a_file_part_lands_on_the_document_block(self) -> None:
+        body = build(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "file",
+                                "file": {"file_data": PDF, "filename": "a.pdf"},
+                                "cache_control": dict(MARK),
+                            },
+                            {"type": "text", "text": "summarise"},
+                        ],
+                    }
+                ]
+            }
+        )
+        blocks = body["messages"][0]["content"]
+        assert blocks[0]["type"] == "document"
+        assert blocks[0]["cache_control"] == MARK
+        # ours goes on the last block, so the document and the question are both marked
+        assert [label for label, _ in breakpoints(body)] == ["message0:document", "message0:text"]
+
+    def test_a_mark_on_a_tool_message_lands_on_its_tool_result(self) -> None:
+        messages = [
+            user("q"),
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"id": "t1", "type": "function", "function": {"name": "a", "arguments": "{}"}}
+                ],
+            },
+            {"role": "tool", "tool_call_id": "t1", "content": "big", "cache_control": HOUR},
+        ]
+        body = build({"messages": messages})
+        result = body["messages"][2]["content"][0]
+        assert result["type"] == "tool_result"
+        assert result["cache_control"] == HOUR
+        assert len(breakpoints(body)) == 2  # the tool_result (not doubled) and the first turn
+
+    def test_a_mark_on_a_part_of_a_tool_result_counts_against_the_four(self) -> None:
+        messages = [
+            {"role": "system", "content": "s"},
+            user("q"),
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"id": "t1", "type": "function", "function": {"name": "a", "arguments": "{}"}}
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "t1",
+                "content": [{"type": "text", "text": "big", "cache_control": dict(MARK)}],
+            },
+        ]
+        body = build({"messages": messages, "tools": self.TOOLS})
+        found = [label for label, _ in breakpoints(body)]
+        assert "message2:tool_result>text" in found  # the client's, nested, kept as written
+        assert len(found) == 4  # one client + three of ours, never five
+
+    def test_four_marks_inside_tool_results_leave_no_room(self) -> None:
+        def result(call: str) -> dict:
+            return {
+                "role": "tool",
+                "tool_call_id": call,
+                "content": [{"type": "text", "text": call, "cache_control": dict(MARK)}],
+            }
+
+        calls = [
+            {"id": f"t{n}", "type": "function", "function": {"name": "a", "arguments": "{}"}}
+            for n in range(4)
+        ]
+        messages = [
+            {"role": "system", "content": "s"},
+            user("q"),
+            {"role": "assistant", "content": None, "tool_calls": calls},
+            *(result(f"t{n}") for n in range(4)),
+        ]
+        body = build({"messages": messages, "tools": self.TOOLS})
+        assert len(breakpoints(body)) == 4
+        assert all(">" in label for label, _ in breakpoints(body))
+
+    def test_the_callers_payload_is_not_changed_by_ours(self) -> None:
+        import copy
+
+        payload = {
+            "model": "claude-sonnet-4-5-20250929",
+            "messages": [{"role": "system", "content": LONG_SYSTEM}, user("q")],
+            "tools": [{**self.TOOLS[0], "cache_control": dict(MARK)}, self.TOOLS[1]],
+        }
+        before = copy.deepcopy(payload)
+        build_request(payload, settings=AnthropicSettings(), max_output_tokens=None)
+        assert payload == before
+
+
+class TestMixedTtl:
+    """Anthropic: "a 1-hour cache entry must appear before any 5-minute cache entries".
+
+    Our breakpoints are 5-minute when the client wrote any, so one the client put
+    on a late block as 1-hour would sit after our 5-minute ones on the tools and
+    the system prompt. They take the hour too: a request that carries a 1-hour
+    breakpoint bills everything up to its last one as 1-hour writes, so it costs
+    nothing more and is the only way to keep those breakpoints and the order.
+    """
+
+    TOOLS: ClassVar[Any] = TestPromptCache.TOOLS
+
+    def history(self, *, mark: str) -> dict:
+        """A tool loop with a system prompt and tools; *mark* names where the
+        client put its one 1-hour breakpoint: ``newest``, ``first``, ``system``
+        or ``tool``."""
+        control = dict(HOUR)
+        first: Any = user("q1")
+        newest: Any = {"role": "tool", "tool_call_id": "t1", "content": "r"}
+        system: Any = {"role": "system", "content": LONG_SYSTEM}
+        tools = [dict(t) for t in self.TOOLS]
+        if mark == "newest":
+            newest["cache_control"] = control
+        elif mark == "first":
+            first = {
+                "role": "user",
+                "content": [{"type": "text", "text": "q1", "cache_control": control}],
+            }
+        elif mark == "system":
+            system = {
+                "role": "system",
+                "content": [{"type": "text", "text": LONG_SYSTEM, "cache_control": control}],
+            }
+        elif mark == "tool":
+            tools[0]["cache_control"] = control
+        messages = [
+            system,
+            first,
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"id": "t1", "type": "function", "function": {"name": "a", "arguments": "{}"}}
+                ],
+            },
+            newest,
+        ]
+        return build({"messages": messages, "tools": tools})
+
+    def test_a_late_one_hour_mark_does_not_follow_our_five_minute_ones(self) -> None:
+        body = self.history(mark="newest")
+        found = breakpoints(body)
+        assert longest_first(body), found
+        # the client's own mark is untouched, and every breakpoint is still there
+        assert dict(body["messages"][2]["content"][0]["cache_control"]) == HOUR
+        assert [label for label, _ in found] == [
+            "tool:b",
+            "system",
+            "message0:text",
+            "message2:tool_result",
+        ]
+
+    def test_a_one_hour_mark_on_the_first_turn_pulls_the_tools_and_system_up_with_it(self) -> None:
+        body = self.history(mark="first")
+        assert longest_first(body), breakpoints(body)
+        by_label = {label: ttl_of(c) for label, c in breakpoints(body)}
+        assert by_label["tool:b"] == by_label["system"] == by_label["message0:text"] == "1h"
+        # after the last 1-hour mark, ours stay the default
+        assert by_label["message2:tool_result"] == "5m"
+
+    def test_ours_stay_five_minutes_when_no_one_hour_mark_follows_them(self) -> None:
+        tool = {label: ttl_of(c) for label, c in breakpoints(self.history(mark="tool"))}
+        # the client's hour is on the first tool: everything of ours is after it
+        assert tool == {
+            "tool:a": "1h",
+            "tool:b": "5m",
+            "system": "5m",
+            "message2:tool_result": "5m",
+        }  # the first turn has no slot: one client mark and three of ours make the four
+
+    def test_a_one_hour_mark_on_the_system_prompt_lifts_the_last_tool_only(self) -> None:
+        system = {label: ttl_of(c) for label, c in breakpoints(self.history(mark="system"))}
+        assert system == {
+            "tool:b": "1h",
+            "system": "1h",
+            "message0:text": "5m",
+            "message2:tool_result": "5m",
+        }
+
+    def test_a_client_five_minute_mark_never_makes_ours_longer(self) -> None:
+        body = build(
+            {
+                "messages": [
+                    {"role": "system", "content": LONG_SYSTEM},
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "q", "cache_control": dict(MARK)}],
+                    },
+                ],
+                "tools": self.TOOLS,
+            },
+            prompt_cache_ttl="1h",
+        )
+        assert {ttl_of(c) for _, c in breakpoints(body)} == {"5m"}
+
+    def test_the_configured_hour_still_applies_when_the_client_wrote_nothing(self) -> None:
+        body = self.history_without_marks()
+        assert {ttl_of(c) for _, c in breakpoints(body)} == {"1h"}
+
+    def history_without_marks(self) -> dict:
+        return build(
+            {
+                "messages": [{"role": "system", "content": LONG_SYSTEM}, *tool_loop()],
+                "tools": self.TOOLS,
+            },
+            prompt_cache_ttl="1h",
+        )
+
+    @pytest.mark.parametrize("mark", ["newest", "first", "system", "tool"])
+    def test_whatever_the_position_the_prompt_is_in_the_documented_order(self, mark: str) -> None:
+        body = self.history(mark=mark)
+        assert longest_first(body), breakpoints(body)
+        assert len(breakpoints(body)) <= 4
+
+
 class TestResponse:
     def test_text_reply(self) -> None:
         message = {
