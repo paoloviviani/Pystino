@@ -38,6 +38,7 @@ from gateway.config import (
     Settings,
     UpstreamSettings,
 )
+from gateway.db import create_engine
 from gateway.main import create_app, init_app_state, shutdown_app_state
 from gateway.models import (
     ApiKey,
@@ -439,15 +440,24 @@ def settings(tmp_path: Path) -> Iterator[Settings]:
 async def app(settings: Settings, fake_upstream: FakeUpstream) -> AsyncIterator[FastAPI]:
     """The real application, wired by the real init code, with a fake upstream."""
     application = create_app(settings)
+    # The schema first, on an engine of its own. init_app_state reads the database
+    # while it wires up (the policies, the fx pairs, the bundled-users and admin
+    # sweeps) and starts the pollers; with the tables created after it, each of
+    # those failed with "no such table" and logged a traceback, in every test of the
+    # suite, and the pollers' first pass was an error as well. On the Postgres leg
+    # the copy of the template already has them and this is a no-op.
+    schema_engine = create_engine(settings)
+    try:
+        async with schema_engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+    finally:
+        await schema_engine.dispose()
     await init_app_state(
         application,
         settings,
         upstream_http=fake_upstream.client(),
         control_http=httpx.AsyncClient(),
     )
-
-    async with application.state.engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
 
     try:
         yield application
