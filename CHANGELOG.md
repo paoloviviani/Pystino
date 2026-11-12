@@ -4,6 +4,10 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+## v0.33.2 — 2026-11-11
+
+Paired with Cerea 0.49.1.
+
 - **Chat on an Anthropic provider: a client's one-hour `cache_control` no longer sits after our five-minute ones.** Anthropic requires a one-hour cache entry to appear before any five-minute entry, and the prompt order is tools, system, messages. Automatic breakpoints carry no TTL when the client wrote any, so a client's `"ttl": "1h"` on the system prompt followed the automatic one on the last tool, and one on a message followed those and the system one too. Automatic breakpoints that have a client's one-hour breakpoint after them now take the hour as well (it costs nothing more: a request is billed one-hour writes up to its last one-hour breakpoint whichever breakpoint wrote them); the client's own are never changed and the rest stay five-minute. Found by new tests of the prompt prefix across a tool loop, redaction included (`test_anthropic_cache_prefix.py`), and a live tool-loop check (`test_anthropic_chat_live.py::test_5`, needs `ANTHROPIC_API_KEY`).
 
 ## v0.33.1 — 2026-11-11
