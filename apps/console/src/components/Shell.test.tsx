@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../lib/types";
-import { Shell } from "./Shell";
+import { Shell, otherViewPath } from "./Shell";
 
 /**
  * The header, and specifically signing out.
@@ -234,6 +234,42 @@ describe("Shell", () => {
   it("does not offer the way into administration to a non-administrator", () => {
     renderShell(me({ is_admin: false }));
     expect(screen.queryByRole("link", { name: "Admin view" })).not.toBeInTheDocument();
+  });
+
+  it("puts the view switch in the bar for an administrator, marking the current view", () => {
+    renderShell(me({ is_admin: true }));
+    const bar = screen.getByRole("group", { name: "Switch view" });
+    expect(bar.closest("header")).not.toBeNull();
+    expect(within(bar).getByRole("link", { name: "User view" })).toHaveAttribute("aria-current", "page");
+    expect(within(bar).getByRole("link", { name: "Admin view" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("marks the admin view as current inside administration, and links back to the user one", () => {
+    renderShell(me({ is_admin: true }), "/admin/models");
+    const bar = screen.getByRole("group", { name: "Switch view" });
+    expect(within(bar).getByRole("link", { name: "Admin view" })).toHaveAttribute("aria-current", "page");
+    expect(within(bar).getByRole("link", { name: "User view" })).toHaveAttribute("href", "/");
+  });
+
+  it("switches views, to the equivalent page when there is one", async () => {
+    renderShell(me({ is_admin: true }), "/reports");
+    const bar = screen.getByRole("group", { name: "Switch view" });
+    expect(within(bar).getByRole("link", { name: "Admin view" })).toHaveAttribute("href", "/admin/reports");
+    await userEvent.click(within(bar).getByRole("link", { name: "Admin view" }));
+    expect(within(bar).getByRole("link", { name: "Admin view" })).toHaveAttribute("aria-current", "page");
+    expect(within(bar).getByRole("link", { name: "User view" })).toHaveAttribute("href", "/reports");
+  });
+
+  it("falls back to the other view's front page", () => {
+    renderShell(me({ is_admin: true }), "/admin/groups");
+    expect(screen.getByRole("link", { name: "User view" })).toHaveAttribute("href", "/");
+    expect(otherViewPath("/requests", false)).toBe("/admin/requests");
+    expect(otherViewPath("/", false)).toBe("/admin");
+  });
+
+  it("hides the view switch from a non-administrator", () => {
+    renderShell(me({ is_admin: false }));
+    expect(screen.queryByRole("group", { name: "Switch view" })).not.toBeInTheDocument();
   });
 
   it("keeps administration out of the navigation until you are in it", () => {

@@ -15,7 +15,7 @@ import {
 } from "@llmp/ui";
 import { useState } from "react";
 import type { ComponentType, CSSProperties, ReactNode, SVGProps } from "react";
-import { NavLink, useLocation } from "react-router";
+import { Link, NavLink, useLocation } from "react-router";
 import { ADMIN_GROUPS, adminIcon } from "../lib/adminNav";
 import { request } from "../lib/api";
 import {
@@ -41,6 +41,7 @@ import {
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
   ShieldIcon,
+  UserIcon,
   XIcon,
 } from "./icons";
 
@@ -241,6 +242,7 @@ export function Shell({ me, children }: ShellProps) {
           </NavLink>
 
           <div className="ml-auto flex shrink-0 items-center gap-2">
+            {me.is_admin && <ViewSwitch inAdmin={inAdmin} pathname={location.pathname} />}
             <UserMenu
               me={me}
               name={name}
@@ -312,8 +314,70 @@ export function Shell({ me, children }: ShellProps) {
 }
 
 /**
- * The sidebar's contents: the navigation of the place you are in, and at the
- * bottom the switch to the other place.
+ * Where the other view's equivalent of this page lives, when there is one.
+ * Only the top-level screens that exist in both places are mapped; anything
+ * else lands on the other view's front page rather than a guessed URL.
+ */
+const VIEW_PAIRS: Array<[user: string, admin: string]> = [
+  ["/reports", "/admin/reports"],
+  ["/requests", "/admin/requests"],
+  ["/privacy", "/admin/privacy"],
+  ["/me/providers", "/admin/providers"],
+];
+
+export function otherViewPath(pathname: string, inAdmin: boolean): string {
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  for (const [user, admin] of VIEW_PAIRS) {
+    if (inAdmin && path === admin) return user;
+    if (!inAdmin && path === user) return admin;
+  }
+  return inAdmin ? "/" : "/admin";
+}
+
+/**
+ * The switch between the two places, in the bar beside the account: a
+ * segmented pair of links, the current one marked with `aria-current`. Links,
+ * not buttons, because each is a navigation to a URL. Administrators only; a
+ * reader with no second place is not shown a control that refuses them. On a
+ * phone the "view" word drops out of the visible text (the accessible name
+ * keeps it) so the pair fits beside the account.
+ */
+function ViewSwitch({ inAdmin, pathname }: { inAdmin: boolean; pathname: string }) {
+  const target = otherViewPath(pathname, inAdmin);
+  const base =
+    "inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-sm font-medium no-underline transition-colors focus-visible:outline-none focus-visible:shadow-focus max-[40rem]:gap-1 max-[40rem]:px-2";
+  const on = "bg-ink text-surface";
+  const off = "text-ink-muted hover:text-ink";
+  return (
+    <div
+      role="group"
+      aria-label={m["shell.view_switch.label"]()}
+      className="flex shrink-0 items-center gap-0.5 rounded-full border border-line bg-sunken p-0.5"
+    >
+      <Link
+        to={inAdmin ? target : "/"}
+        aria-label={m["shell.nav.user_view"]()}
+        aria-current={inAdmin ? undefined : "page"}
+        className={`${base} ${inAdmin ? off : on}`}
+      >
+        <UserIcon className="size-3.5 shrink-0" />
+        {m["shell.view_switch.user"]()}
+      </Link>
+      <Link
+        to={inAdmin ? "/admin" : target}
+        aria-label={m["shell.nav.admin_view"]()}
+        aria-current={inAdmin ? "page" : undefined}
+        className={`${base} ${inAdmin ? on : off}`}
+      >
+        <ShieldIcon className="size-3.5 shrink-0" />
+        {m["shell.view_switch.admin"]()}
+      </Link>
+    </div>
+  );
+}
+
+/**
+ * The sidebar's contents: the navigation of the place you are in.
  *
  * Rendered once and always in the DOM, whatever the width — the phone hides it
  * with `hidden`, the desktop re-dresses it as a rail — so there is exactly one
@@ -392,25 +456,6 @@ function SidebarNav({
         )}
       </nav>
 
-      {/* Administration is a place, not a section — so the way between the two
-          places is not a link among the links but the sidebar's one control,
-          pinned at the bottom where a switcher belongs. Absent for a reader
-          with no second place to switch to: a non-administrator offered "Admin
-          view" would be offered a screen that refuses them. */}
-      {me.is_admin && (
-        <div className="shrink-0 border-t border-line-quiet p-2.5">
-          <SideLink
-            to={inAdmin ? "/" : "/admin"}
-            end={inAdmin}
-            label={inAdmin ? m["shell.nav.user_view"]() : m["shell.nav.admin_view"]()}
-            icon={ShieldIcon}
-            rail={rail}
-            onClose={onClose}
-            neverActive
-            className="text-ink"
-          />
-        </div>
-      )}
     </>
   );
 }
@@ -447,9 +492,7 @@ function NavList({
  *
  * Expanded, icon and label; in the rail, the icon alone with the label on a
  * tooltip — and as the link's `aria-label`, so the accessible name survives
- * the text's removal. The active state follows the route, as the header pills
- * used to; the view switcher declines it, because the control that moves you
- * somewhere is not the marker of where you are.
+ * the text's removal. The active state follows the route.
  */
 function SideLink({
   to,
@@ -458,7 +501,6 @@ function SideLink({
   icon: Icon,
   rail,
   onClose,
-  neverActive = false,
   className,
 }: {
   to: string;
@@ -467,7 +509,6 @@ function SideLink({
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   rail: boolean;
   onClose: () => void;
-  neverActive?: boolean;
   className?: string;
 }) {
   const link = (
@@ -479,7 +520,7 @@ function SideLink({
       className={({ isActive }) =>
         [
           SIDEBAR_LINK,
-          isActive && !neverActive ? SIDEBAR_LINK_ACTIVE : "",
+          isActive ? SIDEBAR_LINK_ACTIVE : "",
           rail ? SIDEBAR_LINK_COLLAPSED : "",
           className,
         ]
