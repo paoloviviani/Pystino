@@ -53,14 +53,16 @@ class UpstreamSettings(BaseModel):
     Since ADR 0027 the endpoint and credentials of a *running* request come from
     the ``providers`` table, not from here: ``base_url`` and ``api_key`` are read
     once, by migration 0003, to create the ``default`` provider so an upgrade
-    changes nothing.
+    changes nothing. With no ``base_url`` a fresh database gets no provider.
 
     Everything else on this model is still live. Timeouts and pool sizes are
     properties of this gateway's HTTP client rather than of any provider, so they
     stay global and apply to every provider's client.
     """
 
-    base_url: str = "https://api.cortecs.ai/v1"
+    # Empty means no upstream is configured: nothing is seeded, and an admin
+    # adds providers in the console.
+    base_url: str = ""
     api_key: SecretStr = SecretStr("")
     # Sent to the upstream as-is. Useful for provider-specific routing headers.
     extra_headers: dict[str, str] = Field(default_factory=dict)

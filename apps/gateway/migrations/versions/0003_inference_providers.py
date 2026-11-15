@@ -30,19 +30,29 @@ depends_on: str | Sequence[str] | None = None
 
 logger = logging.getLogger("alembic.runtime.migration")
 
-# Matches gateway.config.UpstreamSettings.base_url, so a deployment that never
-# set the variable still lands on the endpoint it has been using.
-_DEFAULT_BASE_URL = "https://api.cortecs.ai/v1"
+# What a deployment that already has models and never set the variable has been
+# using. Only the upgrade of such a database falls back to it; a fresh one seeds
+# nothing without an explicit GATEWAY_UPSTREAM__BASE_URL.
+_LEGACY_DEFAULT_BASE_URL = "https://api.cortecs.ai/v1"
 
 
-def _seed_provider() -> dict[str, object]:
+def _seed_provider(has_models: bool) -> dict[str, object] | None:
     """The `default` provider, from the environment this gateway already uses.
 
     Read straight from ``os.environ`` rather than through Settings: a migration
     must not import application configuration, which validates far more than
     this needs and would fail the upgrade for an unrelated reason.
+
+    A fresh database with no ``GATEWAY_UPSTREAM__BASE_URL`` gets no provider at
+    all: a placeholder pointing at a vendor nobody chose is clutter in the
+    console, and an admin adds a real one from the catalogue. A database that
+    already holds models must have one for them to point at, so that upgrade
+    keeps the old default.
     """
-    base_url = (os.environ.get("GATEWAY_UPSTREAM__BASE_URL") or _DEFAULT_BASE_URL).rstrip("/")
+    configured = os.environ.get("GATEWAY_UPSTREAM__BASE_URL") or ""
+    if not configured and not has_models:
+        return None
+    base_url = (configured or _LEGACY_DEFAULT_BASE_URL).rstrip("/")
     api_key = os.environ.get("GATEWAY_UPSTREAM__API_KEY") or ""
 
     encrypted = ""
@@ -114,7 +124,8 @@ def upgrade() -> None:
 
     # The seed row goes in before the column that references it, so the backfill
     # below has something to point at.
-    seed = _seed_provider()
+    has_models = bool(op.get_bind().execute(sa.text("SELECT count(*) FROM models")).scalar())
+    seed = _seed_provider(has_models)
     now = sa.func.now()
     providers = sa.table(
         "providers",
@@ -129,15 +140,17 @@ def upgrade() -> None:
         sa.column("created_at", sa.DateTime(timezone=True)),
         sa.column("updated_at", sa.DateTime(timezone=True)),
     )
-    op.execute(providers.insert().values(**seed, created_at=now, updated_at=now))
+    if seed is not None:
+        op.execute(providers.insert().values(**seed, created_at=now, updated_at=now))
 
     with op.batch_alter_table("models", schema=None) as batch_op:
         # Nullable first: existing rows have no value yet, and a NOT NULL column
         # cannot be added to a populated table without one.
         batch_op.add_column(sa.Column("provider_id", sa.Uuid(), nullable=True))
 
-    models = sa.table("models", sa.column("provider_id", sa.Uuid()))
-    op.execute(models.update().values(provider_id=seed["id"]))
+    if seed is not None:
+        models = sa.table("models", sa.column("provider_id", sa.Uuid()))
+        op.execute(models.update().values(provider_id=seed["id"]))
 
     with op.batch_alter_table("models", schema=None) as batch_op:
         batch_op.alter_column("provider_id", existing_type=sa.Uuid(), nullable=False)

@@ -5,6 +5,7 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 ## Unreleased
 
 - **Console: the switch between the user and admin views is now in the top bar, beside your name.** A "User | Admin" pair for administrators, with the current view highlighted; it goes to the same screen in the other view when there is one. It replaces the link at the bottom of the sidebar.
+- **A fresh deployment no longer gets a placeholder provider.** Migration 0003 used to create a `default` provider pointing at `https://api.cortecs.ai/v1` whenever `GATEWAY_UPSTREAM__BASE_URL` was unset, and the setting itself defaulted to that URL. Now with no base URL a fresh database has no provider and no models; add one from the catalogue in the console (the Cortecs entry is still there). Setting `GATEWAY_UPSTREAM__BASE_URL` still seeds `default`, and upgrading a database that already has models keeps working. Existing providers are never touched. `deploy/compose.yaml` and `deploy/.env.example` default to empty, and `gateway seed` now asks for a base URL.
 
 ## v0.33.2 — 2026-11-11
 
