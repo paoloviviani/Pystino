@@ -140,11 +140,11 @@ class TestToolAnalysis:
     @pytest.mark.parametrize(
         ("flavour", "content", "flag"),
         [
-            (sp.VLLM, '<tool_call>\n{"name": "get_weather"}\n</tool_call>', "hermes"),
-            (sp.SGLANG, '<tool_call>\n{"name": "get_weather"}\n</tool_call>', "qwen25"),
+            (sp.VLLM, '<tool_call>\n{"name": "get_weather"}\n</tool_call>', "e.g. hermes"),
+            (sp.SGLANG, '<tool_call>\n{"name": "get_weather"}\n</tool_call>', "e.g. qwen25"),
             (sp.SGLANG, "<｜DSML｜tool_calls>...", "--tool-call-parser deepseekv4"),  # noqa: RUF001
-            (sp.VLLM, "<|tool_call_begin|>functions.get_weather:0", "kimi_k2"),
-            (sp.VLLM, '[TOOL_CALLS][{"name": "get_weather"}]', "--tool-call-parser mistral"),
+            (sp.VLLM, "<|tool_call_begin|>functions.get_weather:0", "e.g. kimi_k2"),
+            (sp.VLLM, '[TOOL_CALLS][{"name": "get_weather"}]', "e.g. mistral"),
             (sp.LLAMACPP, '<tool_call>{"name": "get_weather"}</tool_call>', "--jinja"),
         ],
     )
@@ -276,7 +276,11 @@ class TestProbeServer:
         found = probe.models["Qwen/Qwen2.5-7B-Instruct"]
         assert found.context_window == 32768
         assert found.tools is False
-        assert "--enable-auto-tool-choice --tool-call-parser hermes" in found.warnings[0]
+        assert (
+            "--enable-auto-tool-choice --tool-call-parser <parser> (e.g. hermes"
+            in found.warnings[0]
+        )
+        assert "docs for your model" in found.warnings[0]
         # The credential rides along, and only to the administrator's own server.
         assert {r.headers.get("authorization") for r in server.requests} == {"Bearer k"}
 
@@ -365,14 +369,11 @@ class TestSglangDeepseekV4:
         body = {"model": "deepseek-ai/DeepSeek-V4-Flash", "messages": [], **payload}
         return SglangPlugin().prepare_payload(body, surface=ApiSurface.CHAT_COMPLETIONS)
 
-    def test_an_effort_turns_thinking_on_and_names_a_tier(self) -> None:
-        out = self.shape(reasoning_effort="medium")
+    @pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
+    def test_an_effort_turns_thinking_on_and_is_passed_through_unchanged(self, effort: str) -> None:
+        out = self.shape(reasoning_effort=effort)
         assert out["chat_template_kwargs"] == {"thinking": True}
-        assert out["reasoning_effort"] == "high"
-
-    @pytest.mark.parametrize("effort", ["xhigh", "max"])
-    def test_the_top_efforts_become_max(self, effort: str) -> None:
-        assert self.shape(reasoning_effort=effort)["reasoning_effort"] == "max"
+        assert out["reasoning_effort"] == effort
 
     def test_none_turns_thinking_off_and_sends_no_effort(self) -> None:
         out = self.shape(reasoning_effort="none")

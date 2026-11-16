@@ -160,7 +160,7 @@ class TestDiscoveryAndImport:
         ).json()
         row = next(r for r in body["available"] if r["upstream_model"] == "other/model")
         assert "tools" not in row["supported_features"]
-        assert "--tool-call-parser hermes" in row["warnings"][0]
+        assert "e.g. hermes" in row["warnings"][0]
 
     async def test_the_probe_is_not_metered(
         self,
@@ -299,6 +299,25 @@ class TestRefreshOfAnExistingModel:
         assert row.context_window == 8000
         assert row.supported_features == ["tools", "json_mode"]
         assert row.input_modalities == ["text", "image"]
+
+    async def test_a_non_admin_cannot_probe_or_discover(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        vllm: list[httpx.Request],
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded, admin=False))
+        for method, url in (
+            ("POST", f"/api/admin/models/{seeded.model.id}/probe"),
+            ("GET", f"/api/admin/models/discover?provider_id={seeded.provider.id}"),
+            ("POST", f"/api/admin/models/import?provider_id={seeded.provider.id}"),
+        ):
+            response = await client.request(method, url, json={"models": []})
+            assert response.status_code == 403, url
+        # And nothing was sent to the server.
+        assert vllm == []
 
     async def test_a_hosted_provider_cannot_be_probed(
         self,

@@ -250,7 +250,7 @@ the server was started with one.
     - *Tools:* proper `tool_calls` mean tools work. Tool-call markup in the answer
       (`<tool_call>`, `<|tool_call_begin|>`, `[TOOL_CALLS]`, DeepSeek's DSML) or a
       refusal naming the flag means the server's **parser is missing**: a warning
-      says which flag to add. Anything else is "unknown", and nothing is claimed.
+      says which flag to add (parser names other than DeepSeek's are given as examples, to check against the server's docs). Anything else is "unknown", and nothing is claimed.
     - *Reasoning:* a `reasoning_content` or `reasoning` field is noted; `<think>`
       text left in the answer is warned about. Otherwise it is left to you.
 - **It proposes; you confirm.** Discovery shows the proposed window, features and
@@ -266,11 +266,11 @@ the server was started with one.
   shown as `default_reasoning_effort` on `/v1/models`. The gateway applies it to a
   chat completion that names no `reasoning_effort` (or `reasoning` object); a
   request's own choice always wins, so a client needs no change. For SGLang
-  serving DeepSeek V4 (a model name containing `deepseek-v4`), the plugin
-  turns an effort into what that upstream reads: `chat_template_kwargs.thinking`
-  is set to true (false for `none`, with no effort sent) unless the request set it,
-  and the effort is sent as `max` (for `xhigh` and `max`) or `high` (anything else),
-  because SGLang's DeepSeek V4 path wants a named tier and documents only those.
+  serving DeepSeek V4 (a model name containing `deepseek-v4`), the plugin also
+  switches thinking on, because that upstream thinks only when
+  `chat_template_kwargs.thinking` is true: any effort except `none` sets it (unless
+  the request already did) and is sent to SGLang unchanged; `none` sets it false and
+  sends no effort.
   Other SGLang models are left alone; set their own switch with
   `chat_template_kwargs` from the client.
 - **Cached tokens.** llama.cpp reports reused prompt tokens as `timings.cache_n`;

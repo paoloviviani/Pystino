@@ -251,11 +251,22 @@ def find_tool_markup(text: str) -> str | None:
     return None
 
 
+#: Parser names stated as fact: checked against the server's own code.
+_VERIFIED_PARSERS: Final = frozenset({"deepseekv4"})
+
+
 def _tool_advice(flavour: str, marker: str | None) -> str:
+    """The flag to add. A parser name not checked against the server's docs is
+    offered as an example, with a pointer to them, never as the answer."""
     flags = TOOL_FLAGS[flavour]
     for known, parsers in _TOOL_MARKUP:
         if known == marker and flavour in parsers:
-            return flags.replace("<parser>", parsers[flavour])
+            name = parsers[flavour]
+            if name in _VERIFIED_PARSERS:
+                return flags.replace("<parser>", name)
+            return (
+                f"{flags} (e.g. {name}; see {LABELS[flavour]}'s tool-calling docs for your model)"
+            )
     return flags
 
 

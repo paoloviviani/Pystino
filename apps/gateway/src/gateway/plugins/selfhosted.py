@@ -66,10 +66,6 @@ class LlamaCppPlugin(SelfHostedPlugin):
 #: server's parsers, which the gateway cannot see.
 _DEEPSEEK_V4 = re.compile(r"deepseek[-_ ]?v4", re.IGNORECASE)
 
-#: DeepSeek V4's documented reasoning tiers. Anything lower is rounded up to the
-#: nearest it has: SGLang's DeepSeek V4 adapter requires a named tier.
-_DSV4_TIER = {"max": "max", "xhigh": "max"}
-
 
 class SglangPlugin(SelfHostedPlugin):
     name = "sglang"
@@ -84,13 +80,13 @@ class SglangPlugin(SelfHostedPlugin):
         """Usage on streams, and DeepSeek V4's thinking switch.
 
         SGLang serves DeepSeek V4 through its own chat encoding, which thinks only
-        when ``chat_template_kwargs.thinking`` is true (server default: off) and
-        which takes a named ``reasoning_effort`` tier. So an effort, whether the
-        client's or the model's gateway-side default, is translated:
+        when ``chat_template_kwargs.thinking`` is true (server default: off). The
+        effort itself is passed through unchanged (a live DeepSeek V4 on SGLang
+        accepts ``medium`` and reasons), so for an effort, whether the client's or
+        the model's gateway-side default:
 
         * ``none`` turns thinking off and sends no effort;
-        * ``max`` and ``xhigh`` become ``max``; every other effort becomes ``high``;
-        * ``thinking`` is switched on unless the client already set it.
+        * any other effort switches ``thinking`` on, and is sent as it is.
 
         Only for a model whose name says DeepSeek V4. A client's own
         ``chat_template_kwargs.thinking`` is never overwritten.
@@ -108,6 +104,4 @@ class SglangPlugin(SelfHostedPlugin):
         payload["chat_template_kwargs"] = kwargs
         if effort == "none":
             payload.pop("reasoning_effort")
-        else:
-            payload["reasoning_effort"] = _DSV4_TIER.get(effort, "high")
         return payload
