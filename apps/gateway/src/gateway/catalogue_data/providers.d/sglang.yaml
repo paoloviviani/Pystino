@@ -1,0 +1,27 @@
+providers:
+  - id: sglang
+    name: SGLang
+    plugin: sglang
+    base_url_example: http://host:30000/v1
+    description: >-
+      An SGLang server you run yourself, through its OpenAI-compatible API.
+      Models are free to the gateway (no price); the server is probed for its
+      context window and tool support when you list or import its models.
+    region: not-published
+    region_note: >-
+      Your own server: it runs wherever you host it, which the gateway cannot
+      know. Residency rules treat it as unknown unless you set a region in a
+      catalogue override.
+    retention:
+      status: not_published
+      note: >-
+        Self-hosted: what is kept is whatever your own server, its logs and its
+        host keep. Nothing leaves it unless you route it elsewhere.
+    notes:
+      - "Tools: start the server with --tool-call-parser <parser> (for DeepSeek V4: deepseekv4)."
+      - "Reasoning: add --reasoning-parser <parser> (for DeepSeek V4: deepseek-v4). DeepSeek V4 thinks only when asked: set a default reasoning effort on the model, and the gateway turns thinking on for it."
+      - "Add --enable-cache-report so cached prompt tokens show in the usage figures."
+    sources:
+      - url: https://docs.sglang.io/advanced_features/tool_parser.html
+        retrieved: 2026-11-16
+        covers: server flags for tools

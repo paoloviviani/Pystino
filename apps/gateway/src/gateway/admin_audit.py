@@ -58,6 +58,7 @@ MODEL_FIELDS = (
     "context_window",
     "max_output_tokens",
     "max_input_tokens",
+    "default_reasoning_effort",
     "input_modalities",
     "output_modalities",
     "supported_features",

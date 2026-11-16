@@ -94,6 +94,8 @@ providers:
 | `name` | Required once merged (built-in or override must set it). |
 | `plugin` | Required once merged; must be an installed plugin. |
 | `base_url` | `http(s)` with a host, no credentials in the URL. Omit to use the plugin's own default, where it has one. |
+| `base_url_example` | A sample address shown as the field's placeholder, for a self-hosted type that has no endpoint of its own (`http://host:8000/v1`). Never used as the endpoint. |
+| `notes` | A short list of per-vendor sentences the console shows when the entry is chosen: the server flags a self-hosted model needs. |
 | `region` | A free-form lower-case tag. Routing rules compare tags, so be consistent. Three tags say how much is known rather than where: `global` (anywhere, no commitment), `various` (a router: the routed upstream decides) and `not-published` (the provider does not say). `various` and `not-published` reach routing as *unknown*, never as a place. |
 | `region_note` | Plain words: is the region selectable, is there an EU option, what is not covered. |
 | `retention.status` | `published`, `various` (a router) or `not_published`. Required of every built-in entry, so none ships blank. |
@@ -188,7 +190,7 @@ residency and zero-data-retention rules are a later step.
 ## The built-in entries
 
 OpenAI, Anthropic, Mistral, Nebius, Melious, Tensorix, Cortecs and OpenRouter ship
-built in. They state a region only where the provider commits to one (Mistral,
+built in, with vLLM, SGLang and llama.cpp for [servers you run yourself](#self-hosted-servers-vllm-sglang-llamacpp). They state a region only where the provider commits to one (Mistral,
 Melious and Cortecs: `eu`) and no retention claims at all: those are for you to record
 from your own contract, in an override.
 
@@ -214,6 +216,67 @@ differs" and a **Use catalogue endpoint** button; or edit the provider and set
 the endpoint by hand. Region and retention, which are read through the link,
 follow the new entry at once, so check that the row's endpoint matches what the
 entry now claims.
+
+## Self-hosted servers: vLLM, SGLang, llama.cpp
+
+Three presets for an OpenAI-compatible server you run. As with every vendor entry,
+the provider's *type* is the protocol (OpenAI-compatible); the vendor is only the
+plugin (`vllm`, `sglang`, `llamacpp`) and the entry's notes. Choose the entry
+under **Provider** when adding one, type the server's address (the field shows
+`http://host:8000/v1` as an example; nothing is pre-filled), and give a key only if
+the server was started with one.
+
+- **Free.** Every model the server lists imports at zero rates, recorded as a
+  catalogue price hint. Tokens are still counted, so quotas and usage reports work.
+- **What each server needs started with.** The console shows these under the entry.
+
+    | Server | Tools | Reasoning | Other |
+    |---|---|---|---|
+    | vLLM | `--enable-auto-tool-choice --tool-call-parser <parser>` | `--reasoning-parser <parser>` | |
+    | SGLang | `--tool-call-parser <parser>` (DeepSeek V4: `deepseekv4`) | `--reasoning-parser <parser>` (DeepSeek V4: `deepseek-v4`) | `--enable-cache-report` for cached-token figures |
+    | llama.cpp | `--jinja` | | |
+
+- **The server probe.** When the models of such a provider are listed (Discover),
+  imported, or refreshed (**Check the server** on a model's page), the gateway
+  asks the server what it is and what it can do, with at most one identity request
+  and one small non-streaming chat request per model (`max_tokens` 128; at most 8
+  models; each time-bounded):
+    - *Identity:* vLLM `GET /version`, SGLang `GET /server_info` (then the older
+      `/get_server_info`), llama.cpp `GET /props`; failing that, `owned_by` in
+      `/v1/models`. A server of another kind than the preset is flagged.
+    - *Context window:* vLLM and SGLang `max_model_len` from `/v1/models`;
+      llama.cpp `default_generation_settings.n_ctx` from `/props`, which is the
+      window of **one slot** (the configured context divided by `-np`).
+    - *Tools:* proper `tool_calls` mean tools work. Tool-call markup in the answer
+      (`<tool_call>`, `<|tool_call_begin|>`, `[TOOL_CALLS]`, DeepSeek's DSML) or a
+      refusal naming the flag means the server's **parser is missing**: a warning
+      says which flag to add. Anything else is "unknown", and nothing is claimed.
+    - *Reasoning:* a `reasoning_content` or `reasoning` field is noted; `<think>`
+      text left in the answer is warned about. Otherwise it is left to you.
+- **It proposes; you confirm.** Discovery shows the proposed window, features and
+  `text` input, and the warnings, on each row; importing adopts them for the new
+  model. On an existing model the probe writes nothing: it offers only what the
+  model has none of (a missing window, features it lacks, empty modalities), as a
+  button that fills the form, which you save. A value you set is never overwritten.
+- **Not billed.** The probe's requests go from the control plane straight to your
+  server, never through the metered request path, so they create no usage record,
+  reserve no quota and bill nobody. They cost tokens on your own server only.
+- **Default reasoning effort.** Any model can carry a default effort (`none`,
+  `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), set on the model's page and
+  shown as `default_reasoning_effort` on `/v1/models`. The gateway applies it to a
+  chat completion that names no `reasoning_effort` (or `reasoning` object); a
+  request's own choice always wins, so a client needs no change. For SGLang
+  serving DeepSeek V4 (a model name containing `deepseek-v4`), the plugin
+  turns an effort into what that upstream reads: `chat_template_kwargs.thinking`
+  is set to true (false for `none`, with no effort sent) unless the request set it,
+  and the effort is sent as `max` (for `xhigh` and `max`) or `high` (anything else),
+  because SGLang's DeepSeek V4 path wants a named tier and documents only those.
+  Other SGLang models are left alone; set their own switch with
+  `chat_template_kwargs` from the client.
+- **Cached tokens.** llama.cpp reports reused prompt tokens as `timings.cache_n`;
+  when `usage` has no cache figure, that is recorded as the cached prompt tokens.
+  A server that sends usage on every chunk (vLLM `continuous_usage_stats`) is
+  counted once, from the last.
 
 ## Melious
 

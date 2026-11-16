@@ -18,6 +18,8 @@ import { AdminRouting } from "./AdminRouting";
  */
 
 const MODEL: AdminModel = {
+  default_reasoning_effort: null,
+  provider_self_hosted: false,
   id: "m1",
   name: "gpt-4o-mini",
   upstream_model: "openai/gpt-4o-mini",

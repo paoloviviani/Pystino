@@ -53,6 +53,8 @@ function backend(overrides: Partial<AdminProvider> = {}): AdminProvider {
 
 function tier(overrides: Partial<AdminModel> = {}): AdminModel {
   return {
+    default_reasoning_effort: null,
+    provider_self_hosted: false,
     id: "m-linkup",
     name: "linkup",
     upstream_model: "search",
@@ -102,6 +104,7 @@ function group(overrides: Partial<AdminGroup> = {}): AdminGroup {
 
 const PLUGINS: ProviderPlugin[] = [
   {
+    self_hosted: false,
     name: "linkup",
     label: "Linkup (web search)",
     description: "Linkup",
@@ -115,6 +118,7 @@ const PLUGINS: ProviderPlugin[] = [
     requires_api_key: true,
   },
   {
+    self_hosted: false,
     name: "exa",
     label: "Exa (web search)",
     description: "Exa",
@@ -128,6 +132,7 @@ const PLUGINS: ProviderPlugin[] = [
     requires_api_key: true,
   },
   {
+    self_hosted: false,
     name: "jina",
     label: "Jina (web search)",
     description: "Jina",
@@ -144,6 +149,7 @@ const PLUGINS: ProviderPlugin[] = [
     requires_api_key: true,
   },
   {
+    self_hosted: false,
     name: "duckduckgo",
     label: "DuckDuckGo (web search)",
     description:

@@ -315,6 +315,9 @@ export type ManualImportPrice = Narrow<
 >;
 
 /** One row of an import request. */
+/** What probing one model on a self-hosted server found, and what it proposes. */
+export type ModelProbe = Schemas["ModelProbeResponse"];
+
 export type ModelImportItem = Narrow<
   Schemas["ModelImportItem"],
   {

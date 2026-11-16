@@ -926,9 +926,30 @@ export function ProviderDialog({
         label={m["admin_providers.field.base_url"]()}
         value={baseUrl}
         onChange={(event) => setBaseUrl(event.target.value)}
-        placeholder={m["admin_providers.field.base_url_placeholder"]()}
+        placeholder={
+          selectedEntry?.base_url_example ??
+          m["admin_providers.field.base_url_placeholder"]()
+        }
         hint={m["admin_providers.field.base_url_hint"]()}
       />
+
+      {/* Per-vendor notes from the catalogue entry: for a self-hosted server,
+          the flags it needs started with for tools and reasoning. */}
+      {selectedEntry && selectedEntry.notes.length > 0 && (
+        <Notice
+          tone="info"
+          title={m["admin_providers.field.notes_title"]({
+            name: selectedEntry.name,
+          })}
+        >
+          <ul className="list-disc pl-5">
+            {selectedEntry.notes.map((note) => (
+              // i18n: server text — the catalogue entry's own notes.
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        </Notice>
+      )}
 
       <Input
         label={m["admin_providers.field.description"]()}

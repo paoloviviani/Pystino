@@ -449,6 +449,8 @@ _CONTEXT_KEYS = (
     "context_length",
     "context_window",
     "max_context",
+    # vLLM and SGLang put the served context length on each `/v1/models` entry.
+    "max_model_len",
     "max_input_tokens",
 )
 _OUTPUT_LIMIT_KEYS = ("max_output_tokens", "max_completion_tokens")

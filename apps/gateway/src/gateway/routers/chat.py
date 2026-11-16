@@ -230,6 +230,23 @@ def build_upstream_payload(
     return payload
 
 
+def apply_default_reasoning_effort(payload: dict[str, Any], default: str | None) -> None:
+    """Give a request that chose no reasoning effort the model's default.
+
+    Applied here, in the gateway, rather than only advertised in ``/v1/models``,
+    so that every client behaves the same: a client that ignores the field, one
+    written before it existed, and a bare curl all get what the operator set.
+    A client's own choice always wins, and so does an OpenRouter-style
+    ``reasoning`` object, which is also a choice. An explicit ``null`` counts as
+    no choice. The provider's plugin then maps the effort to what its upstream
+    needs (SGLang's DeepSeek V4 reads ``chat_template_kwargs.thinking``).
+    """
+    if not default:
+        return
+    if payload.get("reasoning_effort") is None and payload.get("reasoning") is None:
+        payload["reasoning_effort"] = default
+
+
 # response_model=None because this endpoint returns either a JSONResponse or a
 # StreamingResponse, and FastAPI would otherwise try to build a Pydantic response
 # model from that union. The response body is OpenAI's schema, not ours, and is
@@ -348,6 +365,7 @@ async def chat_completions(
         payload = build_upstream_payload(
             body, outcome=outcome, upstream_model=resolved.upstream_model
         )
+        apply_default_reasoning_effort(payload, resolved.model.default_reasoning_effort)
         search.apply(payload)
         inject_system_note(payload, outcome, surface=SURFACE)
         payload = metered.shape_payload(payload, surface=SURFACE)

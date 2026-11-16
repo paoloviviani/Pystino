@@ -38,6 +38,7 @@ from gateway.plugins.mistral import MistralPlugin
 from gateway.plugins.nebius import NebiusPlugin
 from gateway.plugins.openai import OpenAIPlugin
 from gateway.plugins.openrouter import OpenRouterPlugin
+from gateway.plugins.selfhosted import LlamaCppPlugin, SglangPlugin, VllmPlugin
 from gateway.plugins.tensorix import TensorixPlugin
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,10 @@ _BUILTIN: dict[str, PluginFactory] = {
     "tensorix": TensorixPlugin,
     "cortecs": CortecsRouterPlugin,
     "openrouter": OpenRouterPlugin,
+    # Self-hosted servers: OpenAI-compatible, so quirks and not a new type.
+    "vllm": VllmPlugin,
+    "sglang": SglangPlugin,
+    "llamacpp": LlamaCppPlugin,
     # Not a counterparty: this deployment's own extractor service. Listed
     # here because `providers.plugin` is already the answer to "what kind of
     # thing is behind this row", and a second discriminator for one case
@@ -167,6 +172,8 @@ def describe() -> list[dict[str, object]]:
                 # (ADR 0100), so the console can say so before a model is made.
                 "supports_decisions": getattr(plugin, "decisions", None) is not None,
                 "requires_api_key": bool(getattr(plugin, "requires_api_key", True)),
+                # A self-hosted server: models import free and the server is probed.
+                "self_hosted": bool(getattr(plugin, "self_hosted", False)),
                 "is_default": plugin.name == DEFAULT_PLUGIN,
             }
         )

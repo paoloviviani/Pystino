@@ -42,6 +42,8 @@ function price(overrides: Partial<Price> = {}): Price {
 
 function model(overrides: Partial<AdminModel> = {}): AdminModel {
   return {
+    default_reasoning_effort: null,
+    provider_self_hosted: false,
     id: "m1",
     name: "fast-summariser",
     upstream_model: "provider/fast-1",
@@ -165,6 +167,70 @@ async function save(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("AdminModelDetail", () => {
+  it("probes a self-hosted server, shows its warning, and fills only what the admin then saves", async () => {
+    const user = userEvent.setup({ delay: null });
+    const captured: Captured = { bodies: [], prices: [] };
+    const base = routes(
+      model({
+        provider_self_hosted: true,
+        context_window: null,
+        supported_features: [],
+      }),
+      [price()],
+      captured,
+    );
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).includes("/probe")
+        ? Promise.resolve(
+            jsonResponse({
+              server: "vLLM 0.10.1",
+              warnings: [
+                "The server refused a tool request. Start it with --enable-auto-tool-choice --tool-call-parser <parser> to use tools.",
+              ],
+              tools: false,
+              reasoning: null,
+              reported_context_window: 32768,
+              proposal: {
+                context_window: 32768,
+                add_features: [],
+                input_modalities: ["text"],
+              },
+            }),
+          )
+        : base(input, init),
+    );
+    renderScreen();
+    await ready();
+
+    await user.click(screen.getByRole("button", { name: "Check the server" }));
+    expect(await screen.findByText(/--tool-call-parser/)).toBeInTheDocument();
+    expect(screen.getByText(/parser is missing/)).toBeInTheDocument();
+
+    // Nothing is written by the probe itself.
+    expect(captured.bodies).toHaveLength(0);
+    await user.click(
+      screen.getByRole("button", { name: "Fill the form with what is missing" }),
+    );
+    await user.selectOptions(
+      screen.getByLabelText("Default reasoning effort"),
+      "high",
+    );
+    await save(user);
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    const body = captured.bodies[0] as Record<string, unknown>;
+    expect(body.context_window).toBe(32768);
+    expect(body.default_reasoning_effort).toBe("high");
+  });
+
+  it("offers no server probe for a hosted provider", async () => {
+    vi.stubGlobal("fetch", routes(model()));
+    renderScreen();
+    await ready();
+    expect(
+      screen.queryByRole("button", { name: "Check the server" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("toggling visibility sends is_public and flips the badge", async () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [], prices: [] };

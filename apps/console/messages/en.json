@@ -3554,5 +3554,20 @@
   "privacy.rule.override_placeholder": "TYPE_NAME",
   "privacy.phrase.finds_one": "it finds at least 1 item",
   "privacy.phrase.finds_fewer_one": "it finds fewer than 1 item",
-  "privacy.rule.overrides_count_one": "1 override"
+  "privacy.rule.overrides_count_one": "1 override",
+  "admin_providers.field.notes_title": "Starting the {name} server",
+  "admin_models.discover.badge.server_warning": "Server",
+  "admin_models.discover.server_title": "Server: {server}",
+  "admin_models.discover.server_ok": "The server answered and nothing needs fixing. Context windows and tool support below are what it reported; you confirm them by importing.",
+  "model_detail.probe.button": "Check the server",
+  "model_detail.probe.title": "Server: {server}",
+  "model_detail.probe.tools_yes": "Tool calls work.",
+  "model_detail.probe.tools_no": "Tools do not work yet: the server's parser is missing.",
+  "model_detail.probe.tools_unknown": "Tool support could not be told from one small request.",
+  "model_detail.probe.window": "The server reports a context window of {tokens} tokens.",
+  "model_detail.probe.apply": "Fill the form with what is missing",
+  "model_detail.probe.nothing_to_add": "Nothing to add: the values you set are kept.",
+  "model_detail.describe.default_effort": "Default reasoning effort",
+  "model_detail.describe.default_effort_hint": "Applied by the gateway when a request names no reasoning effort; a request's own choice always wins. Also shown on /v1/models.",
+  "model_detail.describe.effort_none": "No default"
 }

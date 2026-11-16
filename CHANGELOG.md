@@ -4,6 +4,11 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **Self-hosted servers: vLLM, SGLang and llama.cpp are catalogue entries.** Pick one under Provider, type your server's address and, if it has one, a key. Models import free of charge. Each entry lists the flags the server needs for tools and reasoning. They are OpenAI-compatible entries, not new provider types.
+- **A server probe when you list, import or refresh such a provider's models.** One identity request and one tiny tool call per model, on your own server, unmetered. It proposes the context window (llama.cpp: per slot), tool and reasoning support and text input, and warns when the server's tool-call parser is missing, naming the flag. It never overwrites values you set. New: **Check the server** on a model's page; `POST /api/admin/models/{id}/probe`; `warnings` and `server` on discovery and import results.
+- **A default reasoning effort per model** (migration 0087). Set it on the model's page; `/v1/models` shows it as `default_reasoning_effort`, and the gateway applies it to chat completions that name no effort, so every client gets it. For SGLang serving DeepSeek V4 the effort also switches thinking on.
+- **Accounting:** llama.cpp's `timings.cache_n` is read as cached prompt tokens when `usage` reports none.
+
 ## v0.33.3 — 2026-11-16
 
 Paired with Cerea 0.53.1.

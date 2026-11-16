@@ -28,6 +28,7 @@ import type {
   MergePreview,
   MergeResult,
   ModelImportItem,
+  ModelProbe,
   ModelImportResponse,
   OidcPolicy,
   OidcPolicyInput,
@@ -488,6 +489,7 @@ export interface CreateModelInput {
   context_window?: number | null;
   max_output_tokens?: number | null;
   max_input_tokens?: number | null;
+  default_reasoning_effort?: string | null;
   input_modalities?: string[];
   output_modalities?: string[];
   supported_features?: string[];
@@ -514,6 +516,8 @@ export interface ModelUpdateInput {
   context_window?: number | null;
   max_output_tokens?: number | null;
   max_input_tokens?: number | null;
+  /** The effort the gateway applies when a request names none; null clears it. */
+  default_reasoning_effort?: string | null;
   input_modalities?: string[];
   output_modalities?: string[];
   supported_features?: string[];
@@ -526,6 +530,19 @@ export function useUpdateModel() {
     mutationFn: ({ id, ...body }: { id: string } & ModelUpdateInput) =>
       request<AdminModel>(`${base}/models/${id}`, { method: "PATCH", body }),
     onSuccess: () => client.invalidateQueries({ queryKey: keys.models }),
+  });
+}
+
+/**
+ * Ask a self-hosted server what one of its models supports. A mutation, not a
+ * query: it makes the server generate, so it runs when the administrator asks.
+ * It writes nothing; the proposal is applied through an ordinary model update.
+ */
+export function useProbeModel() {
+  const { base } = useScope();
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<ModelProbe>(`${base}/models/${id}/probe`, { method: "POST" }),
   });
 }
 
