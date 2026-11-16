@@ -345,7 +345,7 @@ export function otherViewPath(pathname: string, inAdmin: boolean): string {
 function ViewSwitch({ inAdmin, pathname }: { inAdmin: boolean; pathname: string }) {
   const target = otherViewPath(pathname, inAdmin);
   const base =
-    "inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-sm font-medium no-underline transition-colors focus-visible:outline-none focus-visible:shadow-focus max-[40rem]:gap-1 max-[40rem]:px-2";
+    "inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-dense font-medium no-underline transition-colors focus-visible:outline-none focus-visible:shadow-focus max-[40rem]:gap-1 max-[40rem]:px-2";
   const on = "bg-ink text-surface";
   const off = "text-ink-muted hover:text-ink";
   return (
