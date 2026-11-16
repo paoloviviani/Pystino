@@ -4,6 +4,8 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **Console: the switch between the user and admin views is now in the top bar, beside your name.** A "User | Admin" pair for administrators, with the current view highlighted; it goes to the same screen in the other view when there is one. It replaces the link at the bottom of the sidebar.
+
 ## v0.33.2 — 2026-11-11
 
 Paired with Cerea 0.49.1.

@@ -5,8 +5,10 @@
     A map of the console at `/console`: which screen answers which question, and which page explains it.
 
 The console is the React admin app the gateway serves at `/console`. Everyone
-who signs in sees two personal screens; administrators also get an **Admin**
-button beside their name, which opens a landing page with a card per screen.
+who signs in sees two personal screens; administrators also get a **User | Admin** switch in the top bar, beside their
+name. It marks the view you are in and moves to the matching page of the other
+one (Usage, Requests, Privacy, Providers) or to its front page; the Admin side
+is a landing page with a card per screen.
 Each card says what the screen decides, not what it is called.
 
 ## For everyone
