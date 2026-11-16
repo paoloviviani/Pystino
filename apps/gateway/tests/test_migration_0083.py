@@ -353,7 +353,10 @@ def test_a_reading_rule_with_a_content_condition_is_kept_switched_off_with_a_not
 def test_a_rule_reading_with_the_extractors_model_reads_with_the_built_in_extractor(
     tmp_path: Path,
 ) -> None:
+    import uuid
+
     from gateway.models import ModelDef, ModelKind, Provider
+    from gateway.types import utcnow
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
 
@@ -364,8 +367,29 @@ def test_a_rule_reading_with_the_extractors_model_reads_with_the_built_in_extrac
         other = Provider(name="cloud", base_url="http://ocr.test", plugin=None)
         db.add(other)
         db.flush()
-        db.add(
-            ModelDef(name="mistral", upstream_model="m", provider_id=other.id, kind=ModelKind.OCR)
+        # Core insert of the columns the 0082 schema has: the ORM would name every
+        # column the current model has, including ones later migrations add.
+        db.execute(
+            ModelDef.__table__.insert().values(
+                id=uuid.uuid4(),
+                name="mistral",
+                upstream_model="m",
+                provider_id=other.id,
+                kind=ModelKind.OCR,
+                is_alias=False,
+                route_rule="first_available",
+                route_sticky_ttl_seconds=3600,
+                route_price_input_weight=1,
+                route_price_output_weight=1,
+                is_active=True,
+                is_public=False,
+                admin_disabled=False,
+                input_modalities=[],
+                output_modalities=[],
+                supported_features=[],
+                created_at=utcnow(),
+                updated_at=utcnow(),
+            )
         )
         db.commit()
     engine.dispose()

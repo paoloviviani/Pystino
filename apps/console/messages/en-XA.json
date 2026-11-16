@@ -3554,5 +3554,20 @@
   "privacy.rule.override_placeholder": "[ŤÝÞÉ_ŃÁḾÉ]",
   "privacy.phrase.finds_one": "[íť ƒíńďś áť ľéáśť 1 íťéḿ]",
   "privacy.phrase.finds_fewer_one": "[íť ƒíńďś ƒéŵéŕ ťȟáń 1 íťéḿ]",
-  "privacy.rule.overrides_count_one": "[1 óǚéŕŕíďé]"
+  "privacy.rule.overrides_count_one": "[1 óǚéŕŕíďé]",
+  "admin_providers.field.notes_title": "[Śťáŕťíńǧ ťȟé {name} śéŕǚéŕ]",
+  "admin_models.discover.badge.server_warning": "[Śéŕǚéŕ]",
+  "admin_models.discover.server_title": "[Śéŕǚéŕ: {server}]",
+  "admin_models.discover.server_ok": "[Ťȟé śéŕǚéŕ áńśŵéŕéď áńď ńóťȟíńǧ ńééďś ƒíẋíńǧ. Ćóńťéẋť ŵíńďóŵś áńď ťóóľ śúþþóŕť ƀéľóŵ áŕé ŵȟáť íť ŕéþóŕťéď; ýóú ćóńƒíŕḿ ťȟéḿ ƀý íḿþóŕťíńǧ.]",
+  "model_detail.probe.button": "[Ćȟéćķ ťȟé śéŕǚéŕ]",
+  "model_detail.probe.title": "[Śéŕǚéŕ: {server}]",
+  "model_detail.probe.tools_yes": "[Ťóóľ ćáľľś ŵóŕķ.]",
+  "model_detail.probe.tools_no": "[Ťóóľś ďó ńóť ŵóŕķ ýéť: ťȟé śéŕǚéŕ'ś þáŕśéŕ íś ḿíśśíńǧ.]",
+  "model_detail.probe.tools_unknown": "[Ťóóľ śúþþóŕť ćóúľď ńóť ƀé ťóľď ƒŕóḿ óńé śḿáľľ ŕéǫúéśť.]",
+  "model_detail.probe.window": "[Ťȟé śéŕǚéŕ ŕéþóŕťś á ćóńťéẋť ŵíńďóŵ óƒ {tokens} ťóķéńś.]",
+  "model_detail.probe.apply": "[Ƒíľľ ťȟé ƒóŕḿ ŵíťȟ ŵȟáť íś ḿíśśíńǧ]",
+  "model_detail.probe.nothing_to_add": "[Ńóťȟíńǧ ťó áďď: ťȟé ǚáľúéś ýóú śéť áŕé ķéþť.]",
+  "model_detail.describe.default_effort": "[Ďéƒáúľť ŕéáśóńíńǧ éƒƒóŕť]",
+  "model_detail.describe.default_effort_hint": "[Áþþľíéď ƀý ťȟé ǧáťéŵáý ŵȟéń á ŕéǫúéśť ńáḿéś ńó ŕéáśóńíńǧ éƒƒóŕť; á ŕéǫúéśť'ś óŵń ćȟóíćé áľŵáýś ŵíńś. Áľśó śȟóŵń óń /ǚ1/ḿóďéľś.]",
+  "model_detail.describe.effort_none": "[Ńó ďéƒáúľť]"
 }

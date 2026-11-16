@@ -221,6 +221,9 @@ class RequestAccounting:
         self.record_id: uuid.UUID | None = None
         self._choices: dict[int, ChoiceAccumulator] = {}
         self._upstream_usage: dict[str, Any] | None = None
+        # llama.cpp's own count of prompt tokens it did not re-evaluate, from the
+        # `timings` object it sends beside `usage` (see `_with_timings`).
+        self._timings_cache_n = 0
         # What the provider says actually served this request. A router with
         # model fallback can substitute a different model, and the request no
         # longer describes the answer (ADR 0028).
@@ -363,6 +366,11 @@ class RequestAccounting:
                     # provider that sends running totals is believed at its
                     # final word.
                     self._upstream_usage = usage
+
+            if isinstance(timings := frame.get("timings"), dict):
+                cache_n = timings.get("cache_n")
+                if isinstance(cache_n, int) and not isinstance(cache_n, bool) and cache_n > 0:
+                    self._timings_cache_n = cache_n
 
             # Captured before the rename stage rewrites `model` to our
             # client-facing name on the way out. First frame wins: a stream
@@ -554,6 +562,22 @@ class RequestAccounting:
 
     # -- finalisation ------------------------------------------------------
 
+    def _with_timings(self, counts: TokenCounts) -> TokenCounts:
+        """Read llama.cpp's ``timings.cache_n`` as the cached prompt tokens.
+
+        llama.cpp reports how much of the prompt it reused from its slot cache
+        only in ``timings`` (beside ``usage``), never in ``usage``. Used only
+        when ``usage`` itself reports no cache read, so a server that does
+        report one (vLLM, SGLang with ``--enable-cache-report``) is never
+        overridden, and clamped to the prompt like every other cache slice.
+        Reused tokens are part of llama.cpp's ``prompt_tokens``, the OpenAI
+        convention, so nothing is added to the prompt.
+        """
+        if self._timings_cache_n and not counts.cached_prompt and counts.prompt:
+            cached = min(self._timings_cache_n, counts.prompt - counts.cache_write)
+            return replace(counts, cached_prompt=max(0, cached))
+        return counts
+
     def resolve_counts(self, *, failed: bool = False) -> tuple[TokenCounts, UsageSource]:
         """Best available token counts, and an honest label for their provenance."""
         if self._audio_seconds:
@@ -574,7 +598,7 @@ class RequestAccounting:
             return self._with_units(counts or TokenCounts()), label
 
         if self._upstream_usage:
-            counts = self._reader.counts(self._upstream_usage)
+            counts = self._with_timings(self._reader.counts(self._upstream_usage))
             # `total` is tokens, and on the OCR surface there are none: the
             # counterparty reports `pages_processed` and charges by it. Testing
             # tokens alone sent a perfectly exact page count down the estimation

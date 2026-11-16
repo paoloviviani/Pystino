@@ -1723,11 +1723,29 @@
             "title": "Provider Url",
             "type": "string"
           },
+          "server": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server"
+          },
           "unparsable": {
             "items": {
               "type": "string"
             },
             "title": "Unparsable",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
             "type": "array"
           }
         },
@@ -1735,6 +1753,8 @@
           "provider_url",
           "provider_model_count",
           "available",
+          "server",
+          "warnings",
           "catalogued",
           "missing_upstream",
           "unparsable"
@@ -1785,6 +1805,17 @@
             ],
             "title": "Base Url"
           },
+          "base_url_example": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url Example"
+          },
           "description": {
             "anyOf": [
               {
@@ -1803,6 +1834,13 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "array"
           },
           "origins": {
             "items": {
@@ -1866,6 +1904,8 @@
           "description",
           "plugin",
           "base_url",
+          "base_url_example",
+          "notes",
           "prefix",
           "region",
           "region_note",
@@ -2953,6 +2993,13 @@
           "upstream_model": {
             "title": "Upstream Model",
             "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -2973,6 +3020,7 @@
           "output_modalities",
           "supported_features",
           "blocked_reason",
+          "warnings",
           "price_source"
         ],
         "title": "DiscoveredModel",
@@ -5718,6 +5766,17 @@
               }
             ]
           },
+          "default_reasoning_effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Reasoning Effort"
+          },
           "description": {
             "anyOf": [
               {
@@ -5828,6 +5887,11 @@
             "title": "Provider Name",
             "type": "string"
           },
+          "provider_self_hosted": {
+            "default": false,
+            "title": "Provider Self Hosted",
+            "type": "boolean"
+          },
           "supported_features": {
             "items": {
               "type": "string"
@@ -5848,6 +5912,7 @@
           "provider_name",
           "provider_is_active",
           "provider_kind",
+          "provider_self_hosted",
           "kind",
           "display_name",
           "description",
@@ -5856,6 +5921,7 @@
           "context_window",
           "max_output_tokens",
           "max_input_tokens",
+          "default_reasoning_effort",
           "input_modalities",
           "output_modalities",
           "supported_features",
@@ -5897,6 +5963,17 @@
             },
             "title": "Decision Forms",
             "type": "array"
+          },
+          "default_reasoning_effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Reasoning Effort"
           },
           "description": {
             "anyOf": [
@@ -5997,6 +6074,7 @@
           "context_window",
           "max_output_tokens",
           "max_input_tokens",
+          "default_reasoning_effort",
           "display_name",
           "description",
           "input_modalities",
@@ -6023,6 +6101,26 @@
               }
             ],
             "title": "Context Window"
+          },
+          "default_reasoning_effort": {
+            "anyOf": [
+              {
+                "enum": [
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Reasoning Effort"
           },
           "description": {
             "anyOf": [
@@ -6258,6 +6356,13 @@
           "upstream_model": {
             "title": "Upstream Model",
             "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -6266,7 +6371,8 @@
           "imported",
           "priced",
           "reason",
-          "price_source"
+          "price_source",
+          "warnings"
         ],
         "title": "ModelImportResult",
         "type": "object"
@@ -6343,6 +6449,112 @@
         "title": "ModelOption",
         "type": "object"
       },
+      "ModelProbeProposal": {
+        "description": "Values the probe suggests for a model, only where the model has none.\n\nNever applied by the gateway: the console shows them and the administrator\nconfirms with an ordinary model update, so a value an administrator set is\nnever overwritten.",
+        "properties": {
+          "add_features": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Add Features",
+            "type": "array"
+          },
+          "context_window": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Window"
+          },
+          "input_modalities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Input Modalities",
+            "type": "array"
+          }
+        },
+        "required": [
+          "context_window",
+          "add_features",
+          "input_modalities"
+        ],
+        "title": "ModelProbeProposal",
+        "type": "object"
+      },
+      "ModelProbeResponse": {
+        "description": "What probing one existing model on a self-hosted server found.",
+        "properties": {
+          "proposal": {
+            "$ref": "#/components/schemas/ModelProbeProposal"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          },
+          "reported_context_window": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Context Window"
+          },
+          "server": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server"
+          },
+          "tools": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tools"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "server",
+          "warnings",
+          "tools",
+          "reasoning",
+          "reported_context_window",
+          "proposal"
+        ],
+        "title": "ModelProbeResponse",
+        "type": "object"
+      },
       "ModelSummary": {
         "description": "What the pipelines in scope for one model do, in short words.",
         "properties": {
@@ -6392,6 +6604,26 @@
               }
             ],
             "title": "Context Window"
+          },
+          "default_reasoning_effort": {
+            "anyOf": [
+              {
+                "enum": [
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Reasoning Effort"
           },
           "description": {
             "anyOf": [
@@ -9439,6 +9671,11 @@
             "title": "Requires Api Key",
             "type": "boolean"
           },
+          "self_hosted": {
+            "default": false,
+            "title": "Self Hosted",
+            "type": "boolean"
+          },
           "supports_decisions": {
             "default": false,
             "title": "Supports Decisions",
@@ -9455,6 +9692,7 @@
           "default_base_url",
           "base_url_options",
           "requires_api_key",
+          "self_hosted",
           "supports_decisions",
           "is_default"
         ],
@@ -17171,6 +17409,50 @@
         ]
       }
     },
+    "/api/admin/models/{model_id}/probe": {
+      "post": {
+        "description": "Ask a self-hosted server what one of its models can do, and propose it.\n\nThe refresh half of the probe (discovery and import are the other two). It\n**writes nothing**: the response says what the server reported and proposes\nvalues only where the model has none of its own, so the console can offer\nthem and the administrator confirms with an ordinary model update. A value\nalready set is never proposed over, which is the whole of \"never overwrites\nwhat an administrator set\". The request goes to the administrator's own\nserver through the control-plane client, never through the metered path, so\nit records no usage and bills nobody.",
+        "operationId": "probe_model_api_admin_models__model_id__probe_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelProbeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Probe Model",
+        "tags": [
+          "administration"
+        ]
+      }
+    },
     "/api/admin/oidc/policy": {
       "get": {
         "description": "The identity policy in force, and the newest decision behind it.",
@@ -21299,6 +21581,50 @@
           }
         },
         "summary": "Create Price",
+        "tags": [
+          "bring-your-own-key"
+        ]
+      }
+    },
+    "/api/me/models/{model_id}/probe": {
+      "post": {
+        "description": "Ask a self-hosted server what one of its models can do, and propose it.\n\nThe refresh half of the probe (discovery and import are the other two). It\n**writes nothing**: the response says what the server reported and proposes\nvalues only where the model has none of its own, so the console can offer\nthem and the administrator confirms with an ordinary model update. A value\nalready set is never proposed over, which is the whole of \"never overwrites\nwhat an administrator set\". The request goes to the administrator's own\nserver through the control-plane client, never through the metered path, so\nit records no usage and bills nobody.",
+        "operationId": "probe_model_api_me_models__model_id__probe_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelProbeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Probe Model",
         "tags": [
           "bring-your-own-key"
         ]

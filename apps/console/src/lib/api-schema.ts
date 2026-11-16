@@ -1175,6 +1175,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/models/{model_id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe Model
+         * @description Ask a self-hosted server what one of its models can do, and propose it.
+         *
+         *     The refresh half of the probe (discovery and import are the other two). It
+         *     **writes nothing**: the response says what the server reported and proposes
+         *     values only where the model has none of its own, so the console can offer
+         *     them and the administrator confirms with an ordinary model update. A value
+         *     already set is never proposed over, which is the whole of "never overwrites
+         *     what an administrator set". The request goes to the administrator's own
+         *     server through the control-plane client, never through the metered path, so
+         *     it records no usage and bills nobody.
+         */
+        post: operations["probe_model_api_admin_models__model_id__probe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/oidc/policy": {
         parameters: {
             query?: never;
@@ -2746,6 +2775,35 @@ export interface paths {
          *     alter what already-recorded requests cost.
          */
         post: operations["create_price_api_me_models__model_id__prices_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/models/{model_id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe Model
+         * @description Ask a self-hosted server what one of its models can do, and propose it.
+         *
+         *     The refresh half of the probe (discovery and import are the other two). It
+         *     **writes nothing**: the response says what the server reported and proposes
+         *     values only where the model has none of its own, so the console can offer
+         *     them and the administrator confirms with an ordinary model update. A value
+         *     already set is never proposed over, which is the whole of "never overwrites
+         *     what an administrator set". The request goes to the administrator's own
+         *     server through the control-plane client, never through the metered path, so
+         *     it records no usage and bills nobody.
+         */
+        post: operations["probe_model_api_me_models__model_id__probe_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4648,8 +4706,12 @@ export interface components {
             provider_model_count: number;
             /** Provider Url */
             provider_url: string;
+            /** Server */
+            server: string | null;
             /** Unparsable */
             unparsable: string[];
+            /** Warnings */
+            warnings: string[];
         };
         /** CatalogueDriftRow */
         CatalogueDriftRow: {
@@ -4672,12 +4734,16 @@ export interface components {
         CatalogueEntryResponse: {
             /** Base Url */
             base_url: string | null;
+            /** Base Url Example */
+            base_url_example: string | null;
             /** Description */
             description: string | null;
             /** Id */
             id: string;
             /** Name */
             name: string;
+            /** Notes */
+            notes: string[];
             /** Origins */
             origins: components["schemas"]["CatalogueOriginResponse"][];
             /** Plugin */
@@ -5101,6 +5167,8 @@ export interface components {
             supported_features: string[];
             /** Upstream Model */
             upstream_model: string;
+            /** Warnings */
+            warnings: string[];
         };
         /**
          * DryRunClaim
@@ -6207,6 +6275,8 @@ export interface components {
              */
             created_at: string;
             current_price: components["schemas"]["PriceResponse"] | null;
+            /** Default Reasoning Effort */
+            default_reasoning_effort: string | null;
             /** Description */
             description: string | null;
             /** Display Name */
@@ -6247,6 +6317,11 @@ export interface components {
             provider_kind: string;
             /** Provider Name */
             provider_name: string;
+            /**
+             * Provider Self Hosted
+             * @default false
+             */
+            provider_self_hosted: boolean;
             /** Supported Features */
             supported_features: string[];
             /** Upstream Model */
@@ -6268,6 +6343,8 @@ export interface components {
             created: number;
             /** Decision Forms */
             decision_forms: string[];
+            /** Default Reasoning Effort */
+            default_reasoning_effort: string | null;
             /** Description */
             description: string | null;
             /** Display Name */
@@ -6310,6 +6387,8 @@ export interface components {
         ModelCreateRequest: {
             /** Context Window */
             context_window?: number | null;
+            /** Default Reasoning Effort */
+            default_reasoning_effort?: ("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max") | null;
             /** Description */
             description?: string | null;
             /** Display Name */
@@ -6382,6 +6461,8 @@ export interface components {
             reason: string | null;
             /** Upstream Model */
             upstream_model: string;
+            /** Warnings */
+            warnings: string[];
         };
         /** ModelList */
         ModelList: {
@@ -6411,6 +6492,39 @@ export interface components {
             provider_id: string | null;
         };
         /**
+         * ModelProbeProposal
+         * @description Values the probe suggests for a model, only where the model has none.
+         *
+         *     Never applied by the gateway: the console shows them and the administrator
+         *     confirms with an ordinary model update, so a value an administrator set is
+         *     never overwritten.
+         */
+        ModelProbeProposal: {
+            /** Add Features */
+            add_features: string[];
+            /** Context Window */
+            context_window: number | null;
+            /** Input Modalities */
+            input_modalities: string[];
+        };
+        /**
+         * ModelProbeResponse
+         * @description What probing one existing model on a self-hosted server found.
+         */
+        ModelProbeResponse: {
+            proposal: components["schemas"]["ModelProbeProposal"];
+            /** Reasoning */
+            reasoning: boolean | null;
+            /** Reported Context Window */
+            reported_context_window: number | null;
+            /** Server */
+            server: string | null;
+            /** Tools */
+            tools: boolean | null;
+            /** Warnings */
+            warnings: string[];
+        };
+        /**
          * ModelSummary
          * @description What the pipelines in scope for one model do, in short words.
          */
@@ -6434,6 +6548,8 @@ export interface components {
         ModelUpdateRequest: {
             /** Context Window */
             context_window?: number | null;
+            /** Default Reasoning Effort */
+            default_reasoning_effort?: ("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max") | null;
             /** Description */
             description?: string | null;
             /** Display Name */
@@ -7536,6 +7652,11 @@ export interface components {
              * @default true
              */
             requires_api_key: boolean;
+            /**
+             * Self Hosted
+             * @default false
+             */
+            self_hosted: boolean;
             /**
              * Supports Decisions
              * @default false
@@ -11220,6 +11341,37 @@ export interface operations {
             };
         };
     };
+    probe_model_api_admin_models__model_id__probe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelProbeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_oidc_policy_view_api_admin_oidc_policy_get: {
         parameters: {
             query?: never;
@@ -13606,6 +13758,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PriceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    probe_model_api_me_models__model_id__probe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelProbeResponse"];
                 };
             };
             /** @description Validation Error */

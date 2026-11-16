@@ -33,6 +33,7 @@ import {
   useDeleteModel,
   useModel,
   usePrices,
+  useProbeModel,
   useUpdateModel,
 } from "../lib/admin";
 import {
@@ -455,6 +456,28 @@ function Describe({ model }: { model: AdminModel }) {
   const [maxOutput, setMaxOutput] = useState(
     model.max_output_tokens ? String(model.max_output_tokens) : "",
   );
+  const [effort, setEffort] = useState(model.default_reasoning_effort ?? "");
+  const probe = useProbeModel();
+  const found = probe.data;
+  const proposed = found?.proposal;
+  const hasProposal =
+    proposed !== undefined &&
+    (proposed.context_window !== null ||
+      proposed.add_features.length > 0 ||
+      proposed.input_modalities.length > 0);
+  // Applying fills the form; the administrator still presses Save, so nothing
+  // the probe suggests is written without that confirmation.
+  const applyProposal = () => {
+    if (!proposed) return;
+    if (proposed.context_window !== null)
+      setContext(String(proposed.context_window));
+    if (proposed.add_features.length > 0)
+      setFeatures((current) =>
+        [...new Set([...current, ...proposed.add_features])].sort(),
+      );
+    if (proposed.input_modalities.length > 0)
+      setInputs(proposed.input_modalities);
+  };
 
   return (
     <Card
@@ -472,6 +495,60 @@ function Describe({ model }: { model: AdminModel }) {
         ) : null}
         {update.isSuccess && !update.isPending && (
           <Notice tone="info">{m["model_detail.describe.saved"]()}</Notice>
+        )}
+
+        {model.provider_self_hosted && model.kind === "chat" && (
+          <div className="flex flex-col gap-2">
+            <div>
+              <Button busy={probe.isPending} onClick={() => probe.mutate(model.id)}>
+                {m["model_detail.probe.button"]()}
+              </Button>
+            </div>
+            {probe.error ? (
+              <Notice tone="danger">
+                {/* i18n: server text — the API's own error message. */}
+                {probe.error instanceof Error
+                  ? probe.error.message
+                  : m["model_detail.unknown_error"]()}
+              </Notice>
+            ) : null}
+            {found && (
+              <Notice
+                tone={found.warnings.length > 0 ? "warn" : "info"}
+                title={m["model_detail.probe.title"]({
+                  server: found.server ?? "?",
+                })}
+              >
+                <div>
+                  {found.tools === true
+                    ? m["model_detail.probe.tools_yes"]()
+                    : found.tools === false
+                      ? m["model_detail.probe.tools_no"]()
+                      : m["model_detail.probe.tools_unknown"]()}
+                </div>
+                {found.reported_context_window !== null && (
+                  <div>
+                    {m["model_detail.probe.window"]({
+                      tokens: String(found.reported_context_window),
+                    })}
+                  </div>
+                )}
+                {/* i18n: server text — what the server probe found. */}
+                {found.warnings.map((warning) => (
+                  <div key={warning}>{warning}</div>
+                ))}
+                {hasProposal ? (
+                  <div className="mt-2">
+                    <Button onClick={applyProposal}>
+                      {m["model_detail.probe.apply"]()}
+                    </Button>
+                  </div>
+                ) : (
+                  <div>{m["model_detail.probe.nothing_to_add"]()}</div>
+                )}
+              </Notice>
+            )}
+          </div>
         )}
 
         <Select
@@ -542,6 +619,21 @@ function Describe({ model }: { model: AdminModel }) {
           onChange={(event) => setMaxInput(event.target.value)}
           hint={m["model_detail.describe.max_input_hint"]()}
         />
+        <Select
+          label={m["model_detail.describe.default_effort"]()}
+          value={effort}
+          onChange={(event) => setEffort(event.target.value)}
+          hint={m["model_detail.describe.default_effort_hint"]()}
+        >
+          <option value="">{m["model_detail.describe.effort_none"]()}</option>
+          {["none", "minimal", "low", "medium", "high", "xhigh", "max"].map(
+            (value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ),
+          )}
+        </Select>
         <Input
           label={m["model_detail.describe.max_output"]()}
           type="number"
@@ -564,6 +656,7 @@ function Describe({ model }: { model: AdminModel }) {
                   output_modalities: outputs,
                   supported_features: features,
                   context_window: context === "" ? null : Number(context),
+                  default_reasoning_effort: effort === "" ? null : effort,
                   max_input_tokens: maxInput === "" ? null : Number(maxInput),
                   max_output_tokens:
                     maxOutput === "" ? null : Number(maxOutput),

@@ -76,6 +76,12 @@ Capabilities = Annotated[
 ]
 
 
+#: The efforts a model may carry as its default (``models.default_reasoning_effort``).
+#: The union of what the OpenAI-compatible servers accept: ``none`` turns thinking
+#: off where the upstream has a switch, ``xhigh`` and ``max`` are the newest tiers.
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+
 class ChatCompletionRequest(BaseModel):
     """Only the fields the gateway itself reasons about; the rest passes through."""
 
@@ -577,6 +583,9 @@ class ModelCard(ResponseModel):
     # The "in" half. Distinct from ``context_window`` because a provider can
     # cap prompt harder than the window total implies; null means unknown.
     max_input_tokens: int | None = None
+    # The effort the gateway applies when a chat request names none, so a client
+    # may show it as the starting choice. Null when the model has no default.
+    default_reasoning_effort: str | None = None
     display_name: str | None = None
     # The alias's or the model's own free text (ADR 0101). Null when nobody has
     # written one, which is the common case and a normal answer here: Cerea has
@@ -1025,6 +1034,10 @@ class CatalogueEntryResponse(ResponseModel):
     plugin: str
     #: The entry's URL, else the plugin's own default; null when neither exists.
     base_url: str | None = None
+    #: A sample address for a self-hosted type with no endpoint of its own.
+    base_url_example: str | None = None
+    #: Per-vendor notes (the server flags tools and reasoning need).
+    notes: list[str] = Field(default_factory=list)
     prefix: str = ""
     region: str | None = None
     region_note: str | None = None
@@ -1267,6 +1280,9 @@ class ProviderPluginResponse(ResponseModel):
     #: instead of demanding a dummy key. True for everything else, which is
     #: also what an installed third-party plugin reports by saying nothing.
     requires_api_key: bool = True
+    #: A server the administrator runs (vLLM, SGLang, llama.cpp): its models
+    #: import free and the console can probe it for context window and tools.
+    self_hosted: bool = False
     #: Whether a `decision` model can be served through this type (ADR 0100).
     #: The console says so before an administrator makes one that would be
     #: refused.
@@ -1317,6 +1333,7 @@ class ModelCreateRequest(BaseModel):
     max_output_tokens: int | None = Field(default=None, ge=1)
     # Set by hand: the upstream's own input cap, which no catalogue reports.
     max_input_tokens: int | None = Field(default=None, ge=1)
+    default_reasoning_effort: ReasoningEffort | None = None
     input_modalities: Capabilities = Field(default_factory=list)
     output_modalities: Capabilities = Field(default_factory=list)
     supported_features: Capabilities = Field(default_factory=list)
@@ -1353,6 +1370,7 @@ class ModelUpdateRequest(BaseModel):
     context_window: int | None = Field(default=None, ge=1)
     max_output_tokens: int | None = Field(default=None, ge=1)
     max_input_tokens: int | None = Field(default=None, ge=1)
+    default_reasoning_effort: ReasoningEffort | None = None
     # Editable, because the catalogue is a claim rather than a contract: an
     # operator who has found out that a model does not really do tool calling
     # needs somewhere to record it that discovery will not immediately undo.
@@ -1498,6 +1516,9 @@ class ModelAdminResponse(ResponseModel):
     # (`internal`, the extractor) the way they already leave search tiers out
     # by the model's own kind.
     provider_kind: str
+    #: Whether the provider is a server the administrator runs, so the model page
+    #: can offer the server probe.
+    provider_self_hosted: bool = False
     # "chat" or "embedding": which /v1 route may use it (ADR 0028).
     kind: str
     display_name: str | None
@@ -1507,6 +1528,7 @@ class ModelAdminResponse(ResponseModel):
     context_window: int | None
     max_output_tokens: int | None
     max_input_tokens: int | None
+    default_reasoning_effort: str | None = None
     input_modalities: list[str]
     output_modalities: list[str]
     supported_features: list[str]
@@ -2926,6 +2948,9 @@ class DiscoveredModel(ResponseModel):
     # Set when the model cannot be imported as-is, with the reason. The commonest
     # is a price quoted in a currency this gateway does not bill in.
     blocked_reason: str | None = None
+    #: What the server probe found wrong with this model on a self-hosted
+    #: provider (a missing tool-call parser, thinking left inline). Server text.
+    warnings: list[str] = Field(default_factory=list)
     # Where the figures above came from: "provider" for the counterparty's own
     # catalogue, "community" for a gap the LiteLLM file filled, "hint" for a gap
     # the provider catalogue's own dated price hint filled, None for a model
@@ -2953,6 +2978,10 @@ class CatalogueDiscoveryResponse(ResponseModel):
     provider_model_count: int
     # Offered upstream, absent from our catalogue: candidates to adopt.
     available: list[DiscoveredModel]
+    #: A self-hosted provider's server as the probe identified it ("llama.cpp
+    #: b6123"), and what is wrong with the server as a whole. Empty otherwise.
+    server: str | None = None
+    warnings: list[str] = Field(default_factory=list)
     # Ours, and still offered upstream.
     catalogued: list[CatalogueDriftRow]
     # Ours, and NO LONGER offered upstream. Drift in the direction that breaks at
@@ -3017,6 +3046,37 @@ class ModelImportResult(ResponseModel):
     # later proves wrong is then traceable to the import that took it, rather
     # than looking like a hand-typed mistake.
     price_source: str | None = None
+    #: What the server probe found wrong with the imported model, if anything.
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ModelProbeProposal(ResponseModel):
+    """Values the probe suggests for a model, only where the model has none.
+
+    Never applied by the gateway: the console shows them and the administrator
+    confirms with an ordinary model update, so a value an administrator set is
+    never overwritten.
+    """
+
+    #: Set only when the model has no context window of its own.
+    context_window: int | None = None
+    #: Features the model lacks and the probe saw working (added, never removed).
+    add_features: list[str] = Field(default_factory=list)
+    #: Set only when the model has no input modalities of its own.
+    input_modalities: list[str] = Field(default_factory=list)
+
+
+class ModelProbeResponse(ResponseModel):
+    """What probing one existing model on a self-hosted server found."""
+
+    server: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    #: True: tool calls work. False: the server's parser is missing. Null: unknown.
+    tools: bool | None = None
+    reasoning: bool | None = None
+    #: What the server reports, even where the model's own value differs.
+    reported_context_window: int | None = None
+    proposal: ModelProbeProposal
 
 
 class ModelImportResponse(ResponseModel):

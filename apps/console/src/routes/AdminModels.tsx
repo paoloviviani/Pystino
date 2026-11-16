@@ -1204,6 +1204,13 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
         <>
           <div>{row.suggested_name}</div>
           <div className={`${MUTED} ${CODE}`}>{row.upstream_model}</div>
+          {(row.warnings ?? []).map((warning) => (
+            <div key={warning} className={MUTED}>
+              <Badge tone="warn">{m["admin_models.discover.badge.server_warning"]()}</Badge>{" "}
+              {/* i18n: server text — what the server probe found. */}
+              {warning}
+            </div>
+          ))}
           {row.blocked_reason && (
             <div className={MUTED}>
               {/* Not "cannot import": a price typed below the name is what
@@ -1440,6 +1447,10 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
                         community file outranked is the API's own sentence. A
                         skipped row's reason is already in the message above. */}
                     {result.imported && result.reason ? ` — ${result.reason}` : ""}
+                    {/* i18n: server text — what the server probe found. */}
+                    {result.imported && (result.warnings ?? []).length > 0
+                      ? ` — ${(result.warnings ?? []).join(" ")}`
+                      : ""}
                   </div>
                 ))}
               </Notice>
@@ -1447,6 +1458,22 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
 
         {discovery.data && (
           <>
+            {/* A self-hosted server's own identity, and what is wrong with it as a whole. */}
+            {discovery.data.server && (
+              <Notice
+                tone={discovery.data.warnings.length > 0 ? "warn" : "info"}
+                title={m["admin_models.discover.server_title"]({
+                  server: discovery.data.server,
+                })}
+              >
+                {/* i18n: server text — what the server probe found. */}
+                {discovery.data.warnings.map((warning) => (
+                  <div key={warning}>{warning}</div>
+                ))}
+                {discovery.data.warnings.length === 0 &&
+                  m["admin_models.discover.server_ok"]()}
+              </Notice>
+            )}
             {/* The dangerous direction of drift: still served, no longer offered.
                 These fail only when someone calls them. */}
             {discovery.data.missing_upstream.length > 0 && (

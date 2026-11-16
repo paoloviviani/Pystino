@@ -1259,6 +1259,11 @@ class ModelDef(Base):
     # Never overwritten by catalogue import or price refresh: this is the
     # operator's claim about the upstream, not something the catalogue knows.
     max_input_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
+    # The effort the gateway applies to a chat completion that names no
+    # `reasoning_effort` of its own, so every client (the chat, a coding agent,
+    # curl) gets the same behaviour from a model an operator has set one on.
+    # Null means "apply nothing". Never overwrites what a request sent.
+    default_reasoning_effort: Mapped[str | None] = mapped_column(String(16), default=None)
 
     # Public access (ADR 0045): any authenticated caller may use this model,
     # billed to the caller's own default billing group. Access is granted;

@@ -272,6 +272,8 @@ from gateway.schemas import (
     ModelImportRequest,
     ModelImportResponse,
     ModelImportResult,
+    ModelProbeProposal,
+    ModelProbeResponse,
     ModelUpdateRequest,
     OidcMappingRule,
     OidcPolicyChange,
@@ -319,6 +321,7 @@ from gateway.schemas import (
     UserUpdateRequest,
 )
 from gateway.secrets import SecretBox, SecretsUnavailableError, hint_for
+from gateway.server_probe import ModelProbe, ServerProbe, probe_server
 from gateway.types import utcnow
 
 
@@ -459,6 +462,14 @@ async def _unpriced_count(session: SessionDep, provider_id: uuid.UUID) -> int:
     return (await _unpriced_counts(session)).get(provider_id, 0)
 
 
+def _plugin_is_self_hosted(name: str | None) -> bool:
+    """Whether the named plugin is a server the administrator runs (vLLM, ...)."""
+    try:
+        return bool(getattr(plugin_registry.resolve(name), "self_hosted", False))
+    except plugin_registry.UnknownPluginError:
+        return False
+
+
 def _plugin_kind(name: str | None) -> str | None:
     """What the named plugin says it is, or None if it is not installed.
 
@@ -529,6 +540,7 @@ def _model_response(
         # the kind to leave infrastructure out of the catalogue, exactly as
         # `kind` lets them set search tiers aside.
         provider_kind=model.provider.kind.value,
+        provider_self_hosted=_plugin_is_self_hosted(model.provider.plugin),
         kind=model.kind.value,
         display_name=model.display_name,
         description=model.description,
@@ -537,6 +549,7 @@ def _model_response(
         context_window=model.context_window,
         max_output_tokens=model.max_output_tokens,
         max_input_tokens=model.max_input_tokens,
+        default_reasoning_effort=model.default_reasoning_effort,
         input_modalities=list(model.input_modalities or []),
         output_modalities=list(model.output_modalities or []),
         supported_features=list(model.supported_features or []),
@@ -679,6 +692,8 @@ def _catalogue_entry_response(entry: CatalogueEntry) -> CatalogueEntryResponse:
         description=entry.description,
         plugin=entry.plugin,
         base_url=entry.effective_base_url,
+        base_url_example=entry.base_url_example,
+        notes=list(entry.notes),
         prefix=entry.prefix,
         region=entry.region,
         region_note=entry.region_note,
@@ -1408,6 +1423,7 @@ async def create_model(
         context_window=payload.context_window,
         max_output_tokens=payload.max_output_tokens,
         max_input_tokens=payload.max_input_tokens,
+        default_reasoning_effort=payload.default_reasoning_effort,
         input_modalities=list(payload.input_modalities),
         output_modalities=list(payload.output_modalities),
         supported_features=list(payload.supported_features),
@@ -1697,6 +1713,60 @@ def _fill_from_hints(
     return out
 
 
+def _free_prices(
+    unpriced: Sequence[str],
+    facts: Mapping[str, Mapping[str, Any]],
+    currency: str,
+) -> list[CataloguePrice]:
+    """Zero rates for every model a self-hosted server lists.
+
+    The hardware is the administrator's own, so there is nothing to charge; the
+    ledger still counts tokens. Recorded as a catalogue price hint, which is what
+    it is: the catalogue's own statement that this provider's models cost nothing.
+    """
+    return [
+        CataloguePrice(
+            model_id=model_id,
+            input_per_mtok=Decimal(0),
+            output_per_mtok=Decimal(0),
+            currency=currency,
+            **(facts.get(model_id) or {}),
+        )
+        for model_id in unpriced
+        if model_id not in ANONYMOUS_UNPARSABLE
+    ]
+
+
+async def _probe_listing(
+    http: Any,
+    provider: Provider,
+    api_key: str | None,
+    model_ids: Sequence[str],
+    models_payload: Any = None,
+) -> ServerProbe | None:
+    """The server probe for a self-hosted provider, or ``None`` for any other.
+
+    Best effort by design: a probe that fails must never fail the listing, the
+    import or the refresh it rides on, so any error is logged and absorbed.
+    """
+    plugin = plugin_registry.resolve(provider.plugin)
+    flavour = getattr(plugin, "flavour", "")
+    if not getattr(plugin, "self_hosted", False) or not flavour or not model_ids:
+        return None
+    try:
+        return await probe_server(
+            http,
+            base_url=provider.base_url,
+            api_key=api_key,
+            flavour=flavour,
+            model_ids=model_ids,
+            models_payload=models_payload,
+        )
+    except Exception:
+        logger.warning("server probe of provider %s failed", provider.name, exc_info=True)
+        return None
+
+
 async def _catalogue_with_prices(
     # `Any`, as `ControlHttpDep` itself is: the control-plane client is passed
     # through rather than constructed here.
@@ -1707,6 +1777,7 @@ async def _catalogue_with_prices(
     *,
     fill_missing: bool,
     entry: CatalogueEntry | None = None,
+    currency: str = "EUR",
 ) -> tuple[
     dict[str, CataloguePrice],
     list[str],
@@ -1750,6 +1821,13 @@ async def _catalogue_with_prices(
     published, unpriced = _catalogue_parser(provider)(payload)
 
     filled: dict[str, str] = {}
+    if getattr(plugin, "self_hosted", False) and unpriced:
+        # A server the administrator runs has no price list and nothing to charge:
+        # its models import at zero rather than being refused as unpriced.
+        free = _free_prices(unpriced, facts_by_id(payload), currency)
+        published = [*published, *free]
+        filled.update({price.model_id: "hint" for price in free})
+        unpriced = [u for u in unpriced if u not in filled]
     # A counterparty with no price API (Anthropic) has its dated hints applied
     # without the operator asking; the community file still needs the tick.
     hints_wanted = fill_missing or bool(getattr(plugin, "price_hints_always", False))
@@ -1840,6 +1918,7 @@ async def discover_models(
             if getattr(plugin_registry.resolve(provider.plugin), "price_hints_always", False)
             else None
         ),
+        currency=settings.billing_currency.upper(),
     )
 
     # Only this provider's models. A model served by another provider is not
@@ -1891,6 +1970,19 @@ async def discover_models(
                 price_source=filled.get(upstream_id, "provider"),
             )
         )
+
+    # A self-hosted server is asked what it can do before the administrator
+    # adopts its models: the proposals fill only what the listing left empty.
+    probe = await _probe_listing(
+        http,
+        provider,
+        api_key,
+        [m.upstream_model for m in available if m.kind == ModelKind.CHAT.value],
+    )
+    if probe is not None:
+        available = [
+            _with_probe(model, probe.models.get(model.upstream_model)) for model in available
+        ]
 
     # Listed by the provider, priced by nobody. Shown rather than hidden: with
     # the fill off, these *are* the answer to "what does this provider offer",
@@ -1971,11 +2063,89 @@ async def discover_models(
         ),
         provider_model_count=len(offered),
         available=available,
+        server=probe.server if probe is not None else None,
+        warnings=list(probe.warnings) if probe is not None else [],
         catalogued=catalogued,
         missing_upstream=missing,
         # Only the entries with no id at all remain genuinely unparsable; the
         # rest are now reported as rows an operator can see and act on.
         unparsable=[entry for entry in unpriced if entry in ANONYMOUS_UNPARSABLE],
+    )
+
+
+def _with_probe(model: DiscoveredModel, found: ModelProbe | None) -> DiscoveredModel:
+    """A discovered model with the probe's proposals filled into what it left empty."""
+    if found is None:
+        return model
+    return model.model_copy(
+        update={
+            "context_window": model.context_window or found.context_window,
+            "supported_features": sorted({*model.supported_features, *found.supported_features}),
+            "input_modalities": model.input_modalities or list(found.input_modalities),
+            "warnings": list(found.warnings),
+        }
+    )
+
+
+@router.post("/models/{model_id}/probe", response_model=ModelProbeResponse)
+@me_router.post("/models/{model_id}/probe", response_model=ModelProbeResponse)
+async def probe_model(
+    model_id: uuid.UUID,
+    scope: CatalogueScopeDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+    control_http: ControlHttpDep,
+    byok_http: ByokHttpDep,
+    providers: ProvidersDep,
+) -> ModelProbeResponse:
+    """Ask a self-hosted server what one of its models can do, and propose it.
+
+    The refresh half of the probe (discovery and import are the other two). It
+    **writes nothing**: the response says what the server reported and proposes
+    values only where the model has none of its own, so the console can offer
+    them and the administrator confirms with an ordinary model update. A value
+    already set is never proposed over, which is the whole of "never overwrites
+    what an administrator set". The request goes to the administrator's own
+    server through the control-plane client, never through the metered path, so
+    it records no usage and bills nobody.
+    """
+    model = await _load_model(session, model_id, scope=scope)
+    upstream_model = model.upstream_model
+    if model.is_alias or model.provider is None or upstream_model is None:
+        raise BadRequestError("An alias is not served by a server of its own.")
+    if model.kind is not ModelKind.CHAT:
+        raise BadRequestError("Only chat models can be probed.")
+    plugin = plugin_registry.resolve(model.provider.plugin)
+    if not getattr(plugin, "self_hosted", False):
+        raise BadRequestError(
+            "Only a self-hosted server (vLLM, SGLang, llama.cpp) can be probed.",
+            code="not_self_hosted",
+        )
+    # Not the catalogue URL override: `/models` of the provider's own endpoint.
+    provider, catalogue_url, api_key = await _catalogue_source(
+        session, secrets, model.provider.id, None, scope
+    )
+    http = await _catalogue_http(scope, provider, providers, control_http, byok_http)
+    try:
+        listing = await fetch_catalogue(http, catalogue_url, api_key)
+    except CatalogueUnavailable as exc:
+        raise UpstreamUnavailableError(f"Could not read the server's model list: {exc}") from exc
+    probe = await _probe_listing(http, provider, api_key, [upstream_model], models_payload=listing)
+    if probe is None or upstream_model not in probe.models:
+        raise UpstreamUnavailableError("The server could not be probed.")
+    found = probe.models[upstream_model]
+    have = set(model.supported_features or [])
+    return ModelProbeResponse(
+        server=probe.server,
+        warnings=[*probe.warnings, *found.warnings],
+        tools=found.tools,
+        reasoning=found.reasoning,
+        reported_context_window=found.context_window,
+        proposal=ModelProbeProposal(
+            context_window=found.context_window if model.context_window is None else None,
+            add_features=sorted(set(found.supported_features) - have),
+            input_modalities=[] if model.input_modalities else list(found.input_modalities),
+        ),
     )
 
 
@@ -2162,6 +2332,7 @@ async def import_models(
             if getattr(plugin_registry.resolve(provider.plugin), "price_hints_always", False)
             else None
         ),
+        currency=settings.billing_currency.upper(),
     )
     # The ids a manual price may name: what the provider listed and nobody
     # priced, minus the anonymous placeholders discovery never lists. The same
@@ -2183,6 +2354,21 @@ async def import_models(
     taken_upstream = {
         (model.provider_id, model.upstream_model) for model in existing if not model.is_alias
     }
+
+    # A self-hosted server is probed for the models being imported, so a model
+    # arrives with the context window and tool support the server reported. Only
+    # chat models: the probe is a chat request.
+    probe = await _probe_listing(
+        http,
+        provider,
+        api_key,
+        [
+            item.upstream_model
+            for item in payload.models
+            if kinds.get(item.upstream_model, ModelKind.CHAT) is ModelKind.CHAT
+            and (provider.id, item.upstream_model) not in taken_upstream
+        ],
+    )
 
     results: list[ModelImportResult] = []
     for item in payload.models:
@@ -2341,6 +2527,9 @@ async def import_models(
                 continue
             own_count += 1
 
+        # What the probe found out about a self-hosted model: used only to fill
+        # what the listing left empty, and only here, on a row being created.
+        found = probe.models.get(item.upstream_model) if probe is not None else None
         model = ModelDef(
             owner_kind="user" if scope.owner is not None else None,
             owner_id=scope.owner.id if scope.owner is not None else None,
@@ -2350,15 +2539,22 @@ async def import_models(
             # A priced entry's own figures first; a manual-price import has none
             # on its candidate, so the listing's limits fill them. The operator's
             # `max_input_tokens` cap is deliberately left null.
-            context_window=price.context_window or limits.get(item.upstream_model, (None, None))[0],
+            context_window=price.context_window
+            or limits.get(item.upstream_model, (None, None))[0]
+            or (found.context_window if found is not None else None),
             max_output_tokens=price.max_output_tokens
             or limits.get(item.upstream_model, (None, None))[1],
             # From the catalogue, so an imported embedding model lands on the
             # right route without anyone editing it afterwards (ADR 0028).
             kind=price.kind,
-            input_modalities=list(price.input_modalities),
+            input_modalities=list(
+                price.input_modalities or (found.input_modalities if found is not None else ())
+            ),
             output_modalities=list(price.output_modalities),
-            supported_features=default_features(price.input_modalities, price.supported_features),
+            supported_features=default_features(
+                price.input_modalities,
+                (*price.supported_features, *(found.supported_features if found else ())),
+            ),
         )
         model.id = uuid.uuid4()
         session.add(model)
@@ -2414,6 +2610,7 @@ async def import_models(
                 priced=True,
                 reason=manual_set_aside,
                 price_source=(fill_source or ("manual" if manual_used else "provider")),
+                warnings=list(found.warnings) if found is not None else [],
             )
         )
 

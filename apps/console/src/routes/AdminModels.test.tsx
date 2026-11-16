@@ -17,6 +17,8 @@ import { AdminModels } from "./AdminModels";
 
 function model(overrides: Partial<AdminModel> = {}): AdminModel {
   return {
+    default_reasoning_effort: null,
+    provider_self_hosted: false,
     id: "m1",
     name: "fast-summariser",
     upstream_model: "provider/fast-1",
@@ -60,11 +62,14 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
 }
 
 const DISCOVERY: CatalogueDiscovery = {
+  server: null,
+  warnings: [],
   provider_url: "http://provider/v1/models",
   provider_model_count: 3,
   available: [
     {
       upstream_model: "provider/new-1",
+      warnings: [],
       suggested_name: "new-1",
       input_per_mtok: "0.500000000000",
       output_per_mtok: "1.500000000000",
@@ -85,6 +90,7 @@ const DISCOVERY: CatalogueDiscovery = {
     },
     {
       upstream_model: "provider/dollar-1",
+      warnings: [],
       suggested_name: "dollar-1",
       input_per_mtok: "0.900000000000",
       output_per_mtok: "1.900000000000",
@@ -125,6 +131,7 @@ const DISCOVERY_FILLED: CatalogueDiscovery = {
     ...DISCOVERY.available,
     {
       upstream_model: "provider/unpriced-1",
+      warnings: [],
       suggested_name: "unpriced-1",
       input_per_mtok: "0.250000000000",
       output_per_mtok: "0.750000000000",
@@ -145,6 +152,7 @@ const DISCOVERY_FILLED: CatalogueDiscovery = {
     },
     {
       upstream_model: "provider/nowhere-1",
+      warnings: [],
       suggested_name: "nowhere-1",
       input_per_mtok: null,
       output_per_mtok: null,
@@ -594,6 +602,53 @@ describe("AdminModels", () => {
     expect(ours.parentElement).toHaveTextContent("provider/retired");
     // The direction is carried by the arrow, so the row itself stays one line.
     expect(ours.parentElement).toHaveTextContent("→");
+  });
+
+  it("shows the server probe's warning on a discovered model and the server itself", async () => {
+    const user = userEvent.setup();
+    const [first, ...rest] = DISCOVERY.available;
+    const discovery: CatalogueDiscovery = {
+      ...DISCOVERY,
+      server: "vLLM 0.10.1",
+      warnings: [],
+      available: [
+        { ...first!, warnings: ["The model wrote a tool call as plain text."] },
+        ...rest,
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/admin/providers"))
+          return jsonResponse([
+            {
+              id: "pr1",
+              name: "gpu",
+              description: null,
+              base_url: "http://gpu:8000/v1",
+              api_key_hint: "",
+              has_api_key: false,
+              extra_headers: {},
+              is_active: true,
+              model_count: 1,
+              created_at: "2026-08-01T10:00:00Z",
+              updated_at: "2026-08-01T10:00:00Z",
+            },
+          ]);
+        if (url.includes("/models/discover")) return jsonResponse(discovery);
+        if (url.includes("/api/admin/models")) return jsonResponse([model()]);
+        return jsonResponse([]);
+      }),
+    );
+    renderScreen(<AdminModels />);
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+
+    expect(await screen.findByText("Server: vLLM 0.10.1")).toBeInTheDocument();
+    expect(
+      screen.getByText("The model wrote a tool call as plain text."),
+    ).toBeInTheDocument();
   });
 
   it("says when a dropped model is already deactivated", async () => {

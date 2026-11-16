@@ -1,0 +1,30 @@
+# Self-hosted server presets (vLLM, SGLang, llama.cpp). The type is the OpenAI-compatible
+# protocol; what differs is in the plugin (plugins/selfhosted.py) and in these notes.
+# There is no endpoint to pre-fill: the administrator types their own server's address.
+providers:
+  - id: vllm
+    name: vLLM
+    plugin: vllm
+    base_url_example: http://host:8000/v1
+    description: >-
+      A vLLM server you run yourself, through its OpenAI-compatible API. Models
+      are free to the gateway (no price); the server is probed for its context
+      window and tool support when you list or import its models.
+    region: not-published
+    region_note: >-
+      Your own server: it runs wherever you host it, which the gateway cannot
+      know. Residency rules treat it as unknown unless you set a region in a
+      catalogue override.
+    retention:
+      status: not_published
+      note: >-
+        Self-hosted: what is kept is whatever your own server, its logs and its
+        host keep. Nothing leaves it unless you route it elsewhere.
+    notes:
+      - "Tools: start the server with --enable-auto-tool-choice --tool-call-parser <parser>, the parser your model needs (hermes, mistral, ...). Without them tools are refused or come back as plain text."
+      - "Reasoning: add --reasoning-parser <parser> so the thinking arrives as reasoning_content instead of inside the answer."
+      - "The context window comes from the server's own max_model_len."
+    sources:
+      - url: https://docs.vllm.ai/en/latest/features/tool_calling.html
+        retrieved: 2026-11-16
+        covers: server flags for tools

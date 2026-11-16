@@ -1199,6 +1199,7 @@ class TestImport:
             "reason": None,
             # The provider published this one, and the row that stores it says so.
             "price_source": "provider",
+            "warnings": [],
         }
 
         async with session_factory() as session:

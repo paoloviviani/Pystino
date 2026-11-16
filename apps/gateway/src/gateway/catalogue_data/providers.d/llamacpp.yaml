@@ -1,0 +1,27 @@
+providers:
+  - id: llamacpp
+    name: llama.cpp
+    plugin: llamacpp
+    base_url_example: http://host:8080/v1
+    description: >-
+      A llama.cpp llama-server you run yourself, through its OpenAI-compatible
+      API. Models are free to the gateway (no price); the server is probed for
+      its context window and tool support when you list or import its models.
+    region: not-published
+    region_note: >-
+      Your own server: it runs wherever you host it, which the gateway cannot
+      know. Residency rules treat it as unknown unless you set a region in a
+      catalogue override.
+    retention:
+      status: not_published
+      note: >-
+        Self-hosted: what is kept is whatever your own server, its logs and its
+        host keep. Nothing leaves it unless you route it elsewhere.
+    notes:
+      - "Tools: start llama-server with --jinja so the model's own chat template parses tool calls."
+      - "The context window is the one /props reports for a slot: the configured context divided by the parallel slots (-np)."
+      - "Cached prompt tokens are read from the server's timings when its usage object has none."
+    sources:
+      - url: https://github.com/ggml-org/llama.cpp/blob/master/docs/function-calling.md
+        retrieved: 2026-11-16
+        covers: server flags for tools

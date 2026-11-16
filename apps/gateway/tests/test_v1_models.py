@@ -189,6 +189,7 @@ class TestUnauthenticatedListing:
             "context_window",
             "max_output_tokens",
             "max_input_tokens",
+            "default_reasoning_effort",
             "display_name",
             "description",
             "kind",

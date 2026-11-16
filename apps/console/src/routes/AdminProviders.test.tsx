@@ -76,6 +76,17 @@ const PLUGINS = [
     protocol: "openai",
   },
   {
+    name: "vllm",
+    label: "vLLM",
+    description: "A vLLM server you run yourself.",
+    kind: "provider",
+    billing_modes: ["own_prices"],
+    default_base_url: null,
+    base_url_options: [],
+    is_default: false,
+    protocol: "openai",
+  },
+  {
     name: "cortecs",
     label: "Cortecs (router)",
     description: "Chooses a sub-provider per request and reports its own cost.",
@@ -145,6 +156,8 @@ const PLUGINS = [
 
 function entry(overrides: Partial<CatalogueEntry> = {}): CatalogueEntry {
   return {
+    base_url_example: null,
+    notes: [],
     id: "mistral",
     name: "Mistral AI",
     description: null,
@@ -817,6 +830,39 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
       0,
     );
     expect(screen.getByText("catalogue entry missing")).toBeInTheDocument();
+  });
+
+  it("a self-hosted entry shows its own address as an example and its server notes", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      routes([], { bodies: [] }, undefined, [
+        entry({
+          id: "vllm",
+          name: "vLLM",
+          plugin: "vllm",
+          base_url: null,
+          base_url_example: "http://host:8000/v1",
+          notes: ["Tools: start the server with --enable-auto-tool-choice."],
+        }),
+      ]),
+    );
+    renderScreen(<AdminProviders />);
+    await user.click(
+      await screen.findByRole("button", { name: "Add provider" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await user.selectOptions(
+      await within(dialog).findByLabelText("Provider"),
+      "c:vllm",
+    );
+    const url = within(dialog).getByLabelText("Base URL");
+    // Nothing is pre-filled: the address is the administrator's own.
+    expect(url).toHaveValue("");
+    expect(url).toHaveAttribute("placeholder", "http://host:8000/v1");
+    expect(
+      within(dialog).getByText(/--enable-auto-tool-choice/),
+    ).toBeInTheDocument();
   });
 
   it("creating from an entry pre-fills the form and sends the link", async () => {

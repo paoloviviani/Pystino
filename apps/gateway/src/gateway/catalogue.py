@@ -161,6 +161,13 @@ class EntryPatch(_Strict):
     base_url: Annotated[str, Field(min_length=1, max_length=500)] | None = None
     #: Prepended to the model names this provider contributes (``providers.prefix``).
     prefix: Annotated[str, Field(max_length=32, pattern=r"^[a-zA-Z0-9._-]*$")] | None = None
+    #: What an administrator's own URL looks like, for a self-hosted server that has
+    #: no address of its own to pre-fill (``http://host:8000/v1``). Shown as the
+    #: field's placeholder; never used as the endpoint.
+    base_url_example: Annotated[str, Field(max_length=200)] | None = None
+    #: Short per-vendor notes the console shows beside the entry: the server flags
+    #: a self-hosted model needs for tools and reasoning, quirks worth knowing.
+    notes: list[Annotated[str, Field(min_length=1, max_length=400)]] | None = None
     #: A lower-case tag for where requests are processed: ``eu``, ``us``,
     #: ``eu-west``. Free-form on purpose; a residency rule compares tags.
     region: Region | None = None
@@ -246,6 +253,8 @@ class CatalogueEntry:
     prefix: str = ""
     region: str | None = None
     region_note: str | None = None
+    base_url_example: str | None = None
+    notes: tuple[str, ...] = ()
     retention: Retention = field(default_factory=Retention)
     sources: tuple[Source, ...] = ()
     prices: tuple[PriceHint, ...] = ()
@@ -398,7 +407,17 @@ def _check_url(url: str | None, where: str, errors: list[str]) -> None:
 
 # -- merging -------------------------------------------------------------------
 
-_SCALARS = ("name", "description", "plugin", "base_url", "prefix", "region", "region_note")
+_SCALARS = (
+    "name",
+    "description",
+    "plugin",
+    "base_url",
+    "base_url_example",
+    "notes",
+    "prefix",
+    "region",
+    "region_note",
+)
 
 
 @dataclass(slots=True)
@@ -487,6 +506,8 @@ def _finish(entry_id: str, draft: _Draft, errors: list[str]) -> CatalogueEntry |
         prefix=draft.scalars.get("prefix") or "",
         region=draft.scalars.get("region"),
         region_note=draft.scalars.get("region_note"),
+        base_url_example=draft.scalars.get("base_url_example"),
+        notes=tuple(draft.scalars.get("notes") or ()),
         retention=Retention(**draft.retention),
         sources=draft.sources,
         prices=tuple(hints),
