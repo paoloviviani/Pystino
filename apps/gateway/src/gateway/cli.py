@@ -79,6 +79,11 @@ async def _seed(
                 )
             ).scalar_one_or_none()
             if provider is None:
+                if not settings.upstream.base_url:
+                    raise SystemExit(
+                        "gateway seed needs a provider: set GATEWAY_UPSTREAM__BASE_URL "
+                        "(and GATEWAY_UPSTREAM__API_KEY if it needs one)"
+                    )
                 provider = Provider(
                     name="default",
                     description="Created by `gateway seed`",
