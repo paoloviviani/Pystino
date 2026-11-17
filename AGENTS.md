@@ -169,7 +169,9 @@ Two repositories, released separately, shipped together by Cerea's deploy kit.
 4. **Write the failing test first, and see it fail.** Add the test, run it,
    and keep the failure output: it must fail for the reason the bug describes.
    Then fix, and run it again. For a bug fix, confirm the test fails without
-   the fix (`git stash` the fix, run the test, `git stash pop`).
+   the fix (copy the fixed file aside, `git restore --source=<base> -- <file>`,
+   run the test, copy it back; never `git stash`, whose stack is shared by every
+   worktree).
 5. **Run the checks**, from the repository root, and keep their output:
 
    ```bash
@@ -178,7 +180,7 @@ Two repositories, released separately, shipped together by Cerea's deploy kit.
    uv run ruff check .
    uv run ruff format --check .
    uv run mypy apps/gateway/src packages/shared-py/src services       # --strict; CI runs exactly this
-   flock /tmp/heavy.lock uv run pytest -q                             # ~1,900 tests, SQLite, no services
+   flock /tmp/heavy.lock uv run pytest -q                             # ~3,800 tests (gateway, shared-py, redaction), SQLite, no services
    uv run pytest apps/gateway/tests/test_migrations_sqlite.py -q      # the whole migration chain on SQLite
    ```
 
@@ -408,7 +410,7 @@ and report it with its output. Derived from `.github/workflows/images.yml`,
    ```
 
 7. **Ship it through Cerea.** In the Cerea repository, following its
-   `AGENTS.md` "Releasing" (authoritative there):
+   `MAINTAINING.md` section 5 (authoritative there):
    - the Cerea release commit on its `main`: the version in `package.json`,
      `kit/tools/pin --cerea <new Cerea version> --pystino X.Y.Z`, then
      `kit/tools/pin --check` and the kit's unit tests
@@ -463,6 +465,8 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
   amount to zero (it reads `< €0.001`). Admins reach full precision with the
   **Exact figures** toggle, a `MoneyPrecisionContext`: a `formatMoney` call
   outside `<Money>` reads it with `useExactMoney`.
+- **The console has a User | Admin view switch** in the top bar (`Shell.tsx`),
+  not a sidebar link.
 - **The look lives in one file.** `packages/ui/src/tokens.css` carries the
   palette (light and dark), the type and the geometry; components use tokens,
   never literals. Components are styled with Tailwind utilities, and the
@@ -472,6 +476,14 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
   `@source` for `packages/ui/src`: if a class "does nothing", check that line.
   Cerea carries a byte copy of `tokens.css` (see "How Pystino and Cerea
   relate").
+- **Self-hosted servers (vLLM, SGLang, llama.cpp) are OpenAI-compatible
+  catalogue entries, not provider types.** Listing, importing or refreshing their
+  models runs a server probe (one identity request, one tiny tool call per model,
+  unmetered) that only proposes values, never overwriting the admin's
+  (`POST /api/admin/models/{id}/probe`; docs/provider-catalogue.md).
+  `default_reasoning_effort` (migration 0087) is a per-model default applied to
+  chat requests that name no effort. A fresh deployment has **no default
+  upstream provider**: one is seeded only when `GATEWAY_UPSTREAM__BASE_URL` is set.
 - **Provider-side web search is a surcharge.** `per_search` on the price row,
   `search_count` on the usage row. The count comes only from
   `usage.server_tool_use.web_search_requests`, never from counting blocks (an
