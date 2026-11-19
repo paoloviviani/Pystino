@@ -85,9 +85,10 @@ recreates the built-in models with the seed defaults and logs it. The deployment
 | `EXTRACTOR_THREADS` | Intra-op threads for ONNX and torch. Default: the cores this container may use (the CPU-affinity mask, which follows `--cpuset` and not a CPU quota: set it explicitly with `cpus:` limits). |
 | `EXTRACTOR_MAX_PAGES` | Pages read by OCR or Docling per document (default 200). Further pages are not read and the response says `truncated`. Pages are counted by pdfium (pdfminer as a fallback); when neither can count, the cap is still passed to Docling. A page is drawn for OCR at 200 DPI but never larger than 2600 pixels on its long side, so a 200-inch page cannot become a multi-gigabyte bitmap. |
 | `EXTRACTOR_TIMEOUT_SECONDS` | A soft time budget per document (default 300), checked between pages. A page already being read is not interrupted, so the real bound is this plus one page. Docling stops and returns what it has (`truncated`). |
+| `EXTRACTOR_MAX_BYTES` | The largest document read, in bytes (default 33554432, 32 MiB: above the 30 MB Cerea accepts per chat attachment). Larger documents answer `too_large`. The gateway's `/v1` body limit (64 MiB) still bounds what reaches the extractor as base64, so raise both together. |
 | `EXTRACTOR_MODELS_DIR` | Where the baked weights are (`/opt/extractor-models`). |
 
-The size limit (25 MB), the character cap (2,000,000) and the archive checks are
+The size limit (`EXTRACTOR_MAX_BYTES`, 32 MiB by default), the character cap (2,000,000) and the archive checks are
 the same for every engine. A document the engine cannot use is handed to the
 markitdown path; a document nobody can read gets the same `unreadable` or
 `unsupported` answer as before, never a 4xx.

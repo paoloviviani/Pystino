@@ -42,6 +42,10 @@ from typing import Final
 DEFAULT_MODELS_DIR: Final = "/opt/extractor-models"
 DEFAULT_MAX_PAGES: Final = 200
 DEFAULT_TIMEOUT_SECONDS: Final = 300
+
+#: The largest document the reader inspects (`EXTRACTOR_MAX_BYTES`): 32 MiB, above
+#: the 30 MB Cerea accepts as one chat attachment, so a valid attachment is read.
+DEFAULT_MAX_BYTES: Final = 32 * 1024 * 1024
 ENGINE_HEADER: Final = "x-extractor-engine"
 
 
@@ -88,6 +92,7 @@ class Settings:
     models_dir: Path
     max_pages: int
     timeout_seconds: int
+    max_bytes: int = DEFAULT_MAX_BYTES
 
 
 def settings() -> Settings:
@@ -99,6 +104,7 @@ def settings() -> Settings:
         models_dir=Path(os.environ.get("EXTRACTOR_MODELS_DIR") or DEFAULT_MODELS_DIR),
         max_pages=_int("EXTRACTOR_MAX_PAGES", DEFAULT_MAX_PAGES),
         timeout_seconds=_int("EXTRACTOR_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS),
+        max_bytes=_int("EXTRACTOR_MAX_BYTES", DEFAULT_MAX_BYTES),
     )
 
 
