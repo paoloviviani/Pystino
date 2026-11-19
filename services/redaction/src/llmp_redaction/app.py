@@ -465,7 +465,7 @@ def create_app(detector: Detector | None = None) -> FastAPI:
 
         Raw bytes with their own `Content-Type` rather than multipart: the
         payload is a single file, multipart would add a dependency and a parser
-        to a service whose job is to be small, and 25 MB of base64 in JSON is
+        to a service whose job is to be small, and 30 MB of base64 in JSON is
         33 MB of JSON. `X-Filename` is optional and only consulted when the
         content type is unrecognised — several clients send
         `application/octet-stream` for every upload. `X-Page-Images: N` asks

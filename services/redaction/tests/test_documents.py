@@ -175,6 +175,17 @@ class TestNotReadingIsNotCleanliness:
         assert result.kind is ExtractionKind.TOO_LARGE
         assert not result.inspected
 
+    def test_the_default_cap_covers_a_30_mb_attachment(self) -> None:
+        assert MAX_BYTES >= 30 * 1024 * 1024
+        result = extract(b"x" * (30 * 1024 * 1024), media_type="application/pdf")
+        assert result.kind is not ExtractionKind.TOO_LARGE
+
+    def test_the_cap_follows_the_environment(self, monkeypatch) -> None:
+        monkeypatch.setenv("EXTRACTOR_MAX_BYTES", "1000")
+        result = extract(b"x" * 1001, media_type="application/pdf")
+        assert result.kind is ExtractionKind.TOO_LARGE
+        assert "1000-byte" in (result.detail or "")
+
     def test_a_zip_bomb_is_refused_on_its_declared_size(self) -> None:
         """Read the central directory, not the payload: the whole point of a zip
         bomb is that it is small until you decompress it."""

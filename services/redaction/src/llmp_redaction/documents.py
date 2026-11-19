@@ -82,14 +82,15 @@ from typing import Final
 from llmp_shared import ExtractionKind, ExtractionResponse, PageImage
 
 from llmp_redaction import docling_engine, ocr
-from llmp_redaction.engines import Engine, Settings, parse_engine, settings
+from llmp_redaction.engines import DEFAULT_MAX_BYTES, Engine, Settings, parse_engine, settings
 
 logger = logging.getLogger(__name__)
 
 #: Refused before anything is parsed. A document larger than this is not
 #: inspected, and therefore must not be treated as inspected: the caller gets
 #: `too_large` and decides.
-MAX_BYTES: Final = 25 * 1024 * 1024
+#: The default; `EXTRACTOR_MAX_BYTES` overrides it (read per call).
+MAX_BYTES: Final = DEFAULT_MAX_BYTES
 
 #: Stop after this much text. Detection cost is linear in length
 #: (docs/performance.md), so an unbounded document is an unbounded stall for
@@ -764,10 +765,11 @@ def _extract(
     its own comes back as a picture; a PDF with any such page is not "inspected"
     however much text the others had.
     """
-    if len(data) > MAX_BYTES:
+    max_bytes = settings().max_bytes
+    if len(data) > max_bytes:
         return ExtractionResponse(
             kind=ExtractionKind.TOO_LARGE,
-            detail=f"{len(data)} bytes exceeds the {MAX_BYTES}-byte inspection limit",
+            detail=f"{len(data)} bytes exceeds the {max_bytes}-byte inspection limit",
         )
 
     declared = media_type_for(media_type, filename)

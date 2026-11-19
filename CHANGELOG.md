@@ -4,6 +4,8 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **The document reader accepts files up to 32 MiB (was 25 MB).** Cerea takes chat attachments up to 30 MB, so a 25-30 MB PDF or Office file failed with `too_large`. Set `EXTRACTOR_MAX_BYTES` (bytes) to change it; the gateway's 64 MiB `/v1` body limit still applies.
+
 ## v0.33.4 — 2026-11-16
 
 Paired with Cerea 0.54.0.
