@@ -180,7 +180,7 @@ class TestNotReadingIsNotCleanliness:
         result = extract(b"x" * (30 * 1024 * 1024), media_type="application/pdf")
         assert result.kind is not ExtractionKind.TOO_LARGE
 
-    def test_the_cap_follows_the_environment(self, monkeypatch) -> None:
+    def test_the_cap_follows_the_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("EXTRACTOR_MAX_BYTES", "1000")
         result = extract(b"x" * 1001, media_type="application/pdf")
         assert result.kind is ExtractionKind.TOO_LARGE
