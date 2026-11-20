@@ -1402,3 +1402,51 @@ class TestSlowExtraction:
         warned = [r.getMessage() for r in caplog.records if "timed out" in r.getMessage()]
         assert warned and "GATEWAY_EXTRACTOR__TIMEOUT_SECONDS" in warned[0]
         assert "limit 5s" in warned[0]
+
+
+class TestReadPipelinesDoNotRedact:
+    """P33: a read pipeline chooses a reader or refuses; it hides nothing in the returned text."""
+
+    async def test_a_stored_read_rule_with_a_redact_with_policy_leaves_the_text_alone(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: Any,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        from gateway.config import EntityPolicy
+        from privacy_helpers import add_pipeline, add_policy
+
+        resolver = app.state.redaction
+        install_detector(app, [("IBAN_CODE", IBAN)])
+        # The resolver is back, so only a pipeline's policy (or the deployment's, which hides
+        # nothing) can redact: what this asserts is that the read pipeline's does not.
+        app.state.redaction = resolver
+        pid = await add_policy(
+            app, session_factory, "Ibans", entities={"IBAN_CODE": EntityPolicy()}
+        )
+        # A row as an older gateway stored it, before migration 0088 strips it.
+        await add_pipeline(
+            app,
+            session_factory,
+            "read",
+            "Files",
+            otherwise={"level": "default", "redact_with": str(pid)},
+        )
+        rules = app.state.privacy.pipelines_of("extract")[0].rules
+        assert rules and all(not r.policies and r.mode == "off" for r in rules)
+        model = await add_ocr_model(session, seeded, name="plain-ocr")
+        fake_upstream.set_json(
+            {
+                "model": "mistral-ocr-4.1",
+                "pages": [{"index": 0, "markdown": f"Pay to {IBAN} immediately."}],
+                "usage_info": {"pages_processed": 1},
+            }
+        )
+        response = await client.post(
+            "/v1/ocr", json={"model": model.name, "document": DOCUMENT}, headers=seeded.auth
+        )
+        assert response.status_code == 200
+        assert response.json()["pages"][0]["markdown"] == f"Pay to {IBAN} immediately."

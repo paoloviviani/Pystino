@@ -281,7 +281,11 @@ export function useSavePrivacySettings() {
   return useMutation({
     mutationFn: (body: { user_entity_types: string[] | null }) =>
       request<PrivacySettings>(`${BASE.admin}/settings`, { method: "PUT", body }),
-    onSuccess: () => client.invalidateQueries({ queryKey: privacyKeys.settings }),
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: privacyKeys.settings }),
+        client.invalidateQueries({ queryKey: privacyKeys.options("admin") }),
+      ]),
   });
 }
 
@@ -541,9 +545,7 @@ export function ruleSentence(kind: PrivacyKind, rule: SentenceRule, labels: Labe
       conditions: conds || m["privacy.rule.all_requests"](),
       action,
     });
-    return names && rule.mode && rule.mode !== "off"
-      ? m["privacy.rule.sentence_hide"]({ action: head, mode: mode.toLowerCase(), policies: names })
-      : head;
+    return head;
   }
   return m["privacy.rule.sentence"]({
     policies: names || m["privacy.rule.no_policies"](),

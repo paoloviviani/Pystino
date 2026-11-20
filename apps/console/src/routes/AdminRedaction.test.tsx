@@ -1,6 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -385,19 +384,5 @@ describe("Redaction service: what is left of the detector profiles", () => {
     expect(screen.queryByText(/profile/i)).toBeNull();
     expect(calls.some((c) => c.url.includes("/privacy/profiles"))).toBe(false);
   });
-
-  it("keeps the setting for what users may add to their own policies", async () => {
-    const user = userEvent.setup({ delay: null });
-    const calls: { method: string; url: string; body: unknown }[] = [];
-    stubService(calls);
-    renderScreen(<AdminPrivacyDetectors />);
-
-    const field = await screen.findByLabelText("Entity types users may name");
-    await waitFor(() => expect(field).toHaveValue("PERSON"));
-    await user.type(field, ", URL");
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() =>
-      expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ user_entity_types: ["PERSON", "URL"] }),
-    );
-  });
 });
+

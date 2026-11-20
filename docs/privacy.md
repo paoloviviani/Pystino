@@ -66,10 +66,10 @@ made available (Detectors tab). See [User pipelines](privacy-routing.md#user-pip
 
 | Tab | What it holds |
 |---|---|
-| **Pipelines** | the **Privacy: On / Off** master switch (off means no pipeline runs and nothing is hidden: the `noop` engine under a plain name, with an inline confirmation, the append-only engine row and its audit, and a warning banner across the Privacy area while it is off); pipelines by kind: scope, rules as sentences, the fixed last rule; the editor (ladder as radios, "Redact with", observe-only), reorder, turn off |
+| **Pipelines** | the **Privacy: On / Off** master switch (off means no pipeline runs and nothing is hidden: the `noop` engine under a plain name, with an inline confirmation, the append-only engine row and its audit, and a warning banner across the Privacy area while it is off); pipelines by kind: scope, rules as sentences, the fixed last rule; the editor (a read rule has the ladder as radios; a content rule has policies and a mode; read rules have no "Redact with"), reorder, turn off |
 | **Redaction policies** | one editor with two sections: *Patterns (fast, deterministic)*: built-in formats, regular expressions, keyword lists with a case checkbox; *Entities (NER, probabilistic)*: the engine picker (what is available), its entity types with a mode and a threshold, custom GLiNER types. A mode per item, `detect only` among them, same-length placeholders, the allow-list, and a **Try it** box |
 | **Classifiers** | decision models: a chat model and a topic in plain words; says when no model provider is configured and that classifying sends the text to that provider |
-| **Detectors** | exactly what the redaction service reports, one card per detector (the patterns, spaCy, GLiNER) with an On/Off switch, its capabilities (formats, languages, speed, entity types, custom types) and "used by N policies"; a detector no active policy uses can be switched off, one a policy uses is refused (409, naming the policies); a policy can only choose detectors that are on. Then what users may add to their own policies, and, collapsed, the engine's activity and configuration |
+| **Detectors** | exactly what the redaction service reports, one card per detector (the patterns, spaCy, GLiNER) with an On/Off switch, its capabilities (formats, languages, speed, entity types, custom types) and "used by N policies"; a detector no active policy uses can be switched off, one a policy uses is refused (409, naming the policies); a policy can only choose detectors that are on. Then what users may add to their own policies (a searchable list of the entity types the installed detectors support, grouped by detector, to tick; "Any type the detectors offer" (null) and "Only the types I pick" (a list, an empty list meaning none) are separate choices, and switching to any from a non-empty list asks first; a type no detector supports is refused with a 422 naming it, and one already stored that no detector supports still loads, is marked unknown and logged, and is dropped when you remove it), and, collapsed, the engine's activity and configuration |
 | **Test** | one box: a kind of request, a user and a target, a text or file; every pipeline in scope with its trace (each item that made a condition true, with its group and, for entities, engine and score), the reroute, the ladder, who chose the reader, and the policies added up. Nothing is stored |
 
 Users have **Privacy pipelines** (their own pipelines and policies, the
@@ -94,3 +94,15 @@ Read-only; labels and names only.
 
 Migration `0082` turns what you had into the new shape and requests are handled
 exactly as before. See [migration](privacy-routing.md#migration).
+
+## Read pipelines do not redact
+
+A read (extract) pipeline decides how a file is read: the reader the caller named, another
+reader, or a refusal. It does not hide anything in the text it returns, and a read rule has no
+"Redact with" (policies, mode, overrides). Chat and embedding pipelines still redact that text
+before it reaches a model or an index. Saving a read rule that names policies, a mode other
+than `off` or overrides is refused with a 422, in the administrator and the user API alike.
+Migration `0088` removed them from stored rules: each rule that lost one is logged
+(`read rules 0088: ...`) and has an audit entry (actor "system migration", action
+`privacy_pipeline.read_redaction_dropped`) with the rule and the policies dropped. The migration
+cannot be undone; its downgrade refuses unless `PYSTINO_ALLOW_LOSSY_DOWNGRADE=1`.

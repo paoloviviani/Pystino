@@ -55,6 +55,8 @@ from gateway.privacy.engines import (
     engine_problem,
     ner_state,
     no_ner_message,
+    supported_groups,
+    supported_types,
     usable,
 )
 from gateway.privacy.pipelines import Pipeline, pipeline_from_row, validate_pipeline
@@ -91,6 +93,13 @@ from gateway.privacy.state import state_of
 from gateway.rate_limit import SlidingWindowLimiter
 
 logger = logging.getLogger(__name__)
+
+
+class UnknownEntityTypesError(GatewayError):
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    error_type = "invalid_request_error"
+    code = "unknown_entity_types"
+
 
 router = APIRouter(prefix="/api/admin/privacy", tags=["administration"])
 
@@ -169,6 +178,7 @@ async def options(
     policies = [p for p in await service.policy_rows(session) if p.is_active]
     classifiers = await service.classifier_rows(session)
     settings_row = await service.settings_row(session)
+    report = await effective_engines(session, control_http, settings)
     return OptionsResponse(
         users=[NamedId(id=i, name=n or "") for i, n in users],
         groups=[NamedId(id=i, name=n) for i, n in groups],
@@ -189,6 +199,7 @@ async def options(
         own_policies=[],
         classifiers=[NamedId(id=c.id, name=c.name) for c in classifiers],
         entity_types=settings_row.user_entity_types,
+        supported_groups=supported_groups(report),
     )
 
 
@@ -1118,17 +1129,46 @@ async def delete_classifier(
 
 
 @router.get("/settings", response_model=SettingsResponse)
-async def get_settings(admin: AdminUserDep, session: SessionDep) -> SettingsResponse:
+async def get_settings(
+    admin: AdminUserDep,
+    session: SessionDep,
+    control_http: ControlHttpDep,
+    settings: SettingsDep,
+) -> SettingsResponse:
     row = await service.settings_row(session)
     await session.commit()
-    return SettingsResponse(user_entity_types=row.user_entity_types)
+    stored = row.user_entity_types
+    supported = (
+        supported_types(await effective_engines(session, control_http, settings))
+        if stored
+        else None
+    )
+    unknown = sorted(
+        t for t in stored or () if supported is not None and t.upper() not in supported
+    )
+    if unknown:
+        logger.warning(
+            "privacy settings list entity types no detector supports: %s", ", ".join(unknown)
+        )
+    return SettingsResponse(user_entity_types=stored, unknown_entity_types=unknown)
 
 
 @router.put("/settings", response_model=SettingsResponse)
 async def put_settings(
-    payload: SettingsRequest, admin: AdminUserDep, session: SessionDep, request: Request
+    payload: SettingsRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+    control_http: ControlHttpDep,
+    settings: SettingsDep,
 ) -> SettingsResponse:
-    """The entity types users' own policies may name (null: any the detector offers)."""
+    """The entity types users' own policies may name (null: any the detector offers).
+
+    A type no detector supports is refused by name (a typo would otherwise allow nothing).
+    Types already stored stay loadable (GET reports them as unknown); a save must
+    leave them out. When the redaction service cannot be asked nothing can be checked, so
+    the list is saved as given.
+    """
     row = await service.settings_row(session)
     before = {"user_entity_types": row.user_entity_types}
     types = (
@@ -1136,6 +1176,15 @@ async def put_settings(
         if payload.user_entity_types is None
         else sorted({t.strip().upper() for t in payload.user_entity_types if t.strip()})
     )
+    supported = supported_types(await effective_engines(session, control_http, settings))
+    if types and supported is not None:
+        unknown = [t for t in types if t not in supported]
+        if unknown:
+            raise UnknownEntityTypesError(
+                "No detector supports these entity types: "
+                + ", ".join(unknown)
+                + ". Pick from the types the detectors list."
+            )
     row.user_entity_types = types
     record_audit(
         session,
@@ -1149,7 +1198,7 @@ async def put_settings(
     )
     await session.commit()
     await _reload(request)
-    return SettingsResponse(user_entity_types=types)
+    return SettingsResponse(user_entity_types=types, unknown_entity_types=[])
 
 
 # -- the test box ------------------------------------------------------------------

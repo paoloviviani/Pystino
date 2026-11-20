@@ -203,7 +203,7 @@ describe("Detectors: the cards", () => {
   it("keeps the setting for what users may add, and the technical section collapsed", async () => {
     stub({});
     renderUi(<AdminPrivacyDetectors />);
-    expect(await screen.findByLabelText("Entity types users may name")).toBeInTheDocument();
+    expect(await screen.findByTestId("user-types")).toBeInTheDocument();
     const details = (await screen.findByText("Engine activity and configuration")).closest("details");
     expect(details).not.toBeNull();
     expect(details).not.toHaveAttribute("open");

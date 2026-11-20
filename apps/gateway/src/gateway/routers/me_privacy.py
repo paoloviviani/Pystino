@@ -49,6 +49,7 @@ from gateway.privacy.engines import (
     has_ner,
     ner_type_names,
     no_ner_message,
+    offered_types,
     usable,
 )
 from gateway.privacy.pipelines import Pipeline, pipeline_from_row, validate_pipeline
@@ -234,14 +235,7 @@ async def options(
         classifiers=[],
         entity_types=entity_types,
         ner_available=ner,
-        offered_types=(
-            sorted(
-                {t.upper() for t in report.pattern_entities}
-                | {t.upper() for e in report.engines if e.available for t in e.entities}
-            )
-            if report.reachable
-            else None
-        ),
+        offered_types=offered_types(report),
         ner_note=no_ner_message(report) if ner is False else None,
     )
 
@@ -463,12 +457,7 @@ async def _policy_fields(
             allowed_types=settings_row.user_entity_types,
             no_ner_types=ner_type_names(report) if has_ner(report) is False else None,
             no_ner_reason=no_ner_message(report),
-            offered_types=(
-                {t.upper() for t in report.pattern_entities}
-                | {t.upper() for e in report.engines if e.available for t in e.entities}
-                if report.reachable
-                else None
-            ),
+            offered_types=set(offered_types(report) or ()) if report.reachable else None,
             reserved={
                 *(settings_row.user_entity_types or ()),
                 *await _administrator_names(session),

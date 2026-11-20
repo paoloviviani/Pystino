@@ -176,7 +176,7 @@ class TestValidation:
                 user=True,
             )
 
-    def test_an_extract_rule_has_an_action_and_optional_hiding(self) -> None:
+    def test_an_extract_rule_has_an_action_and_hides_nothing(self) -> None:
         ok = rulelib.validate_rule("extract", {"name": "r", "action": {"level": "extract_with"}})
         assert (
             ok["action"] == {"level": "extract_with", "reader": "markitdown"}
@@ -184,8 +184,32 @@ class TestValidation:
         )
         with pytest.raises(rulelib.ContentOnReadError):
             rulelib.validate_rule("extract", {"name": "r", "conditions": [{"key": "finds"}]})
-        with pytest.raises(rulelib.RuleError, match="blocks with its action"):
-            rulelib.validate_rule("extract", {"name": "r", "mode": "block"})
+        for hiding in (
+            {"policies": [P1], "mode": "redact"},
+            {"mode": "anonymise"},
+            {"mode": "block"},
+            {"policies": [P1]},
+            {"overrides": {"PERSON": "redact"}},
+        ):
+            with pytest.raises(rulelib.RuleError, match="no longer redacts"):
+                rulelib.validate_rule("extract", {"name": "r", **hiding})
+        # An explicit "off" and no policies is what a client that sends every field sends.
+        rulelib.validate_rule(
+            "extract", {"name": "r", "policies": [], "mode": "off", "overrides": {}}
+        )
+
+    def test_a_stored_read_rule_that_still_carries_redaction_is_read_without_it(self) -> None:
+        stored = {
+            "id": str(uuid.uuid4()),
+            "name": "old",
+            "policies": [P1],
+            "mode": "redact",
+            "overrides": {"PERSON": "anonymise"},
+            "action": {"level": "extract_with", "reader": "docling"},
+        }
+        rule = rulelib.rule_from_json("extract", 0, stored)
+        assert rule.policies == () and rule.mode == "off" and not rule.overrides
+        assert not rule.hides_text and rule.level == "extract_with"
         with pytest.raises(rulelib.RuleError, match="Only an extract rule"):
             rulelib.validate_rule(
                 "content",

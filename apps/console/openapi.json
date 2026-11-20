@@ -7064,6 +7064,27 @@
         "title": "OcrRequest",
         "type": "object"
       },
+      "OfferedGroup": {
+        "properties": {
+          "detector": {
+            "title": "Detector",
+            "type": "string"
+          },
+          "types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Types",
+            "type": "array"
+          }
+        },
+        "required": [
+          "detector",
+          "types"
+        ],
+        "title": "OfferedGroup",
+        "type": "object"
+      },
       "OidcMappingRule": {
         "description": "One IdP group → local group mapping (ADR 0048).",
         "properties": {
@@ -7603,6 +7624,20 @@
             "title": "Readers",
             "type": "array"
           },
+          "supported_groups": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OfferedGroup"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supported Groups"
+          },
           "users": {
             "items": {
               "$ref": "#/components/schemas/NamedId"
@@ -7624,7 +7659,8 @@
           "entity_types",
           "ner_available",
           "ner_note",
-          "offered_types"
+          "offered_types",
+          "supported_groups"
         ],
         "title": "OptionsResponse",
         "type": "object"
@@ -12898,6 +12934,13 @@
       },
       "SettingsResponse": {
         "properties": {
+          "unknown_entity_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unknown Entity Types",
+            "type": "array"
+          },
           "user_entity_types": {
             "anyOf": [
               {
@@ -12914,7 +12957,8 @@
           }
         },
         "required": [
-          "user_entity_types"
+          "user_entity_types",
+          "unknown_entity_types"
         ],
         "title": "SettingsResponse",
         "type": "object"
@@ -18395,7 +18439,7 @@
         ]
       },
       "put": {
-        "description": "The entity types users' own policies may name (null: any the detector offers).",
+        "description": "The entity types users' own policies may name (null: any the detector offers).\n\nA type no detector supports is refused by name (a typo would otherwise allow nothing).\nTypes already stored stay loadable (GET reports them as unknown); a save must\nleave them out. When the redaction service cannot be asked nothing can be checked, so\nthe list is saved as given.",
         "operationId": "put_settings_api_admin_privacy_settings_put",
         "requestBody": {
           "content": {

@@ -84,13 +84,13 @@ describe("ruleSentence", () => {
     expect(text).toBe("When its name matches *draft* → extract with markitdown-ocr");
   });
 
-  it("says 'any file' for no conditions and adds the hiding of an extract rule", () => {
+  it("says 'any file' for no conditions, and a read rule never says it hides", () => {
     const text = ruleSentence(
       "extract",
       rule({ mode: "redact", action: { level: "default" } }),
       labels,
     );
-    expect(text).toBe("When any file → default extractor, then redact Strict");
+    expect(text).toBe("When any file → default extractor");
   });
 });
 

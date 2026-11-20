@@ -131,7 +131,7 @@ class TestPipelineApi:
         }
         assert (await client.post(f"{BASE}/pipelines", json=typed)).status_code == 422
 
-    async def test_an_extract_pipeline_has_an_action_and_optional_hiding(
+    async def test_an_extract_pipeline_has_an_action_and_no_redaction(
         self, app: Any, admin: None, client: httpx.AsyncClient, session_factory: Any
     ) -> None:
         pid = await policy(app, session_factory)
@@ -139,14 +139,52 @@ class TestPipelineApi:
             "name": "Scans",
             "conditions": [{"key": "scan"}],
             "action": {"level": "default"},
-            "policies": [str(pid)],
-            "mode": "redact",
         }
         resp = await client.post(
             f"{BASE}/pipelines", json={"kind": "extract", "name": "Files", "rules": [rule]}
         )
         assert resp.status_code == 201, resp.text
         assert resp.json()["rules"][0]["action"] == {"level": "default", "reader": None}
+        assert resp.json()["rules"][0]["policies"] == []
+        # "Redact with" on a read rule is refused, by create and by update.
+        for hiding in ({"policies": [str(pid)], "mode": "redact"}, {"mode": "anonymise"}):
+            refused = await client.post(
+                f"{BASE}/pipelines",
+                json={"kind": "extract", "name": "F2", "rules": [{**rule, **hiding}]},
+            )
+            assert refused.status_code == 422, refused.text
+            assert "no longer redacts" in refused.text
+        put = await client.patch(
+            f"{BASE}/pipelines/{resp.json()['id']}",
+            json={"name": "Files", "rules": [{**rule, "policies": [str(pid)], "mode": "redact"}]},
+        )
+        assert put.status_code == 422 and "no longer redacts" in put.text
+        # A content pipeline still redacts.
+        content = await client.post(
+            f"{BASE}/pipelines",
+            json={
+                "kind": "content",
+                "name": "Chat",
+                "rules": [{"name": "r", "policies": [str(pid)], "mode": "redact"}],
+            },
+        )
+        assert content.status_code == 201, content.text
+
+    async def test_a_users_read_pipeline_cannot_redact_either(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded
+    ) -> None:
+        as_user(app, seeded.user)
+        rule = {"name": "Scans", "conditions": [{"key": "scan"}], "action": {"level": "default"}}
+        ok = await client.post(
+            "/api/me/privacy/pipelines",
+            json={"kind": "extract", "name": "Mine", "rules": [rule]},
+        )
+        assert ok.status_code == 201, ok.text
+        refused = await client.post(
+            "/api/me/privacy/pipelines",
+            json={"kind": "extract", "name": "Mine 2", "rules": [{**rule, "mode": "redact"}]},
+        )
+        assert refused.status_code == 422 and "no longer redacts" in refused.text
 
     async def test_a_policy_is_what_to_look_for_and_carries_no_mode(
         self, app: Any, admin: None, client: httpx.AsyncClient, session_factory: Any

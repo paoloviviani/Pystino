@@ -171,8 +171,11 @@ An extract rule has an **action** instead of a mode, lowest to highest:
 
 - Between two "extract with" rules the **first in the order above wins**: an administrator's
   before a user's.
-- An extract rule may also **hide** in the text the extractor returns: it has policies, a mode
-  and overrides in the same shape, applied in the same order, and optional.
+- An extract rule **does not hide anything**: it has no policies, mode or overrides (saving one
+  that names them is a 422; migration `0088` removed them from stored rules). The text a read
+  returns is redacted where it is used: by the chat or embedding (content) pipelines of the
+  model that receives it or the index it goes into. A deployment-wide redaction policy
+  (`GATEWAY_REDACTION__POLICY`) still screens what `/v1/ocr` returns, as it always did.
 - **It fails closed when it cannot be done**: the document is a link and the extractor is one of
   the built-in extractor's models (which read only documents sent with the request), or the
   extractor is not available to the caller.

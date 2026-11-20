@@ -347,7 +347,7 @@ function PoliciesEditor({
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">
         <div className={`${FIELD_LABEL} flex items-center gap-2`}>
-          {kind === "extract" ? m["privacy.rule.hide_extract"]() : m["privacy.rule.policies"]()}
+          {m["privacy.rule.policies"]()}
           <Tip text={m["privacy.rule.policies_tip"]()} />
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -654,10 +654,11 @@ export function PipelineEditorPage({ area }: { area: Area }) {
         name: r.name,
         enabled: r.enabled,
         note: r.note,
-        policies: r.policies,
+        // A read rule redacts nothing: it chooses a reader or blocks.
+        policies: kind === "extract" ? [] : r.policies,
         match: r.match,
-        mode: r.mode,
-        overrides: r.overrides,
+        mode: kind === "extract" ? "off" : r.mode,
+        overrides: kind === "extract" ? {} : r.overrides,
         conditions: r.conditions.map((c) => ({
           key: c.key,
           values: c.values,
@@ -1012,13 +1013,6 @@ export function PipelineEditorPage({ area }: { area: Area }) {
                           onChange={(action) => patchRule(rule.uid, { action })}
                           options={opts}
                           prefix={rule.uid}
-                        />
-                        <PoliciesEditor
-                          kind={kind}
-                          rule={rule}
-                          onChange={(patch) => patchRule(rule.uid, patch)}
-                          options={opts}
-                          prefix={`${rule.uid}-hide`}
                         />
                       </>
                     )}

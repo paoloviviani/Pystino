@@ -808,3 +808,10 @@ for the refusal, and the gateway log gives the input size and the engine, never
 the text. Raise the limit if large inputs still time out. With
 `GATEWAY_REDACTION__FAIL_OPEN` on, either case forwards the request unredacted
 instead, and logs it loudly.
+
+## Reads
+
+`/v1/ocr` returns text, and a read pipeline does not redact it (it only chooses the reader or
+refuses the file). Redaction applies where that text is used: a chat or embedding pipeline of the
+receiving model or index. Only the deployment-wide policy still screens a `/v1/ocr` response.
+See privacy.md, "Read pipelines do not redact".

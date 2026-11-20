@@ -193,8 +193,9 @@ describe("Pipeline editor", () => {
     });
   });
 
-  it("shows the extractors for 'extract with', and hiding on the extracted text", async () => {
-    vi.stubGlobal("fetch", api([]));
+  it("shows the extractors for 'extract with', and no hiding on the extracted text", async () => {
+    const seen: Seen[] = [];
+    vi.stubGlobal("fetch", api(seen));
     const user = userEvent.setup();
     renderEditor(<AdminPipeline />, "/admin/privacy/pipelines/new?kind=extract");
     await user.click(await screen.findByRole("button", { name: "Add rule" }));
@@ -204,9 +205,20 @@ describe("Pipeline editor", () => {
     expect(within(readers).getByRole("button", { name: "markitdown" })).toBeInTheDocument();
     expect(within(readers).getByRole("button", { name: "docling" })).toBeInTheDocument();
     expect(within(readers).getByRole("button", { name: "mistral" })).toBeInTheDocument();
-    expect(screen.getByText("Hide in the extracted text (optional)")).toBeInTheDocument();
+    // A read rule redacts nothing: no policies, mode or overrides to pick, anywhere in the editor.
+    expect(screen.queryByText(/Hide in the extracted text/)).toBeNull();
+    expect(screen.queryByLabelText("Add policy...")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: /^Then/ })).toBeNull();
+    expect(screen.queryByText(/Redact with/)).toBeNull();
     expect(screen.getByRole("radio", { name: /Block/ })).toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: /Refuse|Pass/ })).toBeNull();
+    await user.type(screen.getByLabelText("Name"), "Files");
+    await user.click(screen.getByRole("button", { name: "Create pipeline" }));
+    await posted(seen);
+    expect(POST(seen)?.body).toMatchObject({
+      kind: "extract",
+      rules: [{ policies: [], mode: "off", overrides: {}, action: { level: "extract_with" } }],
+    });
   });
 
   it("has no extract action on a content rule: its mode says what it does", async () => {

@@ -434,6 +434,9 @@ class PolicyTryResponse(ResponseModel):
 class SettingsResponse(ResponseModel):
     #: Entity types users' own policies may name; null means any the detector offers.
     user_entity_types: list[str] | None = None
+    #: Stored types no installed detector supports (a typo, or an engine since removed);
+    #: still kept until the administrator removes them. Empty when the service cannot be asked.
+    unknown_entity_types: list[str] = Field(default_factory=list)
 
 
 class SettingsRequest(BaseModel):
@@ -467,6 +470,12 @@ class ReaderOption(ResponseModel):
     local: bool
 
 
+class OfferedGroup(ResponseModel):
+    #: ``patterns`` or an NER engine's name.
+    detector: str
+    types: list[str]
+
+
 class OptionsResponse(ResponseModel):
     users: list[NamedId]
     groups: list[NamedId]
@@ -490,6 +499,10 @@ class OptionsResponse(ResponseModel):
     #: Every type the redaction service finds now (pattern formats if switched on, and the
     #: entities of NER engines that are on); null when the service cannot be asked.
     offered_types: list[str] | None = None
+    #: Administrators only: every type the installed detectors support, by detector, whether
+    #: or not the detector is switched on (what "what users may add" can name); null when
+    #: the service cannot be asked.
+    supported_groups: list[OfferedGroup] | None = None
 
 
 # -- the test box ------------------------------------------------------------------
