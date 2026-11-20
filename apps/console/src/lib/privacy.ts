@@ -281,7 +281,11 @@ export function useSavePrivacySettings() {
   return useMutation({
     mutationFn: (body: { user_entity_types: string[] | null }) =>
       request<PrivacySettings>(`${BASE.admin}/settings`, { method: "PUT", body }),
-    onSuccess: () => client.invalidateQueries({ queryKey: privacyKeys.settings }),
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: privacyKeys.settings }),
+        client.invalidateQueries({ queryKey: privacyKeys.options("admin") }),
+      ]),
   });
 }
 

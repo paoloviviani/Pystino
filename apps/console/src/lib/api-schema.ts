@@ -1510,6 +1510,11 @@ export interface paths {
         /**
          * Put Settings
          * @description The entity types users' own policies may name (null: any the detector offers).
+         *
+         *     A type no detector supports is refused by name (a typo would otherwise allow nothing).
+         *     Types already stored stay loadable (GET reports them as unknown); a save must
+         *     leave them out. When the redaction service cannot be asked nothing can be checked, so
+         *     the list is saved as given.
          */
         put: operations["put_settings_api_admin_privacy_settings_put"];
         post?: never;
@@ -6714,6 +6719,13 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** OfferedGroup */
+        OfferedGroup: {
+            /** Detector */
+            detector: string;
+            /** Types */
+            types: string[];
+        };
         /**
          * OidcMappingRule
          * @description One IdP group → local group mapping (ADR 0048).
@@ -6899,6 +6911,8 @@ export interface components {
             providers: components["schemas"]["NamedId"][];
             /** Readers */
             readers: components["schemas"]["ReaderOption"][];
+            /** Supported Groups */
+            supported_groups: components["schemas"]["OfferedGroup"][] | null;
             /** Users */
             users: components["schemas"]["NamedId"][];
         };
@@ -8920,6 +8934,8 @@ export interface components {
         };
         /** SettingsResponse */
         SettingsResponse: {
+            /** Unknown Entity Types */
+            unknown_entity_types: string[];
             /** User Entity Types */
             user_entity_types: string[] | null;
         };

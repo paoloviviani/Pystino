@@ -4,6 +4,8 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+- **"What users may add" is a list to tick, not a comma-separated text field.** Privacy > Detectors lists the entity types the installed detectors support, by detector, with search. Saving a type no detector supports (a typo) is refused with a 422 naming it; a type already stored that no detector supports keeps loading, is marked as unknown in the console and logged as a warning, and goes when you remove it. `GET /api/admin/privacy/settings` reports these as `unknown_entity_types`; `GET /api/admin/privacy/options` gains `supported_groups`. When the redaction service cannot be reached nothing can be checked and the list is saved as given.
+
 ## v0.33.5 — 2026-11-19
 
 Paired with Cerea 0.59.1.

@@ -5,7 +5,12 @@ import { PrivacyHeader } from "../components/PrivacyHeader";
 import { useRedactionStatus } from "../lib/admin";
 import { EngineDetails, Warnings } from "./AdminRedaction";
 import { MUTED, PAGE } from "../lib/layout";
-import { usePrivacyEngines, usePrivacySettings, useSavePrivacySettings } from "../lib/privacy";
+import {
+  usePrivacyEngines,
+  usePrivacyOptions,
+  usePrivacySettings,
+  useSavePrivacySettings,
+} from "../lib/privacy";
 import { useSetRedactionEngine } from "../lib/admin";
 import { entityLabel } from "../lib/entities";
 import { useOptionalToast } from "../lib/toast";
@@ -21,25 +26,113 @@ import { m } from "../paraglide/messages.js";
  * switched on here.
  */
 
+/** The heading of a detector's group of types: a known detector by its name, else the raw name. */
+function groupTitle(detector: string): string {
+  switch (detector) {
+    case "patterns":
+      return m["privacy.user_types.group.patterns"]();
+    case "spacy":
+      return m["privacy.user_types.group.spacy"]();
+    case "gliner":
+      return m["privacy.user_types.group.gliner"]();
+    default:
+      // i18n: a detector's own name.
+      return detector;
+  }
+}
+
 /**
  * What users may add to their own policies: the entity types they may name
- * (patterns are always theirs). Blank means every type the detector offers.
+ * (patterns are always theirs). A searchable list of the types the detectors
+ * support, grouped by detector, as the server reports them; none picked means
+ * every type the detectors offer. A stored type no detector supports (a typo, an
+ * engine since removed) is shown marked, with a remove control, and a save that
+ * still holds it is refused by the server by name.
  */
 function UserTypes() {
   const settings = usePrivacySettings();
+  const options = usePrivacyOptions("admin");
   const save = useSavePrivacySettings();
-  const [text, setText] = useState<string | null>(null);
-  const current = settings.data?.user_entity_types ?? null;
-  const shown = text ?? (current ? current.join(", ") : "");
+  const [picked, setPicked] = useState<string[] | null>(null);
+  const [query, setQuery] = useState("");
+  const stored = settings.data?.user_entity_types ?? [];
+  const chosen = picked ?? stored;
+  const groups = options.data?.supported_groups ?? null;
+  const supported = new Set((groups ?? []).flatMap((g) => g.types));
+  // With the service silent nothing can be called unknown; the server says which are.
+  const unknown = new Set(
+    groups === null ? [] : chosen.filter((t) => !supported.has(t.toUpperCase())),
+  );
+  const toggle = (type: string, on: boolean) =>
+    setPicked(on ? [...chosen, type] : chosen.filter((t) => t !== type));
+  const needle = query.trim().toLowerCase();
+  const visible = (groups ?? [])
+    .map((g) => ({
+      ...g,
+      types: g.types.filter(
+        (t) => !needle || t.toLowerCase().includes(needle) || entityLabel(t).toLowerCase().includes(needle),
+      ),
+    }))
+    .filter((g) => g.types.length > 0);
   return (
     <Card title={m["privacy.user_types.title"]()} description={m["privacy.user_types.hint"]()}>
-      <div className="flex flex-col gap-3">
-        <Input
-          label={m["privacy.user_types.label"]()}
-          hint={m["privacy.user_types.field_hint"]()}
-          value={shown}
-          onChange={(event) => setText(event.target.value)}
-        />
+      <div className="flex flex-col gap-3" data-testid="user-types">
+        <p className={`m-0 text-small ${MUTED}`}>
+          {chosen.length ? m["privacy.user_types.selected"]({ count: chosen.length }) : m["privacy.user_types.any"]()}
+        </p>
+        {chosen.length > 0 && (
+          <ul className="m-0 flex list-none flex-wrap gap-2 p-0" aria-label={m["privacy.user_types.label"]()}>
+            {chosen.map((type) => (
+              <li key={type} data-testid={`chosen-${type}`}>
+                <Badge tone={unknown.has(type) ? "warn" : "neutral"}>
+                  {entityLabel(type)}
+                  {unknown.has(type) && <> · {m["privacy.user_types.unknown"]()}</>}
+                  <button
+                    type="button"
+                    className="ml-2 cursor-pointer border-0 bg-transparent p-0 font-semibold"
+                    aria-label={m["privacy.user_types.remove"]({ name: type })}
+                    onClick={() => toggle(type, false)}
+                  >
+                    ×
+                  </button>
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        )}
+        {groups === null ? (
+          !options.isPending && <Notice tone="warn">{m["privacy.user_types.unreachable"]()}</Notice>
+        ) : (
+          <>
+            <Input
+              label={m["privacy.user_types.search"]()}
+              hint={m["privacy.user_types.field_hint"]()}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <div className="flex max-h-72 flex-col gap-3 overflow-y-auto">
+              {visible.length === 0 && <p className={`m-0 text-small ${MUTED}`}>{m["privacy.user_types.none_match"]()}</p>}
+              {visible.map((group) => (
+                <fieldset key={group.detector} className="m-0 border-0 p-0" data-testid={`types-${group.detector}`}>
+                  <legend className="mb-1 p-0 text-small font-semibold">{groupTitle(group.detector)}</legend>
+                  <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                    {group.types.map((type) => (
+                      <label key={type} className="flex items-center gap-2 text-small">
+                        <input
+                          type="checkbox"
+                          checked={chosen.some((t) => t.toUpperCase() === type)}
+                          onChange={(event) => toggle(type, event.target.checked)}
+                        />
+                        <span>{entityLabel(type)}</span>
+                        {entityLabel(type) !== type && <code className={MUTED}>{type}</code>}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              ))}
+            </div>
+          </>
+        )}
         {save.error && (
           <Notice tone="danger">
             {/* i18n: server text, the API's own message. */}
@@ -50,16 +143,12 @@ function UserTypes() {
           <Button
             variant="primary"
             busy={save.isPending}
-            onClick={() => {
-              const types = shown
-                .split(",")
-                .map((t) => t.trim())
-                .filter(Boolean);
+            onClick={() =>
               save.mutate(
-                { user_entity_types: types.length ? types : null },
-                { onSuccess: () => setText(null) },
-              );
-            }}
+                { user_entity_types: chosen.length ? chosen : null },
+                { onSuccess: () => setPicked(null) },
+              )
+            }
           >
             {m["privacy.user_types.save"]()}
           </Button>
@@ -68,7 +157,6 @@ function UserTypes() {
     </Card>
   );
 }
-
 
 export const DOCS_URL = "https://paoloviviani.github.io/Pystino/redaction/#deploying-less-of-it";
 

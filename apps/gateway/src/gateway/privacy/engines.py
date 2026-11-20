@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.config import NER_ENGINES, Settings
-from gateway.privacy.schemas import EnginesResponse, NerEngineView
+from gateway.privacy.schemas import EnginesResponse, NerEngineView, OfferedGroup
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +135,48 @@ def ner_type_names(report: EnginesResponse) -> set[str]:
     for engine in report.engines:
         names.update(entity.upper() for entity in engine.entities)
     return names
+
+
+def supported_groups(report: EnginesResponse) -> list[OfferedGroup] | None:
+    """Every entity type the service's detectors support, grouped by detector.
+
+    Whether a detector is switched on is not asked: the administrator may allow a type
+    whose detector is off for now. An engine that is not installed offers none. None when
+    the service cannot be asked, so nothing can be checked.
+    """
+    if not report.reachable:
+        return None
+    groups: list[OfferedGroup] = []
+    if report.pattern_entities:
+        groups.append(
+            OfferedGroup(
+                detector="patterns", types=sorted({t.upper() for t in report.pattern_entities})
+            )
+        )
+    for engine in report.engines:
+        if engine.available and engine.entities:
+            groups.append(
+                OfferedGroup(
+                    detector=engine.name, types=sorted({t.upper() for t in engine.entities})
+                )
+            )
+    return groups
+
+
+def supported_types(report: EnginesResponse) -> set[str] | None:
+    """The flat set of :func:`supported_groups` (None: the service cannot be asked)."""
+    groups = supported_groups(report)
+    return None if groups is None else {t for g in groups for t in g.types}
+
+
+def offered_types(report: EnginesResponse) -> list[str] | None:
+    """What a policy may name now: pattern formats and the types of engines that are on."""
+    if not report.reachable:
+        return None
+    return sorted(
+        {t.upper() for t in report.pattern_entities}
+        | {t.upper() for e in report.engines if e.available for t in e.entities}
+    )
 
 
 def engine_problem(report: EnginesResponse, policy_engine: str | None, labels: bool) -> str | None:

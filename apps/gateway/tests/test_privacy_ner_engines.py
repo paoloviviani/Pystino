@@ -1140,3 +1140,83 @@ class TestSwitchingOffNeedsTheService:
         )
         assert response.status_code == 503, response.text
         assert "switched off" in response.text
+
+
+class TestUserEntityTypesSetting:
+    """P32: what users may add is checked against what the detectors support."""
+
+    async def install(self, app: Any, service: FakeService) -> None:
+        app.state.settings.redaction.engine = "http"
+        app.state.settings.redaction.endpoint = "http://detector:8080"
+        app.state.control_http = service.client()
+        app.state.redactor = service.redactor()
+        app.state.redaction = None
+
+    async def test_options_list_the_supported_types_by_detector(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        await self.install(app, FakeService())
+        groups = (await client.get("/api/admin/privacy/options")).json()["supported_groups"]
+        assert {g["detector"]: g["types"] for g in groups} == {
+            "patterns": ["CREDIT_CARD", "EMAIL_ADDRESS", "IBAN_CODE"],
+            "spacy": ["LOCATION", "ORGANIZATION", "PERSON"],
+            "gliner": ["DATE", "LOCATION", "ORGANIZATION", "PERSON"],
+        }
+
+    async def test_a_supported_list_is_saved(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        await self.install(app, FakeService())
+        saved = await client.put(
+            "/api/admin/privacy/settings", json={"user_entity_types": ["person", "IBAN_CODE"]}
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["user_entity_types"] == ["IBAN_CODE", "PERSON"]
+        assert saved.json()["unknown_entity_types"] == []
+
+    async def test_an_unknown_type_is_refused_by_name(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        await self.install(app, FakeService())
+        refused = await client.put(
+            "/api/admin/privacy/settings",
+            json={"user_entity_types": ["PERSON", "IBAN_CODEE", "pesron"]},
+        )
+        assert refused.status_code == 422
+        assert "IBAN_CODEE, PESRON" in refused.text
+        assert "PERSON," not in refused.text
+        assert (await client.get("/api/admin/privacy/settings")).json()["user_entity_types"] is None
+
+    async def test_a_stored_unknown_type_still_loads_and_is_reported(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: Any,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from gateway.models import PrivacySettings
+
+        as_user(app, await make_admin(session_factory, seeded))
+        async with session_factory() as db:
+            db.add(PrivacySettings(id=1, user_entity_types=["PERSON", "TYPO_TYPE"]))
+            await db.commit()
+        await self.install(app, FakeService())
+        with caplog.at_level("WARNING"):
+            got = await client.get("/api/admin/privacy/settings")
+        assert got.status_code == 200
+        assert got.json()["user_entity_types"] == ["PERSON", "TYPO_TYPE"]
+        assert got.json()["unknown_entity_types"] == ["TYPO_TYPE"]
+        assert "TYPO_TYPE" in caplog.text
+        # Removing it saves; keeping it is refused.
+        assert (
+            await client.put(
+                "/api/admin/privacy/settings", json={"user_entity_types": ["PERSON", "TYPO_TYPE"]}
+            )
+        ).status_code == 422
+        assert (
+            await client.put("/api/admin/privacy/settings", json={"user_entity_types": ["PERSON"]})
+        ).status_code == 200
