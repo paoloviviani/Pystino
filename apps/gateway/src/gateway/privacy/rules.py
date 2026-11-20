@@ -10,8 +10,10 @@ A pipeline's rule is a sentence: **When <policies> + <conditions> -> <mode>**.
   ``filetype``, ``scan`` and ``filename``. With none, a content rule fires when its
   policies find one item.
 * ``mode`` is ``off`` < ``detect_only`` < ``anonymise_restore`` < ``anonymise`` <
-  ``redact`` < ``block``, with optional ``overrides`` by entity type. An extract rule has
-  an ``action`` (default reader < read with < block) and hiding that is optional.
+  ``redact`` < ``block``, with optional ``overrides`` by entity type. An extract (read) rule
+  has an ``action`` (default reader < read with < block) and hides nothing: it has no
+  policies, mode or overrides (the text a read returns is redacted downstream by the content
+  pipelines of the model that receives it).
 
 This module owns what each kind may say, so the admin API, the user API, the test
 endpoint and the evaluator agree. **Errors** (:func:`validate_rule`) block saving;
@@ -29,6 +31,12 @@ from gateway.config import EntityMode, hides
 from gateway.redaction import user_rules
 
 KIND_EXTRACT = "extract"
+#: What a save is told when a read rule names policies, a mode or overrides.
+READ_REDACTION_REMOVED = (
+    "A read rule no longer redacts: it chooses how a file is read or refuses it. The text a "
+    "read returns is redacted by the chat or embedding pipeline of the model that receives it. "
+    "Remove the policies, mode and overrides from this rule."
+)
 KIND_CONTENT = "content"
 KINDS = (KIND_EXTRACT, KIND_CONTENT)
 
@@ -277,13 +285,18 @@ def rule_from_json(kind: str, position: int, raw: Mapping[str, Any]) -> Rule:
     overrides = {str(k): str(v) for k, v in dict(raw.get("overrides") or {}).items()}
     if any(v not in MODES for v in overrides.values()):
         raise ValueError("an override has no valid mode")
+    policies = tuple(str(p) for p in raw.get("policies") or ())
+    if kind == KIND_EXTRACT:
+        # A read rule hides nothing (migration 0088 removes what older rows carry; a row that
+        # still has some is read without it rather than redacting a read).
+        policies, mode, overrides = (), "off", {}
     return Rule(
         id=uuid.UUID(str(raw["id"])),
         kind=kind,
         name=str(raw.get("name") or ""),
         enabled=bool(raw.get("enabled", True)),
         position=position,
-        policies=tuple(str(p) for p in raw.get("policies") or ()),
+        policies=policies,
         match=match,
         conditions=tuple(condition_from_json(c) for c in raw.get("conditions") or []),
         mode=mode,
@@ -499,6 +512,10 @@ def validate_rule(
         raise RuleError("Give every rule a name.")
     if len(name) > _MAX_NAME:
         raise RuleError(f"A rule name is longer than {_MAX_NAME} characters.")
+    if kind == KIND_EXTRACT and (
+        raw.get("policies") or raw.get("overrides") or str(raw.get("mode") or "off") != "off"
+    ):
+        raise RuleError(READ_REDACTION_REMOVED)
     policies: list[str] = []
     for item in raw.get("policies") or ():
         value = str(item)

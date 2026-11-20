@@ -545,9 +545,7 @@ export function ruleSentence(kind: PrivacyKind, rule: SentenceRule, labels: Labe
       conditions: conds || m["privacy.rule.all_requests"](),
       action,
     });
-    return names && rule.mode && rule.mode !== "off"
-      ? m["privacy.rule.sentence_hide"]({ action: head, mode: mode.toLowerCase(), policies: names })
-      : head;
+    return head;
   }
   return m["privacy.rule.sentence"]({
     policies: names || m["privacy.rule.no_policies"](),
