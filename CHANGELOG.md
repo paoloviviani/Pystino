@@ -4,6 +4,10 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+## v0.33.6 — 2026-11-20
+
+Paired with Cerea 0.60.4.
+
 - **Read pipelines no longer redact the extracted text; chat and embedding pipelines still redact it before it reaches a model or an index.** Existing read rules lose their "Redact with" (policies, mode and overrides) and keep their conditions and reader choice; migration `0088` logs each one (`read rules 0088: ...`) and writes an audit entry per rule (actor "system migration", action `privacy_pipeline.read_redaction_dropped`) naming the rule and the policies dropped. Saving a read rule that names policies, a mode or overrides is now a 422 (administrator and user API); content pipelines are unchanged. The console's read-rule editor has no "Redact with" control. The migration cannot be undone: the downgrade refuses unless `PYSTINO_ALLOW_LOSSY_DOWNGRADE=1`, and restores nothing. A deployment-wide redaction policy still screens `/v1/ocr` responses.
 
 - **"What users may add" is a list to tick, not a comma-separated text field.** Privacy > Detectors lists the entity types the installed detectors support, by detector, with search, and "any type" is an explicit choice (an empty list means none). Saving a type no detector supports (a typo) is refused with a 422 naming it; a type already stored that no detector supports keeps loading, is marked as unknown in the console and logged as a warning, and goes when you remove it. `GET /api/admin/privacy/settings` reports these as `unknown_entity_types`; `GET /api/admin/privacy/options` gains `supported_groups`. When the redaction service cannot be reached nothing can be checked and the list is saved as given.
