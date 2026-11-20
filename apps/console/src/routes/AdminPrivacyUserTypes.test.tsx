@@ -34,7 +34,7 @@ function stub(opts: {
         return opts.putResponse ? opts.putResponse() : json({ user_entity_types: [] });
       }
       if (url.includes("/privacy/settings")) {
-        return json({ user_entity_types: opts.stored ?? null, unknown_entity_types: [] });
+        return json({ user_entity_types: opts.stored === undefined ? [] : opts.stored, unknown_entity_types: [] });
       }
       if (url.includes("/privacy/options")) {
         return json({ supported_groups: opts.groups === undefined ? GROUPS : opts.groups });
@@ -80,7 +80,7 @@ describe("What users may add", () => {
     expect(screen.getByTestId("types-gliner")).toBeInTheDocument();
   });
 
-  it("saves the ticked types, and none ticked saves null", async () => {
+  it("saves the ticked types, and none ticked saves an empty list", async () => {
     const puts = stub({ stored: ["PERSON"] });
     renderUi();
     await screen.findByTestId("chosen-PERSON");
@@ -92,6 +92,39 @@ describe("What users may add", () => {
     await userEvent.click(screen.getByRole("button", { name: "Remove PERSON" }));
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(puts).toHaveLength(2));
+    // Nothing ticked under "only" is none, never "any".
+    expect(puts[1]!.body).toEqual({ user_entity_types: [] });
+  });
+
+  it("shows 'any' for a stored null and offers no list", async () => {
+    stub({ stored: null });
+    renderUi();
+    expect(await screen.findByRole("radio", { name: "Any type the detectors offer" })).toBeChecked();
+    expect(screen.queryByTestId("types-patterns")).toBeNull();
+  });
+
+  it("switching to any from a non-empty list asks first, then saves null", async () => {
+    const puts = stub({ stored: ["PERSON"] });
+    renderUi();
+    await screen.findByTestId("chosen-PERSON");
+    await userEvent.click(screen.getByRole("radio", { name: "Any type the detectors offer" }));
+    expect(screen.getByRole("radio", { name: "Only the types I pick" })).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: "Keep the list" }));
+    expect(screen.queryByText(/Switch to any type/)).toBeNull();
+    await userEvent.click(screen.getByRole("radio", { name: "Any type the detectors offer" }));
+    await userEvent.click(screen.getByRole("button", { name: "Allow any type" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]!.body).toEqual({ user_entity_types: null });
+  });
+
+  it("removing the last chip and saving does not mean any", async () => {
+    const puts = stub({ stored: ["IBAN_CODEE"] });
+    renderUi();
+    await userEvent.click(await screen.findByRole("button", { name: "Remove IBAN_CODEE" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]!.body).toEqual({ user_entity_types: [] });
   });
 
   it("shows a stored type no detector supports as unknown, and removing it leaves the rest", async () => {

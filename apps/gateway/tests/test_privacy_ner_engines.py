@@ -1220,3 +1220,15 @@ class TestUserEntityTypesSetting:
         assert (
             await client.put("/api/admin/privacy/settings", json={"user_entity_types": ["PERSON"]})
         ).status_code == 200
+
+    async def test_an_empty_list_means_none_and_null_means_any(
+        self, app: Any, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        await self.install(app, FakeService())
+        none = await client.put("/api/admin/privacy/settings", json={"user_entity_types": []})
+        assert none.status_code == 200 and none.json()["user_entity_types"] == []
+        assert (await client.get("/api/admin/privacy/settings")).json()["user_entity_types"] == []
+        any_ = await client.put("/api/admin/privacy/settings", json={"user_entity_types": None})
+        assert any_.json()["user_entity_types"] is None
+        assert (await client.get("/api/admin/privacy/settings")).json()["user_entity_types"] is None

@@ -64,10 +64,7 @@ def upgrade() -> None:
     names: dict[str, str] = {}
     for table, column in (("redaction_policies", "name"), ("user_policies", "name")):
         t = sa.table(table, sa.column("id", sa.Uuid()), sa.column(column, sa.String()))
-        try:
-            names.update({str(r[0]): str(r[1]) for r in bind.execute(sa.select(t.c.id, t.c[column]))})
-        except sa.exc.DBAPIError:  # a table without a name column: the log says ids only
-            continue
+        names.update({str(r[0]): str(r[1]) for r in bind.execute(sa.select(t.c.id, t.c[column]))})
     audit = sa.table(
         "admin_audit_events",
         sa.column("id", sa.Uuid()),

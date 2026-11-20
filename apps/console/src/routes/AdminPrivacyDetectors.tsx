@@ -57,6 +57,12 @@ function UserTypes() {
   const [query, setQuery] = useState("");
   const stored = settings.data?.user_entity_types ?? [];
   const chosen = picked ?? stored;
+  // "Any type" (null on the wire) and "only these" (a list, possibly empty: none) are
+  // separate choices, so unticking the last type never turns into "any".
+  const [scope, setScope] = useState<"any" | "only" | null>(null);
+  const [confirmAny, setConfirmAny] = useState(false);
+  const storedScope = settings.data?.user_entity_types == null ? "any" : "only";
+  const shownScope = scope ?? storedScope;
   const groups = options.data?.supported_groups ?? null;
   const supported = new Set((groups ?? []).flatMap((g) => g.types));
   // With the service silent nothing can be called unknown; the server says which are.
@@ -77,10 +83,63 @@ function UserTypes() {
   return (
     <Card title={m["privacy.user_types.title"]()} description={m["privacy.user_types.hint"]()}>
       <div className="flex flex-col gap-3" data-testid="user-types">
+        <div role="radiogroup" aria-label={m["privacy.user_types.title"]()} className="flex flex-col gap-1">
+          <label className="flex items-center gap-2 text-body">
+            <input
+              type="radio"
+              name="user-types-scope"
+              checked={shownScope === "any"}
+              onChange={() => {
+                if (chosen.length > 0 && shownScope === "only") setConfirmAny(true);
+                else setScope("any");
+              }}
+            />
+            {m["privacy.user_types.scope_any"]()}
+          </label>
+          <label className="flex items-center gap-2 text-body">
+            <input
+              type="radio"
+              name="user-types-scope"
+              checked={shownScope === "only"}
+              onChange={() => {
+                setConfirmAny(false);
+                setScope("only");
+              }}
+            />
+            {m["privacy.user_types.scope_only"]()}
+          </label>
+        </div>
+        {confirmAny && (
+          <Notice tone="warn">
+            <div className="flex flex-col gap-2">
+              {m["privacy.user_types.confirm_any"]()}
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => {
+                    setPicked([]);
+                    setScope("any");
+                    setConfirmAny(false);
+                  }}
+                >
+                  {m["privacy.user_types.confirm_any_yes"]()}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirmAny(false)}>
+                  {m["privacy.user_types.confirm_any_no"]()}
+                </Button>
+              </div>
+            </div>
+          </Notice>
+        )}
         <p className={`m-0 text-small ${MUTED}`}>
-          {chosen.length ? m["privacy.user_types.selected"]({ count: chosen.length }) : m["privacy.user_types.any"]()}
+          {shownScope === "any"
+            ? m["privacy.user_types.any"]()
+            : chosen.length
+              ? m["privacy.user_types.selected"]({ count: chosen.length })
+              : m["privacy.user_types.none"]()}
         </p>
-        {chosen.length > 0 && (
+        {shownScope === "only" && chosen.length > 0 && (
           <ul className="m-0 flex list-none flex-wrap gap-2 p-0" aria-label={m["privacy.user_types.label"]()}>
             {chosen.map((type) => (
               <li key={type} data-testid={`chosen-${type}`}>
@@ -100,7 +159,7 @@ function UserTypes() {
             ))}
           </ul>
         )}
-        {groups === null ? (
+        {shownScope === "any" ? null : groups === null ? (
           !options.isPending && <Notice tone="warn">{m["privacy.user_types.unreachable"]()}</Notice>
         ) : (
           <>
@@ -145,8 +204,13 @@ function UserTypes() {
             busy={save.isPending}
             onClick={() =>
               save.mutate(
-                { user_entity_types: chosen.length ? chosen : null },
-                { onSuccess: () => setPicked(null) },
+                { user_entity_types: shownScope === "any" ? null : chosen },
+                {
+                  onSuccess: () => {
+                    setPicked(null);
+                    setScope(null);
+                  },
+                },
               )
             }
           >
