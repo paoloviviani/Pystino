@@ -31,6 +31,7 @@ import orjson
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from gateway import metrics
 from gateway.accounting.cost import (
     CostBreakdown,
     TokenCounts,
@@ -179,6 +180,10 @@ class RequestContext:
     #: The caller's own label for the request (`x-pystino-tag`), already
     #: validated by `clean_tag`.
     tag: str | None = None
+    #: The provider's name, for the metrics label only (never written to the
+    #: row, which has `model_id`). A plain string for the same reason as
+    #: `plugin`: finalisation runs in its own session.
+    provider_name: str = ""
 
 
 if TYPE_CHECKING:
@@ -257,6 +262,11 @@ class RequestAccounting:
         self._last_flush_at = self._started_at
         self._finalised = False
         self._last_actuals = QuotaAmounts()
+
+    @property
+    def byok(self) -> bool:
+        """Whether the caller's own provider serves this request (never counted or billed)."""
+        return self._ctx.byok
 
     @property
     def request_id(self) -> str:
@@ -686,6 +696,42 @@ class RequestAccounting:
                 return slot.finish_reason
         return None
 
+    def _observe_metrics(
+        self,
+        status: UsageStatus,
+        counts: TokenCounts | None,
+        charged: Decimal | None,
+        currency: str | None,
+        ttfb_ms: int | None,
+    ) -> None:
+        """Say what this request came to, to /metrics (gateway/metrics.py).
+
+        Here because every route, streamed or not, and every outcome ends in
+        ``finalise``: one place sees the status, the tokens and the charge.
+        Never raises: a monitoring fault must not lose a ledger row.
+        """
+        try:
+            metrics.finished_request(
+                surface=str(self._ctx.surface),
+                provider=self._ctx.provider_name,
+                model=self._ctx.model_name,
+                status=str(status),
+                duration_seconds=(utcnow() - self._started_at).total_seconds(),
+                ttfb_seconds=None if ttfb_ms is None else ttfb_ms / 1000,
+                byok=self._ctx.byok,
+                prompt=counts.prompt if counts else 0,
+                completion=counts.completion if counts else 0,
+                cached_read=counts.cached_prompt if counts else 0,
+                cache_write=counts.cache_write if counts else 0,
+                pages=counts.pages if counts else 0,
+                cost=float(charged) if charged is not None else None,
+                currency=currency or "",
+                searches=self._own_searches,
+                search_backend=self._own_search_backend,
+            )
+        except Exception:
+            logger.debug("could not record request metrics", exc_info=True)
+
     async def finalise(
         self,
         *,
@@ -709,6 +755,7 @@ class RequestAccounting:
             # on, the settings refuse that combination — every figure computed
             # here would be discarded. This is the point of running unmetered.
             self._last_actuals = QuotaAmounts(tokens=Decimal(0), cost=Decimal(0))
+            self._observe_metrics(status, None, None, None, None)
             return self._last_actuals
 
         counts, source = self.resolve_counts(failed=status in (UsageStatus.UPSTREAM_ERROR,))
@@ -873,6 +920,7 @@ class RequestAccounting:
             own_search_requests=Decimal(self._own_searches),
         )
         self._last_actuals = actuals
+        self._observe_metrics(status, counts, charged, charged_currency, ttfb_ms)
 
         if self.record_id is None:
             logger.error("finalise called before begin; usage not persisted")

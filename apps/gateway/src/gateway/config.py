@@ -1867,6 +1867,39 @@ class QuotaSettings(BaseModel):
     fail_open: bool = False
 
 
+class MetricsSettings(BaseModel):
+    """``GET /metrics``, Prometheus text format (docs/metrics.md).
+
+    Off by default. On, the one access rule is a bearer token: the route is
+    not behind the console's session or an API key, because a scraper has
+    neither. The token is required rather than optional so that switching the
+    endpoint on can never publish it: the proxy reaches the gateway, and the
+    world reaches the proxy.
+    """
+
+    enabled: bool = False
+    #: The bearer token a scraper sends (``Authorization: Bearer <token>``).
+    token: str = ""
+    #: Where prometheus_client keeps one file per worker process, so that a
+    #: scrape reports the whole container rather than the worker that happened
+    #: to answer. Empty means ``PROMETHEUS_MULTIPROC_DIR`` if set, else a fresh
+    #: temporary directory. Emptied at every start of ``gateway serve``, so it
+    #: must be a directory nothing else uses.
+    multiproc_dir: str = ""
+    #: How often a worker refreshes the gauges that are sampled rather than
+    #: counted (pool use, dependency health, active callers).
+    sample_seconds: float = Field(default=10.0, gt=0)
+
+    @model_validator(mode="after")
+    def _token_with_enabled(self) -> MetricsSettings:
+        if self.enabled and len(self.token) < 16:
+            raise ValueError(
+                "GATEWAY_METRICS__ENABLED needs GATEWAY_METRICS__TOKEN, at least 16 "
+                "characters (openssl rand -hex 32): the endpoint is never served open."
+            )
+        return self
+
+
 class AnthropicSettings(BaseModel):
     """How chat completions are served by an Anthropic provider.
 
@@ -2011,6 +2044,7 @@ class Settings(BaseSettings):
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
     accounting: AccountingSettings = Field(default_factory=AccountingSettings)
     anthropic: AnthropicSettings = Field(default_factory=AnthropicSettings)
+    metrics: MetricsSettings = Field(default_factory=MetricsSettings)
 
     @model_validator(mode="after")
     def _check_accounting(self) -> Settings:

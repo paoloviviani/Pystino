@@ -151,6 +151,10 @@ services:
       GATEWAY_UPSTREAM__API_KEY: ${GATEWAY_UPSTREAM__API_KEY:-}
       GATEWAY_ACCOUNTING__ENABLED: ${GATEWAY_ACCOUNTING__ENABLED:-true}
       GATEWAY_QUOTA__ENABLED: ${GATEWAY_QUOTA__ENABLED:-true}
+      # GET /metrics (docs/metrics.md): off unless a token is set too. The proxy
+      # answers 404 for it; scrape the loopback port or the compose network.
+      GATEWAY_METRICS__ENABLED: ${GATEWAY_METRICS__ENABLED:-false}
+      GATEWAY_METRICS__TOKEN: ${GATEWAY_METRICS__TOKEN:-}
       # Redaction: the engine is `noop` unless the redaction profile is on
       # (.env writes both together). The endpoints are harmless when nothing
       # listens there, because the noop engine never calls them.
@@ -296,7 +300,7 @@ services:
     image: ${CADDY_IMAGE:-caddy:2.11-alpine}
     restart: unless-stopped
     labels:
-      pystino.config-rev: "sha256:7556e959cea7689e"
+      pystino.config-rev: "sha256:0f176a1988464f1b"
     ports:
       - "${PUBLIC_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
       - "${PUBLIC_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:443"

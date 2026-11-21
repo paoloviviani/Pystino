@@ -256,6 +256,18 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(level=settings.log_level, json_output=settings.log_json)
 
     if args.command == "serve":
+        import os
+
+        if settings.metrics.enabled and (
+            args.workers > 1 or os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+        ):
+            # Before uvicorn starts the workers: each is a fresh interpreter and
+            # reads the variable when it first imports prometheus_client. With
+            # one worker there is nothing to merge, so it stays in-process.
+            from gateway.metrics_env import prepare_multiprocess
+
+            prepare_multiprocess(settings.metrics.multiproc_dir)
+
         import uvicorn
 
         uvicorn.run(

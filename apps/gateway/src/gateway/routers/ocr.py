@@ -40,6 +40,7 @@ is not billable output.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import replace
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -47,7 +48,7 @@ from urllib.parse import unquote, urlsplit
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import extraction
+from gateway import extraction, metrics
 from gateway.accounting import TokenCounts
 from gateway.config import EffectivePolicy, Settings
 from gateway.deps import (
@@ -132,9 +133,11 @@ async def _redact_pages(
     messages = [
         {"role": "user", "content": text if isinstance(text, str) else ""} for text in texts
     ]
+    started = time.perf_counter()
     try:
         outcome = await redactor.redact_request(messages, policy=policy)
     except ContentBlockedError as exc:
+        metrics.privacy_action("extract", "blocked")
         # Nothing was substituted — the policy refused outright — but which
         # rule refused it is the fact worth keeping.
         detail = build_detail(
@@ -165,6 +168,9 @@ async def _redact_pages(
             )
         return JSONResponse(status_code=403, content=content)
 
+    metrics.redaction_seconds(time.perf_counter() - started)
+    if outcome.entity_count:
+        metrics.privacy_action("extract", "redacted")
     for page, message in zip(pages, outcome.messages, strict=True):
         page["markdown"] = str(message.get("content") or "")
     detail = relabel(outcome.detail, SOURCE_DOCUMENT)

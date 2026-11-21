@@ -38,6 +38,14 @@
 	# default; a glob that matches nothing is not an error.
 	import /etc/caddy.d/*.caddy
 
+	# The gateway's own /metrics (docs/metrics.md) is for a scraper on the
+	# compose network or the loopback port, never for the public origin: the
+	# bearer token is the second layer, this is the first.
+	@metrics path /metrics /metrics/*
+	handle @metrics {
+		respond 404
+	}
+
 	handle /authelia/* {
 		reverse_proxy authelia:9091 {
 			import to_app
