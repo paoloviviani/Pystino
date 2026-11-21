@@ -521,14 +521,24 @@ covers:
 A rule with neither is on all usage, exactly as before. Existing rules are
 unchanged.
 
-**What counts.** The model that **served** the request, the one in the ledger
-row's `model_id`. A request sent to an [alias](model-aliases.md) is checked, and
-counted, against the alias's chosen target and that target's provider, never the
-alias. A request that failed before reaching the provider writes no row, so it
-counts for nothing, as for any rule. A rule's usage comes from the ledger the
-same way as every other rule's (seeding, the cold rebuild, **Reconcile**), with
-the filter added; the filtered rule has a counter of its own, so it never shares a
-total with the unfiltered rule for the same scope.
+**What counts.** The model that **served** the request. A request sent to an
+[alias](model-aliases.md) is checked, and counted, against the alias's chosen
+target and that target's provider, never the alias. A request that failed before
+reaching the provider writes no row, so it counts for nothing, as for any rule.
+The ledger row records both the serving model (`model_id`) and the serving
+**provider** (`provider_id`, written with the row), and a rule sums by whichever it
+names, so changing the catalogue later cannot move or lose spend: **repointing a
+model to another provider** leaves its past rows with the provider that served
+them, and **deleting a model** leaves its rows counted for their provider. (Rows
+from before migration 0089 were attributed to their model's provider at upgrade
+time, best effort: a model repointed earlier counts for its current provider, and a
+row whose model was already deleted has none.) A model rule sums by `model_id`, so
+rows of a deleted model are no longer in it. A filtered rule has a counter of its
+own and is seeded, rebuilt and reconciled from the ledger like every other rule.
+
+**A rule on a model is the model alone.** Naming both a provider and a model
+stores only the model (a provider repoint must not silence the rule); the console
+and API show the model's provider beside it.
 
 **Several targets and no fallback.** The check runs before the request is sent,
 against the target the alias selected. If that target's provider (or model) is
@@ -553,6 +563,15 @@ rule nor blocked by it. Because of that, a rule cannot name a member's own
 provider or model (400); nor an alias (400: name the target model instead).
 The model must belong to the provider when both are given.
 
+**Web search is not a filter target.** A built-in web search's count and cost are
+recorded on the *language model's* request and reserved against that model's
+target; they are not a separate row on the search backend. So a provider or model
+filter is refused (422) on the `own_search_requests` metric and on search backends
+and search tiers, and a provider limit such as "Anthropic at most €20" **includes**
+the search surcharge of the requests it served. Only a standalone `/v1/search` call
+is a search request on its own; limit those with an unfiltered `own_search_requests`
+rule.
+
 **Not editable, like the window.** The filter decides which counter the rule
 reads, so changing it would abandon the consumption recorded so far. Delete the
 rule and add the one you want. At most one rule per scope, metric, window,
@@ -563,11 +582,12 @@ are different rules.
 each-user rule with the same metric, window **and filter**: Ada's "€100 a month"
 does not lift "each user at most €20 a month on Anthropic".
 
-**Deleted models and providers.** Deleting a model deletes the rules that name it,
-and a provider can only be deleted once its models are gone, so its rules go with
-them. The rule is never turned into one on all usage: that would silently widen a
-"OpenAI at most €500" into "everything at most €500". The spend stays in the
-ledger and the reports.
+**Deleting a model or provider a rule names is refused (409).** The answer lists
+the rules; delete or change them under Quotas first. (`limit_rules` references both
+with ON DELETE RESTRICT: a cost cap must not vanish with the model, nor be widened
+to all usage.) No catalogue refresh or import deletes models, so none can remove a
+rule's target. Search backends, whose total delete removes their tiers, cannot be
+named by a quota.
 
 **Seeing it.** `GET /api/admin/limits` returns `provider_id`, `provider_name`,
 `model_id` and `model_name` (null on a rule on all usage). A person's own
@@ -576,7 +596,7 @@ apply to them with `provider_name` and `model_name`; Quota usage shows the filte
 beside the window. Performance: no extra query on the request path (the provider
 and model names come in the rule query; the match is made in memory, and a
 counter read is one batched read as before). Only the database fallback and
-seeding add a `model_id IN (...)` condition, served by `ix_usage_model_created`.
+seeding add a `model_id IN (...)` condition, served by `ix_usage_model_created` and `ix_usage_provider_created`, which migration 0089 builds `CONCURRENTLY` on PostgreSQL (no write lock; the backfill of `usage_records.provider_id` is one UPDATE).
 
 ### Rebuilds replace; they never add
 
