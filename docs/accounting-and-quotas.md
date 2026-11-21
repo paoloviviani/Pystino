@@ -539,11 +539,13 @@ filter keeps the alias behaviour described in
 `code: quota_exceeded` and a `retry-after` header, and its message names what was
 limited and when it frees up:
 
-    each user limit of 20 cost per month on provider Anthropic exceeded
-    (current 20.4); it resets in 9 days
+    Quota exceeded. global per user limit of 20 cost per month on Anthropic exceeded (current 20.4)
 
-A calendar window resets at its boundary; for a rolling one the time is an
-estimate (see "Retry-After").
+The provider or model name sits in the window's slot, in the same sentence shape
+as every other quota refusal, so a client that parses these messages (Cerea does)
+keeps working and shows "per month on Anthropic". When it frees up is in the
+`retry-after` header (seconds), exactly as for any quota: a calendar window resets
+at its boundary, a rolling one by estimate.
 
 **Your own key.** A request served by a member's own provider and key
 ([BYOK](byok.md)) is in no quota, so it is neither counted by a provider or model

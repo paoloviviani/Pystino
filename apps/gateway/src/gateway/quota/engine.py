@@ -181,29 +181,23 @@ class Violation:
                 f"{self.rule.scope.value}{kind} limit of {self.limit} {self.rule.metric.value}"
                 f" per {self.rule.window_label} exceeded (current {self.current})"
             )
-        # A provider or model limit says which one, and when it frees up: the
-        # caller can still use everything else, and wants to know what to wait for.
-        what = "model" if self.rule.model_id is not None else "provider"
+        # A provider or model limit says which one, in the window's slot ("per month
+        # on Anthropic"). The shape is deliberate: Cerea reads the figures out of
+        # `limit of N metric per <window> exceeded (current M)` and words its own
+        # message from them, so a window ending in "on Anthropic" reaches the user
+        # as "Your allowance of EUR 20 per month on Anthropic is used up" with no
+        # change there, where any text after the closing parenthesis would make the
+        # parse fail and the provider disappear. When it resets is in `retry-after`.
         return (
             f"{self.rule.scope.value}{kind} limit of {_plain(self.limit)} {self.rule.metric.value}"
-            f" per {self.rule.window_label} on {what} {label} exceeded"
-            f" (current {_plain(self.current)});"
-            f" it resets in {_humanize(self.retry_after_seconds)}"
+            f" per {self.rule.window_label} on {label} exceeded"
+            f" (current {_plain(self.current)})"
         )
 
 
 def _plain(value: Decimal) -> str:
     """A figure without the database's trailing zeros ("20", not "20.000000000000")."""
     return format(value.normalize(), "f")
-
-
-def _humanize(seconds: int) -> str:
-    """A wait as one rounded unit: "45 seconds", "3 hours", "12 days"."""
-    for size, name in ((86_400, "day"), (3_600, "hour"), (60, "minute")):
-        if seconds >= size:
-            value = max(1, round(seconds / size))
-            return f"{value} {name}" if value == 1 else f"{value} {name}s"
-    return f"{max(1, seconds)} second" + ("" if seconds == 1 else "s")
 
 
 class QuotaExceeded(Exception):

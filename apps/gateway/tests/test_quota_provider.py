@@ -262,6 +262,28 @@ class TestMatching:
         )
         assert reservation.is_empty
 
+    async def test_a_provider_rule_and_a_rule_on_everything_keep_separate_counters(
+        self, session: AsyncSession, two_providers: tuple[ModelDef, ModelDef]
+    ) -> None:
+        """Same scope, metric and window, so only the filter tells the counters
+        apart: traffic on the other provider must not use up the provider's budget."""
+        claude, gpt = two_providers
+        provider = (
+            await session.execute(select(Provider).where(Provider.id == claude.provider_id))
+        ).scalar_one()
+        await add_filtered_rule(session, limit="100", name="everything")
+        await add_filtered_rule(session, provider=provider, limit="2")
+        user = await make_user(session)
+        quota = engine_for()
+        subject = QuotaSubject(user.id, None)
+
+        for _ in range(3):
+            await one(quota, session, subject, gpt)
+        reservation = await quota.check_and_reserve(
+            session, subject, QuotaAmounts(), target=target_of(claude)
+        )
+        assert not reservation.is_empty
+
     async def test_the_filter_is_part_of_the_counter_key(self) -> None:
         user = uuid.uuid4()
         plain = ScopeRef(LimitScope.USER, user)
@@ -449,8 +471,9 @@ class TestRefusalMessage:
                 session, QuotaSubject(user.id, None), QuotaAmounts(), target=target_of(claude)
             )
         message = str(caught.value)
-        assert "per user limit of 0 cost per month on provider Anthropic exceeded" in message
-        assert "resets in" in message
+        assert message.endswith(
+            "per user limit of 0 cost per month on Anthropic exceeded (current 0)"
+        )
         assert caught.value.names_provider_or_model
 
     async def test_a_model_rule_says_model(self, session: AsyncSession) -> None:
@@ -463,7 +486,7 @@ class TestRefusalMessage:
             await engine_for().check_and_reserve(
                 session, QuotaSubject(user.id, None), QuotaAmounts(), target=target_of(opus)
             )
-        assert "on model opus exceeded" in str(caught.value)
+        assert "per 1 hour on opus exceeded" in str(caught.value)
 
 
 class TestOverHttp:
@@ -486,9 +509,8 @@ class TestOverHttp:
         assert response.status_code == 429
         error = response.json()["error"]
         assert error["code"] == "quota_exceeded"
-        assert "on provider fake exceeded" in error["message"]
-        assert "resets in" in error["message"]
-        assert "retry-after" in response.headers
+        assert "per 1 hour on fake exceeded (current 0)" in error["message"]
+        assert int(response.headers["retry-after"]) > 0
 
     async def test_a_rule_on_another_provider_leaves_the_request_alone(
         self,
@@ -557,7 +579,7 @@ class TestOverHttp:
             "/v1/chat/completions", json=basic_request(model="fast"), headers=seeded.auth
         )
         assert response.status_code == 429, response.text
-        assert "on provider fake exceeded" in response.json()["error"]["message"]
+        assert "on fake exceeded" in response.json()["error"]["message"]
         assert calls == []
         async with session_factory() as db:
             assert (await db.execute(select(UsageRecord))).first() is None
