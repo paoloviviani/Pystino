@@ -1615,6 +1615,10 @@ class UsageRecord(Base):
         Index("ix_usage_group_created", "group_id", "created_at"),
         Index("ix_usage_user_created", "user_id", "created_at"),
         Index("ix_usage_key_created", "api_key_id", "created_at"),
+        # A quota rule limited to a model or a provider (one `model_id IN`
+        # subquery) reads "rows for these models since T" from the ledger when it
+        # is seeded, rebuilt or served by the database fallback.
+        Index("ix_usage_model_created", "model_id", "created_at"),
         Index("ix_usage_created", "created_at"),
         Index("ix_usage_status", "status"),
         Index("ix_usage_user_tag_created", "user_id", "tag", "created_at"),
@@ -1886,6 +1890,11 @@ class LimitRule(Base):
             # A person may hold an override and an ordinary user rule for the
             # same metric and window; they are different rules.
             text("overrides_each_user"),
+            # "OpenAI at most EUR 500" and "Anthropic at most EUR 500" are two
+            # rules; so are a provider's and one of its models'. NULL means "no
+            # filter", which the sentinel makes distinct from every real id.
+            text("coalesce(provider_id, '00000000-0000-0000-0000-000000000000')"),
+            text("coalesce(model_id, '00000000-0000-0000-0000-000000000000')"),
             unique=True,
         ),
         CheckConstraint(
@@ -1940,6 +1949,31 @@ class LimitRule(Base):
         server_default=text("'aggregate'"),
     )
 
+    # Optional filter: the rule counts, and limits, only the requests served by
+    # this provider and/or this model ("each user at most EUR 20 a month on
+    # Anthropic"). The **served** model decides, so a request that arrived by way
+    # of an alias counts for the provider of the alias's target. Own-key (BYOK)
+    # requests are in neither a rule's usage nor its refusals, as for any rule.
+    #
+    # CASCADE, never SET NULL: nulling the column would silently turn "OpenAI at
+    # most EUR 500" into "everything at most EUR 500". A provider can only be
+    # deleted once its models are gone, and a deleted model's rules go with it:
+    # there is nothing left for them to limit, and the ledger keeps the spend.
+    provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("providers.id", ondelete="CASCADE"), default=None
+    )
+    model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("models.id", ondelete="CASCADE"), default=None
+    )
+    # Always loaded with the rule (a many-to-one join in the same query), because
+    # the refusal message and every listing name them.
+    provider: Mapped[Provider | None] = relationship(
+        foreign_keys=[provider_id], lazy="joined", viewonly=True
+    )
+    model: Mapped[ModelDef | None] = relationship(
+        foreign_keys=[model_id], lazy="joined", viewonly=True
+    )
+
     # A user rule that replaces, for that person, every global each-user rule
     # with the same metric and window (see QuotaEngine.drop_overridden).
     overrides_each_user: Mapped[bool] = mapped_column(
@@ -1985,6 +2019,15 @@ class LimitRule(Base):
                 value = seconds // size
                 return f"{value} {name}" if value == 1 else f"{value} {name}s"
         return f"{seconds}s"
+
+    @property
+    def filter_label(self) -> str | None:
+        """The provider or model the rule is limited to, as a reader names it."""
+        if self.model is not None:
+            return self.model.display_name or self.model.name
+        if self.provider is not None:
+            return self.provider.name
+        return None
 
     def __repr__(self) -> str:
         return (

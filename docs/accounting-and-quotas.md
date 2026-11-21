@@ -505,6 +505,77 @@ Notifications (ADR 0052) follow the rules that are evaluated: the override
 notifies like any user rule, and the replaced global rule does not notify that
 person.
 
+### Limiting a rule to one provider or one model
+
+Any rule can name a **provider**, a **model**, or both (`provider_id` and
+`model_id` on `POST /api/admin/limits`; the console's "Provider" and "Model"
+pickers). The rule then counts, and limits, only the requests that provider or
+model **serves**. Every scope and every `applies_to` works with it, so one system
+covers:
+
+- "OpenAI at most €500 a month" for the deployment (global, aggregate, provider);
+- "Research at most €200 a month on Anthropic" (group, aggregate);
+- "each user at most €20 a month on Anthropic" (global, `each_user`);
+- "this CI key at most 1,000 requests a day on `claude-opus`" (API key, model).
+
+A rule with neither is on all usage, exactly as before. Existing rules are
+unchanged.
+
+**What counts.** The model that **served** the request, the one in the ledger
+row's `model_id`. A request sent to an [alias](model-aliases.md) is checked, and
+counted, against the alias's chosen target and that target's provider, never the
+alias. A request that failed before reaching the provider writes no row, so it
+counts for nothing, as for any rule. A rule's usage comes from the ledger the
+same way as every other rule's (seeding, the cold rebuild, **Reconcile**), with
+the filter added; the filtered rule has a counter of its own, so it never shares a
+total with the unfiltered rule for the same scope.
+
+**Several targets and no fallback.** The check runs before the request is sent,
+against the target the alias selected. If that target's provider (or model) is
+over a provider or model limit the caller is **refused**: the request is not moved
+to the alias's next target, whatever the alias's routing says. A limit with no
+filter keeps the alias behaviour described in
+[routing](model-aliases.md#3-fallback). The refusal is the usual `429` with
+`code: quota_exceeded` and a `retry-after` header, and its message names what was
+limited and when it frees up:
+
+    each user limit of 20 cost per month on provider Anthropic exceeded
+    (current 20.4); it resets in 9 days
+
+A calendar window resets at its boundary; for a rolling one the time is an
+estimate (see "Retry-After").
+
+**Your own key.** A request served by a member's own provider and key
+([BYOK](byok.md)) is in no quota, so it is neither counted by a provider or model
+rule nor blocked by it. Because of that, a rule cannot name a member's own
+provider or model (400); nor an alias (400: name the target model instead).
+The model must belong to the provider when both are given.
+
+**Not editable, like the window.** The filter decides which counter the rule
+reads, so changing it would abandon the consumption recorded so far. Delete the
+rule and add the one you want. At most one rule per scope, metric, window,
+`applies_to` and filter (409 otherwise); a provider's rule and one of its model's
+are different rules.
+
+**Overrides.** A user rule with `overrides_each_user` replaces only the global
+each-user rule with the same metric, window **and filter**: Ada's "€100 a month"
+does not lift "each user at most €20 a month on Anthropic".
+
+**Deleted models and providers.** Deleting a model deletes the rules that name it,
+and a provider can only be deleted once its models are gone, so its rules go with
+them. The rule is never turned into one on all usage: that would silently widen a
+"OpenAI at most €500" into "everything at most €500". The spend stays in the
+ledger and the reports.
+
+**Seeing it.** `GET /api/admin/limits` returns `provider_id`, `provider_name`,
+`model_id` and `model_name` (null on a rule on all usage). A person's own
+`/api/me/limits` and `/v1/pystino/usage` list the provider and model rules that
+apply to them with `provider_name` and `model_name`; Quota usage shows the filter
+beside the window. Performance: no extra query on the request path (the provider
+and model names come in the rule query; the match is made in memory, and a
+counter read is one batched read as before). Only the database fallback and
+seeding add a `model_id IN (...)` condition, served by `ix_usage_model_created`.
+
 ### Rebuilds replace; they never add
 
 Every path that fills a counter from the ledger (the start-up rebuild, seeding

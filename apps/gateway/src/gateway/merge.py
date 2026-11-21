@@ -112,7 +112,7 @@ MERGE_RULES: tuple[MergeRule, ...] = (
         "limit_rules",
         "scope_id",
         MergeRuleKind.SCOPE_ID_USER,
-        duplicate_key_columns=("metric", "window_seconds", "period"),
+        duplicate_key_columns=("metric", "window_seconds", "period", "provider_id", "model_id"),
     ),
     MergeRule("privacy_pipelines", "who", MergeRuleKind.JSON_WHO_USERS),
     MergeRule("email_settings", "updated_by", MergeRuleKind.REASSIGN),

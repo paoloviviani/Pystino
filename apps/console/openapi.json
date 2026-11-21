@@ -5003,6 +5003,18 @@
             "title": "Metric",
             "type": "string"
           },
+          "model_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
           "name": {
             "default": "",
             "maxLength": 255,
@@ -5031,6 +5043,18 @@
               }
             ],
             "title": "Period"
+          },
+          "provider_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Id"
           },
           "scope": {
             "enum": [
@@ -5148,6 +5172,29 @@
             "title": "Metric",
             "type": "string"
           },
+          "model_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -5167,6 +5214,29 @@
               }
             ],
             "title": "Period"
+          },
+          "provider_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Id"
+          },
+          "provider_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Name"
           },
           "scope": {
             "title": "Scope",
@@ -5213,6 +5283,10 @@
           "limit_value",
           "applies_to",
           "overrides_each_user",
+          "provider_id",
+          "provider_name",
+          "model_id",
+          "model_name",
           "is_active",
           "current_value",
           "last_reset_at"
@@ -6818,6 +6892,17 @@
             "title": "Metric",
             "type": "string"
           },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -6833,6 +6918,17 @@
             "default": false,
             "title": "Overrides Each User",
             "type": "boolean"
+          },
+          "provider_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Name"
           },
           "scope": {
             "title": "Scope",
@@ -6850,6 +6946,8 @@
           "scope",
           "applies_to",
           "overrides_each_user",
+          "provider_name",
+          "model_name",
           "metric",
           "window_label",
           "limit_value",
@@ -13985,6 +14083,17 @@
             "title": "Metric",
             "type": "string"
           },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
           "percent": {
             "anyOf": [
               {
@@ -14006,6 +14115,17 @@
               }
             ],
             "title": "Period"
+          },
+          "provider_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Name"
           },
           "replaced_by_name": {
             "anyOf": [
@@ -14093,6 +14213,8 @@
           "kind",
           "scope",
           "scope_label",
+          "provider_name",
+          "model_name",
           "metric",
           "limit_value",
           "current_value",

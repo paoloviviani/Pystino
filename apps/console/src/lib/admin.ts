@@ -880,6 +880,9 @@ export interface CreateLimitInput {
   applies_to?: string;
   /** User scope only: replaces the global each-user ceiling for that person. */
   overrides_each_user?: boolean;
+  /** Count only the requests this provider and/or model serves. */
+  provider_id?: string | null;
+  model_id?: string | null;
 }
 
 export function useCreateLimit() {

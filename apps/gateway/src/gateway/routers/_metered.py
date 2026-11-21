@@ -81,6 +81,7 @@ from gateway.quota import (
     QuotaAmounts,
     QuotaEngine,
     QuotaExceeded,
+    QuotaTarget,
     QuotaUnavailable,
     Reservation,
 )
@@ -911,6 +912,9 @@ async def _admit(
                 cost=worst_case_cost.total + search_cost,
                 own_search_requests=Decimal(worst_case_own_searches),
             ),
+            # What serves the request, so a rule limited to a provider or a model
+            # is checked against the target's own, never the alias's.
+            target=QuotaTarget(provider_id=model.provider_id, model_id=model.id),
         )
     except QuotaExceeded as exc:
         logger.info("quota refusal for user=%s: %s", principal.user.id, exc)
@@ -921,10 +925,14 @@ async def _admit(
             code="quota_exceeded",
             headers={"retry-after": str(exc.retry_after_seconds)},
         )
-        if not resolved.last:
+        if not resolved.last and not exc.names_provider_or_model:
             # Admission is per attempt: a rule that names this target (or this
             # target's provider) can refuse here while the next target is fine.
             # No ledger row exists for a refusal, so nothing else to undo.
+            #
+            # Not when a provider or model limit refused: that is the owner's
+            # "refuse, do not move the request to another provider", so the caller
+            # gets the 429 naming the provider instead of a quiet detour.
             raise AttemptFailed("quota_exceeded", response=refusal) from exc
         return refusal
     except QuotaUnavailable as exc:

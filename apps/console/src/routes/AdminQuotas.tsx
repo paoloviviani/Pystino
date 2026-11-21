@@ -22,12 +22,15 @@ import {
   useDeleteLimit,
   useGroups,
   useLimits,
+  useModels,
+  useProviders,
   useQuotaHealth,
   useReconcileQuota,
   useResets,
   useUsers,
 } from "../lib/admin";
 import { unitFor } from "../lib/metrics";
+import { quotaFilter } from "../lib/quota-filter";
 import { formatNumber, formatShortDate, formatDateTime } from "../lib/format";
 import { m } from "../paraglide/messages.js";
 import { usePaginated } from "../lib/paging";
@@ -99,6 +102,7 @@ export function AdminQuotas() {
                 ? m["admin_quotas.window.per_user"]({ window: describeWindow(rule) })
                 : m["admin_quotas.window.per"]({ window: describeWindow(rule) })}
           </div>
+          {quotaFilter(rule) && <div className={`${MUTED} ${NOWRAP}`}>{quotaFilter(rule)}</div>}
         </>
       ),
     },
@@ -439,9 +443,13 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const create = useCreateLimit();
   const groups = useGroups();
   const users = useUsers();
+  const providers = useProviders();
+  const models = useModels();
   const toast = useOptionalToast();
 
   const [name, setName] = useState("");
+  const [providerId, setProviderId] = useState("");
+  const [modelId, setModelId] = useState("");
   const [scope, setScope] = useState("group");
   const [scopeId, setScopeId] = useState("");
   const [appliesTo, setAppliesTo] = useState("aggregate");
@@ -451,6 +459,14 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const [period, setPeriod] = useState("month");
   const [hours, setHours] = useState("6");
   const [limitValue, setLimitValue] = useState("10");
+
+  // The admin lists hold deployment providers and the models that serve only: a
+  // member's own provider is in no quota, and an alias serves nothing itself
+  // (billing follows its target).
+  const providerOptions = providers.data?.items ?? [];
+  const modelOptions = (models.data?.items ?? []).filter(
+    (model) => !providerId || model.provider_id === providerId,
+  );
 
   const submit = () => {
     create.mutate(
@@ -466,6 +482,9 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
         applies_to: scope === "group" || scope === "global" ? appliesTo : "aggregate",
         // Only a rule for one person can stand in for everyone's ceiling.
         overrides_each_user: scope === "user" ? overrides : false,
+        // Optional filter: only the requests this provider or model serves.
+        provider_id: providerId || null,
+        model_id: modelId || null,
         metric,
         window_seconds: kind === "rolling" ? Math.round(Number(hours) * 3600) : null,
         period: kind === "period" ? period : null,
@@ -592,6 +611,38 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
           <div className={MUTED}>{m["admin_quotas.create.overrides_help"]()}</div>
         </>
       )}
+
+      <div className={FORM_ROW}>
+        <Select
+          label={m["admin_quotas.create.provider"]()}
+          value={providerId}
+          onChange={(e) => {
+            setProviderId(e.target.value);
+            // A model of another provider would be refused; start again.
+            setModelId("");
+          }}
+        >
+          <option value="">{m["admin_quotas.create.provider_any"]()}</option>
+          {providerOptions.map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.name}
+            </option>
+          ))}
+        </Select>
+        <Select
+          label={m["admin_quotas.create.model"]()}
+          value={modelId}
+          onChange={(e) => setModelId(e.target.value)}
+        >
+          <option value="">{m["admin_quotas.create.model_any"]()}</option>
+          {modelOptions.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.name}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <div className={MUTED}>{m["admin_quotas.create.filter_help"]()}</div>
 
       <div className={FORM_ROW}>
         <Select

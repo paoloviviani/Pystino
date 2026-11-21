@@ -178,7 +178,7 @@ tried, up to **three attempts** per request.
 | upstream `401` or `402` | yes (the caller already authenticated to the gateway, so this is *our* credential or balance at that provider; one provider answers "Insufficient Balance." with a 401). Logged at warning level naming the provider |
 | upstream `403` whose body says auth, billing, quota, balance, credit or an API key | yes, with the same warning |
 | a provider whose credential cannot be read (misconfigured) | yes |
-| quota refusal for this attempt | yes (see below) |
+| quota refusal for this attempt | yes (see below), **except** a provider or model limit: that is final and the caller is refused (see [quotas](accounting-and-quotas.md#limiting-a-rule-to-one-provider-or-one-model)) |
 | any other upstream `4xx` (400, a `403` that says nothing about our account, 404, 413, 422 ...) | **no**: the answer is returned as is |
 | a request blocked by redaction policy | **no**: it is the same on every target |
 | quota state unavailable | **no**: 503, as for any request |
@@ -243,7 +243,10 @@ accepted.
 
 Quota rules that name an **alias** are not supported: rules name a scope and a
 metric, and an alias's usage is the target's, so the target is what you write
-the rule against.
+the rule against. A rule may be limited to a **provider** or a **model** (the
+target's); a request is checked against the target the alias selected, and if that
+provider or model is at its limit the request is **refused**, not moved to the next
+target ([details](accounting-and-quotas.md#limiting-a-rule-to-one-provider-or-one-model)).
 
 ## In the console
 

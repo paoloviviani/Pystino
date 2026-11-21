@@ -21,6 +21,8 @@ function entry(overrides: Partial<UserQuotaEntry> = {}): UserQuotaEntry {
     kind: "each_member",
     scope: "group",
     scope_label: "research",
+    provider_name: null,
+    model_name: null,
     metric: "requests",
     limit_value: "4",
     current_value: "3",

@@ -34,6 +34,7 @@ import {
   STATS,
 } from "../lib/layout";
 import { unitFor } from "../lib/metrics";
+import { quotaFilter } from "../lib/quota-filter";
 import { formatDate, formatNumber } from "../lib/format";
 import { Message } from "../components/Message";
 import { m } from "../paraglide/messages.js";
@@ -397,6 +398,7 @@ function QuotaMeter({ rule, currency }: { rule: MyLimit; currency: string }) {
       <div className={QUOTA_HEAD}>
         <span className={QUOTA_NAME}>{rule.name}</span>
         <Badge>{SCOPE_LABEL[rule.scope]?.() ?? rule.scope}</Badge>
+        {quotaFilter(rule) && <Badge>{quotaFilter(rule)}</Badge>}
       </div>
       {used === null ? (
         <p className={QUOTA_DETAIL}>{m["overview.quotas.unavailable"]()}</p>

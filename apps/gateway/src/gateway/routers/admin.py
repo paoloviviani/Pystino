@@ -3777,6 +3777,10 @@ def _limit_response(rule: LimitRule, current: Decimal | None = None) -> LimitRul
         limit_value=rule.limit_value,
         applies_to=rule.applies_to.value,
         overrides_each_user=rule.overrides_each_user,
+        provider_id=rule.provider_id,
+        provider_name=rule.provider.name if rule.provider else None,
+        model_id=rule.model_id,
+        model_name=rule.model.name if rule.model else None,
         is_active=rule.is_active,
         current_value=current,
         # Requires `resets` to be loaded; every caller here does so explicitly,
@@ -3903,6 +3907,47 @@ async def quota_reconcile(
     )
 
 
+async def _check_limit_filter(
+    session: SessionDep, provider_id: uuid.UUID | None, model_id: uuid.UUID | None
+) -> None:
+    """A rule's provider/model filter must name something a quota can count.
+
+    Deployment providers and models only: usage on a member's own key (BYOK) is in
+    no quota, so a rule on one would never count anything. An alias is no model
+    that serves (billing follows its target), so a rule on one is refused with
+    the advice to name the target.
+    """
+    if provider_id is not None:
+        provider = (
+            await session.execute(select(Provider).where(Provider.id == provider_id))
+        ).scalar_one_or_none()
+        if provider is None:
+            raise NotFoundError(f"No provider with id {provider_id}.")
+        if provider.owner_id is not None:
+            raise BadRequestError(
+                "A quota cannot name a member's own provider: usage on a member's own "
+                "key is in no quota."
+            )
+    if model_id is not None:
+        model = (
+            await session.execute(select(ModelDef).where(ModelDef.id == model_id))
+        ).scalar_one_or_none()
+        if model is None:
+            raise NotFoundError(f"No model with id {model_id}.")
+        if model.is_alias:
+            raise BadRequestError(
+                "A quota cannot name a model alias: usage is counted against the model "
+                "that serves the request. Name the target model instead."
+            )
+        if model.is_private:
+            raise BadRequestError(
+                "A quota cannot name a member's own model: usage on a member's own key "
+                "is in no quota."
+            )
+        if provider_id is not None and model.provider_id != provider_id:
+            raise BadRequestError("That model does not belong to that provider.")
+
+
 @router.post("/limits", response_model=LimitRuleResponse, status_code=status.HTTP_201_CREATED)
 async def create_limit(
     payload: LimitRuleCreateRequest, admin: AdminUserDep, session: SessionDep, quota: QuotaDep
@@ -3952,9 +3997,13 @@ async def create_limit(
         if exists is None:
             raise NotFoundError(f"No API key with id {payload.scope_id}.")
 
+    await _check_limit_filter(session, payload.provider_id, payload.model_id)
+
     rule = LimitRule(
         id=uuid.uuid4(),
         name=payload.name,
+        provider_id=payload.provider_id,
+        model_id=payload.model_id,
         scope=scope,
         scope_id=payload.scope_id,
         metric=LimitMetric(payload.metric),
@@ -3977,7 +4026,9 @@ async def create_limit(
             "A rule already exists for that scope, metric, window and applies-to. "
             "Update it instead of adding a second one."
         ) from exc
-    await session.refresh(rule, attribute_names=["resets"])
+    # Reloaded, not refreshed: the provider and model the response names are joined
+    # in by the query, and a new row has never been read through it.
+    rule = await _load_rule(session, rule.id)
     # Start the counter from the spend already in the ledger for this window. A
     # monthly rule created on the 20th otherwise begins at zero and the cap is
     # wrong for the rest of the month.

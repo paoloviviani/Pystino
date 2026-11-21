@@ -838,6 +838,13 @@ class LimitRuleResponse(ResponseModel):
     applies_to: str = "aggregate"
     #: A user rule that replaces the global each-user ceiling for that person.
     overrides_each_user: bool = False
+    #: Optional filter: the rule counts only requests served by this provider
+    #: and/or this model (the model that *served*, so an alias's target). Null
+    #: for a rule on all usage. The names are for display.
+    provider_id: uuid.UUID | None = None
+    provider_name: str | None = None
+    model_id: uuid.UUID | None = None
+    model_name: str | None = None
     is_active: bool
     current_value: Money | None = None
     # Null unless the rule has ever been reset. Consumption before this instant
@@ -919,6 +926,10 @@ class MyLimitResponse(ResponseModel):
     #: True on a rule that stands in for the global each-user ceiling for this
     #: caller (the ceiling shown here is then their real one).
     overrides_each_user: bool = False
+    #: Set when the rule limits one provider or model only; it then counts, and
+    #: refuses, only requests that provider or model serves.
+    provider_name: str | None = None
+    model_name: str | None = None
     metric: str
     window_label: str = ""
     limit_value: Money
@@ -2336,6 +2347,12 @@ class LimitRuleCreateRequest(BaseModel):
     # added to it. The route refuses it on any other scope with a 400, the
     # database regardless of writer.
     overrides_each_user: bool = False
+    # Limit the rule to the requests one provider or one model serves ("each user
+    # at most EUR 20 a month on Anthropic"). Both may be given; the model must
+    # then belong to the provider. Not editable afterwards, like the window: the
+    # filter decides the counter, so changing it would abandon the consumption.
+    provider_id: uuid.UUID | None = None
+    model_id: uuid.UUID | None = None
     # `own_search_requests` bounds **volume, not spend**: it counts calls to
     # our own web-search backends, whose per-request prices differ by more than
     # an order of magnitude between tiers (Exa `deep-reasoning` against
@@ -2418,6 +2435,9 @@ class UserQuotaEntry(ResponseModel):
     scope: str
     #: The group's name for a group rule; null otherwise.
     scope_label: str | None = None
+    #: Set when the rule limits one provider or model only.
+    provider_name: str | None = None
+    model_name: str | None = None
     metric: str
     limit_value: Money
     #: Null when the counter store could not be read: unknown, not zero.
