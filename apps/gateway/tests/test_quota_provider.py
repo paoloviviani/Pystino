@@ -157,6 +157,7 @@ async def ledger_row(
     cost: str = "1",
     byok: bool = False,
     requested_model: str | None = None,
+    provider_id: uuid.UUID | None = None,
 ) -> None:
     session.add(
         UsageRecord(
@@ -164,6 +165,8 @@ async def ledger_row(
             status=UsageStatus.COMPLETED,
             user_id=user_id,
             model_id=model.id if model else None,
+            # What the recorder writes: the provider that served the row.
+            provider_id=provider_id or (model.provider_id if model else None),
             model_name=model.name if model else "gone",
             requested_model=requested_model,
             currency="EUR",
@@ -378,8 +381,9 @@ class TestLedgerSums:
         await ledger_row(session, model=gpt, user_id=user.id)
         # A request that arrived as an alias is stored under the model that served it.
         await ledger_row(session, model=claude, user_id=user.id, requested_model="fast")
-        # A row whose model was deleted belongs to no provider.
-        await ledger_row(session, model=None, user_id=user.id)
+        # A row whose model was deleted still counts for the provider that served
+        # it (the row carries it), and for no model.
+        await ledger_row(session, model=None, user_id=user.id, provider_id=claude.provider_id)
         # Own-key usage is in no quota.
         await ledger_row(session, model=claude, user_id=user.id, byok=True)
 
@@ -390,11 +394,10 @@ class TestLedgerSums:
         on_gpt_model = await self._total(
             session_factory, ScopeRef(LimitScope.GLOBAL, model_id=gpt.id)
         )
-        wrong_pair = await self._total(
-            session_factory,
-            ScopeRef(LimitScope.GLOBAL, provider_id=gpt.provider_id, model_id=claude.id),
+        on_claude_model = await self._total(
+            session_factory, ScopeRef(LimitScope.GLOBAL, model_id=claude.id)
         )
-        assert (everything, on_claude, on_gpt_model, wrong_pair) == (5, 3, 1, 0)
+        assert (everything, on_claude, on_gpt_model, on_claude_model) == (5, 4, 1, 3)
 
     async def test_the_grouped_per_user_query_applies_the_filter_too(
         self,
@@ -654,9 +657,14 @@ class TestAdminApi:
         )
         assert created.status_code == 201, created.text
         body = created.json()
+        # The model alone is stored; the provider shown is its model's.
         assert body["provider_id"] == str(seeded.provider.id)
         assert body["provider_name"] == "fake"
         assert body["model_name"] == "test-model"
+        async with session_factory() as db:
+            stored = (await db.execute(select(LimitRule))).scalars().one()
+            assert stored.provider_id is None
+            assert stored.model_id == seeded.model.id
 
         listed = (await client.get("/api/admin/limits")).json()["items"]
         (row,) = [r for r in listed if r["name"] == "cap"]
@@ -765,19 +773,318 @@ class TestAdminApi:
 
 
 class TestDeletion:
-    async def test_deleting_a_model_deletes_its_rules_and_never_widens_them(
+    async def test_the_database_refuses_to_delete_what_a_rule_names(
         self, session: AsyncSession
     ) -> None:
+        """RESTRICT: a cost cap never goes with the model, and is never widened."""
+        from sqlalchemy.exc import IntegrityError
+
         provider = await make_provider(session, "Anthropic")
         opus = await make_model(session, provider, "opus")
-        keep = await make_model(session, provider, "haiku")
         await session.commit()
         await add_filtered_rule(session, model=opus, name="opus cap")
-        await add_filtered_rule(session, model=keep, name="haiku cap")
-        await session.delete(opus)
+        with pytest.raises(IntegrityError):
+            await session.delete(opus)
+            await session.commit()
+        await session.rollback()
+        assert list((await session.execute(select(LimitRule.name))).scalars().all()) == ["opus cap"]
+
+    async def test_the_admin_api_names_the_rules_in_a_409(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        from test_admin import as_user, make_admin
+
+        as_user(app, await make_admin(session_factory, seeded))
+        async with session_factory() as db:
+            provider = (
+                await db.execute(select(Provider).where(Provider.id == seeded.provider.id))
+            ).scalar_one()
+            model_rule = await add_filtered_rule(db, model=seeded.model, name="model cap")
+            provider_rule = await add_filtered_rule(
+                db, provider=provider, metric=LimitMetric.TOKENS, name="provider cap"
+            )
+
+        refused = await client.delete(f"/api/admin/models/{seeded.model.id}")
+        assert refused.status_code == 409
+        assert "'model cap'" in refused.json()["error"]["message"]
+        refused = await client.delete(f"/api/admin/providers/{seeded.provider.id}")
+        assert refused.status_code == 409
+        assert "'provider cap'" in refused.json()["error"]["message"]
+
+        # With the rules gone the model can go, and the rows it served keep their
+        # provider.
+        async with session_factory() as db:
+            await db.delete(await db.get(LimitRule, model_rule.id))
+            await db.delete(await db.get(LimitRule, provider_rule.id))
+            await db.commit()
+        assert (await client.delete(f"/api/admin/models/{seeded.model.id}")).status_code == 204
+
+
+class TestHistoryIsTheRowsOwn:
+    """A provider's total is summed from the provider each row recorded, so the
+    catalogue changing afterwards cannot move or lose spend (money)."""
+
+    async def _provider_total(
+        self, session_factory: async_sessionmaker[AsyncSession], provider_id: uuid.UUID
+    ) -> int:
+        month = period_containing(PeriodKind.MONTH, datetime.now(UTC), timezone="Europe/Rome")
+        (total,) = await DatabaseCounterStore(session_factory).totals(
+            [
+                WindowQuery(
+                    scope=ScopeRef(LimitScope.GLOBAL, provider_id=provider_id),
+                    metric=LimitMetric.REQUESTS,
+                    period=month,
+                )
+            ],
+            now=datetime.now(UTC).timestamp(),
+        )
+        return total.units
+
+    async def test_repointing_a_model_does_not_move_its_history(
+        self,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        two_providers: tuple[ModelDef, ModelDef],
+    ) -> None:
+        claude, gpt = two_providers
+        user = await make_user(session)
+        original = claude.provider_id
+        for _ in range(2):
+            await ledger_row(session, model=claude, user_id=user.id)
+        claude.provider_id = gpt.provider_id
         await session.commit()
-        names = (await session.execute(select(LimitRule.name))).scalars().all()
-        assert list(names) == ["haiku cap"]
+        assert await self._provider_total(session_factory, original) == 2
+        assert await self._provider_total(session_factory, gpt.provider_id) == 0
+
+    async def test_deleting_a_model_does_not_lose_its_history(
+        self,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        two_providers: tuple[ModelDef, ModelDef],
+    ) -> None:
+        claude, _ = two_providers
+        user = await make_user(session)
+        provider_id = claude.provider_id
+        for _ in range(3):
+            await ledger_row(session, model=claude, user_id=user.id)
+        await session.delete(claude)
+        await session.commit()
+        assert await self._provider_total(session_factory, provider_id) == 3
+
+    async def test_a_provider_rule_keeps_refusing_after_its_model_is_deleted(
+        self,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        two_providers: tuple[ModelDef, ModelDef],
+    ) -> None:
+        """The cap that matters: seed from the ledger after the delete, still full."""
+        claude, _ = two_providers
+        provider = (
+            await session.execute(select(Provider).where(Provider.id == claude.provider_id))
+        ).scalar_one()
+        user = await make_user(session)
+        for _ in range(2):
+            await ledger_row(session, model=claude, user_id=user.id)
+        await session.delete(claude)
+        await session.commit()
+        sibling = await make_model(session, provider, "sibling")
+        await session.commit()
+        rule = await add_filtered_rule(
+            session, provider=provider, period=PeriodKind.MONTH, limit="2"
+        )
+        quota = engine_for(InMemoryCounterStore(), fallback=DatabaseCounterStore(session_factory))
+        assert await quota.seed_rule(session, rule)
+        with pytest.raises(QuotaExceeded):
+            await quota.check_and_reserve(
+                session, QuotaSubject(user.id, None), QuotaAmounts(), target=target_of(sibling)
+            )
+
+    async def test_a_model_rule_survives_the_model_being_repointed(
+        self, session: AsyncSession, two_providers: tuple[ModelDef, ModelDef]
+    ) -> None:
+        claude, gpt = two_providers
+        user = await make_user(session)
+        await add_filtered_rule(session, model=claude, limit="1")
+        quota = engine_for()
+        subject = QuotaSubject(user.id, None)
+        await one(quota, session, subject, claude)
+        claude.provider_id = gpt.provider_id
+        await session.commit()
+        with pytest.raises(QuotaExceeded):
+            await quota.check_and_reserve(
+                session, subject, QuotaAmounts(), target=target_of(claude)
+            )
+
+    async def test_requests_record_the_provider_that_served_them(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        fake_upstream: FakeUpstream,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        fake_upstream.set_json(completion_body())
+        response = await client.post(
+            "/v1/chat/completions", json=basic_request(), headers=seeded.auth
+        )
+        assert response.status_code == 200, response.text
+        async with session_factory() as db:
+            row = (await db.execute(select(UsageRecord))).scalars().one()
+        assert row.provider_id == seeded.provider.id
+        assert row.model_id == seeded.model.id
+
+
+class TestCountersMoveTogether:
+    async def test_settle_and_release_move_every_counter_a_request_touches(
+        self, session: AsyncSession, two_providers: tuple[ModelDef, ModelDef]
+    ) -> None:
+        claude, _ = two_providers
+        provider = (
+            await session.execute(select(Provider).where(Provider.id == claude.provider_id))
+        ).scalar_one()
+        user = await make_user(session)
+        everything = await add_filtered_rule(session, limit="100", name="all")
+        by_provider = await add_filtered_rule(session, provider=provider, limit="100", name="p")
+        by_model = await add_filtered_rule(session, model=claude, limit="100", name="m")
+        rules = [everything, by_provider, by_model]
+        quota = engine_for()
+        subject = QuotaSubject(user.id, None)
+
+        async def counts() -> list[Decimal]:
+            current = await quota.current_values(rules, subject=subject)
+            return [current[rule.id] for rule in rules]
+
+        reservation = await quota.check_and_reserve(
+            session, subject, QuotaAmounts(), target=target_of(claude)
+        )
+        assert await counts() == [1, 1, 1]
+        # Settling with a different actual corrects all three by the same amount.
+        await quota.settle(reservation, QuotaAmounts(requests=Decimal(0)))
+        assert await counts() == [0, 0, 0]
+
+        reservation = await quota.check_and_reserve(
+            session, subject, QuotaAmounts(), target=target_of(claude)
+        )
+        await quota.settle(reservation, QuotaAmounts())
+        assert await counts() == [1, 1, 1]
+        released = await quota.check_and_reserve(
+            session, subject, QuotaAmounts(), target=target_of(claude)
+        )
+        await quota.release(released)
+        assert await counts() == [1, 1, 1]
+
+
+class TestSearchIsRefused:
+    async def _admin(
+        self, app: Any, session_factory: async_sessionmaker[AsyncSession], seeded: Seeded
+    ) -> None:
+        from test_admin import as_user, make_admin
+
+        as_user(app, await make_admin(session_factory, seeded))
+
+    def _body(self, **extra: Any) -> dict[str, Any]:
+        return {
+            "name": "cap",
+            "scope": "global",
+            "metric": "cost",
+            "period": "month",
+            "limit_value": "20",
+            **extra,
+        }
+
+    async def test_a_search_count_limit_cannot_name_a_provider_or_model(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await self._admin(app, session_factory, seeded)
+        for extra in ({"provider_id": str(seeded.provider.id)}, {"model_id": str(seeded.model.id)}):
+            r = await client.post(
+                "/api/admin/limits", json=self._body(metric="own_search_requests", **extra)
+            )
+            assert r.status_code == 422, r.text
+            assert "search-count" in r.json()["error"]["message"]
+        # With no filter it is as before.
+        ok = await client.post("/api/admin/limits", json=self._body(metric="own_search_requests"))
+        assert ok.status_code == 201, ok.text
+
+    async def test_a_search_backend_or_tier_cannot_be_named(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        from gateway.models import ModelKind, ProviderKind
+
+        await self._admin(app, session_factory, seeded)
+        async with session_factory() as db:
+            backend = await make_provider(db, "exa")
+            backend.kind = ProviderKind.SEARCH
+            tier = await make_model(db, backend, "exa-fast", priced=False)
+            tier.kind = ModelKind.SEARCH
+            await db.commit()
+            backend_id, tier_id = str(backend.id), str(tier.id)
+        for extra in ({"provider_id": backend_id}, {"model_id": tier_id}):
+            r = await client.post("/api/admin/limits", json=self._body(**extra))
+            assert r.status_code == 422, r.text
+            assert "search" in r.json()["error"]["message"]
+
+
+def _seed_served_row(path: Path) -> tuple[str, str]:
+    """A provider, a model and a ledger row for it, in a database at 0088."""
+    at = "2026-11-21 12:00:00.000000"
+    provider, model = uuid.uuid4().hex, uuid.uuid4().hex
+    fixed = {
+        "providers": {
+            "id": provider,
+            "name": "old",
+            "kind": "PROVIDER",
+            "billing_mode": "OWN_PRICES",
+        },
+        "models": {
+            "id": model,
+            "name": "m",
+            "provider_id": provider,
+            "upstream_model": "u",
+            "is_alias": 0,
+        },
+        "usage_records": {
+            "id": uuid.uuid4().hex,
+            "model_id": model,
+            "status": "COMPLETED",
+            "usage_source": "UNAVAILABLE",
+            "api_surface": "CHAT_COMPLETIONS",
+        },
+    }
+    with closing(sqlite3.connect(path)) as conn:
+        for table, given in fixed.items():
+            values = dict(given)
+            for _, name, kind, notnull, default, _pk in conn.execute(f"PRAGMA table_info({table})"):
+                if name in values or not notnull or default is not None:
+                    continue
+                kind = kind.upper()
+                values[name] = (
+                    at
+                    if "DATETIME" in kind
+                    else 0
+                    if any(t in kind for t in ("INT", "BOOL", "NUMERIC", "FLOAT"))
+                    else "{}"
+                    if "JSON" in kind
+                    else uuid.uuid4().hex
+                    if "CHAR(32)" in kind
+                    else "x"
+                )
+            columns = ", ".join(values)
+            marks = ", ".join("?" for _ in values)
+            conn.execute(f"INSERT INTO {table} ({columns}) VALUES ({marks})", list(values.values()))
+        conn.commit()
+    return model, provider
 
 
 class TestMigration:
@@ -799,8 +1106,23 @@ class TestMigration:
             conn.execute(insert())
             conn.commit()
 
+        # A served row at 0088, to see the backfill.
+        model_hex, provider_hex = _seed_served_row(path)
+
         up = _alembic(url, "upgrade", "0089")
         assert up.returncode == 0, up.stderr[-2000:]
+        with closing(sqlite3.connect(path)) as conn:
+            assert conn.execute(
+                "SELECT provider_id FROM usage_records WHERE model_id = ?", (model_hex,)
+            ).fetchall() == [(provider_hex,)]
+            # A model rule stores the model alone.
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    insert("both")
+                    .replace("applies_to)", "applies_to, provider_id, model_id)")
+                    .replace("'aggregate')", f"'aggregate', '{provider_hex}', '{model_hex}')")
+                )
+            conn.rollback()
         provider_id = uuid.uuid4().hex
         with closing(sqlite3.connect(path)) as conn:
             # The existing rule is unfiltered and unchanged.

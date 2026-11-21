@@ -236,7 +236,7 @@ def _entry(
         scope_label=group_names.get(rule.scope_id)
         if rule.scope is LimitScope.GROUP and rule.scope_id
         else None,
-        provider_name=rule.provider.name if rule.provider else None,
+        provider_name=rule.shown_provider.name if rule.shown_provider else None,
         model_name=rule.model.name if rule.model else None,
         metric=rule.metric.value,
         limit_value=rule.limit_value,

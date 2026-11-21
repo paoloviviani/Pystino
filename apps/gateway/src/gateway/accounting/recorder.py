@@ -137,6 +137,9 @@ class RequestContext:
     group_id: uuid.UUID | None = None
     api_key_id: uuid.UUID | None = None
     model_id: uuid.UUID | None = None
+    #: The provider that serves this request, recorded on the row so a provider's
+    #: quota keeps its history when a model is repointed or deleted.
+    provider_id: uuid.UUID | None = None
     #: The alias the caller named, when they named one (ADR 0101). `model_name`
     #: is always the model that served the request, because billing follows the
     #: target; this is the name they typed, kept so a report can say "via fast"
@@ -281,6 +284,7 @@ class RequestAccounting:
             group_id=self._ctx.group_id,
             api_key_id=self._ctx.api_key_id,
             model_id=self._ctx.model_id,
+            provider_id=self._ctx.provider_id,
             model_name=self._ctx.model_name,
             requested_model=self._ctx.requested_model,
             route_attempt=self._ctx.route_attempt,

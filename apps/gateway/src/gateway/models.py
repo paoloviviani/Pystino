@@ -1619,6 +1619,9 @@ class UsageRecord(Base):
         # subquery) reads "rows for these models since T" from the ledger when it
         # is seeded, rebuilt or served by the database fallback.
         Index("ix_usage_model_created", "model_id", "created_at"),
+        # ... and "rows served by this provider since T", from the provider the
+        # row itself carries (see `provider_id`).
+        Index("ix_usage_provider_created", "provider_id", "created_at"),
         Index("ix_usage_created", "created_at"),
         Index("ix_usage_status", "status"),
         Index("ix_usage_user_tag_created", "user_id", "tag", "created_at"),
@@ -1643,6 +1646,17 @@ class UsageRecord(Base):
     )
     model_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("models.id", ondelete="SET NULL"), default=None
+    )
+    # The provider that SERVED the request, written with the row (the served
+    # model's provider at that moment). Denormalised on purpose: a quota rule on
+    # a provider sums by it, and deriving it from `model_id` through today's
+    # catalogue would move history when a model is repointed to another provider
+    # and lose it when the model is deleted (`model_id` goes null). Null for a
+    # row written before migration 0089 whose model was already gone, and for a
+    # BYOK row's deleted provider. Migration 0089 backfilled older rows from the
+    # model's provider at upgrade time: best effort for history.
+    provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("providers.id", ondelete="SET NULL"), default=None
     )
     # Denormalised so the ledger stays readable after a model is retired.
     model_name: Mapped[str] = mapped_column(String(255))
@@ -1919,6 +1933,10 @@ class LimitRule(Base):
             "NOT overrides_each_user OR scope = 'user'",
             name="ck_limit_rules_override_user_scope",
         ),
+        # A model rule is the model alone (see `provider_id`).
+        CheckConstraint(
+            "model_id IS NULL OR provider_id IS NULL", name="ck_limit_rules_model_alone"
+        ),
         # Correct as-is for a nullable column: a CHECK passes when its expression
         # is NULL, so a calendar rule with no window_seconds satisfies it.
         CheckConstraint("window_seconds > 0", name="ck_limit_rules_window_positive"),
@@ -1955,17 +1973,21 @@ class LimitRule(Base):
     # of an alias counts for the provider of the alias's target. Own-key (BYOK)
     # requests are in neither a rule's usage nor its refusals, as for any rule.
     #
-    # CASCADE, never SET NULL: nulling the column would silently turn "OpenAI at
-    # most EUR 500" into "everything at most EUR 500". A provider can only be
-    # deleted once its models are gone, and a deleted model's rules go with it:
-    # there is nothing left for them to limit, and the ledger keeps the spend.
+    # A model rule stores the model alone (`provider_id` stays null): the model
+    # decides, and a model repointed to another provider must keep its rule. A
+    # provider rule sums the ledger by the provider each row was served by.
+    #
+    # RESTRICT, never CASCADE or SET NULL: cascading would silently remove a cost
+    # cap with the model, and nulling would turn "OpenAI at most EUR 500" into
+    # "everything at most EUR 500". Deleting a provider or model a rule names is a
+    # 409 that lists the rules; delete or change them first.
     provider_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("providers.id", ondelete="CASCADE"), default=None
+        ForeignKey("providers.id", ondelete="RESTRICT"), default=None
     )
     model_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("models.id", ondelete="CASCADE"), default=None
+        ForeignKey("models.id", ondelete="RESTRICT"), default=None
     )
-    # Always loaded with the rule (a many-to-one join in the same query), because
+    # Always loaded with the rule (many-to-one joins in the same query), because
     # the refusal message and every listing name them.
     provider: Mapped[Provider | None] = relationship(
         foreign_keys=[provider_id], lazy="joined", viewonly=True
@@ -2019,6 +2041,13 @@ class LimitRule(Base):
                 value = seconds // size
                 return f"{value} {name}" if value == 1 else f"{value} {name}s"
         return f"{seconds}s"
+
+    @property
+    def shown_provider(self) -> Provider | None:
+        """The provider to display: a model rule's is its model's, today's."""
+        if self.model is not None:
+            return self.model.provider
+        return self.provider
 
     @property
     def filter_label(self) -> str | None:

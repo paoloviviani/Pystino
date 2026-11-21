@@ -122,9 +122,11 @@ def rule_matches_target(rule: LimitRule, target: QuotaTarget | None) -> bool:
         return True
     if target is None:
         return False
-    if rule.provider_id is not None and rule.provider_id != target.provider_id:
-        return False
-    return rule.model_id is None or rule.model_id == target.model_id
+    # A model rule is the model alone: it must survive the model being repointed
+    # to another provider. (The API stores no provider on one.)
+    if rule.model_id is not None:
+        return rule.model_id == target.model_id
+    return rule.provider_id == target.provider_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,7 +273,13 @@ def ceiling_key(rule: LimitRule) -> tuple[object, ...]:
     An override of "each user at most EUR 5 a month" must not replace the
     "each user at most EUR 20 a month on Anthropic" rule, which is another budget.
     """
-    return (rule.metric, rule.window_seconds, rule.period, rule.provider_id, rule.model_id)
+    return (
+        rule.metric,
+        rule.window_seconds,
+        rule.period,
+        None if rule.model_id is not None else rule.provider_id,
+        rule.model_id,
+    )
 
 
 def is_per_user(rule: LimitRule) -> bool:
@@ -518,7 +526,7 @@ class QuotaEngine:
             scope.scope,
             scope.scope_id,
             member_id=scope.member_id,
-            provider_id=rule.provider_id,
+            provider_id=None if rule.model_id is not None else rule.provider_id,
             model_id=rule.model_id,
         )
 

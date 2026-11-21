@@ -26,7 +26,7 @@ from typing import Any, Protocol
 from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from gateway.models import LimitMetric, LimitScope, ModelDef, UsageRecord, UsageStatus
+from gateway.models import LimitMetric, LimitScope, UsageRecord, UsageStatus
 from gateway.periods import Period
 from gateway.quota.windows import WindowSpec
 from gateway.types import utcnow
@@ -660,23 +660,18 @@ class DatabaseCounterStore:
 
     @staticmethod
     def _served_by[S: Select[Any]](stmt: S, scope: ScopeRef) -> S:
-        """Narrow to the provider or model that served the request.
+        """Narrow to the model, or the provider, that served the request.
 
-        The ledger's ``model_id`` is the model that *served* (an alias's target),
-        so a request that arrived as an alias counts for the target's provider.
-        A provider has no column of its own on the ledger row; one subquery on
-        the models table (``ix_models_provider_id``) answers it. A row whose
-        model has since been deleted has a null ``model_id`` and belongs to no
-        provider, which is also why deleting a model deletes its rules.
+        The ledger's ``model_id`` is the model that *served* (an alias's target)
+        and ``provider_id`` the provider it belonged to when the row was written,
+        so a request that arrived as an alias counts for the target's provider,
+        and neither a model's deletion nor its repointing moves a provider's
+        history. A model rule never carries a provider (the model decides).
         """
         if scope.model_id is not None:
-            stmt = stmt.where(UsageRecord.model_id == scope.model_id)
+            return stmt.where(UsageRecord.model_id == scope.model_id)
         if scope.provider_id is not None:
-            stmt = stmt.where(
-                UsageRecord.model_id.in_(
-                    select(ModelDef.id).where(ModelDef.provider_id == scope.provider_id)
-                )
-            )
+            return stmt.where(UsageRecord.provider_id == scope.provider_id)
         return stmt
 
     async def apply(self, deltas: Sequence[CounterDelta], *, now: float) -> None:

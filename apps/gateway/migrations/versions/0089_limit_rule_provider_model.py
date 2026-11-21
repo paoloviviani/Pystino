@@ -7,18 +7,27 @@ Create Date: 2026-11-21
 ``limit_rules.provider_id`` and ``limit_rules.model_id`` are an optional filter on the
 existing rules: a rule that names them counts, and limits, only the requests served by that
 provider (or that model). Both null (every existing row) keeps the rule's meaning exactly.
+A rule that names a model stores the model alone (a check constraint says so): the model
+decides, so repointing a model to another provider keeps its rule.
 
-Both foreign keys cascade. Nulling them instead would turn "OpenAI at most EUR 500 a month"
-into "everything at most EUR 500 a month" the moment the provider's last model was removed,
-which is the wrong failure; a deleted model's rules have nothing left to limit.
+Both foreign keys are RESTRICT: cascading would silently remove a cost cap with the model, and
+nulling would widen it to all usage. The admin API answers a delete of a model or provider that
+a rule names with a 409 listing the rules.
 
-The uniqueness index gains the two columns (a provider's rule and a model's rule are different
-rules from each other and from the unfiltered one). It is rebuilt on both dialects, as in
-0068: SQLite's batch rebuild cannot reflect an expression index, so it would vanish with the
-old table otherwise.
+``usage_records.provider_id`` is new: the provider that served the row, written at record
+time, so a provider's rule sums history that survives a model being repointed or deleted. It is
+backfilled here from each row's model's current provider, which is best effort for history:
+a row whose model was already deleted stays null, and a model repointed earlier is attributed to
+its current provider.
 
-``ix_usage_model_created`` serves the ledger reads of a filtered rule (seeding, rebuilding,
-the database fallback), which narrow by the served model.
+The uniqueness index gains the two filter columns (a provider's rule, a model's rule and the
+unfiltered rule are distinct). It is rebuilt on both dialects, as in 0068: SQLite's batch
+rebuild cannot reflect an expression index, so it would vanish with the old table otherwise.
+
+``ix_usage_model_created`` and ``ix_usage_provider_created`` serve the ledger reads of a
+filtered rule (seeding, rebuilding, the database fallback). On PostgreSQL they are built
+CONCURRENTLY, outside the migration's transaction, so a large ledger is not locked against
+writes while they build.
 
 The downgrade refuses while a filtered rule exists: dropping the columns would turn each into
 an unfiltered, much wider budget.
@@ -54,19 +63,60 @@ def _create_identity_index(*, with_filter: bool) -> None:
     op.create_index(_INDEX, "limit_rules", columns, unique=True)
 
 
+_MODEL_ALONE = "ck_limit_rules_model_alone"
+
+
+def _concurrently(create: bool, name: str, columns: list[str]) -> None:
+    """Build or drop an index on usage_records; CONCURRENTLY on PostgreSQL."""
+    if op.get_bind().dialect.name == "postgresql":
+        with op.get_context().autocommit_block():
+            if create:
+                op.create_index(
+                    name, "usage_records", columns, postgresql_concurrently=True, if_not_exists=True
+                )
+            else:
+                op.drop_index(
+                    name,
+                    table_name="usage_records",
+                    postgresql_concurrently=True,
+                    if_exists=True,
+                )
+    elif create:
+        op.create_index(name, "usage_records", columns)
+    else:
+        op.drop_index(name, table_name="usage_records")
+
+
 def upgrade() -> None:
     op.drop_index(_INDEX, table_name="limit_rules")
     with op.batch_alter_table("limit_rules", schema=None) as batch_op:
         batch_op.add_column(sa.Column("provider_id", sa.Uuid(), nullable=True))
         batch_op.add_column(sa.Column("model_id", sa.Uuid(), nullable=True))
         batch_op.create_foreign_key(
-            "fk_limit_rules_provider_id", "providers", ["provider_id"], ["id"], ondelete="CASCADE"
+            "fk_limit_rules_provider_id", "providers", ["provider_id"], ["id"], ondelete="RESTRICT"
         )
         batch_op.create_foreign_key(
-            "fk_limit_rules_model_id", "models", ["model_id"], ["id"], ondelete="CASCADE"
+            "fk_limit_rules_model_id", "models", ["model_id"], ["id"], ondelete="RESTRICT"
         )
+        batch_op.create_check_constraint(_MODEL_ALONE, "model_id IS NULL OR provider_id IS NULL")
     _create_identity_index(with_filter=True)
-    op.create_index("ix_usage_model_created", "usage_records", ["model_id", "created_at"])
+
+    with op.batch_alter_table("usage_records", schema=None) as batch_op:
+        batch_op.add_column(sa.Column("provider_id", sa.Uuid(), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_usage_records_provider_id",
+            "providers",
+            ["provider_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+    op.execute(
+        "UPDATE usage_records SET provider_id = "
+        "(SELECT models.provider_id FROM models WHERE models.id = usage_records.model_id) "
+        "WHERE model_id IS NOT NULL"
+    )
+    _concurrently(True, "ix_usage_model_created", ["model_id", "created_at"])
+    _concurrently(True, "ix_usage_provider_created", ["provider_id", "created_at"])
 
 
 def downgrade() -> None:
@@ -81,9 +131,14 @@ def downgrade() -> None:
             f"{count} quota rule(s) are limited to a provider or a model; delete them before "
             "downgrading, since the older schema would turn each into a rule on all usage"
         )
-    op.drop_index("ix_usage_model_created", table_name="usage_records")
+    _concurrently(False, "ix_usage_provider_created", ["provider_id", "created_at"])
+    _concurrently(False, "ix_usage_model_created", ["model_id", "created_at"])
+    with op.batch_alter_table("usage_records", schema=None) as batch_op:
+        batch_op.drop_constraint("fk_usage_records_provider_id", type_="foreignkey")
+        batch_op.drop_column("provider_id")
     op.drop_index(_INDEX, table_name="limit_rules")
     with op.batch_alter_table("limit_rules", schema=None) as batch_op:
+        batch_op.drop_constraint(_MODEL_ALONE, type_="check")
         batch_op.drop_constraint("fk_limit_rules_model_id", type_="foreignkey")
         batch_op.drop_constraint("fk_limit_rules_provider_id", type_="foreignkey")
         batch_op.drop_column("model_id")
