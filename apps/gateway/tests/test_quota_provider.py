@@ -15,7 +15,8 @@ share of one provider. Pinned here:
   failover to another provider even through an alias with several targets;
 - the admin API validates the filter and shows it, and a person's own limits list
   shows the provider-scoped rules that apply to them;
-- deleting a model deletes its rules (never widens them).
+- deleting a model or provider that a rule names is refused with a 409 (RESTRICT),
+  so a cap never vanishes or widens, search backends included.
 """
 
 from __future__ import annotations
@@ -623,6 +624,60 @@ class TestOverHttp:
         )
         assert response.status_code == 200, response.text
 
+    async def test_a_cap_on_a_later_target_does_not_end_the_alias(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        fake_upstream: FakeUpstream,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Alias -> [t-first (upstream 500), t-second on `backup` (at its limit),
+        t-third on `fake`]. The no-fallback rule is for the first attempt: once the
+        first target failed upstream the request has already moved on, so the capped
+        second target is skipped and the third serves it."""
+        fake_upstream.set_json(completion_body())
+        calls: list[str] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            calls.append(str(request.url))
+            if len(calls) == 1:
+                return httpx.Response(500, json={"error": {"message": "boom"}})
+            return httpx.Response(200, json=completion_body())
+
+        fake_upstream._responder = respond
+        async with session_factory() as db:
+            first = await make_model(db, seeded.provider, "t-first")
+            backup = await make_provider(db, "backup")
+            second = await make_model(db, backup, "t-second")
+            third = await make_model(db, seeded.provider, "t-third")
+            alias = ModelDef(
+                name="fast3",
+                provider_id=None,
+                upstream_model=None,
+                is_alias=True,
+                is_active=True,
+                route_rule="first_available",
+            )
+            db.add(alias)
+            await db.flush()
+            for position, target in enumerate((first, second, third)):
+                db.add(
+                    ModelRouteTarget(
+                        alias_id=alias.id,
+                        target_model_id=target.id,
+                        position=position,
+                        weight=1,
+                    )
+                )
+            db.add(GroupModelAccess(group_id=seeded.group.id, model_id=alias.id))
+            await db.commit()
+            await add_filtered_rule(db, provider=backup, limit="0")
+        response = await client.post(
+            "/v1/chat/completions", json=basic_request(model="fast3"), headers=seeded.auth
+        )
+        assert response.status_code == 200, response.text
+        assert len(calls) == 2
+
 
 class TestAdminApi:
     async def _admin(
@@ -822,6 +877,38 @@ class TestDeletion:
             await db.delete(await db.get(LimitRule, provider_rule.id))
             await db.commit()
         assert (await client.delete(f"/api/admin/models/{seeded.model.id}")).status_code == 204
+
+    async def test_a_search_backend_with_a_rule_is_refused_not_a_500(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A provider re-kinded to search, or a model repointed onto a backend, keeps
+        its rule; the total delete must answer 409, not trip the RESTRICT FK."""
+        from gateway.models import ModelKind, ProviderKind
+        from test_admin import as_user, make_admin
+
+        as_user(app, await make_admin(session_factory, seeded))
+        async with session_factory() as db:
+            by_provider = await make_provider(db, "exa-a")
+            by_provider.kind = ProviderKind.SEARCH
+            await make_model(db, by_provider, "a-tier", priced=False)
+            by_model = await make_provider(db, "exa-b")
+            by_model.kind = ProviderKind.SEARCH
+            tier = await make_model(db, by_model, "b-tier", priced=False)
+            tier.kind = ModelKind.SEARCH
+            await db.commit()
+            await add_filtered_rule(db, provider=by_provider, name="rekinded cap")
+            await add_filtered_rule(db, model=tier, name="tier cap")
+            first, second = by_provider.id, by_model.id
+        refused = await client.delete(f"/api/admin/providers/{first}")
+        assert refused.status_code == 409, refused.text
+        assert "'rekinded cap'" in refused.json()["error"]["message"]
+        refused = await client.delete(f"/api/admin/providers/{second}")
+        assert refused.status_code == 409, refused.text
+        assert "'tier cap'" in refused.json()["error"]["message"]
 
 
 class TestHistoryIsTheRowsOwn:
@@ -1109,7 +1196,7 @@ class TestMigration:
         # A served row at 0088, to see the backfill.
         model_hex, provider_hex = _seed_served_row(path)
 
-        up = _alembic(url, "upgrade", "0089")
+        up = _alembic(url, "upgrade", "0090")
         assert up.returncode == 0, up.stderr[-2000:]
         with closing(sqlite3.connect(path)) as conn:
             assert conn.execute(

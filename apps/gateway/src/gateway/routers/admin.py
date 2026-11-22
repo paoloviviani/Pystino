@@ -1196,8 +1196,11 @@ async def delete_provider(
         # a real deletion, only a confusing detour through 404s until then.
         raise ConflictError(BUILTIN_READER_KEPT)
 
+    # Before the kind branch: a provider re-kinded to search, or a model
+    # repointed onto a search backend, can still carry a rule, and the RESTRICT
+    # FK would otherwise surface as a 500.
+    await _refuse_while_quota_rules(session, provider_id=provider_id, what="provider")
     if provider.kind != ProviderKind.SEARCH:
-        await _refuse_while_quota_rules(session, provider_id=provider_id, what="provider")
         counts = await _model_counts(session)
         if (count := counts.get(provider_id, 0)) > 0:
             raise ConflictError(
@@ -1227,6 +1230,8 @@ async def delete_provider(
         )
     ).all()
     tier_ids = [row.id for row in tier_rows]
+    if tier_ids:
+        await _refuse_while_quota_rules(session, model_ids=tier_ids, what="tier")
     # Annotated for mypy: an inline conditional's bare-list branch gives strict
     # mode nothing to infer a row type from.
     pointed: Sequence[Row[tuple[uuid.UUID, str]]] = []
@@ -1514,23 +1519,25 @@ async def _refuse_while_quota_rules(
     *,
     what: str,
     model_id: uuid.UUID | None = None,
+    model_ids: Sequence[uuid.UUID] | None = None,
     provider_id: uuid.UUID | None = None,
 ) -> None:
-    """409 naming the quota rules that name this model or provider.
+    """409 naming the quota rules that name this model, these models or this provider.
 
     ``limit_rules`` references both with ON DELETE RESTRICT; this is the readable
-    answer ahead of the database's. Search backends never reach here for a
-    provider (a quota cannot name one), so their total delete cannot remove a cap.
+    answer ahead of the database's. It runs for search backends too: the console
+    never offers one, but a provider re-kinded to search (or a model repointed
+    onto a backend) can still carry a rule, and the total delete must not hit
+    the FK.
     """
-    column = LimitRule.model_id if model_id is not None else LimitRule.provider_id
+    if model_ids is not None:
+        condition: ColumnElement[bool] = LimitRule.model_id.in_(model_ids)
+    elif model_id is not None:
+        condition = LimitRule.model_id == model_id
+    else:
+        condition = LimitRule.provider_id == provider_id
     names = (
-        (
-            await session.execute(
-                select(LimitRule.name)
-                .where(column == (model_id or provider_id))
-                .order_by(LimitRule.name)
-            )
-        )
+        (await session.execute(select(LimitRule.name).where(condition).order_by(LimitRule.name)))
         .scalars()
         .all()
     )
@@ -4099,7 +4106,8 @@ async def create_limit(
     except IntegrityError as exc:
         await session.rollback()
         raise ConflictError(
-            "A rule already exists for that scope, metric, window and applies-to. "
+            "A rule already exists for that scope, provider, model, metric, window and "
+            "applies-to. "
             "Update it instead of adding a second one."
         ) from exc
     # Reloaded, not refreshed: the provider and model the response names are joined

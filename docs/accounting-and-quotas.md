@@ -596,7 +596,7 @@ apply to them with `provider_name` and `model_name`; Quota usage shows the filte
 beside the window. Performance: no extra query on the request path (the provider
 and model names come in the rule query; the match is made in memory, and a
 counter read is one batched read as before). Only the database fallback and
-seeding add a `model_id IN (...)` condition, served by `ix_usage_model_created` and `ix_usage_provider_created`, which migration 0089 builds `CONCURRENTLY` on PostgreSQL (no write lock; the backfill of `usage_records.provider_id` is one UPDATE).
+seeding add a `model_id IN (...)` condition, served by `ix_usage_model_created` and `ix_usage_provider_created`, which migration 0090 builds `CONCURRENTLY` on PostgreSQL (no write lock while they build). Migration 0089 adds the columns and backfills `usage_records.provider_id` with one UPDATE; its ADD FOREIGN KEY and that UPDATE block inserts into the ledger until it commits, so run it in a quiet moment on a large ledger.
 
 ### Rebuilds replace; they never add
 

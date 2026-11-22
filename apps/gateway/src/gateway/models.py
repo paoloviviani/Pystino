@@ -2053,7 +2053,10 @@ class LimitRule(Base):
     def filter_label(self) -> str | None:
         """The provider or model the rule is limited to, as a reader names it."""
         if self.model is not None:
-            return self.model.display_name or self.model.name
+            # `name`, not `display_name`: it is what callers send and what the
+            # console's Quotas page and the limit view show, so the refusal and
+            # the console name a model the same way.
+            return self.model.name
         if self.provider is not None:
             return self.provider.name
         return None

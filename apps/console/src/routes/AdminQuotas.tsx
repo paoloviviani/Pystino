@@ -22,7 +22,7 @@ import {
   useDeleteLimit,
   useGroups,
   useLimits,
-  useModels,
+  useProviderModels,
   useProviders,
   useQuotaHealth,
   useReconcileQuota,
@@ -444,7 +444,6 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const groups = useGroups();
   const users = useUsers();
   const providers = useProviders();
-  const models = useModels();
   const toast = useOptionalToast();
 
   const [name, setName] = useState("");
@@ -463,10 +462,19 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
   // The admin lists hold deployment providers and the models that serve only: a
   // member's own provider is in no quota, and an alias serves nothing itself
   // (billing follows its target).
-  const providerOptions = providers.data?.items ?? [];
-  const modelOptions = (models.data?.items ?? []).filter(
-    (model) => !providerId || model.provider_id === providerId,
+  // A search backend and its tiers are not language-model traffic: the API
+  // refuses them in a rule, so they are not offered. Models come per provider
+  // (all pages), so the picker is empty until a provider is chosen.
+  const providerOptions = (providers.data?.items ?? []).filter(
+    (provider) => provider.kind !== "search",
   );
+  const models = useProviderModels(providerId);
+  const modelOptions = (models.data ?? []).filter(
+    (model) => model.kind !== "search" && model.provider_id === providerId,
+  );
+  // A search-count limit counts the member's own searches, which no provider or
+  // model serves; the API refuses a filter on it.
+  const filterable = metric !== "own_search_requests";
 
   const submit = () => {
     create.mutate(
@@ -616,6 +624,7 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
         <Select
           label={m["admin_quotas.create.provider"]()}
           value={providerId}
+          disabled={!filterable}
           onChange={(e) => {
             setProviderId(e.target.value);
             // A model of another provider would be refused; start again.
@@ -632,6 +641,7 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
         <Select
           label={m["admin_quotas.create.model"]()}
           value={modelId}
+          disabled={!filterable || providerId === ""}
           onChange={(e) => setModelId(e.target.value)}
         >
           <option value="">{m["admin_quotas.create.model_any"]()}</option>
@@ -648,7 +658,13 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
         <Select
           label={m["admin_quotas.create.metric"]()}
           value={metric}
-          onChange={(e) => setMetric(e.target.value)}
+          onChange={(e) => {
+            setMetric(e.target.value);
+            if (e.target.value === "own_search_requests") {
+              setProviderId("");
+              setModelId("");
+            }
+          }}
         >
           <option value="cost">{m["admin_quotas.create.metric.cost"]()}</option>
           <option value="tokens">{m["admin_quotas.create.metric.tokens"]()}</option>
