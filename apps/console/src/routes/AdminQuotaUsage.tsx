@@ -6,6 +6,7 @@ import { Link, useParams } from "react-router";
 import { PageHeader } from "../components/PageHeader";
 import { useGroups, useLimits, useQuotaUsage, useResetLimit, useUserQuotaUsage } from "../lib/admin";
 import { formatDateTime, formatNumber } from "../lib/format";
+import { quotaFilter } from "../lib/quota-filter";
 import { MUTED, PAGE } from "../lib/layout";
 import { usePaginated } from "../lib/paging";
 import { useOptionalToast } from "../lib/toast";
@@ -94,7 +95,11 @@ function UserList() {
         row.most_constrained ? (
           <>
             <div>{row.most_constrained.rule_name}</div>
-            <div className={MUTED}>{row.most_constrained.window_label}</div>
+            <div className={MUTED}>
+              {[row.most_constrained.window_label, quotaFilter(row.most_constrained)]
+                .filter(Boolean)
+                .join(" · ")}
+            </div>
           </>
         ) : (
           <span className={MUTED}>{m["quota_usage.no_rules"]()}</span>
@@ -211,8 +216,16 @@ function UserDetail({ userId }: { userId: string }) {
     {
       key: "window",
       header: m["quota_usage.column.window"](),
-      render: (entry) =>
-        entry.period ? entry.window_label : m["quota_usage.window.rolling"]({ window: entry.window_label }),
+      render: (entry) => (
+        <>
+          <div>
+            {entry.period
+              ? entry.window_label
+              : m["quota_usage.window.rolling"]({ window: entry.window_label })}
+          </div>
+          {quotaFilter(entry) && <div className={MUTED}>{quotaFilter(entry)}</div>}
+        </>
+      ),
     },
     {
       key: "resets",

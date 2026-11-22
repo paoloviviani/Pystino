@@ -94,6 +94,8 @@ async def caller_limits(
             scope=rule.scope.value,
             applies_to=rule.applies_to.value,
             overrides_each_user=rule.overrides_each_user,
+            provider_name=rule.shown_provider.name if rule.shown_provider else None,
+            model_name=rule.model.name if rule.model else None,
             metric=rule.metric.value,
             window_label=rule.window_label,
             limit_value=rule.limit_value,

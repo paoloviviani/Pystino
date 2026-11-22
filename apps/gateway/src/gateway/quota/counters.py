@@ -81,6 +81,11 @@ class ScopeRef:
     scope: LimitScope
     scope_id: uuid.UUID | None = None
     member_id: uuid.UUID | None = None
+    #: A rule limited to one provider or one model counts only that traffic, so
+    #: the filter is part of *which counter* it is: a provider's total is not
+    #: the scope's total, and the two must never share a key.
+    provider_id: uuid.UUID | None = None
+    model_id: uuid.UUID | None = None
 
     def __post_init__(self) -> None:
         if self.scope is LimitScope.GLOBAL and self.scope_id is not None:
@@ -95,9 +100,13 @@ class ScopeRef:
     @property
     def key_part(self) -> str:
         base = f"{self.scope.value}:{self.scope_id or '-'}"
-        if self.member_id is None:
-            return base
-        return f"{base}:member:{self.member_id}"
+        if self.member_id is not None:
+            base = f"{base}:member:{self.member_id}"
+        if self.provider_id is not None:
+            base = f"{base}:provider:{self.provider_id}"
+        if self.model_id is not None:
+            base = f"{base}:model:{self.model_id}"
+        return base
 
 
 @dataclass(frozen=True, slots=True)
@@ -515,9 +524,18 @@ class DatabaseCounterStore:
                 continue
             since, until = self._bounds(query, now)
             group = query.scope.scope_id if query.scope.scope is LimitScope.GROUP else None
-            groups.setdefault((query.scope.scope, group, query.metric, since, until), []).append(
-                position
-            )
+            groups.setdefault(
+                (
+                    query.scope.scope,
+                    group,
+                    query.scope.provider_id,
+                    query.scope.model_id,
+                    query.metric,
+                    since,
+                    until,
+                ),
+                [],
+            ).append(position)
         return [positions for positions in groups.values() if len(positions) > 1]
 
     async def _batch_totals(
@@ -552,6 +570,7 @@ class DatabaseCounterStore:
                 stmt = stmt.where(UsageRecord.created_at < until)
             if first.scope.scope is LimitScope.GROUP:
                 stmt = stmt.where(UsageRecord.group_id == first.scope.scope_id)
+            stmt = self._served_by(stmt, first.scope)
             for user_id, value in (await session.execute(stmt)).all():
                 if user_id is not None and value is not None:
                     found[user_id] = to_units(first.metric, Decimal(str(value)))
@@ -637,6 +656,22 @@ class DatabaseCounterStore:
                 stmt = stmt.where(UsageRecord.api_key_id == query.scope.scope_id)
             case LimitScope.GLOBAL:
                 pass
+        return DatabaseCounterStore._served_by(stmt, query.scope)
+
+    @staticmethod
+    def _served_by[S: Select[Any]](stmt: S, scope: ScopeRef) -> S:
+        """Narrow to the model, or the provider, that served the request.
+
+        The ledger's ``model_id`` is the model that *served* (an alias's target)
+        and ``provider_id`` the provider it belonged to when the row was written,
+        so a request that arrived as an alias counts for the target's provider,
+        and neither a model's deletion nor its repointing moves a provider's
+        history. A model rule never carries a provider (the model decides).
+        """
+        if scope.model_id is not None:
+            return stmt.where(UsageRecord.model_id == scope.model_id)
+        if scope.provider_id is not None:
+            return stmt.where(UsageRecord.provider_id == scope.provider_id)
         return stmt
 
     async def apply(self, deltas: Sequence[CounterDelta], *, now: float) -> None:
@@ -748,6 +783,7 @@ class DatabaseCounterStore:
                         grouped = grouped.where(UsageRecord.created_at < until)
                     if first.scope.scope is LimitScope.GROUP:
                         grouped = grouped.where(UsageRecord.group_id == first.scope.scope_id)
+                    grouped = self._served_by(grouped, first.scope)
                     for user_id, count in (await session.execute(grouped)).all():
                         if user_id is not None:
                             found[user_id] = int(count)

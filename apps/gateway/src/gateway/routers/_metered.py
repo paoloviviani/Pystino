@@ -81,6 +81,7 @@ from gateway.quota import (
     QuotaAmounts,
     QuotaEngine,
     QuotaExceeded,
+    QuotaTarget,
     QuotaUnavailable,
     Reservation,
 )
@@ -911,6 +912,9 @@ async def _admit(
                 cost=worst_case_cost.total + search_cost,
                 own_search_requests=Decimal(worst_case_own_searches),
             ),
+            # What serves the request, so a rule limited to a provider or a model
+            # is checked against the target's own, never the alias's.
+            target=QuotaTarget(provider_id=model.provider_id, model_id=model.id),
         )
     except QuotaExceeded as exc:
         logger.info("quota refusal for user=%s: %s", principal.user.id, exc)
@@ -921,10 +925,17 @@ async def _admit(
             code="quota_exceeded",
             headers={"retry-after": str(exc.retry_after_seconds)},
         )
-        if not resolved.last:
+        if not resolved.last and not (exc.names_provider_or_model and resolved.attempt == 1):
             # Admission is per attempt: a rule that names this target (or this
             # target's provider) can refuse here while the next target is fine.
             # No ledger row exists for a refusal, so nothing else to undo.
+            #
+            # Not when a provider or model limit refuses the *first* attempt:
+            # that is the owner's "refuse, do not move the request to another
+            # provider", so the caller gets the 429 naming the provider instead
+            # of a quiet detour. After an earlier target already failed upstream
+            # the request has moved on regardless, so the next target is tried
+            # rather than the whole alias ending on this one's cap.
             raise AttemptFailed("quota_exceeded", response=refusal) from exc
         return refusal
     except QuotaUnavailable as exc:
@@ -1027,6 +1038,7 @@ async def begin(
             group_id=None if model.is_private else principal.require_billing_group().id,
             api_key_id=principal.api_key.id if principal.api_key else None,
             model_id=model.id,
+            provider_id=model.provider_id,
             estimated_prompt_tokens=worst_case.prompt,
             redaction_engine=outcome.engine if outcome else None,
             redacted_entity_count=outcome.entity_count if outcome else 0,
@@ -1326,6 +1338,7 @@ async def record_blocked(
             group_id=None if model.is_private else principal.require_billing_group().id,
             api_key_id=principal.api_key.id if principal.api_key else None,
             model_id=model.id,
+            provider_id=model.provider_id,
             model_name=model.api_name,
             byok=model.is_private,
             streamed=False,

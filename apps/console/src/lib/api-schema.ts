@@ -5983,6 +5983,8 @@ export interface components {
              * @enum {string}
              */
             metric: "requests" | "tokens" | "cost" | "own_search_requests";
+            /** Model Id */
+            model_id?: string | null;
             /**
              * Name
              * @default
@@ -5995,6 +5997,8 @@ export interface components {
             overrides_each_user?: boolean;
             /** Period */
             period?: ("day" | "week" | "month" | "quarter" | "year") | null;
+            /** Provider Id */
+            provider_id?: string | null;
             /**
              * Scope
              * @enum {string}
@@ -6044,6 +6048,10 @@ export interface components {
             limit_value: string;
             /** Metric */
             metric: string;
+            /** Model Id */
+            model_id: string | null;
+            /** Model Name */
+            model_name: string | null;
             /** Name */
             name: string;
             /**
@@ -6053,6 +6061,10 @@ export interface components {
             overrides_each_user: boolean;
             /** Period */
             period: string | null;
+            /** Provider Id */
+            provider_id: string | null;
+            /** Provider Name */
+            provider_name: string | null;
             /** Scope */
             scope: string;
             /** Scope Id */
@@ -6610,6 +6622,8 @@ export interface components {
             limit_value: string;
             /** Metric */
             metric: string;
+            /** Model Name */
+            model_name: string | null;
             /** Name */
             name: string;
             /** Notification Thresholds */
@@ -6619,6 +6633,8 @@ export interface components {
              * @default false
              */
             overrides_each_user: boolean;
+            /** Provider Name */
+            provider_name: string | null;
             /** Scope */
             scope: string;
             /**
@@ -9352,10 +9368,14 @@ export interface components {
             limit_value: string;
             /** Metric */
             metric: string;
+            /** Model Name */
+            model_name: string | null;
             /** Percent */
             percent: number | null;
             /** Period */
             period: string | null;
+            /** Provider Name */
+            provider_name: string | null;
             /** Replaced By Name */
             replaced_by_name: string | null;
             /** Replaced By Rule Id */

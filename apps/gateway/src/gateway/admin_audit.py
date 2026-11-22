@@ -112,6 +112,8 @@ LIMIT_FIELDS = (
     "is_active",
     "applies_to",
     "overrides_each_user",
+    "provider_id",
+    "model_id",
 )
 
 

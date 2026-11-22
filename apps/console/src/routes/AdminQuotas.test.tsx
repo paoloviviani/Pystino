@@ -26,6 +26,10 @@ function rule(overrides: Partial<LimitRule> = {}): LimitRule {
     metric: "cost",
     applies_to: "aggregate",
     overrides_each_user: false,
+    provider_id: null,
+    provider_name: null,
+    model_id: null,
+    model_name: null,
     window_seconds: null,
     period: "month",
     window_label: "month",
@@ -47,6 +51,18 @@ function routes(rules: LimitRule[], health: unknown = { windows: [] }, users: un
     else if (url.includes("/api/admin/quota/reconcile") && method === "POST")
       payload = { reconciled: [], corrected: 1 };
     else if (url.includes("/api/admin/limits") && method === "GET") payload = rules;
+    else if (url.includes("/api/admin/providers"))
+      payload = [
+        { id: "p-anthropic", name: "Anthropic" },
+        { id: "p-openai", name: "OpenAI" },
+        { id: "p-exa", name: "Exa", kind: "search" },
+      ];
+    else if (url.includes("/api/admin/models"))
+      payload = [
+        { id: "m-opus", name: "claude-opus", provider_id: "p-anthropic" },
+        { id: "m-gpt", name: "gpt-5", provider_id: "p-openai" },
+        { id: "m-exa", name: "exa-fast", provider_id: "p-anthropic", kind: "search" },
+      ];
     else if (url.includes("/api/admin/groups")) payload = [{ id: "g1", name: "research", description: null, source: "idp", is_active: true, member_count: 3, models: [] }];
     else if (url.includes("/api/admin/users")) payload = users;
     return jsonResponse(payload);
@@ -494,6 +510,190 @@ describe("AdminQuotas", () => {
         .find((row) => within(row).queryByText("member share"));
       expect(memberRow).toBeDefined();
       expect(memberRow!.textContent).toContain("ada@example.org");
+    });
+  });
+
+  describe("provider and model limits", () => {
+    it("says which provider a rule is limited to", async () => {
+      vi.stubGlobal(
+        "fetch",
+        routes([
+          rule({
+            scope: "global",
+            scope_id: null,
+            applies_to: "each_user",
+            provider_id: "p-anthropic",
+            provider_name: "Anthropic",
+          }),
+        ]),
+      );
+      renderScreen(<AdminQuotas />);
+
+      expect(await screen.findByText("per month per user")).toBeInTheDocument();
+      expect(screen.getByText("on Anthropic")).toBeInTheDocument();
+    });
+
+    it("names the provider beside a model", async () => {
+      vi.stubGlobal(
+        "fetch",
+        routes([
+          rule({
+            model_id: "m-opus",
+            model_name: "claude-opus",
+            provider_id: "p-anthropic",
+            provider_name: "Anthropic",
+          }),
+        ]),
+      );
+      renderScreen(<AdminQuotas />);
+
+      expect(await screen.findByText("on claude-opus (Anthropic)")).toBeInTheDocument();
+    });
+
+    it("shows nothing extra on a rule for all usage", async () => {
+      vi.stubGlobal("fetch", routes([rule()]));
+      renderScreen(<AdminQuotas />);
+
+      await screen.findByText("per month");
+      expect(screen.queryByText(/^on /)).toBeNull();
+    });
+
+    it("offers a provider and a model picker, the models narrowed to the provider", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      vi.stubGlobal("fetch", routes([rule()]));
+      renderScreen(<AdminQuotas />);
+      await user.click(await screen.findByRole("button", { name: "New rule" }));
+
+      const dialog = await screen.findByRole("dialog");
+      const provider = within(dialog).getByLabelText("Provider");
+      const model = within(dialog).getByLabelText("Model");
+      await waitFor(() =>
+        expect(within(provider).getByRole("option", { name: "Anthropic" })).toBeInTheDocument(),
+      );
+      expect(within(provider).getByRole("option", { name: "Any provider" })).toBeInTheDocument();
+      // Models are fetched for one provider, so none is offered before one is chosen.
+      expect(model).toBeDisabled();
+
+      await user.selectOptions(provider, "p-anthropic");
+      await waitFor(() =>
+        expect(within(model).getByRole("option", { name: "claude-opus" })).toBeInTheDocument(),
+      );
+      expect(model).toBeEnabled();
+      expect(within(model).queryByRole("option", { name: "gpt-5" })).toBeNull();
+    });
+
+    it("never offers a search backend or its tiers", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      vi.stubGlobal("fetch", routes([rule()]));
+      renderScreen(<AdminQuotas />);
+      await user.click(await screen.findByRole("button", { name: "New rule" }));
+
+      const dialog = await screen.findByRole("dialog");
+      const provider = within(dialog).getByLabelText("Provider");
+      await waitFor(() =>
+        expect(within(provider).getByRole("option", { name: "Anthropic" })).toBeInTheDocument(),
+      );
+      expect(within(provider).queryByRole("option", { name: "Exa" })).toBeNull();
+      await user.selectOptions(provider, "p-anthropic");
+      const model = within(dialog).getByLabelText("Model");
+      await waitFor(() =>
+        expect(within(model).getByRole("option", { name: "claude-opus" })).toBeInTheDocument(),
+      );
+      expect(within(model).queryByRole("option", { name: "exa-fast" })).toBeNull();
+    });
+
+    it("pages through every model of the provider", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const base = routes([rule()]);
+      const many = Array.from({ length: 250 }, (_, i) => ({
+        id: `m-${i}`,
+        name: `model-${String(i).padStart(3, "0")}`,
+        provider_id: "p-anthropic",
+      }));
+      const offsets: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = new URL(String(input), "http://localhost");
+          if (url.pathname === "/api/admin/models") {
+            expect(url.searchParams.get("provider_id")).toBe("p-anthropic");
+            const offset = Number(url.searchParams.get("offset"));
+            offsets.push(String(offset));
+            return jsonResponse({
+              items: many.slice(offset, offset + 200),
+              total: 250,
+              limit: 200,
+              offset,
+            });
+          }
+          return base(input, init);
+        }),
+      );
+      renderScreen(<AdminQuotas />);
+      await user.click(await screen.findByRole("button", { name: "New rule" }));
+
+      const dialog = await screen.findByRole("dialog");
+      const provider = within(dialog).getByLabelText("Provider");
+      await waitFor(() =>
+        expect(within(provider).getByRole("option", { name: "Anthropic" })).toBeInTheDocument(),
+      );
+      await user.selectOptions(provider, "p-anthropic");
+      const model = within(dialog).getByLabelText("Model");
+      await waitFor(() =>
+        expect(within(model).getByRole("option", { name: "model-249" })).toBeInTheDocument(),
+      );
+      expect(offsets).toEqual(["0", "200"]);
+    });
+
+    it("turns the provider and model pickers off for a search-count limit", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      vi.stubGlobal("fetch", routes([rule()]));
+      renderScreen(<AdminQuotas />);
+      await user.click(await screen.findByRole("button", { name: "New rule" }));
+
+      const dialog = await screen.findByRole("dialog");
+      const provider = within(dialog).getByLabelText("Provider");
+      await waitFor(() =>
+        expect(within(provider).getByRole("option", { name: "Anthropic" })).toBeInTheDocument(),
+      );
+      await user.selectOptions(provider, "p-anthropic");
+      await user.selectOptions(within(dialog).getByLabelText("Metric"), "own_search_requests");
+
+      expect(provider).toBeDisabled();
+      expect(within(dialog).getByLabelText("Model")).toBeDisabled();
+      expect((provider as HTMLSelectElement).value).toBe("");
+    });
+
+    it("sends the provider and model it was given, and null when left open", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const fetchMock = routes([rule()]);
+      vi.stubGlobal("fetch", fetchMock);
+      renderScreen(<AdminQuotas />);
+      await user.click(await screen.findByRole("button", { name: "New rule" }));
+
+      const dialog = await screen.findByRole("dialog");
+      await user.selectOptions(within(dialog).getByLabelText("Scope"), "global");
+      await user.selectOptions(within(dialog).getByLabelText("Applies to"), "each_user");
+      await waitFor(() =>
+        expect(
+          within(within(dialog).getByLabelText("Provider")).getByRole("option", {
+            name: "Anthropic",
+          }),
+        ).toBeInTheDocument(),
+      );
+      await user.selectOptions(within(dialog).getByLabelText("Provider"), "p-anthropic");
+      await user.click(within(dialog).getByRole("button", { name: "Create" }));
+
+      await waitFor(() => {
+        const post = fetchMock.mock.calls.find(
+          ([url, init]) => String(url).endsWith("/api/admin/limits") && init?.method === "POST",
+        );
+        expect(post).toBeDefined();
+        const body = JSON.parse(String(post?.[1]?.body));
+        expect(body.provider_id).toBe("p-anthropic");
+        expect(body.model_id).toBeNull();
+        expect(body.applies_to).toBe("each_user");
+      });
     });
   });
 });

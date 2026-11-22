@@ -98,6 +98,38 @@ class QuotaSubject:
 
 
 @dataclass(frozen=True, slots=True)
+class QuotaTarget:
+    """What will serve the request: the model, and the provider it belongs to.
+
+    A rule limited to a provider or a model applies only to a request whose
+    **target** matches, so admission must be told which target that is. For a
+    request through an alias it is the alias's chosen target (ADR 0101), the same
+    model the ledger row will name.
+    """
+
+    provider_id: uuid.UUID | None
+    model_id: uuid.UUID | None
+
+
+def rule_matches_target(rule: LimitRule, target: QuotaTarget | None) -> bool:
+    """Whether *rule*'s provider/model filter lets this request through to it.
+
+    An unfiltered rule matches everything. A filtered rule matches nothing when
+    no target is given: a caller that cannot say what serves the request cannot
+    be charged against a provider's budget.
+    """
+    if rule.provider_id is None and rule.model_id is None:
+        return True
+    if target is None:
+        return False
+    # A model rule is the model alone: it must survive the model being repointed
+    # to another provider. (The API stores no provider on one.)
+    if rule.model_id is not None:
+        return rule.model_id == target.model_id
+    return rule.provider_id == target.provider_id
+
+
+@dataclass(frozen=True, slots=True)
 class QuotaAmounts:
     """A bundle of metric values: an estimate before, the truth after."""
 
@@ -145,10 +177,29 @@ class Violation:
             LimitAppliesTo.EACH_MEMBER: " per member",
             LimitAppliesTo.EACH_USER: " per user",
         }.get(self.rule.applies_to, "")
+        label = self.rule.filter_label
+        if label is None:
+            return (
+                f"{self.rule.scope.value}{kind} limit of {self.limit} {self.rule.metric.value}"
+                f" per {self.rule.window_label} exceeded (current {self.current})"
+            )
+        # A provider or model limit says which one, in the window's slot ("per month
+        # on Anthropic"). The shape is deliberate: Cerea reads the figures out of
+        # `limit of N metric per <window> exceeded (current M)` and words its own
+        # message from them, so a window ending in "on Anthropic" reaches the user
+        # as "Your allowance of EUR 20 per month on Anthropic is used up" with no
+        # change there, where any text after the closing parenthesis would make the
+        # parse fail and the provider disappear. When it resets is in `retry-after`.
         return (
-            f"{self.rule.scope.value}{kind} limit of {self.limit} {self.rule.metric.value}"
-            f" per {self.rule.window_label} exceeded (current {self.current})"
+            f"{self.rule.scope.value}{kind} limit of {_plain(self.limit)} {self.rule.metric.value}"
+            f" per {self.rule.window_label} on {label} exceeded"
+            f" (current {_plain(self.current)})"
         )
+
+
+def _plain(value: Decimal) -> str:
+    """A figure without the database's trailing zeros ("20", not "20.000000000000")."""
+    return format(value.normalize(), "f")
 
 
 class QuotaExceeded(Exception):
@@ -157,6 +208,17 @@ class QuotaExceeded(Exception):
     def __init__(self, violations: Sequence[Violation]) -> None:
         self.violations = list(violations)
         super().__init__("; ".join(v.describe() for v in self.violations))
+
+    @property
+    def names_provider_or_model(self) -> bool:
+        """Whether a provider or model limit refused the request.
+
+        Such a refusal is final: the owner's rule is "refuse, do not move the
+        request to another provider", which an alias's failover would do.
+        """
+        return any(
+            v.rule.provider_id is not None or v.rule.model_id is not None for v in self.violations
+        )
 
     @property
     def retry_after_seconds(self) -> int:
@@ -202,6 +264,21 @@ def _negate(delta: CounterDelta) -> CounterDelta:
         spec=delta.spec,
         period=delta.period,
         reset_epoch=delta.reset_epoch,
+    )
+
+
+def ceiling_key(rule: LimitRule) -> tuple[object, ...]:
+    """What makes two each-user ceilings the same one: metric, window and filter.
+
+    An override of "each user at most EUR 5 a month" must not replace the
+    "each user at most EUR 20 a month on Anthropic" rule, which is another budget.
+    """
+    return (
+        rule.metric,
+        rule.window_seconds,
+        rule.period,
+        None if rule.model_id is not None else rule.provider_id,
+        rule.model_id,
     )
 
 
@@ -359,7 +436,7 @@ class QuotaEngine:
         ``user:<id>`` counter, so turning an override on or off moves no data.
         """
         overridden = {
-            (rule.metric, rule.window_seconds, rule.period)
+            ceiling_key(rule)
             for rule in rules
             if rule.scope is LimitScope.USER and rule.overrides_each_user and rule.is_active
         }
@@ -371,7 +448,7 @@ class QuotaEngine:
             if not (
                 rule.scope is LimitScope.GLOBAL
                 and rule.applies_to is LimitAppliesTo.EACH_USER
-                and (rule.metric, rule.window_seconds, rule.period) in overridden
+                and ceiling_key(rule) in overridden
             )
         ]
 
@@ -425,16 +502,33 @@ class QuotaEngine:
         to anyone, and those rules are skipped: every path that reserves
         today carries an authenticated user, and the guard is what keeps a
         future user-less path from enforcing a budget it cannot count.
+
+        A rule limited to a provider or a model carries that filter into the
+        scope, so it reads a counter of its own.
         """
         if rule.scope is LimitScope.GROUP and rule.applies_to is LimitAppliesTo.EACH_MEMBER:
             if subject.user_id is None:
                 return None
-            return ScopeRef(LimitScope.GROUP, rule.scope_id, member_id=subject.user_id)
+            return QuotaEngine._filtered(
+                rule, ScopeRef(LimitScope.GROUP, rule.scope_id, member_id=subject.user_id)
+            )
         if rule.scope is LimitScope.GLOBAL and rule.applies_to is LimitAppliesTo.EACH_USER:
             if subject.user_id is None:
                 return None
-            return ScopeRef(LimitScope.USER, subject.user_id)
-        return ScopeRef(rule.scope, rule.scope_id)
+            return QuotaEngine._filtered(rule, ScopeRef(LimitScope.USER, subject.user_id))
+        return QuotaEngine._filtered(rule, ScopeRef(rule.scope, rule.scope_id))
+
+    @staticmethod
+    def _filtered(rule: LimitRule, scope: ScopeRef) -> ScopeRef:
+        if rule.provider_id is None and rule.model_id is None:
+            return scope
+        return ScopeRef(
+            scope.scope,
+            scope.scope_id,
+            member_id=scope.member_id,
+            provider_id=None if rule.model_id is not None else rule.provider_id,
+            model_id=rule.model_id,
+        )
 
     async def current_values(
         self,
@@ -566,7 +660,7 @@ class QuotaEngine:
             scope = ScopeRef(rule.scope, rule.scope_id)
         spec, period = self.window_for(rule, datetime.fromtimestamp(moment, tz=UTC))
         return WindowQuery(
-            scope=scope,
+            scope=self._filtered(rule, scope),
             metric=rule.metric,
             spec=spec,
             period=period,
@@ -996,9 +1090,14 @@ class QuotaEngine:
         subject: QuotaSubject,
         estimate: QuotaAmounts,
         *,
+        target: QuotaTarget | None = None,
         now: float | None = None,
     ) -> Reservation:
         """Evaluate every applicable rule and reserve the estimate.
+
+        *target* is what will serve the request. A rule limited to a provider
+        or a model applies only when it matches; without a target such rules are
+        not evaluated and nothing is reserved against them.
 
         Raises:
             QuotaExceeded: at least one rule is already at or over its limit.
@@ -1026,6 +1125,10 @@ class QuotaEngine:
         as_datetime = datetime.fromtimestamp(moment, tz=UTC)
         scoped: list[tuple[LimitRule, WindowQuery]] = []
         for rule in rules:
+            if not rule_matches_target(rule, target):
+                # A provider's or model's budget, and this request goes
+                # elsewhere: not its business, so no check and no reservation.
+                continue
             spec, period = self.window_for(rule, as_datetime)
             scope = self.scope_for_rule(rule, subject)
             if scope is None:
@@ -1044,6 +1147,9 @@ class QuotaEngine:
                     ),
                 )
             )
+
+        if not scoped:
+            return Reservation(created_at=moment)
 
         queries = [query for _, query in scoped]
 

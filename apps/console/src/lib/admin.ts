@@ -412,6 +412,34 @@ export function useModels(query: PageQuery = { limit: MAX_LIMIT }) {
 }
 
 /**
+ * Every model of one provider, paged through to the end.
+ *
+ * `useModels` stops at one page (MAX_LIMIT), which silently hides models on a
+ * large deployment; a picker that must offer them all asks the server for one
+ * provider's models and follows `total` instead.
+ */
+export function useProviderModels(providerId: string) {
+  const { base, keys } = useScope();
+  return useQuery({
+    queryKey: [...keys.models, "of-provider", providerId] as const,
+    enabled: providerId !== "",
+    retry: retryUnlessRejected,
+    queryFn: async () => {
+      const items: AdminModel[] = [];
+      for (;;) {
+        const search = pageParams(
+          { limit: MAX_LIMIT, offset: items.length },
+          { provider_id: providerId },
+        );
+        const page = await request<Page<AdminModel>>(`${base}/models?${search}`);
+        items.push(...page.items);
+        if (page.items.length === 0 || items.length >= page.total) return items;
+      }
+    },
+  });
+}
+
+/**
  * One model, for its own page.
  *
  * Not "find it in the listing we already have": the page is addressable, so it
@@ -880,6 +908,9 @@ export interface CreateLimitInput {
   applies_to?: string;
   /** User scope only: replaces the global each-user ceiling for that person. */
   overrides_each_user?: boolean;
+  /** Count only the requests this provider and/or model serves. */
+  provider_id?: string | null;
+  model_id?: string | null;
 }
 
 export function useCreateLimit() {

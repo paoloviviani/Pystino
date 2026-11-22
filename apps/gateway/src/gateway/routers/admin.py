@@ -1196,6 +1196,10 @@ async def delete_provider(
         # a real deletion, only a confusing detour through 404s until then.
         raise ConflictError(BUILTIN_READER_KEPT)
 
+    # Before the kind branch: a provider re-kinded to search, or a model
+    # repointed onto a search backend, can still carry a rule, and the RESTRICT
+    # FK would otherwise surface as a 500.
+    await _refuse_while_quota_rules(session, provider_id=provider_id, what="provider")
     if provider.kind != ProviderKind.SEARCH:
         counts = await _model_counts(session)
         if (count := counts.get(provider_id, 0)) > 0:
@@ -1226,6 +1230,8 @@ async def delete_provider(
         )
     ).all()
     tier_ids = [row.id for row in tier_rows]
+    if tier_ids:
+        await _refuse_while_quota_rules(session, model_ids=tier_ids, what="tier")
     # Annotated for mypy: an inline conditional's bare-list branch gives strict
     # mode nothing to infer a row type from.
     pointed: Sequence[Row[tuple[uuid.UUID, str]]] = []
@@ -1508,6 +1514,41 @@ async def update_model(
 # -- discovery ---------------------------------------------------------------
 
 
+async def _refuse_while_quota_rules(
+    session: SessionDep,
+    *,
+    what: str,
+    model_id: uuid.UUID | None = None,
+    model_ids: Sequence[uuid.UUID] | None = None,
+    provider_id: uuid.UUID | None = None,
+) -> None:
+    """409 naming the quota rules that name this model, these models or this provider.
+
+    ``limit_rules`` references both with ON DELETE RESTRICT; this is the readable
+    answer ahead of the database's. It runs for search backends too: the console
+    never offers one, but a provider re-kinded to search (or a model repointed
+    onto a backend) can still carry a rule, and the total delete must not hit
+    the FK.
+    """
+    if model_ids is not None:
+        condition: ColumnElement[bool] = LimitRule.model_id.in_(model_ids)
+    elif model_id is not None:
+        condition = LimitRule.model_id == model_id
+    else:
+        condition = LimitRule.provider_id == provider_id
+    names = (
+        (await session.execute(select(LimitRule.name).where(condition).order_by(LimitRule.name)))
+        .scalars()
+        .all()
+    )
+    if names:
+        listed = ", ".join(repr(name or "(unnamed)") for name in names)
+        raise ConflictError(
+            f"Quota rule(s) {listed} limit this {what}. Delete or change them under "
+            f"Quotas before deleting the {what}: a cost cap should not vanish quietly."
+        )
+
+
 @router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
 @me_router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_model(model_id: uuid.UUID, scope: CatalogueScopeDep, session: SessionDep) -> None:
@@ -1541,6 +1582,10 @@ async def delete_model(model_id: uuid.UUID, scope: CatalogueScopeDep, session: S
             f"Groups {names} search through this backend. Point their search "
             "policies elsewhere, or clear them, before deleting it.",
         )
+    # A quota rule that names the model is a cost cap: deleting the model would
+    # remove it (or, were the column nulled, widen it to all usage). Name the
+    # rules instead, so the administrator deletes or changes them first.
+    await _refuse_while_quota_rules(session, model_id=model_id, what="model")
     # Aliases are **not** a reason to refuse: the delete is what an operator
     # wants, and the cascade on `model_route_targets.target_model_id` leaves
     # each alias standing with its grants and no target, which is the
@@ -3777,6 +3822,10 @@ def _limit_response(rule: LimitRule, current: Decimal | None = None) -> LimitRul
         limit_value=rule.limit_value,
         applies_to=rule.applies_to.value,
         overrides_each_user=rule.overrides_each_user,
+        provider_id=rule.shown_provider.id if rule.shown_provider else None,
+        provider_name=rule.shown_provider.name if rule.shown_provider else None,
+        model_id=rule.model_id,
+        model_name=rule.model.name if rule.model else None,
         is_active=rule.is_active,
         current_value=current,
         # Requires `resets` to be loaded; every caller here does so explicitly,
@@ -3903,6 +3952,83 @@ async def quota_reconcile(
     )
 
 
+async def _check_limit_filter(
+    session: SessionDep,
+    provider_id: uuid.UUID | None,
+    model_id: uuid.UUID | None,
+    metric: LimitMetric,
+) -> uuid.UUID | None:
+    """Validate a rule's filter; return the provider id to store.
+
+    A rule naming a model stores the model alone (``None`` here): the model
+    decides, so a model repointed to another provider keeps its rule.
+
+    The filter must name something a quota can count.
+
+    Deployment providers and models only: usage on a member's own key (BYOK) is in
+    no quota, so a rule on one would never count anything. An alias is no model
+    that serves (billing follows its target), so a rule on one is refused with
+    the advice to name the target.
+
+    Search is refused: a built-in web search's count and its cost are recorded on
+    the *language model's* row and reserved against that model's target, so a
+    filter on a search backend would see only standalone ``/v1/search`` calls
+    while a filter on the model's provider includes the search surcharge. A
+    ``own_search_requests`` limit has no per-provider meaning for the same reason.
+    """
+    if (provider_id is not None or model_id is not None) and (
+        metric is LimitMetric.OWN_SEARCH_REQUESTS
+    ):
+        raise UnprocessableError(
+            "A search-count limit cannot be limited to a provider or model: a built-in "
+            "search is counted on the language model's request, not on the search "
+            "backend. Use a limit without a provider or model."
+        )
+    if provider_id is not None:
+        provider = (
+            await session.execute(select(Provider).where(Provider.id == provider_id))
+        ).scalar_one_or_none()
+        if provider is None:
+            raise NotFoundError(f"No provider with id {provider_id}.")
+        if provider.owner_id is not None:
+            raise BadRequestError(
+                "A quota cannot name a member's own provider: usage on a member's own "
+                "key is in no quota."
+            )
+        if provider.kind == ProviderKind.SEARCH:
+            raise UnprocessableError(
+                "A quota cannot name a search backend: a built-in search's cost is "
+                "recorded on the language model's request. Limit the model's provider "
+                "(its searches are included) or use a search-count limit with no filter."
+            )
+    if model_id is not None:
+        model = (
+            await session.execute(select(ModelDef).where(ModelDef.id == model_id))
+        ).scalar_one_or_none()
+        if model is None:
+            raise NotFoundError(f"No model with id {model_id}.")
+        if model.is_alias:
+            raise BadRequestError(
+                "A quota cannot name a model alias: usage is counted against the model "
+                "that serves the request. Name the target model instead."
+            )
+        if model.is_private:
+            raise BadRequestError(
+                "A quota cannot name a member's own model: usage on a member's own key "
+                "is in no quota."
+            )
+        if model.kind == ModelKind.SEARCH:
+            raise UnprocessableError(
+                "A quota cannot name a search tier: a built-in search's cost is recorded "
+                "on the language model's request. Limit the model's provider instead."
+            )
+        if provider_id is not None and model.provider_id != provider_id:
+            raise BadRequestError("That model does not belong to that provider.")
+        # The model alone decides (see LimitRule.provider_id).
+        return None
+    return provider_id
+
+
 @router.post("/limits", response_model=LimitRuleResponse, status_code=status.HTTP_201_CREATED)
 async def create_limit(
     payload: LimitRuleCreateRequest, admin: AdminUserDep, session: SessionDep, quota: QuotaDep
@@ -3952,9 +4078,15 @@ async def create_limit(
         if exists is None:
             raise NotFoundError(f"No API key with id {payload.scope_id}.")
 
+    stored_provider_id = await _check_limit_filter(
+        session, payload.provider_id, payload.model_id, LimitMetric(payload.metric)
+    )
+
     rule = LimitRule(
         id=uuid.uuid4(),
         name=payload.name,
+        provider_id=stored_provider_id,
+        model_id=payload.model_id,
         scope=scope,
         scope_id=payload.scope_id,
         metric=LimitMetric(payload.metric),
@@ -3974,10 +4106,13 @@ async def create_limit(
     except IntegrityError as exc:
         await session.rollback()
         raise ConflictError(
-            "A rule already exists for that scope, metric, window and applies-to. "
+            "A rule already exists for that scope, provider, model, metric, window and "
+            "applies-to. "
             "Update it instead of adding a second one."
         ) from exc
-    await session.refresh(rule, attribute_names=["resets"])
+    # Reloaded, not refreshed: the provider and model the response names are joined
+    # in by the query, and a new row has never been read through it.
+    rule = await _load_rule(session, rule.id)
     # Start the counter from the spend already in the ledger for this window. A
     # monthly rule created on the 20th otherwise begins at zero and the cap is
     # wrong for the rest of the month.

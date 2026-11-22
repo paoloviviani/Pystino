@@ -33,7 +33,7 @@ from gateway.models import (
     User,
 )
 from gateway.quota import Measurement, QuotaEngine, QuotaSubject
-from gateway.quota.engine import is_per_user
+from gateway.quota.engine import ceiling_key, is_per_user
 from gateway.schemas import UserQuotaEntry
 from gateway.types import utcnow
 
@@ -202,8 +202,7 @@ def _replacement(rule: LimitRule, applicable: Sequence[LimitRule]) -> LimitRule 
             for other in applicable
             if other.scope is LimitScope.USER
             and other.overrides_each_user
-            and (other.metric, other.window_seconds, other.period)
-            == (rule.metric, rule.window_seconds, rule.period)
+            and ceiling_key(other) == ceiling_key(rule)
         ),
         None,
     )
@@ -237,6 +236,8 @@ def _entry(
         scope_label=group_names.get(rule.scope_id)
         if rule.scope is LimitScope.GROUP and rule.scope_id
         else None,
+        provider_name=rule.shown_provider.name if rule.shown_provider else None,
+        model_name=rule.model.name if rule.model else None,
         metric=rule.metric.value,
         limit_value=rule.limit_value,
         current_value=value,

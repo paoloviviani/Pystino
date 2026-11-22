@@ -1615,6 +1615,13 @@ class UsageRecord(Base):
         Index("ix_usage_group_created", "group_id", "created_at"),
         Index("ix_usage_user_created", "user_id", "created_at"),
         Index("ix_usage_key_created", "api_key_id", "created_at"),
+        # A quota rule limited to a model or a provider (one `model_id IN`
+        # subquery) reads "rows for these models since T" from the ledger when it
+        # is seeded, rebuilt or served by the database fallback.
+        Index("ix_usage_model_created", "model_id", "created_at"),
+        # ... and "rows served by this provider since T", from the provider the
+        # row itself carries (see `provider_id`).
+        Index("ix_usage_provider_created", "provider_id", "created_at"),
         Index("ix_usage_created", "created_at"),
         Index("ix_usage_status", "status"),
         Index("ix_usage_user_tag_created", "user_id", "tag", "created_at"),
@@ -1639,6 +1646,17 @@ class UsageRecord(Base):
     )
     model_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("models.id", ondelete="SET NULL"), default=None
+    )
+    # The provider that SERVED the request, written with the row (the served
+    # model's provider at that moment). Denormalised on purpose: a quota rule on
+    # a provider sums by it, and deriving it from `model_id` through today's
+    # catalogue would move history when a model is repointed to another provider
+    # and lose it when the model is deleted (`model_id` goes null). Null for a
+    # row written before migration 0089 whose model was already gone, and for a
+    # BYOK row's deleted provider. Migration 0089 backfilled older rows from the
+    # model's provider at upgrade time: best effort for history.
+    provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("providers.id", ondelete="SET NULL"), default=None
     )
     # Denormalised so the ledger stays readable after a model is retired.
     model_name: Mapped[str] = mapped_column(String(255))
@@ -1886,6 +1904,11 @@ class LimitRule(Base):
             # A person may hold an override and an ordinary user rule for the
             # same metric and window; they are different rules.
             text("overrides_each_user"),
+            # "OpenAI at most EUR 500" and "Anthropic at most EUR 500" are two
+            # rules; so are a provider's and one of its models'. NULL means "no
+            # filter", which the sentinel makes distinct from every real id.
+            text("coalesce(provider_id, '00000000-0000-0000-0000-000000000000')"),
+            text("coalesce(model_id, '00000000-0000-0000-0000-000000000000')"),
             unique=True,
         ),
         CheckConstraint(
@@ -1909,6 +1932,10 @@ class LimitRule(Base):
         CheckConstraint(
             "NOT overrides_each_user OR scope = 'user'",
             name="ck_limit_rules_override_user_scope",
+        ),
+        # A model rule is the model alone (see `provider_id`).
+        CheckConstraint(
+            "model_id IS NULL OR provider_id IS NULL", name="ck_limit_rules_model_alone"
         ),
         # Correct as-is for a nullable column: a CHECK passes when its expression
         # is NULL, so a calendar rule with no window_seconds satisfies it.
@@ -1938,6 +1965,35 @@ class LimitRule(Base):
         _enum(LimitAppliesTo, "limit_applies_to"),
         default=LimitAppliesTo.AGGREGATE,
         server_default=text("'aggregate'"),
+    )
+
+    # Optional filter: the rule counts, and limits, only the requests served by
+    # this provider and/or this model ("each user at most EUR 20 a month on
+    # Anthropic"). The **served** model decides, so a request that arrived by way
+    # of an alias counts for the provider of the alias's target. Own-key (BYOK)
+    # requests are in neither a rule's usage nor its refusals, as for any rule.
+    #
+    # A model rule stores the model alone (`provider_id` stays null): the model
+    # decides, and a model repointed to another provider must keep its rule. A
+    # provider rule sums the ledger by the provider each row was served by.
+    #
+    # RESTRICT, never CASCADE or SET NULL: cascading would silently remove a cost
+    # cap with the model, and nulling would turn "OpenAI at most EUR 500" into
+    # "everything at most EUR 500". Deleting a provider or model a rule names is a
+    # 409 that lists the rules; delete or change them first.
+    provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("providers.id", ondelete="RESTRICT"), default=None
+    )
+    model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("models.id", ondelete="RESTRICT"), default=None
+    )
+    # Always loaded with the rule (many-to-one joins in the same query), because
+    # the refusal message and every listing name them.
+    provider: Mapped[Provider | None] = relationship(
+        foreign_keys=[provider_id], lazy="joined", viewonly=True
+    )
+    model: Mapped[ModelDef | None] = relationship(
+        foreign_keys=[model_id], lazy="joined", viewonly=True
     )
 
     # A user rule that replaces, for that person, every global each-user rule
@@ -1985,6 +2041,25 @@ class LimitRule(Base):
                 value = seconds // size
                 return f"{value} {name}" if value == 1 else f"{value} {name}s"
         return f"{seconds}s"
+
+    @property
+    def shown_provider(self) -> Provider | None:
+        """The provider to display: a model rule's is its model's, today's."""
+        if self.model is not None:
+            return self.model.provider
+        return self.provider
+
+    @property
+    def filter_label(self) -> str | None:
+        """The provider or model the rule is limited to, as a reader names it."""
+        if self.model is not None:
+            # `name`, not `display_name`: it is what callers send and what the
+            # console's Quotas page and the limit view show, so the refusal and
+            # the console name a model the same way.
+            return self.model.name
+        if self.provider is not None:
+            return self.provider.name
+        return None
 
     def __repr__(self) -> str:
         return (
