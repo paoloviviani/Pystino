@@ -1008,6 +1008,13 @@ class HttpDetectionRedactor:
         self._healthz_seen = (time.monotonic(), found)
         return found
 
+    async def service_reachable(self) -> bool:
+        """Whether the service answered ``/healthz`` (the answer is cached for 30 s).
+
+        Read by the metrics sampler for ``pystino_redaction_service_up``.
+        """
+        return await self._healthz() is not None
+
     async def _default_engine(self) -> str | None:
         """The service's default NER engine (None when unknown)."""
         body = await self._healthz()

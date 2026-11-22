@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from gateway import metrics
 from gateway.accounting import DEFAULT_ESTIMATOR
 from gateway.catalogue import CatalogueError, load_catalogue
 from gateway.config import Settings, get_settings, startup_warnings
@@ -75,6 +76,9 @@ from gateway.routers import (
     scim,
     search,
     transcription,
+)
+from gateway.routers import (
+    metrics as metrics_router,
 )
 from gateway.routers import responses as responses_router
 from gateway.secrets import SecretBox
@@ -382,6 +386,11 @@ async def init_app_state(
         # one whose counters are briefly optimistic.
         logger.warning("could not check the counter cache at startup", exc_info=True)
 
+    if settings.metrics.enabled:
+        metrics.configure(app, valkey=getattr(app.state, "valkey", None))
+        app.state.metrics_sampler = metrics.SamplerLoop(app, settings.metrics.sample_seconds)
+        app.state.metrics_sampler.start()
+
     logger.info(
         "gateway started",
         extra={
@@ -404,6 +413,10 @@ async def shutdown_app_state(app: FastAPI) -> None:
         logger.info("waiting for %d accounting task(s)", len(pending))
         await asyncio.wait(pending, timeout=5.0)
 
+    if (sampler := getattr(app.state, "metrics_sampler", None)) is not None:
+        await sampler.stop()
+    if getattr(app.state, "metrics_started", False):
+        metrics.shutdown(app)
     await app.state.upstream_http.aclose()
     await app.state.control_http.aclose()
     if app.state.byok_http is not app.state.control_http:
@@ -486,11 +499,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Added last = outermost: the size limit runs before anything else sees the body.
     app.add_middleware(BodyLimitMiddleware, settings=resolved)
     app.add_middleware(SecurityHeadersMiddleware)
+    if resolved.metrics.enabled:
+        # Outermost of the three: the in-flight gauge covers the whole response.
+        app.add_middleware(metrics.MetricsMiddleware)
 
     app.add_exception_handler(GatewayError, gateway_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
 
     app.include_router(health.router)
+    if resolved.metrics.enabled:
+        app.include_router(metrics_router.router)
     app.include_router(client_scripts.router)
     app.include_router(chat.router)
     app.include_router(decisions.router)

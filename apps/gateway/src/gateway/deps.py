@@ -14,6 +14,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
+from gateway import metrics
 from gateway.accounting import TokenEstimator
 from gateway.capabilities import (
     Capabilities,
@@ -434,9 +435,11 @@ def principal_for(user: User, *, pinned: Group | None, api_key: ApiKey | None = 
     except PermissionError_ as exc:
         if not holds_byok(user):
             raise
+        metrics.observe_caller(user.id, api_key.id if api_key else None)
         return Principal(
             user=user, billing_group=None, api_key=api_key, billing_refusal=exc.message
         )
+    metrics.observe_caller(user.id, api_key.id if api_key else None)
     return Principal(user=user, billing_group=group, api_key=api_key)
 
 
@@ -813,6 +816,7 @@ async def get_authenticated_caller(
     user = await _authenticate_bearer_user(request, session, secret)
     requested = requested_billing_group(request)
     pinned = _pin_from_header(user, requested) if requested else None
+    metrics.observe_caller(user.id)
     return AuthenticatedCaller(
         user=user, billing_group=resolve_billing_group_or_none(user, pinned=pinned)
     )
@@ -839,6 +843,7 @@ async def _caller_from_key(
     _refuse_key_outside_groups(request, api_key.user)
     _refuse_key_without_api_keys(api_key.user)
     await _touch_last_used(session, api_key)
+    metrics.observe_caller(api_key.user.id, api_key.id)
     return AuthenticatedCaller(
         user=api_key.user,
         api_key=api_key,
@@ -936,6 +941,7 @@ async def get_management_user(
         and not holds_required_group(user, frozenset(policy.required_groups))
     ):
         raise AuthenticationError("Session is no longer valid.")
+    metrics.observe_caller(user.id)
     return user
 
 

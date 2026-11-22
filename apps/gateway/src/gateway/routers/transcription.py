@@ -121,7 +121,7 @@ async def _audio_is_screened(
     policy: audio cannot be refused or screened by what it says.
     """
     _, combined = await _metered.plan_privacy(
-        request, kind="chat", principal=principal, model=model
+        request, kind="chat", principal=principal, model=model, surface=SURFACE
     )
     return combined.refused or redaction_in_force(
         _metered.effective_policy_of(request, combined), settings

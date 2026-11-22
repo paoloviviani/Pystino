@@ -44,6 +44,7 @@ dependencies = [
     # reserved and billed by the second (gateway/audio.py). MIT, pure Python, no
     # dependencies of its own (verified at source, 2.3.2).
     "tinytag>=2.3.2",
+    "prometheus-client>=0.21",
 ]
 
 [project.scripts]

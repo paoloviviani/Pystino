@@ -96,6 +96,7 @@ nav:
   - Console: console.md
   - Operations:
       - operations.md
+      - Metrics: metrics.md
       - "Measured performance": performance.md
   - Development: development.md
   - Changelog: changelog.md

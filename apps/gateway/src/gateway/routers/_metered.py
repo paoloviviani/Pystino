@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import random
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -38,6 +39,7 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.background import BackgroundTask
 
+from gateway import metrics
 from gateway.access import accessible_model_by_name, alias_targets, alias_unavailable_reason
 from gateway.accounting import RequestAccounting, RequestContext, TokenCounts
 from gateway.accounting.cost import CostBreakdown, compute_cost, select_price
@@ -473,6 +475,11 @@ async def dereference(session: AsyncSession, resolved: ResolvedModel) -> Resolve
     return ResolvedModel(model=ordered[0].target, requested_name=resolved.requested_name)
 
 
+def _alias_label(resolved: ResolvedModel) -> str:
+    """The alias a caller named, for the failover counter; a member's own is ``byok``."""
+    return "byok" if resolved.model.is_private else resolved.requested_name
+
+
 async def serve_with_failover[ResponseT: Response](
     session: AsyncSession,
     plan: RoutePlan,
@@ -505,7 +512,18 @@ async def serve_with_failover[ResponseT: Response](
                 failed.reason,
             )
             failure = failed
+            metrics.route_failover(_alias_label(resolved), "failover")
             continue
+        except Exception:
+            # The last attempt raised (not an AttemptFailed): the caller gets the
+            # error, and the alias still ran out of targets.
+            if resolved.attempt > 1:
+                metrics.route_failover(_alias_label(resolved), "exhausted")
+            raise
+        if resolved.attempt > 1:
+            metrics.route_failover(
+                _alias_label(resolved), "recovered" if response.status_code < 400 else "exhausted"
+            )
         if response.status_code < 400:
             await _stick(session, plan, resolved)
         return response
@@ -665,6 +683,9 @@ class Metered:
         Nothing was generated, so the actuals are zero and the reservation is
         handed back in full — but by the same path as every other outcome.
         """
+        metrics.upstream_error(
+            self.provider_name, metrics.upstream_error_kind(exc=exc), byok=self.accounting.byok
+        )
         actuals = await self.accounting.finalise(
             status=UsageStatus.UPSTREAM_ERROR,
             error_code="upstream_unreachable",
@@ -700,6 +721,11 @@ class Metered:
         vendor's side that never happened, which is the same class of mistake
         as the estimated-usage disclosure recorded in AGENTS.md.
         """
+        metrics.upstream_error(
+            self.provider_name,
+            metrics.upstream_error_kind(status_code=status_code),
+            byok=self.accounting.byok,
+        )
         actuals = await self.accounting.finalise(
             status=UsageStatus.UPSTREAM_ERROR,
             upstream_status=status_code if upstream_status is None else upstream_status,
@@ -880,6 +906,7 @@ async def _admit(
     worst_case: TokenCounts,
     worst_case_own_searches: int,
     search_backend: str | None,
+    surface: ApiSurface,
 ) -> Reservation | JSONResponse:
     """Admission: evaluate the quota rules and reserve the worst case, or refuse.
 
@@ -918,6 +945,19 @@ async def _admit(
         )
     except QuotaExceeded as exc:
         logger.info("quota refusal for user=%s: %s", principal.user.id, exc)
+        for violation in exc.violations:
+            rule = violation.rule
+            metrics.quota_refusal(
+                rule.metric.value,
+                rule.scope.value,
+                "model" if rule.model_id else "provider" if rule.provider_id else "none",
+            )
+        metrics.refused(
+            str(surface),
+            metrics.provider_label(resolved.provider.name, byok=model.is_private),
+            metrics.model_label(model.api_name, byok=model.is_private),
+            "quota_exceeded",
+        )
         refusal = error_response(
             f"Quota exceeded. {exc}",
             status_code=429,
@@ -939,6 +979,12 @@ async def _admit(
             raise AttemptFailed("quota_exceeded", response=refusal) from exc
         return refusal
     except QuotaUnavailable as exc:
+        metrics.refused(
+            str(surface),
+            metrics.provider_label(resolved.provider.name, byok=model.is_private),
+            metrics.model_label(model.api_name, byok=model.is_private),
+            "quota_unavailable",
+        )
         raise ServiceUnavailableError(
             "Quota state is temporarily unavailable, so the request was refused "
             "rather than served unmetered."
@@ -1016,6 +1062,7 @@ async def begin(
             worst_case=worst_case,
             worst_case_own_searches=worst_case_own_searches,
             search_backend=search_backend,
+            surface=surface,
         )
         if isinstance(reservation, JSONResponse):
             return reservation
@@ -1050,6 +1097,7 @@ async def begin(
             billing_mode=resolved.provider.billing_mode.value,
             byok=model.is_private,
             tag=tag,
+            provider_name=resolved.provider.name,
         ),
         session_factory=session_factory,
         settings=settings,
@@ -1073,6 +1121,7 @@ async def plan_privacy(
     kind: str,
     principal: Principal,
     model: ModelDef,
+    surface: ApiSurface,
     texts: Sequence[str] = (),
     requested_name: str | None = None,
 ) -> tuple[Facts, Combined]:
@@ -1095,7 +1144,18 @@ async def plan_privacy(
         texts=tuple(texts) if privacy.uses_verdicts(facts_kind) else (),
         judge=judge_of(request, principal),
     )
-    return facts, await plan(privacy.evaluator, privacy.pipelines_of(facts_kind), facts)
+    try:
+        return facts, await plan(privacy.evaluator, privacy.pipelines_of(facts_kind), facts)
+    except ServiceUnavailableError as exc:
+        if exc.code == "privacy_undecidable":
+            metrics.privacy_action(facts_kind, "undecidable")
+            metrics.refused(
+                str(surface),
+                metrics.provider_of(model),
+                metrics.model_label(model.api_name, byok=model.is_private),
+                "privacy_undecidable",
+            )
+        raise
 
 
 def judge_of(request: Request, principal: Principal) -> ContentJudge:
@@ -1183,6 +1243,7 @@ async def redact_or_block(
         kind=kind,
         principal=principal,
         model=model,
+        surface=surface,
         texts=screened_texts(messages),
         requested_name=requested_name,
     )
@@ -1210,9 +1271,12 @@ async def redact_or_block(
         if combined.winner is not None or policy_names_of(request, combined)
         else "default",
     )
+    started = time.perf_counter()
     try:
         outcome = await redactor.redact_request(messages, policy=policy)
     except ContentBlockedError as exc:
+        metrics.privacy_action("content", "blocked")
+        _count_blocked(surface, model)
         detail = build_detail(exc.findings or {}, policy, blocked=True)
         detail = attribution.with_routing(detail, {**routing, "outcome": "blocked"})
         if wants_redaction_summary(request):
@@ -1239,6 +1303,8 @@ async def redact_or_block(
         )
         raise
     except RedactionUnavailableError as exc:
+        metrics.privacy_action("content", "undecidable")
+        _count_blocked(surface, model)
         # Refused because screening could not run: leave a row whose code says why
         # (timeout vs unreachable), so the request list is not a bare status.
         await record_blocked(
@@ -1255,10 +1321,23 @@ async def redact_or_block(
             policy=policy,
         )
         raise
+    metrics.redaction_seconds(time.perf_counter() - started)
+    if outcome.entity_count:
+        metrics.privacy_action("content", "redacted")
     outcome.routing = routing
     if outcome.detail is not None or privacy_configured(request):
         outcome.detail = attribution.with_routing(outcome.detail, routing)
     return outcome
+
+
+def _count_blocked(surface: ApiSurface, model: ModelDef) -> None:
+    """A request the ledger records as ``blocked`` never reaches ``finalise``."""
+    metrics.refused(
+        str(surface),
+        metrics.provider_of(model),
+        metrics.model_label(model.api_name, byok=model.is_private),
+        "blocked",
+    )
 
 
 async def refuse_by_rule(
@@ -1285,6 +1364,14 @@ async def refuse_by_rule(
     message = f"Refused by the privacy rule '{rule_name}'{where}: {why}"
     detail = attribution.with_routing(None, {**routing, "outcome": "refused", "reason": why})
     detail["blocked"] = True
+    kind = "extract" if surface is ApiSurface.OCR else "content"
+    metrics.privacy_action(kind, "blocked")
+    metrics.refused(
+        str(surface),
+        metrics.provider_of(model),
+        metrics.model_label(model.api_name, byok=model.is_private),
+        "privacy_refused",
+    )
     error = RoutingRefusedError(message)
     if wants_redaction_summary(request):
         error.extra_payload = {
