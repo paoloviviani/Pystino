@@ -580,6 +580,58 @@ class TestQuotaFilter:
         assert response.status_code == 429
         assert moved.deltas() == [0, 0]
 
+    @pytest.mark.parametrize(("limit", "deltas"), [(0, [2, 1]), (100, [1, 1])])
+    async def test_a_model_rule_on_a_later_target_is_a_failover_or_serves_it(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        fake_upstream: FakeUpstream,
+        limit: int,
+        deltas: list[int],
+    ) -> None:
+        """Cap 0 skips b (a second failover) and c serves; under the cap b serves."""
+        from gateway.models import ModelDef
+        from sqlalchemy import select
+        from test_routing_policies import Upstreams, make_route
+
+        alias = f"routed-later-{limit}"
+        await make_route(session_factory, seeded, ("r-a", 1), ("r-b", 1), ("r-c", 1), name=alias)
+        async with session_factory() as db:
+            b_id = (
+                await db.execute(select(ModelDef.id).where(ModelDef.name == "r-b"))
+            ).scalar_one()
+        async with session_factory() as db:
+            db.add(
+                LimitRule(
+                    name="cap",
+                    scope=LimitScope.GROUP,
+                    scope_id=seeded.group.id,
+                    metric=LimitMetric.REQUESTS,
+                    window_seconds=3600,
+                    limit_value=Decimal(limit),
+                    model_id=b_id,
+                )
+            )
+            await db.commit()
+        Upstreams(fake_upstream).set("up-r-a", "timeout")
+        moved = Moved(
+            ("pystino_route_failovers_total", {"alias": alias, "outcome": "failover"}),
+            ("pystino_route_failovers_total", {"alias": alias, "outcome": "recovered"}),
+            (
+                "pystino_quota_refusals_total",
+                {"metric": "requests", "scope": "group", "filter": "model"},
+            ),
+        )
+        response = await client.post(
+            "/v1/chat/completions",
+            json={"model": alias, "messages": [{"role": "user", "content": "hi"}]},
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200
+        refusals = 1 if limit == 0 else 0
+        assert moved.deltas() == [*deltas, refusals]
+
 
 class TestFailoverAccounting:
     async def test_a_last_attempt_that_raises_still_counts_as_exhausted(self) -> None:
