@@ -946,7 +946,12 @@ async def _admit(
     except QuotaExceeded as exc:
         logger.info("quota refusal for user=%s: %s", principal.user.id, exc)
         for violation in exc.violations:
-            metrics.quota_refusal(violation.rule.metric.value, violation.rule.scope.value)
+            rule = violation.rule
+            metrics.quota_refusal(
+                rule.metric.value,
+                rule.scope.value,
+                "model" if rule.model_id else "provider" if rule.provider_id else "none",
+            )
         metrics.refused(
             str(surface),
             metrics.provider_label(resolved.provider.name, byok=model.is_private),

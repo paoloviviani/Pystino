@@ -257,7 +257,10 @@ class TestCounters:
             await db.commit()
         fake_upstream.set_json(completion_body())
         moved = Moved(
-            ("pystino_quota_refusals_total", {"metric": "requests", "scope": "group"}),
+            (
+                "pystino_quota_refusals_total",
+                {"metric": "requests", "scope": "group", "filter": "none"},
+            ),
             (
                 "pystino_requests_total",
                 {
@@ -507,6 +510,77 @@ class TestLedgerGaps:
         assert moved.deltas() == [1]
 
 
+class TestQuotaFilter:
+    async def _rule(
+        self, session_factory: async_sessionmaker[AsyncSession], seeded: Seeded, **where: Any
+    ) -> None:
+        async with session_factory() as db:
+            db.add(
+                LimitRule(
+                    name="cap",
+                    scope=LimitScope.GROUP,
+                    scope_id=seeded.group.id,
+                    metric=LimitMetric.REQUESTS,
+                    window_seconds=3600,
+                    limit_value=Decimal(0),
+                    **where,
+                )
+            )
+            await db.commit()
+
+    @pytest.mark.parametrize("filter_", ["provider", "model"])
+    async def test_a_provider_or_model_rule_says_which_kind_and_not_which(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        fake_upstream: FakeUpstream,
+        filter_: str,
+    ) -> None:
+        where = (
+            {"provider_id": seeded.provider.id}
+            if filter_ == "provider"
+            else {"model_id": seeded.model.id}
+        )
+        await self._rule(session_factory, seeded, **where)
+        moved = Moved(
+            (
+                "pystino_quota_refusals_total",
+                {"metric": "requests", "scope": "group", "filter": filter_},
+            ),
+            (
+                "pystino_quota_refusals_total",
+                {"metric": "requests", "scope": "group", "filter": "none"},
+            ),
+        )
+        assert (await chat(client, seeded)).status_code == 429
+        assert moved.deltas() == [1, 0]
+        assert str(seeded.provider.id) not in await scrape(client)
+
+    async def test_a_cap_on_the_first_attempt_is_not_a_failover(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        from test_routing_policies import make_route
+
+        await make_route(session_factory, seeded, ("q-a", 1), ("q-b", 1), name="routed-cap")
+        await self._rule(session_factory, seeded, provider_id=seeded.provider.id)
+        moved = Moved(
+            ("pystino_route_failovers_total", {"alias": "routed-cap", "outcome": "failover"}),
+            ("pystino_route_failovers_total", {"alias": "routed-cap", "outcome": "exhausted"}),
+        )
+        response = await client.post(
+            "/v1/chat/completions",
+            json={"model": "routed-cap", "messages": [{"role": "user", "content": "hi"}]},
+            headers=seeded.auth,
+        )
+        assert response.status_code == 429
+        assert moved.deltas() == [0, 0]
+
+
 class TestFailoverAccounting:
     async def test_a_last_attempt_that_raises_still_counts_as_exhausted(self) -> None:
         from types import SimpleNamespace
@@ -723,6 +797,7 @@ class TestNoIdentity:
             "currency",
             "metric",
             "scope",
+            "filter",
             "action",
             "backend",
             "window",
@@ -961,7 +1036,11 @@ class TestSeveralWorkers:
         (tmp_path / "counter_123.db").write_bytes(b"stale")
         (tmp_path / "nested").mkdir()
         (tmp_path / "nested" / "x").write_bytes(b"x")
-        monkeypatch.delenv("PROMETHEUS_MULTIPROC_DIR", raising=False)
+        # prepare_multiprocess writes os.environ directly; registering the name with
+        # monkeypatch first makes teardown remove it again instead of leaking a
+        # stale directory into every later test and subprocess.
+        monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", "")
+        monkeypatch.delenv("PROMETHEUS_MULTIPROC_DIR")
         assert prepare_multiprocess(str(tmp_path)) == str(tmp_path)
         assert list(tmp_path.iterdir()) == []
         assert os.environ["PROMETHEUS_MULTIPROC_DIR"] == str(tmp_path)

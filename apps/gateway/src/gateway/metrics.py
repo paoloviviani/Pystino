@@ -136,8 +136,9 @@ COST = Counter(
 )
 QUOTA_REFUSALS = Counter(
     "pystino_quota_refusals",
-    "Requests refused by a quota rule, by the metric and the kind of scope that ran out.",
-    ["metric", "scope"],
+    "Requests refused by a quota rule, by the metric, the kind of scope that ran out and "
+    "whether the rule was limited to a provider or a model.",
+    ["metric", "scope", "filter"],
     registry=REGISTRY,
 )
 PRIVACY_ACTIONS = Counter(
@@ -387,8 +388,10 @@ def route_failover(alias: str, outcome: Literal["failover", "recovered", "exhaus
     FAILOVERS.labels(_bounded("alias", alias), outcome).inc()
 
 
-def quota_refusal(metric: str, scope: str) -> None:
-    QUOTA_REFUSALS.labels(metric, scope).inc()
+def quota_refusal(
+    metric: str, scope: str, filter: Literal["none", "provider", "model"] = "none"
+) -> None:
+    QUOTA_REFUSALS.labels(metric, scope, filter).inc()
 
 
 def privacy_action(kind: str, action: Literal["redacted", "blocked", "undecidable"]) -> None:
