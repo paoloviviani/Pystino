@@ -416,6 +416,129 @@ class TestCounters:
         assert moved.deltas() == [1, 1, 1]
 
 
+class TestLedgerGaps:
+    """Refusals the ledger does not write a row for still show up in the counters."""
+
+    async def test_an_undecidable_privacy_rule_counts_one_503(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        from gateway.errors import ServiceUnavailableError
+        from gateway.routers import _metered
+
+        async def undecidable(*args: Any, **kwargs: Any) -> Any:
+            raise ServiceUnavailableError("cannot decide", code="privacy_undecidable")
+
+        monkeypatch.setattr(_metered, "plan", undecidable)
+        moved = Moved(
+            ("pystino_privacy_actions_total", {"kind": "content", "action": "undecidable"}),
+            (
+                "pystino_requests_total",
+                {
+                    "surface": "chat_completions",
+                    "provider": "fake",
+                    "model": "test-model",
+                    "status": "privacy_undecidable",
+                },
+            ),
+        )
+        assert (await chat(client, seeded)).status_code == 503
+        assert moved.deltas() == [1, 1]
+        assert fake_upstream.bodies == []
+
+    async def test_an_unavailable_quota_store_counts_one_503(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        from gateway.quota import QuotaEngine, QuotaUnavailable
+
+        async def down(*args: Any, **kwargs: Any) -> Any:
+            raise QuotaUnavailable("no counter store could answer")
+
+        monkeypatch.setattr(QuotaEngine, "check_and_reserve", down)
+        moved = Moved(
+            (
+                "pystino_requests_total",
+                {
+                    "surface": "chat_completions",
+                    "provider": "fake",
+                    "model": "test-model",
+                    "status": "quota_unavailable",
+                },
+            ),
+        )
+        assert (await chat(client, seeded)).status_code == 503
+        assert moved.deltas() == [1]
+        assert fake_upstream.bodies == []
+
+    async def test_an_ocr_redaction_service_that_is_down_is_an_undecidable_action(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        from gateway.redaction.http import RedactionUnavailableError
+        from test_ocr_surface import DOCUMENT, add_ocr_model, ocr_response
+
+        class Down:
+            name = "stub"
+
+            async def redact_request(self, messages: Any, *, policy: Any = None) -> Any:
+                raise RedactionUnavailableError("down")
+
+        app.state.redactor = Down()
+        model = await add_ocr_model(session, seeded, name="metrics-ocr")
+        fake_upstream.set_json(ocr_response(1))
+        moved = Moved(
+            ("pystino_privacy_actions_total", {"kind": "extract", "action": "undecidable"}),
+        )
+        response = await client.post(
+            "/v1/ocr", json={"model": model.name, "document": DOCUMENT}, headers=seeded.auth
+        )
+        assert response.status_code >= 500
+        assert moved.deltas() == [1]
+
+
+class TestFailoverAccounting:
+    async def test_a_last_attempt_that_raises_still_counts_as_exhausted(self) -> None:
+        from types import SimpleNamespace
+        from typing import cast
+
+        from gateway.errors import ServiceUnavailableError
+        from gateway.routers import _metered
+        from gateway.routers._metered import AttemptFailed
+
+        def target(attempt: int) -> Any:
+            return SimpleNamespace(
+                attempt=attempt,
+                last=attempt == 2,
+                requested_name="routed-raises",
+                model=SimpleNamespace(is_private=False, name=f"t{attempt}"),
+            )
+
+        async def serve(resolved: Any) -> Any:
+            if resolved.attempt == 1:
+                raise AttemptFailed("upstream_error", response=None)
+            raise ServiceUnavailableError("unreachable")
+
+        plan = SimpleNamespace(attempts=[target(1), target(2)], sticky=None)
+        moved = Moved(
+            ("pystino_route_failovers_total", {"alias": "routed-raises", "outcome": "failover"}),
+            ("pystino_route_failovers_total", {"alias": "routed-raises", "outcome": "exhausted"}),
+        )
+        with pytest.raises(ServiceUnavailableError):
+            await _metered.serve_with_failover(cast(Any, None), cast(Any, plan), serve)
+        assert moved.deltas() == [1, 1]
+
+
 # -- streams -----------------------------------------------------------------
 
 
@@ -842,6 +965,94 @@ class TestSeveralWorkers:
         assert prepare_multiprocess(str(tmp_path)) == str(tmp_path)
         assert list(tmp_path.iterdir()) == []
         assert os.environ["PROMETHEUS_MULTIPROC_DIR"] == str(tmp_path)
+
+
+class TestHealthFlags:
+    def test_the_flags_are_absent_until_something_is_probed(self, tmp_path: Path) -> None:
+        env = {"PROMETHEUS_MULTIPROC_DIR": str(tmp_path)}
+        out, err = _python(SCRAPER, env).communicate(timeout=60)
+        assert "pystino_requests_in_flight" in out or "pystino_build_info" in out or err == ""
+        assert "pystino_valkey_up" not in out
+        assert "pystino_redaction_service_up" not in out
+
+    def test_the_flags_appear_once_a_dependency_is_probed(self, tmp_path: Path) -> None:
+        env = {"PROMETHEUS_MULTIPROC_DIR": str(tmp_path)}
+        code = """
+            import asyncio, types
+            from gateway import metrics
+
+            class Valkey:
+                async def ping(self):
+                    return True
+
+            class Redactor:
+                async def service_reachable(self):
+                    return False
+
+            state = types.SimpleNamespace(valkey=Valkey(), redactor=Redactor())
+            app = types.SimpleNamespace(state=state)
+            print(asyncio.run(metrics.render(app)).decode())
+        """
+        out, err = _python(code, env).communicate(timeout=60)
+        assert "\npystino_valkey_up 1.0" in out, err
+        assert "\npystino_redaction_service_up 0.0" in out
+
+    async def test_the_default_deployment_exports_neither(
+        self, client: httpx.AsyncClient, app: FastAPI
+    ) -> None:
+        # The test app has no Valkey and no HTTP redaction service.
+        text = await scrape(client)
+        if "pystino_valkey_up" not in metrics._up_gauges:
+            assert "pystino_valkey_up" not in text
+        if "pystino_redaction_service_up" not in metrics._up_gauges:
+            assert "pystino_redaction_service_up" not in text
+
+
+class TestTimeToFirstToken:
+    async def test_a_non_streamed_request_does_not_touch_the_ttft_histogram(
+        self, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: FakeUpstream
+    ) -> None:
+        fake_upstream.set_json(completion_body())
+        moved = Moved(("pystino_time_to_first_token_seconds_count", {"provider": "fake"}))
+        assert (await chat(client, seeded)).status_code == 200
+        assert moved.deltas() == [0]
+
+
+class TestDeadWorkers:
+    def test_a_killed_workers_live_gauge_files_are_removed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        monkeypatch.setattr(metrics, "MULTIPROCESS", True)
+        monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(tmp_path))
+        gone = [
+            tmp_path / f"gauge_livesum_{dead.pid}.db",
+            tmp_path / f"gauge_livemin_{dead.pid}.db",
+        ]
+        alive = [
+            tmp_path / f"gauge_livesum_{os.getpid()}.db",
+            tmp_path / f"counter_{dead.pid}.db",
+        ]
+        for path in (*gone, *alive):
+            path.write_bytes(b"")
+        assert metrics.reap_dead_workers() == [dead.pid]
+        assert not any(p.exists() for p in gone)
+        assert all(p.exists() for p in alive)
+
+    def test_a_pid_we_may_not_signal_is_alive(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(metrics, "MULTIPROCESS", True)
+        monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(tmp_path))
+        (tmp_path / "gauge_livesum_999999.db").write_bytes(b"")
+
+        def kill(pid: int, sig: int) -> None:
+            raise PermissionError
+
+        monkeypatch.setattr(os, "kill", kill)
+        assert metrics.reap_dead_workers() == []
+        assert (tmp_path / "gauge_livesum_999999.db").exists()
 
 
 # -- the hot path ------------------------------------------------------------------

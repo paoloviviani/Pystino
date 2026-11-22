@@ -514,6 +514,12 @@ async def serve_with_failover[ResponseT: Response](
             failure = failed
             metrics.route_failover(_alias_label(resolved), "failover")
             continue
+        except Exception:
+            # The last attempt raised (not an AttemptFailed): the caller gets the
+            # error, and the alias still ran out of targets.
+            if resolved.attempt > 1:
+                metrics.route_failover(_alias_label(resolved), "exhausted")
+            raise
         if resolved.attempt > 1:
             metrics.route_failover(
                 _alias_label(resolved), "recovered" if response.status_code < 400 else "exhausted"
@@ -968,6 +974,12 @@ async def _admit(
             raise AttemptFailed("quota_exceeded", response=refusal) from exc
         return refusal
     except QuotaUnavailable as exc:
+        metrics.refused(
+            str(surface),
+            metrics.provider_label(resolved.provider.name, byok=model.is_private),
+            metrics.model_label(model.api_name, byok=model.is_private),
+            "quota_unavailable",
+        )
         raise ServiceUnavailableError(
             "Quota state is temporarily unavailable, so the request was refused "
             "rather than served unmetered."
@@ -1104,6 +1116,7 @@ async def plan_privacy(
     kind: str,
     principal: Principal,
     model: ModelDef,
+    surface: ApiSurface,
     texts: Sequence[str] = (),
     requested_name: str | None = None,
 ) -> tuple[Facts, Combined]:
@@ -1131,6 +1144,12 @@ async def plan_privacy(
     except ServiceUnavailableError as exc:
         if exc.code == "privacy_undecidable":
             metrics.privacy_action(facts_kind, "undecidable")
+            metrics.refused(
+                str(surface),
+                metrics.provider_of(model),
+                metrics.model_label(model.api_name, byok=model.is_private),
+                "privacy_undecidable",
+            )
         raise
 
 
@@ -1219,6 +1238,7 @@ async def redact_or_block(
         kind=kind,
         principal=principal,
         model=model,
+        surface=surface,
         texts=screened_texts(messages),
         requested_name=requested_name,
     )

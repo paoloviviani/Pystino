@@ -67,6 +67,7 @@ from gateway.privacy import attribution
 from gateway.privacy.combine import Combined, Retarget, plan
 from gateway.privacy.rules import DEFAULT_READER, filetype_of
 from gateway.privacy.state import state_of
+from gateway.redaction.http import RedactionUnavailableError
 from gateway.redaction.report import SOURCE_DOCUMENT, build_detail, build_summary, relabel
 from gateway.routers import _metered
 from gateway.schemas import OcrRequest
@@ -167,6 +168,9 @@ async def _redact_pages(
                 request_id=request_id, detail=detail, blocked=True
             )
         return JSONResponse(status_code=403, content=content)
+    except RedactionUnavailableError:
+        metrics.privacy_action("extract", "undecidable")
+        raise
 
     metrics.redaction_seconds(time.perf_counter() - started)
     if outcome.entity_count:

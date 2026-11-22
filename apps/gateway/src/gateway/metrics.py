@@ -171,18 +171,28 @@ DB_POOL = Gauge(
     registry=REGISTRY,
     multiprocess_mode="livesum",
 )
-VALKEY_UP = Gauge(
-    "pystino_valkey_up",
-    "1 when Valkey answered the last probe; absent when none is configured.",
-    registry=REGISTRY,
-    multiprocess_mode="livemin",
-)
-REDACTION_UP = Gauge(
-    "pystino_redaction_service_up",
-    "1 when the redaction service answered the last probe; absent for in-process engines.",
-    registry=REGISTRY,
-    multiprocess_mode="livemin",
-)
+# An unlabelled Gauge exports 0 from the moment it exists (and, with several
+# workers, writes a 0 into its file), so the two health flags are created on the
+# first probe that has something to say. Where there is no Valkey or the engine
+# is in-process, the series stays absent instead of reading 0 forever.
+_UP_HELP = {
+    "pystino_valkey_up": "1 when Valkey answered the last probe; absent when none is configured.",
+    "pystino_redaction_service_up": (
+        "1 when the redaction service answered the last probe; absent for in-process engines."
+    ),
+}
+_up_gauges: dict[str, Gauge] = {}
+
+
+def _set_up(name: str, value: int) -> None:
+    gauge = _up_gauges.get(name)
+    if gauge is None:
+        gauge = _up_gauges[name] = Gauge(
+            name, _UP_HELP[name], registry=REGISTRY, multiprocess_mode="livemin"
+        )
+    gauge.set(value)
+
+
 BUILD_INFO = Gauge(
     "pystino_build_info",
     "Always 1; the version is the label.",
@@ -303,7 +313,13 @@ def refused(
     surface: str,
     provider: str,
     model: str,
-    status: Literal["blocked", "privacy_refused", "quota_exceeded"],
+    status: Literal[
+        "blocked",
+        "privacy_refused",
+        "privacy_undecidable",
+        "quota_exceeded",
+        "quota_unavailable",
+    ],
 ) -> None:
     """A request ended before any provider saw it (no ledger finalise follows)."""
     REQUESTS.labels(surface, provider, model, status).inc()
@@ -491,10 +507,45 @@ def _version() -> str:
         return "unknown"
 
 
+def reap_dead_workers() -> list[int]:
+    """Drop the live-gauge files of workers that died without cleaning up.
+
+    ``mark_process_dead`` only runs on a graceful shutdown; a worker that was
+    killed (SIGKILL, the OOM killer) leaves ``gauge_live*_<pid>.db`` behind, and
+    its last in-flight and pool figures would be summed into every scrape for
+    good. A pid is dead when ``kill(pid, 0)`` finds no such process; a
+    ``PermissionError`` means it exists (owned by someone else), so it stays.
+    """
+    directory = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if not MULTIPROCESS or not directory:
+        return []
+    pids: set[int] = set()
+    with suppress(OSError):
+        for name in os.listdir(directory):
+            if name.startswith("gauge_live") and name.endswith(".db"):
+                tail = name[:-3].rsplit("_", 1)[-1]
+                if tail.isdigit():
+                    pids.add(int(tail))
+    dead: list[int] = []
+    for pid in sorted(pids - {os.getpid()}):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            dead.append(pid)
+        except OSError:
+            continue  # PermissionError and the like: it is alive
+    for pid in dead:
+        with suppress(Exception):
+            mark_process_dead(pid)  # type: ignore[no-untyped-call]
+        logger.info("metrics: removed the gauge files of dead worker %d", pid)
+    return dead
+
+
 def configure(app: FastAPI, *, valkey: Any | None) -> None:
     """Turn collection on for this worker (called from ``init_app_state``)."""
     global _tracker
     _tracker = ActiveTracker(valkey)
+    reap_dead_workers()
     BUILD_INFO.labels(_version()).set(1)
     START_TIME.set(time.time())
     app.state.metrics_started = True
@@ -530,19 +581,19 @@ async def sample(app: FastAPI) -> None:
     if valkey is not None:
         try:
             await valkey.ping()
-            VALKEY_UP.set(1)
+            _set_up("pystino_valkey_up", 1)
         except Exception:
-            VALKEY_UP.set(0)
+            _set_up("pystino_valkey_up", 0)
     elif getattr(app.state, "counter_store_error", None):
-        VALKEY_UP.set(0)
+        _set_up("pystino_valkey_up", 0)
 
     redactor = getattr(app.state, "redactor", None)
     probe = getattr(redactor, "service_reachable", None)
     if probe is not None:
         try:
-            REDACTION_UP.set(1 if await probe() else 0)
+            _set_up("pystino_redaction_service_up", 1 if await probe() else 0)
         except Exception:
-            REDACTION_UP.set(0)
+            _set_up("pystino_redaction_service_up", 0)
 
 
 class SamplerLoop:
@@ -578,6 +629,7 @@ async def render(app: FastAPI) -> bytes:
     """The exposition text: this worker's instruments, or every worker's merged."""
     await sample(app)
     if MULTIPROCESS:
+        reap_dead_workers()
         registry = CollectorRegistry()
         MultiProcessCollector(registry)  # type: ignore[no-untyped-call]
         # The process collector describes the worker that answered the scrape.

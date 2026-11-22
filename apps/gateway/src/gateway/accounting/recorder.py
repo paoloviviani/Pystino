@@ -717,7 +717,11 @@ class RequestAccounting:
                 model=self._ctx.model_name,
                 status=str(status),
                 duration_seconds=(utcnow() - self._started_at).total_seconds(),
-                ttfb_seconds=None if ttfb_ms is None else ttfb_ms / 1000,
+                # Only a stream has a first token: a non-streamed route observes its
+                # whole body once, which would put full latencies in the histogram.
+                ttfb_seconds=(
+                    ttfb_ms / 1000 if ttfb_ms is not None and self._ctx.streamed else None
+                ),
                 byok=self._ctx.byok,
                 prompt=counts.prompt if counts else 0,
                 completion=counts.completion if counts else 0,

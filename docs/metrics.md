@@ -79,14 +79,14 @@ Counters appear in the page with a `_total` suffix and histograms as
 | `pystino_route_failovers_total` | counter | `alias`, `outcome` | A routed alias: `failover` (an attempt failed and the next was tried), `recovered` (a later attempt served), `exhausted` (the last attempt failed too). |
 | `pystino_tokens_total` | counter | `provider`, `model`, `direction` | `prompt`, `completion`, `cached_read`, `cache_write`. The three prompt slices are disjoint: `prompt` is the part that was neither read from nor written to a cache, so their sum is the prompt. |
 | `pystino_cost_total` | counter | `provider`, `currency` | Cost charged, in the currency it was charged in. Not for a caller's own provider key (BYOK), which is never charged. |
-| `pystino_quota_refusals_total` | counter | `metric` (`requests`, `tokens`, `cost`, `own_search_requests`), `scope` (`global`, `group`, `user`, `api_key`) | A request refused by a quota rule; the kind of limit that ran out, never whose. |
-| `pystino_privacy_actions_total` | counter | `kind` (`content`, `extract`), `action` (`redacted`, `blocked`, `undecidable`) | What the privacy rules did. `undecidable` is a request refused because screening could not run or a condition could not be decided. |
+| `pystino_quota_refusals_total` | counter | `metric` (`requests`, `tokens`, `cost`, `own_search_requests`), `scope` (`global`, `group`, `user`, `api_key`) | A request refused by a quota rule; the kind of limit that ran out, never whose. Counted per attempt, like `requests_total`: a routed alias whose first target is refused and whose second serves counts one refusal. |
+| `pystino_privacy_actions_total` | counter | `kind` (`content`, `extract`), `action` (`redacted`, `blocked`, `undecidable`) | What the privacy rules did. `undecidable` is a request refused because screening could not run or a condition could not be decided. `redacted` counts per attempt too, so a routed alias that fails over and redacts on both targets counts two. |
 | `pystino_redaction_duration_seconds` | histogram | none | Time spent redacting one request. |
 | `pystino_search_requests_total` | counter | `backend` | Calls the gateway made to its own search backends (not a provider's built-in search). |
 | `pystino_ocr_pages_total` | counter | `provider` | Pages read by OCR. |
 | `pystino_db_pool_connections` | gauge | `state` (`in_use`, `size`) | Database pool connections, summed over the workers. |
-| `pystino_valkey_up` | gauge | none | 1 if Valkey answered the last probe, 0 if not. Absent when no Valkey is configured. Any worker seeing it down makes it 0. |
-| `pystino_redaction_service_up` | gauge | none | 1 if the redaction service answered `/healthz`, 0 if not. Absent for in-process engines. |
+| `pystino_valkey_up` | gauge | none | 1 if Valkey answered the last probe, 0 if not. The series does not exist at all when no Valkey is configured, so an alert on `== 0` stays quiet there. Any worker seeing it down makes it 0. |
+| `pystino_redaction_service_up` | gauge | none | 1 if the redaction service answered `/healthz`, 0 if not. The series does not exist for in-process engines (`noop` and the like), so an alert on `== 0` stays quiet there. |
 | `pystino_build_info` | gauge | `version` | Always 1. |
 | `pystino_process_start_time_seconds` | gauge | none | When the oldest live worker started. Uptime is `time() - pystino_process_start_time_seconds`. |
 | `process_*`, `python_*` | | | The standard process collector: CPU, memory, file descriptors. With several workers these describe the worker that answered the scrape. |
@@ -96,7 +96,7 @@ Counters appear in the page with a `_total` suffix and histograms as
 in-flight gauge also `api`, `auth`, `console`, `scim` and `other`. `status` is one
 of `completed`, `upstream_error`, `client_disconnected`, `blocked` (a redaction
 policy refused it), `privacy_refused` (a privacy rule refused it),
-`quota_exceeded` and `auth_failed` (a `401` on a `/v1` route; its `provider` and
+`quota_exceeded`, `quota_unavailable` (the quota counters could not answer, a `503`), `privacy_undecidable` (screening could not decide, a `503`) and `auth_failed` (a `401` on a `/v1` route; its `provider` and
 `model` are `none`).
 
 `model` is the catalogue name, `provider` the provider's name. A request served
@@ -150,8 +150,9 @@ container.
   `pystino_redaction_service_up` take the lowest, the active-caller gauges the
   highest.
 - A worker that exits cleanly removes its gauges; its counters stay, as they must.
-  A worker that is killed leaves its gauge files until the next start, so its last
-  in-flight count lingers. Restart the container to clear them.
+  A worker that is killed (SIGKILL, the OOM killer) leaves its gauge files, but the
+  next scrape (and every worker start) removes the files of workers whose process no
+  longer exists, so its in-flight count and pool use do not linger.
 - If you start the gateway some other way (`uvicorn` or `gunicorn` directly with
   several workers), export `PROMETHEUS_MULTIPROC_DIR` to an empty directory
   yourself before it starts.
@@ -189,7 +190,7 @@ sum by (provider, currency) (increase(pystino_cost_total[1h]))
 sum by (provider, kind) (rate(pystino_upstream_errors_total[5m]))
 sum by (alias) (increase(pystino_route_failovers_total{outcome="exhausted"}[15m]))
 
-# is anything down?
+# is anything down? (a dependency that is not configured has no series, so this is quiet)
 pystino_valkey_up == 0 or pystino_redaction_service_up == 0
 ```
 
