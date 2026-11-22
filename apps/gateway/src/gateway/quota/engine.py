@@ -30,7 +30,7 @@ from typing import Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from gateway.config import QuotaSettings
 from gateway.models import (
@@ -39,6 +39,7 @@ from gateway.models import (
     LimitRule,
     LimitScope,
     Membership,
+    ModelDef,
     QuotaReset,
     UsageRecord,
     UsageStatus,
@@ -411,6 +412,14 @@ class QuotaEngine:
             # Resets come along: the watermark is part of evaluating the rule, not a
             # separate lookup, and loading it lazily here would be a query per rule.
             .options(selectinload(LimitRule.resets.and_(self._resets_visible_to(subject))))
+            # `populate_existing` below refreshes every row this statement loads,
+            # including the ModelDef a model rule names through its joined
+            # `LimitRule.model`. That row may be the very object the alias planner
+            # loaded for a later failover target, and a refresh that does not
+            # carry `prices` expires them: the next attempt would then lazy-load
+            # them from async code (MissingGreenlet). Loading them here keeps
+            # them populated through the refresh.
+            .options(joinedload(LimitRule.model).selectinload(ModelDef.prices))
             # Sessions are created with expire_on_commit=False (db.py), so an
             # already-loaded `resets` collection is *not* refreshed by a later
             # selectinload in the same session — SQLAlchemy leaves populated
