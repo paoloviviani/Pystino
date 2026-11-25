@@ -54,7 +54,10 @@ export const REDACTION_PATTERN_TEMPLATES: RedactionPatternTemplate[] = [
   },
   {
     name: "GITLAB_TOKEN",
-    regex: "glpat-[A-Za-z0-9_-]{20,}",
+    // GitLab's documented prefixes; the routable form adds dot-separated segments
+    // ("glpat-<payload>.01.<suffix>"), so a dot followed by a token character
+    // continues the match and a sentence-ending dot does not.
+    regex: "gl(pat|dt|rt|ptt|ft|imt|oas|cbt|soat|ffct|agent)-[A-Za-z0-9_-]{20,}(\\.[A-Za-z0-9_-]+)*",
     mode: "block",
     kind: "credential",
     description: m["pattern_template.gitlab_token.description"],

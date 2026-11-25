@@ -39,3 +39,45 @@ describe("redaction pattern templates", () => {
     expect(modes.get("DATE_OF_BIRTH")).toBe("redact");
   });
 });
+
+describe("GITLAB_TOKEN template", () => {
+  const template = REDACTION_PATTERN_TEMPLATES.find((t) => t.name === "GITLAB_TOKEN");
+  const body = "x".repeat(20);
+  const matches = (text: string): string[] =>
+    [...text.matchAll(new RegExp(template?.regex ?? "", "g"))].map((hit) => hit[0]);
+
+  it("matches a routable token whole, including its dotted tail", () => {
+    const token = `glpat-${body}.01.0y11nprdd`;
+    expect(matches(`my token is ${token} ok`)).toEqual([token]);
+  });
+
+  it("matches a legacy 20-character token", () => {
+    expect(matches(`glpat-${body}`)).toEqual([`glpat-${body}`]);
+  });
+
+  it("leaves a sentence-ending period outside the match", () => {
+    const token = `glpat-${body}.01.0y11nprdd`;
+    expect(matches(`token ${token} .`)).toEqual([token]);
+    expect(matches(`token ${token}.`)).toEqual([token]);
+    expect(matches(`token glpat-${body}...`)).toEqual([`glpat-${body}`]);
+    expect(matches(`token glpat-${body}.\nNext`)).toEqual([`glpat-${body}`]);
+  });
+
+  it("matches the other GitLab prefixes", () => {
+    for (const prefix of [
+      "gldt",
+      "glrt",
+      "glptt",
+      "glft",
+      "glimt",
+      "gloas",
+      "glcbt",
+      "glsoat",
+      "glffct",
+      "glagent",
+    ]) {
+      expect(matches(`${prefix}-${body}`)).toEqual([`${prefix}-${body}`]);
+    }
+    expect(matches(`glxx-${body}`)).toEqual([]);
+  });
+});

@@ -614,7 +614,7 @@
   "pattern_template.aws_access_key_id.description": "[ÁŴŚ áććéśś-ķéý íďéńťíƒíéŕ.]",
   "pattern_template.github_token.description": "[ǦíťȞúƀ ťóķéń ŵíťȟ á þúƀľíśȟéď þŕéƒíẋ.]",
   "pattern_template.github_fine_grained_token.description": "[ǦíťȞúƀ ƒíńé-ǧŕáíńéď þéŕśóńáľ áććéśś ťóķéń.]",
-  "pattern_template.gitlab_token.description": "[ǦíťĹáƀ þéŕśóńáľ áććéśś ťóķéń.]",
+  "pattern_template.gitlab_token.description": "[ǦíťĹáƀ ťóķéń (þéŕśóńáľ áććéśś, ďéþľóý, ŕúńńéŕ áńď óťȟéŕś), íńćľúďíńǧ ťȟé ľóńǧéŕ ŕóúťáƀľé ƒóŕḿ.]",
   "pattern_template.slack_token.description": "[Śľáćķ ťóķéń ŵíťȟ á þúƀľíśȟéď þŕéƒíẋ.]",
   "pattern_template.google_api_key.description": "[Ǧóóǧľé ÁÞÍ ķéý.]",
   "pattern_template.stripe_secret_key.description": "[Śťŕíþé ľíǚé óŕ ťéśť śéćŕéť ķéý.]",
