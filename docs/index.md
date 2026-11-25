@@ -1,14 +1,25 @@
+![Pystino](assets/brand/pystino-mark.svg#only-light){ .hero-logo }
+![Pystino](assets/brand/pystino-mark-reversed.svg#only-dark){ .hero-logo }
+
 # Pystino
 
 A self-hosted OpenAI-compatible **gateway** with per-user and per-group
 accounting, quotas, redaction and OIDC sign-in, plus the **console** that
 operates it. The name is *pistino*: Turin dialect for a nitpicker, the person
 who checks every last detail.
+{ .lead }
 
 One origin: the gateway serves the `/v1` API, the management API and the
 console at `/console`. It pairs with [Cerea](https://github.com/paoloviviani/Cerea),
 the chat, which is a `/v1` client of this gateway: each runs on its own, and
 together they are the intended setup (see [the rest of the stack](#the-rest-of-the-stack)).
+
+[Get started](getting-started.md){ .md-button .md-button--primary }
+[The gateway](gateway.md){ .md-button }
+{ .hero-actions }
+
+![The Pystino console overview: spend, requests and quotas](screenshot.webp#only-light){ .hero-shot }
+![The Pystino console overview: spend, requests and quotas](screenshot-dark.webp#only-dark){ .hero-shot }
 
 ## The four ideas that carry the design
 
