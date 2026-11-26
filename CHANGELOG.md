@@ -4,6 +4,10 @@ Notable changes to Pystino for operators of the gateway, newest first. Each rele
 
 ## Unreleased
 
+## v0.34.1 — 2026-11-26
+
+Paired with Cerea 0.65.0.
+
 - Fix (redaction): GitLab's routable tokens (`glpat-<payload>.01.<suffix>`) were only partly redacted: the **GITLAB_TOKEN** template stopped at the first dot and the tail of the token stayed in the text. The template now matches the whole token, for every documented GitLab prefix (`glpat`, `gldt`, `glrt`, `glptt`, `glft`, `glimt`, `gloas`, `glcbt`, `glsoat`, `glffct`, `glagent`), and leaves a sentence-ending period outside the match. Templates are copied into a policy when added, so migration `0091` rewrites stored patterns (administrator policies and users' own policies) whose regex equals the old template exactly; an edited expression is left alone. The downgrade restores the old expression on the entries holding the new one.
 
 ## v0.34.0 — 2026-11-22
