@@ -614,7 +614,7 @@
   "pattern_template.aws_access_key_id.description": "AWS access-key identifier.",
   "pattern_template.github_token.description": "GitHub token with a published prefix.",
   "pattern_template.github_fine_grained_token.description": "GitHub fine-grained personal access token.",
-  "pattern_template.gitlab_token.description": "GitLab personal access token.",
+  "pattern_template.gitlab_token.description": "GitLab token (personal access, deploy, runner and others), including the longer routable form.",
   "pattern_template.slack_token.description": "Slack token with a published prefix.",
   "pattern_template.google_api_key.description": "Google API key.",
   "pattern_template.stripe_secret_key.description": "Stripe live or test secret key.",
